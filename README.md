@@ -48,6 +48,27 @@ npm install
 npm run tauri:dev
 ```
 
+Notes:
+- `npm run tauri:dev` launches the full desktop app dev loop (frontend + Tauri shell + Rust backend).
+- You do not need to run a separate `cargo build` just to start local desktop development.
+
+Rust-only workflows (from repo root):
+
+```bash
+cargo check --manifest-path vault/desktop/src/Cargo.toml
+cargo build --manifest-path vault/desktop/src/Cargo.toml
+cargo test --manifest-path vault/desktop/src/Cargo.toml
+cargo fmt --manifest-path vault/desktop/src/Cargo.toml
+```
+
+Frontend-only workflows (desktop web UI):
+
+```bash
+npm run -C vault/desktop type-check
+npm run -C vault/desktop test
+npm run -C vault/desktop lint
+```
+
 Useful desktop commands:
 
 ```bash
@@ -55,6 +76,12 @@ npm run lint
 npm run test
 npm run test:e2e
 npm run tauri:build
+```
+
+Release build (desktop bundle):
+
+```bash
+npm run -C vault/desktop tauri:build
 ```
 
 ### Backend Service
