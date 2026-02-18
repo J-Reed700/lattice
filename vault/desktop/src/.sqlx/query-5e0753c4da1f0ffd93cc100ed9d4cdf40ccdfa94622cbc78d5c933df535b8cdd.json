@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    SELECT id as \"id!\", name as \"name!\", color as \"color!\", created_at as \"created_at!\", updated_at as \"updated_at!\"\n                    FROM tags\n                    ORDER BY name ASC\n                    LIMIT ?\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "color!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at!",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5e0753c4da1f0ffd93cc100ed9d4cdf40ccdfa94622cbc78d5c933df535b8cdd"
+}

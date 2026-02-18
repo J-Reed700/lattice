@@ -1,0 +1,37 @@
+[run]
+source = src
+branch = True
+omit =
+    */tests/*
+    */migrations/*
+    */conftest.py
+    */__pycache__/*
+    */site-packages/*
+    */scripts/*
+    */.venv/*
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+fail_under = 70
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    def __str__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    class .*\bProtocol\):
+    @(abc\.)?abstractmethod
+    @overload
+    pass
+    \.\.\.
+
+[html]
+directory = htmlcov
+title = Vault Backend Coverage Report
+
+[xml]
+output = coverage.xml

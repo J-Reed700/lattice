@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM text_embeddings WHERE chunk_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "318ac34d004dcd0a10638638bb2757119f4f8d4f1a0248d4841f3a11bebd01cd"
+}

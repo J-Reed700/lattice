@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    DELETE FROM favorites\n                    WHERE document_id = ?\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "fdf9ee08abdcf099a49b40bc2a1fe0ce9b0a508e4e341103c6caa4e1aed318ae"
+}

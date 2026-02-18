@@ -1,0 +1,247 @@
+# Example GitHub Actions Workflow
+# Copy this to .github/workflows/build.yml to enable CI/CD
+
+name: Build Vault Desktop
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+  RUST_VERSION: 'stable'
+
+jobs:
+  # ==========================================================================
+  # Test Job - Run tests on all platforms
+  # ==========================================================================
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: vault/desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          profile: minimal
+          override: true
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vault/desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install dependencies
+        run: |
+          cd vault/desktop
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd vault/desktop
+          npm test -- --run
+
+      - name: Run backend tests
+        run: |
+          cd vault/desktop/src-tauri
+          cargo test
+
+  # ==========================================================================
+  # Build Job - Build for all platforms
+  # ==========================================================================
+  build:
+    name: Build on ${{ matrix.os }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            script: build.sh
+          - os: macos-latest
+            platform: macos
+            script: build.sh
+          - os: windows-latest
+            platform: windows
+            script: build.ps1
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: vault/desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          profile: minimal
+          override: true
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libwebkit2gtk-4.0-dev \
+            librsvg2-dev
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            vault/desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install dependencies
+        run: |
+          cd vault/desktop
+          npm ci
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd vault/desktop
+          chmod +x ${{ matrix.script }}
+          ./${{ matrix.script }} --checksums --verbose
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd vault/desktop
+          .\${{ matrix.script }} -Checksums -Verbose
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: vault-desktop-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            vault/desktop/src-tauri/target/release/bundle/**/*
+            vault/desktop/dist/checksums.txt
+          retention-days: 30
+
+  # ==========================================================================
+  # Release Job - Create GitHub release (only on tags)
+  # ==========================================================================
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.deb
+            artifacts/**/*.appimage
+            artifacts/**/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ==========================================================================
+  # Multi-Platform Build (Universal Binaries for macOS)
+  # ==========================================================================
+  build-macos-universal:
+    name: Build macOS Universal Binary
+    needs: test
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          profile: minimal
+          override: true
+          target: |
+            x86_64-apple-darwin
+            aarch64-apple-darwin
+
+      - name: Install dependencies
+        run: |
+          cd vault/desktop
+          npm ci
+
+      - name: Build Intel
+        run: |
+          cd vault/desktop
+          ./build.sh --target x86_64-apple-darwin --no-bundle --verbose
+
+      - name: Build Apple Silicon
+        run: |
+          cd vault/desktop
+          ./build.sh --target aarch64-apple-darwin --no-bundle --verbose
+
+      - name: Create Universal Binary
+        run: |
+          cd vault/desktop/src-tauri
+          lipo -create \
+            target/x86_64-apple-darwin/release/vault-desktop \
+            target/aarch64-apple-darwin/release/vault-desktop \
+            -output target/release/vault-desktop-universal
+
+      - name: Upload Universal Binary
+        uses: actions/upload-artifact@v3
+        with:
+          name: vault-desktop-macos-universal-${{ github.sha }}
+          path: vault/desktop/src-tauri/target/release/vault-desktop-universal
+          retention-days: 30
+

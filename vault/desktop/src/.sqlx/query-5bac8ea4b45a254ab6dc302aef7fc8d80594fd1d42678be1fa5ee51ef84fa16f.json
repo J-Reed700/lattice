@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE models\n            SET is_active_for_embedding = 1\n            WHERE model_id = ?1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "5bac8ea4b45a254ab6dc302aef7fc8d80594fd1d42678be1fa5ee51ef84fa16f"
+}

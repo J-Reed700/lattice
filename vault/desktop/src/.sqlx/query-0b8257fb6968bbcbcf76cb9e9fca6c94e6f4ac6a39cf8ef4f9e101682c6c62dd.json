@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO text_embeddings (id, chunk_id, embedding, model_name, dimension, created_at)\n                VALUES (?, ?, ?, ?, ?, ?)\n                ON CONFLICT(id) DO UPDATE SET\n                    chunk_id = excluded.chunk_id,\n                    embedding = excluded.embedding,\n                    model_name = excluded.model_name,\n                    dimension = excluded.dimension,\n                    created_at = excluded.created_at\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "0b8257fb6968bbcbcf76cb9e9fca6c94e6f4ac6a39cf8ef4f9e101682c6c62dd"
+}

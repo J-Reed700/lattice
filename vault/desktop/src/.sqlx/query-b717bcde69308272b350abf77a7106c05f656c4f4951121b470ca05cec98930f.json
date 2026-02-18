@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, name, type, metadata, created_at\n            FROM mentions\n            WHERE name LIKE ?\n            ORDER BY name\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "b717bcde69308272b350abf77a7106c05f656c4f4951121b470ca05cec98930f"
+}

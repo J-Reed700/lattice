@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO mentions (id, name, type, metadata, created_at)\n            VALUES (?, ?, ?, ?, ?)\n            ON CONFLICT(name) DO UPDATE SET\n                type = excluded.type,\n                metadata = excluded.metadata\n            RETURNING id, name, type, metadata, created_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "c23b4cce1bdc526b63d531ab886c6ecdff6c323d5aa96126255da24c82eaf462"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT OR IGNORE INTO conversation_documents (conversation_id, document_id, chunk_id, relevance_score, added_at)\n            VALUES (?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "b998406be73534069ecd3c3bf9a9d59224fe29fca0a4c0e6e9df1c9fa49a5040"
+}

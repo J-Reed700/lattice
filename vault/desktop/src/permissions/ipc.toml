@@ -1,0 +1,6 @@
+# IPC Gateway - Single command for routing all frontend requests
+
+[[permission]]
+identifier = "gateway-access"
+description = "Allow IPC gateway command for routing all requests"
+commands.allow = ["gateway_command"]

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO custom_models (\n                id, name, model_id, source_type, source_value,\n                file_path, file_size_bytes, architecture, task_type,\n                validation_status, validation_error, metadata_json,\n                created_at, updated_at, last_validated_at\n            )\n            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)\n            ON CONFLICT(id) DO UPDATE SET\n                name = excluded.name,\n                model_id = excluded.model_id,\n                source_type = excluded.source_type,\n                source_value = excluded.source_value,\n                file_path = excluded.file_path,\n                file_size_bytes = excluded.file_size_bytes,\n                architecture = excluded.architecture,\n                task_type = excluded.task_type,\n                validation_status = excluded.validation_status,\n                validation_error = excluded.validation_error,\n                metadata_json = excluded.metadata_json,\n                created_at = excluded.created_at,\n                updated_at = excluded.updated_at,\n                last_validated_at = excluded.last_validated_at\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "7a4ee092c00f68cc6457237d385d618f51b7224656bb1a1723b2e31c656962ec"
+}

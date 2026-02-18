@@ -1,0 +1,1 @@
+export { ShortcutsManager } from './ShortcutsManager';

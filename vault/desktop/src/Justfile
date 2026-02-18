@@ -1,0 +1,110 @@
+# Justfile - Command runner for common development tasks
+
+# List all available commands
+default:
+    @just --list
+
+# Check for unwraps in production code (exclude tests)
+check-unwraps:
+    @echo "Checking for unwraps in production code..."
+    @cargo clippy -- -D clippy::unwrap_used -D clippy::expect_used 2>&1 || true
+    @echo "\nSearching source files (excluding tests):"
+    @rg "\.unwrap\(\)" src/ -g '!*test*.rs' --count-matches 2>/dev/null | sort -t: -k2 -rn | head -20 || echo "No unwraps found!"
+
+# Full lint check with all warnings as errors
+lint:
+    cargo clippy --all-targets --all-features -- -D warnings
+
+# Run only production code lints (no tests)
+lint-prod:
+    cargo clippy --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
+
+# Check code without running lints (faster compilation check)
+check:
+    cargo check --all-targets
+
+# Run all tests
+test:
+    cargo test
+
+# Run tests with coverage (grcov + LLVM instrumentation)
+coverage:
+    @echo "Running tests with coverage instrumentation..."
+    @CARGO_INCREMENTAL=0 RUSTFLAGS="-Cinstrument-coverage" LLVM_PROFILE_FILE="recall-%p-%m.profraw" cargo test --lib
+    @echo "Generating HTML coverage report..."
+    @/Users/joshreed/.cargo/bin/grcov . --binary-path ./target/debug/deps/ -s . -t html --branch --ignore-not-existing --ignore '../*' --ignore '/*' --llvm-path /opt/homebrew/Cellar/llvm/21.1.4/bin -o target/coverage/html
+    @echo "Cleaning up profraw files..."
+    @rm -f recall-*.profraw
+    @echo "✅ Coverage report: target/coverage/html/index.html"
+    @open target/coverage/html/index.html
+
+# Format code
+fmt:
+    cargo fmt --all
+
+# Check formatting without modifying files
+fmt-check:
+    cargo fmt --all -- --check
+
+# Run security audit
+audit:
+    cargo audit
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Build in development mode
+build-dev:
+    cargo build
+
+# Build in release mode
+build-release:
+    cargo build --release
+
+# Run the application in development mode
+dev:
+    cargo run
+
+# Run benchmarks
+bench:
+    cargo bench
+
+# Update dependencies
+update:
+    cargo update
+
+# Generate documentation
+doc:
+    cargo doc --no-deps --open
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CI RATCHET: Immaculate Baseline Enforcement
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Run full CI ratchet checks (clippy + tests + Zero-Panic Policy)
+ci-check:
+    @./scripts/ci_check.sh
+
+# Quick CI check (production clippy + tests) - USE BEFORE COMMITTING
+ci-quick:
+    @echo "Running quick CI checks (production code only)..."
+    @cargo clippy --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
+    @cargo test --lib --bins
+
+# Alias for ci-quick (convenient pre-commit check)
+pre-commit: ci-quick
+
+# Comprehensive check (all lints + tests + format + Zero-Panic)
+check-all: fmt-check ci-check
+
+# Make CI check script executable (run once after cloning)
+install-ci-check:
+    @chmod +x scripts/ci_check.sh
+    @echo "✓ CI check script is now executable"
+
+# Install git pre-commit hook
+install-hooks:
+    @cp scripts/pre-commit .git/hooks/pre-commit
+    @chmod +x .git/hooks/pre-commit
+    @echo "✓ Pre-commit hook installed (runs 'just ci-quick' before commits)"

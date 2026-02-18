@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, item_url\n            FROM batch_job_items\n            WHERE job_id = ?1 AND status = 'pending'\n            ORDER BY created_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "item_url",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "663f83f1ad63a0f98396c8affea19bc384e4c647d3fb907c5623ca24b300b809"
+}

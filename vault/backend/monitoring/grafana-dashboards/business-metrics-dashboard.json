@@ -1,0 +1,206 @@
+{
+  "dashboard": {
+    "title": "Vault - Business Metrics",
+    "tags": ["vault", "business"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "30s",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "title": "Files Uploaded (24h)",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "increase(vault_files_uploaded_total[24h])",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto"
+        }
+      },
+      {
+        "title": "Files Indexed (24h)",
+        "type": "stat",
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "increase(vault_files_indexed_total[24h])",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area"
+        }
+      },
+      {
+        "title": "Searches (24h)",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "increase(vault_searches_total[24h])",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area"
+        }
+      },
+      {
+        "title": "Active Watch Folders",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "vault_active_watch_folders",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value"
+        }
+      },
+      {
+        "title": "File Upload Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(vault_files_uploaded_total[5m])",
+            "legendFormat": "{{mime_type}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Files/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Search Rate by Type",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(vault_searches_total[5m])",
+            "legendFormat": "{{search_type}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Searches/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Indexing Success Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(vault_files_indexed_total[5m]) / rate(vault_files_uploaded_total[5m]) * 100",
+            "legendFormat": "Success Rate",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "Success %", "min": 0, "max": 100},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "OCR Operations",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(vault_ocr_operations_total{status=\"success\"}[5m])",
+            "legendFormat": "Success",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(vault_ocr_operations_total{status=\"failure\"}[5m])",
+            "legendFormat": "Failure",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Operations/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Storage Usage by Category",
+        "type": "piechart",
+        "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_storage_bytes",
+            "legendFormat": "{{category}}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "title": "Export Operations",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(vault_exports_total[5m])",
+            "legendFormat": "{{format}} - {{status}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Exports/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Search Query Duration (p95)",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(vault_search_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{search_type}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Duration"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Embedding Generation Duration (p95)",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(vault_embedding_generation_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{model}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Duration"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE batch_job_items\n        SET status = ?1,\n            document_id = COALESCE(?2, document_id),\n            error_message = ?3,\n            processed_at = COALESCE(?4, processed_at)\n        WHERE id = ?5\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "ef0b77af1e9a6370f214095efc17ca1fc404c0bd56fc94b9cf7e290d8ba4a4e9"
+}

@@ -1,0 +1,1933 @@
+//! Conversation Plugin - Conversation management and conversational Q&A
+//!
+//! Migrated from ipc/domains/conversation.rs as part of Operation Scorched Earth Batch 4
+
+use crate::application::dtos::conversation_dto::{
+    CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
+    DeleteConversationResponseDto, GetConversationMessagesRequestDto,
+    GetConversationMessagesResponseDto, GetConversationRequestDto, GetConversationResponseDto,
+    ListConversationsQuery, ListConversationsResponseDto, RenameConversationRequestDto,
+    RenameConversationResponseDto,
+};
+use crate::application::dtos::conversation_message_bookmark_dto::{
+    BookmarkConversationMessageRequestDto, ConversationMessageBookmarkDto,
+    ListMessageBookmarksQueryDto, ListMessageBookmarksResponseDto,
+    UnbookmarkConversationMessageRequestDto,
+};
+use crate::application::dtos::conversation_space_dto::{
+    ArchiveConversationSpaceRequestDto, ConversationSpaceDto, ConversationSpaceMemberDto,
+    CreateConversationSpaceRequestDto, ListConversationsExplorerQueryDto,
+    MoveConversationToSpaceRequestDto, RemoveConversationSpaceMemberRequestDto,
+    SetConversationStateRequestDto, UpdateConversationSpaceRequestDto,
+    UpsertConversationSpaceMemberRequestDto,
+};
+use crate::interfaces::commands::conversation;
+use crate::interfaces::commands::conversation_chat::{
+    chat_with_conversation as chat_with_conversation_impl, ChatResponse, ToolPreferences,
+};
+use crate::interfaces::di::Container;
+use crate::shared::api_result::ApiError;
+use crate::shared::error::AppError;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use std::collections::HashSet;
+use tauri::{
+    plugin::{Builder, TauriPlugin},
+    State,
+};
+
+const DEFAULT_SPACE_ID: &str = "space_general";
+const LOCAL_OWNER_MEMBER_ID: &str = "member_local_owner";
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ConversationStateRow {
+    space_id: String,
+    is_saved: i64,
+    is_bookmarked: i64,
+    is_pinned: i64,
+    is_archived: i64,
+    saved_at: Option<String>,
+    bookmarked_at: Option<String>,
+    pinned_at: Option<String>,
+    archived_at: Option<String>,
+    last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ConversationExplorerRow {
+    id: String,
+    title: String,
+    model_name: String,
+    system_prompt: Option<String>,
+    created_at: String,
+    updated_at: String,
+    message_count: i64,
+    total_tokens: i64,
+    space_id: String,
+    is_saved: i64,
+    is_bookmarked: i64,
+    is_pinned: i64,
+    is_archived: i64,
+    saved_at: Option<String>,
+    bookmarked_at: Option<String>,
+    pinned_at: Option<String>,
+    archived_at: Option<String>,
+    last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct MessageBookmarkRow {
+    id: String,
+    conversation_id: String,
+    conversation_title: String,
+    space_id: String,
+    message_id: String,
+    message_role: String,
+    message_preview: String,
+    title: Option<String>,
+    note: Option<String>,
+    created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationLinkedDocumentDto {
+    pub document_id: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub file_type: String,
+    pub category: String,
+    pub indexed_at: String,
+    pub last_referenced_at: String,
+    pub reference_count: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ConversationLinkedDocumentRow {
+    document_id: String,
+    file_name: String,
+    file_path: String,
+    file_type: Option<String>,
+    category: String,
+    indexed_at: String,
+    last_referenced_at: String,
+    reference_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSpaceMembershipDto {
+    pub space_id: String,
+    pub space_name: String,
+    pub is_archived: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct DocumentSpaceMembershipRow {
+    space_id: String,
+    space_name: String,
+    is_archived: i64,
+    created_at: Option<String>,
+}
+
+async fn fetch_conversation_state(
+    pool: &SqlitePool,
+    conversation_id: &str,
+) -> Result<Option<ConversationStateRow>, ApiError> {
+    let state = sqlx::query_as::<_, ConversationStateRow>(
+        r#"
+        SELECT
+            c.space_id AS space_id,
+            c.is_saved AS is_saved,
+            c.is_bookmarked AS is_bookmarked,
+            c.is_pinned AS is_pinned,
+            c.is_archived AS is_archived,
+            c.saved_at AS saved_at,
+            c.bookmarked_at AS bookmarked_at,
+            c.pinned_at AS pinned_at,
+            c.archived_at AS archived_at,
+            (
+                SELECT m.content
+                FROM conversation_messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) AS last_message_preview
+        FROM conversations c
+        WHERE c.id = ?
+        "#,
+    )
+    .bind(conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to fetch conversation state: {}",
+            e
+        )))
+    })?;
+
+    Ok(state)
+}
+
+fn to_conversation_dto(
+    c: &crate::domain::conversation::Conversation,
+    state: Option<ConversationStateRow>,
+) -> crate::application::dtos::conversation_dto::ConversationDto {
+    let (
+        space_id,
+        is_saved,
+        is_bookmarked,
+        is_pinned,
+        is_archived,
+        saved_at,
+        bookmarked_at,
+        pinned_at,
+        archived_at,
+        last_message_preview,
+    ) = if let Some(s) = state {
+        (
+            Some(s.space_id),
+            Some(s.is_saved != 0),
+            Some(s.is_bookmarked != 0),
+            Some(s.is_pinned != 0),
+            Some(s.is_archived != 0),
+            s.saved_at,
+            s.bookmarked_at,
+            s.pinned_at,
+            s.archived_at,
+            s.last_message_preview,
+        )
+    } else {
+        (
+            Some(DEFAULT_SPACE_ID.to_string()),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(false),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    };
+
+    crate::application::dtos::conversation_dto::ConversationDto {
+        id: c.id.to_string(),
+        title: c.title.clone(),
+        model_name: c.model_name.clone(),
+        system_prompt: c.system_prompt.clone(),
+        created_at: c.created_at.to_rfc3339(),
+        updated_at: c.updated_at.to_rfc3339(),
+        message_count: c.message_count,
+        total_tokens: c.total_tokens,
+        space_id,
+        is_saved,
+        is_bookmarked,
+        is_pinned,
+        is_archived,
+        saved_at,
+        bookmarked_at,
+        pinned_at,
+        archived_at,
+        last_message_preview,
+    }
+}
+
+fn build_fts_query(raw: &str) -> Option<String> {
+    let terms = raw
+        .split_whitespace()
+        .map(|term| term.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" AND "))
+    }
+}
+
+fn validate_space_role(role: &str) -> Result<&str, ApiError> {
+    match role.trim().to_lowercase().as_str() {
+        "owner" => Ok("owner"),
+        "editor" => Ok("editor"),
+        "viewer" => Ok("viewer"),
+        _ => Err(ApiError::from(AppError::InvalidInput(
+            "Role must be one of: owner, editor, viewer".to_string(),
+        ))),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn create_conversation(
+    request: CreateConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<CreateConversationResponseDto, ApiError> {
+    let conversation = conversation::create_conversation_impl(
+        container.inner(),
+        request.title,
+        request.model_name,
+        request.system_prompt,
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    let state = fetch_conversation_state(container.db_pool(), &conversation.id.to_string()).await?;
+
+    Ok(CreateConversationResponseDto {
+        conversation: to_conversation_dto(&conversation, state),
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_conversation(
+    request: GetConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<GetConversationResponseDto, ApiError> {
+    let conversation =
+        conversation::get_conversation_impl(container.inner(), request.conversation_id)
+            .await
+            .map_err(ApiError::from)?;
+
+    Ok(GetConversationResponseDto {
+        conversation: match conversation {
+            Some(c) => {
+                let state =
+                    fetch_conversation_state(container.db_pool(), &c.id.to_string()).await?;
+                Some(to_conversation_dto(&c, state))
+            }
+            None => None,
+        },
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversations(
+    query: ListConversationsQuery,
+    container: State<'_, Container>,
+) -> Result<ListConversationsResponseDto, ApiError> {
+    let conversations =
+        conversation::list_conversations_impl(container.inner(), query.limit, query.offset)
+            .await
+            .map_err(ApiError::from)?;
+
+    let mut items = Vec::with_capacity(conversations.len());
+    for c in &conversations {
+        let state = fetch_conversation_state(container.db_pool(), &c.id.to_string()).await?;
+        items.push(to_conversation_dto(c, state));
+    }
+
+    Ok(ListConversationsResponseDto {
+        conversations: items,
+        total: conversations.len(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_conversation(
+    request: DeleteConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<DeleteConversationResponseDto, ApiError> {
+    conversation::delete_conversation_impl(container.inner(), request.conversation_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(DeleteConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_conversation_messages(
+    request: GetConversationMessagesRequestDto,
+    container: State<'_, Container>,
+) -> Result<GetConversationMessagesResponseDto, ApiError> {
+    let messages =
+        conversation::get_conversation_messages_impl(container.inner(), request.conversation_id)
+            .await
+            .map_err(ApiError::from)?;
+
+    Ok(GetConversationMessagesResponseDto {
+        messages: messages
+            .iter()
+            .map(|m| crate::application::dtos::conversation_dto::MessageDto {
+                id: m.id.to_string(),
+                conversation_id: m.conversation_id.to_string(),
+                role: m.role.to_string(),
+                content: m.content.clone(),
+                tokens: m.tokens,
+                created_at: m.created_at.to_rfc3339(),
+                metadata: m.metadata.clone(),
+                status: m.status.clone(),
+            })
+            .collect(),
+        total: messages.len(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn rename_conversation(
+    request: RenameConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation::rename_conversation_impl(
+        container.inner(),
+        request.conversation_id,
+        request.new_title,
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn chat_with_conversation_wrapper(
+    container: State<'_, Container>,
+    conversation_id: Option<String>,
+    message: String,
+    tool_preferences: Option<ToolPreferences>,
+    cancel_only: Option<bool>,
+    window: tauri::Window,
+) -> Result<ChatResponse, ApiError> {
+    let convo_id_for_log = conversation_id.clone().unwrap_or_else(|| "NEW".to_string());
+    let message_len = message.len();
+    tracing::info!(
+        conversation_id = convo_id_for_log.as_str(),
+        message_len = message_len,
+        "chat_with_conversation_wrapper: START"
+    );
+
+    let fut = chat_with_conversation_impl(
+        container,
+        conversation_id,
+        message,
+        tool_preferences,
+        cancel_only,
+        window,
+    );
+    match Box::pin(fut).await {
+        Ok(response) => {
+            tracing::info!(
+                conversation_id = response.conversation_id.as_str(),
+                response_len = response.message.len(),
+                "chat_with_conversation_wrapper: DONE"
+            );
+            Ok(response)
+        }
+        Err(e) => {
+            tracing::error!(
+                conversation_id = convo_id_for_log.as_str(),
+                error = %e,
+                "chat_with_conversation_wrapper: FAILED"
+            );
+            Err(ApiError::from(e))
+        }
+    }
+}
+
+/// Frontend-facing command: apiCall('chat_with_conversation') expects this name.
+#[tauri::command]
+#[specta::specta]
+pub async fn chat_with_conversation(
+    container: State<'_, Container>,
+    conversation_id: Option<String>,
+    message: String,
+    tool_preferences: Option<ToolPreferences>,
+    cancel_only: Option<bool>,
+    window: tauri::Window,
+) -> Result<ChatResponse, ApiError> {
+    chat_with_conversation_wrapper(
+        container,
+        conversation_id,
+        message,
+        tool_preferences,
+        cancel_only,
+        window,
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn create_conversation_space(
+    request: CreateConversationSpaceRequestDto,
+    container: State<'_, Container>,
+) -> Result<ConversationSpaceDto, ApiError> {
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "Space name cannot be empty".to_string(),
+        )));
+    }
+
+    let id = format!("space_{}", uuid::Uuid::new_v4().simple());
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_spaces (
+            id, name, description, icon, accent_color, space_prompt,
+            default_model_name, tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(request.description)
+    .bind(request.icon)
+    .bind(request.accent_color)
+    .bind(request.space_prompt)
+    .bind(request.default_model_name)
+    .bind(request.tool_preferences_json)
+    .bind(&now)
+    .bind(&now)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| ApiError::from(AppError::Database(format!("Failed to create space: {}", e))))?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO collaborator_profiles (
+            id, display_name, email, avatar_url, created_at, updated_at
+        ) VALUES (?, 'Local Owner', NULL, NULL, ?, ?)
+        "#,
+    )
+    .bind(LOCAL_OWNER_MEMBER_ID)
+    .bind(&now)
+    .bind(&now)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to ensure local owner profile while creating space: {}",
+            e
+        )))
+    })?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO conversation_space_members (
+            space_id, member_id, role, created_at, updated_at
+        ) VALUES (?, ?, 'owner', ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(LOCAL_OWNER_MEMBER_ID)
+    .bind(&now)
+    .bind(&now)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to create default owner membership for new space: {}",
+            e
+        )))
+    })?;
+
+    let created = sqlx::query_as::<_, ConversationSpaceDto>(
+        r#"
+        SELECT
+            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        FROM conversation_spaces
+        WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to fetch created space: {}",
+            e
+        )))
+    })?;
+
+    Ok(created)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversation_spaces(
+    container: State<'_, Container>,
+) -> Result<Vec<ConversationSpaceDto>, ApiError> {
+    let spaces = sqlx::query_as::<_, ConversationSpaceDto>(
+        r#"
+        SELECT
+            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        FROM conversation_spaces
+        ORDER BY is_archived ASC, sort_order ASC, updated_at DESC
+        "#,
+    )
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|e| ApiError::from(AppError::Database(format!("Failed to list spaces: {}", e))))?;
+
+    Ok(spaces)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversation_space_members(
+    space_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<ConversationSpaceMemberDto>, ApiError> {
+    let members = sqlx::query_as::<_, ConversationSpaceMemberDto>(
+        r#"
+        SELECT
+            sm.space_id AS space_id,
+            sm.member_id AS member_id,
+            cp.display_name AS display_name,
+            cp.email AS email,
+            cp.avatar_url AS avatar_url,
+            sm.role AS role,
+            sm.created_at AS created_at,
+            sm.updated_at AS updated_at
+        FROM conversation_space_members sm
+        INNER JOIN collaborator_profiles cp ON cp.id = sm.member_id
+        WHERE sm.space_id = ?
+        ORDER BY
+            CASE sm.role
+                WHEN 'owner' THEN 0
+                WHEN 'editor' THEN 1
+                ELSE 2
+            END,
+            cp.display_name COLLATE NOCASE ASC
+        "#,
+    )
+    .bind(&space_id)
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to list conversation space members: {}",
+            e
+        )))
+    })?;
+
+    Ok(members)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn upsert_conversation_space_member(
+    request: UpsertConversationSpaceMemberRequestDto,
+    container: State<'_, Container>,
+) -> Result<ConversationSpaceMemberDto, ApiError> {
+    let role = validate_space_role(&request.role)?;
+
+    let space_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
+            .bind(&request.space_id)
+            .fetch_one(container.db_pool())
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to verify space before upserting member: {}",
+                    e
+                )))
+            })?;
+    if space_exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Space not found: {}",
+            request.space_id
+        ))));
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let display_name = request
+        .display_name
+        .clone()
+        .unwrap_or_else(|| request.member_id.clone());
+
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to begin transaction while upserting space member: {}",
+            e
+        )))
+    })?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO collaborator_profiles (
+            id, display_name, email, avatar_url, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            email = COALESCE(excluded.email, collaborator_profiles.email),
+            avatar_url = COALESCE(excluded.avatar_url, collaborator_profiles.avatar_url),
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(&request.member_id)
+    .bind(display_name)
+    .bind(request.email)
+    .bind(request.avatar_url)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to upsert collaborator profile: {}",
+            e
+        )))
+    })?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_space_members (
+            space_id, member_id, role, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(space_id, member_id) DO UPDATE SET
+            role = excluded.role,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(&request.space_id)
+    .bind(&request.member_id)
+    .bind(role)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to upsert conversation space member: {}",
+            e
+        )))
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit conversation space member transaction: {}",
+            e
+        )))
+    })?;
+
+    let member = sqlx::query_as::<_, ConversationSpaceMemberDto>(
+        r#"
+        SELECT
+            sm.space_id AS space_id,
+            sm.member_id AS member_id,
+            cp.display_name AS display_name,
+            cp.email AS email,
+            cp.avatar_url AS avatar_url,
+            sm.role AS role,
+            sm.created_at AS created_at,
+            sm.updated_at AS updated_at
+        FROM conversation_space_members sm
+        INNER JOIN collaborator_profiles cp ON cp.id = sm.member_id
+        WHERE sm.space_id = ? AND sm.member_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(&request.space_id)
+    .bind(&request.member_id)
+    .fetch_one(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to fetch upserted conversation space member: {}",
+            e
+        )))
+    })?;
+
+    Ok(member)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_conversation_space_member(
+    request: RemoveConversationSpaceMemberRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let current_role = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT role
+        FROM conversation_space_members
+        WHERE space_id = ? AND member_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(&request.space_id)
+    .bind(&request.member_id)
+    .fetch_optional(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to verify conversation space member: {}",
+            e
+        )))
+    })?
+    .ok_or_else(|| {
+        ApiError::from(AppError::NotFound(format!(
+            "Member {} is not assigned to space {}",
+            request.member_id, request.space_id
+        )))
+    })?;
+
+    if current_role == "owner" {
+        let owner_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM conversation_space_members WHERE space_id = ? AND role = 'owner'",
+        )
+        .bind(&request.space_id)
+        .fetch_one(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to validate owner count for space member removal: {}",
+                e
+            )))
+        })?;
+
+        if owner_count <= 1 {
+            return Err(ApiError::from(AppError::InvalidInput(
+                "Cannot remove the final owner from a space".to_string(),
+            )));
+        }
+    }
+
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_space_members
+        WHERE space_id = ? AND member_id = ?
+        "#,
+    )
+    .bind(&request.space_id)
+    .bind(&request.member_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to remove conversation space member: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_conversation_space(
+    request: UpdateConversationSpaceRequestDto,
+    container: State<'_, Container>,
+) -> Result<ConversationSpaceDto, ApiError> {
+    let now = Utc::now().to_rfc3339();
+    let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
+
+    let result = sqlx::query(
+        r#"
+        UPDATE conversation_spaces
+        SET
+            name = COALESCE(?, name),
+            description = COALESCE(?, description),
+            icon = COALESCE(?, icon),
+            accent_color = COALESCE(?, accent_color),
+            space_prompt = COALESCE(?, space_prompt),
+            default_model_name = COALESCE(?, default_model_name),
+            tool_preferences_json = COALESCE(?, tool_preferences_json),
+            is_archived = COALESCE(?, is_archived),
+            sort_order = COALESCE(?, sort_order),
+            updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(request.name)
+    .bind(request.description)
+    .bind(request.icon)
+    .bind(request.accent_color)
+    .bind(request.space_prompt)
+    .bind(request.default_model_name)
+    .bind(request.tool_preferences_json)
+    .bind(is_archived)
+    .bind(request.sort_order)
+    .bind(&now)
+    .bind(&request.space_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| ApiError::from(AppError::Database(format!("Failed to update space: {}", e))))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Space not found: {}",
+            request.space_id
+        ))));
+    }
+
+    let updated = sqlx::query_as::<_, ConversationSpaceDto>(
+        r#"
+        SELECT
+            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        FROM conversation_spaces
+        WHERE id = ?
+        "#,
+    )
+    .bind(&request.space_id)
+    .fetch_one(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to fetch updated space: {}",
+            e
+        )))
+    })?;
+
+    Ok(updated)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn archive_conversation_space(
+    request: ArchiveConversationSpaceRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    if request.space_id == DEFAULT_SPACE_ID && request.archived {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "The default space cannot be archived".to_string(),
+        )));
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let archived = if request.archived { 1 } else { 0 };
+
+    let result = sqlx::query(
+        r#"
+        UPDATE conversation_spaces
+        SET is_archived = ?, updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(archived)
+    .bind(&now)
+    .bind(&request.space_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to archive space: {}",
+            e
+        )))
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Space not found: {}",
+            request.space_id
+        ))));
+    }
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn move_conversation_to_space(
+    request: MoveConversationToSpaceRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
+        .bind(&request.space_id)
+        .fetch_one(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!("Failed to verify space: {}", e)))
+        })?;
+
+    if exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Space not found: {}",
+            request.space_id
+        ))));
+    }
+
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to begin transaction: {}",
+            e
+        )))
+    })?;
+
+    let _current_space_id =
+        sqlx::query_scalar::<_, String>("SELECT space_id FROM conversations WHERE id = ? LIMIT 1")
+            .bind(&request.conversation_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to resolve current conversation space: {}",
+                    e
+                )))
+            })?
+            .ok_or_else(|| {
+                ApiError::from(AppError::NotFound(format!(
+                    "Conversation not found: {}",
+                    request.conversation_id
+                )))
+            })?;
+
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        UPDATE conversations
+        SET space_id = ?, updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&request.space_id)
+    .bind(&now)
+    .bind(&request.conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to move conversation: {}",
+            e
+        )))
+    })?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
+        SELECT cd.document_id, ?, ?
+        FROM conversation_documents cd
+        WHERE cd.conversation_id = ?
+        "#,
+    )
+    .bind(&request.space_id)
+    .bind(&now)
+    .bind(&request.conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to sync destination space memberships: {}",
+            e
+        )))
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit transaction: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversation_linked_documents(
+    conversation_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<ConversationLinkedDocumentDto>, ApiError> {
+    let linked_docs = sqlx::query_as::<_, ConversationLinkedDocumentRow>(
+        r#"
+        SELECT
+            d.id AS document_id,
+            d.file_name AS file_name,
+            d.file_path AS file_path,
+            d.file_type AS file_type,
+            d.category AS category,
+            d.indexed_at AS indexed_at,
+            MAX(cd.added_at) AS last_referenced_at,
+            COUNT(*) AS reference_count
+        FROM conversation_documents cd
+        INNER JOIN documents d ON d.id = cd.document_id
+        WHERE cd.conversation_id = ?
+        GROUP BY d.id, d.file_name, d.file_path, d.file_type, d.category, d.indexed_at
+        ORDER BY last_referenced_at DESC
+        "#,
+    )
+    .bind(&conversation_id)
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to list conversation linked documents: {}",
+            e
+        )))
+    })?;
+
+    Ok(linked_docs
+        .into_iter()
+        .map(|row| ConversationLinkedDocumentDto {
+            document_id: row.document_id,
+            file_name: row.file_name,
+            file_path: row.file_path,
+            file_type: row.file_type.unwrap_or_default(),
+            category: row.category,
+            indexed_at: row.indexed_at,
+            last_referenced_at: row.last_referenced_at,
+            reference_count: row.reference_count,
+        })
+        .collect())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_conversation_linked_document(
+    conversation_id: String,
+    document_id: String,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to begin transaction: {}",
+            e
+        )))
+    })?;
+
+    let conversation_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
+            .bind(&conversation_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to verify conversation: {}",
+                    e
+                )))
+            })?;
+
+    if conversation_exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Conversation not found: {}",
+            conversation_id
+        ))));
+    }
+
+    let deleted = sqlx::query(
+        r#"
+        DELETE FROM conversation_documents
+        WHERE conversation_id = ? AND document_id = ?
+        "#,
+    )
+    .bind(&conversation_id)
+    .bind(&document_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to remove linked document from conversation: {}",
+            e
+        )))
+    })?;
+
+    if deleted.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Document {} is not linked to conversation {}",
+            document_id, conversation_id
+        ))));
+    }
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit transaction: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_document_space_memberships(
+    document_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<DocumentSpaceMembershipDto>, ApiError> {
+    let memberships = sqlx::query_as::<_, DocumentSpaceMembershipRow>(
+        r#"
+        SELECT
+            cs.id AS space_id,
+            cs.name AS space_name,
+            cs.is_archived AS is_archived,
+            dsm.created_at AS created_at
+        FROM document_space_memberships dsm
+        INNER JOIN conversation_spaces cs ON cs.id = dsm.space_id
+        WHERE dsm.document_id = ?
+        ORDER BY cs.is_archived ASC, cs.name ASC
+        "#,
+    )
+    .bind(&document_id)
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to list document space memberships: {}",
+            e
+        )))
+    })?;
+
+    Ok(memberships
+        .into_iter()
+        .map(|row| DocumentSpaceMembershipDto {
+            space_id: row.space_id,
+            space_name: row.space_name,
+            is_archived: row.is_archived != 0,
+            created_at: row.created_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_document_space_membership(
+    document_id: String,
+    space_id: String,
+    assigned: bool,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let document_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
+        .bind(&document_id)
+        .fetch_one(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to verify document: {}",
+                e
+            )))
+        })?;
+
+    if document_exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Document not found: {}",
+            document_id
+        ))));
+    }
+
+    if assigned {
+        let space_exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
+                .bind(&space_id)
+                .fetch_one(container.db_pool())
+                .await
+                .map_err(|e| {
+                    ApiError::from(AppError::Database(format!("Failed to verify space: {}", e)))
+                })?;
+
+        if space_exists == 0 {
+            return Err(ApiError::from(AppError::NotFound(format!(
+                "Space not found: {}",
+                space_id
+            ))));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
+            VALUES (?, ?, ?)
+            "#,
+        )
+        .bind(&document_id)
+        .bind(&space_id)
+        .bind(now)
+        .execute(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to assign document to space: {}",
+                e
+            )))
+        })?;
+    } else {
+        sqlx::query(
+            r#"
+            DELETE FROM document_space_memberships
+            WHERE document_id = ? AND space_id = ?
+            "#,
+        )
+        .bind(&document_id)
+        .bind(&space_id)
+        .execute(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to remove document space membership: {}",
+                e
+            )))
+        })?;
+    }
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_documents_space_membership(
+    document_ids: Vec<String>,
+    space_id: String,
+    assigned: bool,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    const DOCUMENT_BATCH_SIZE: usize = 250;
+
+    let mut unique_document_ids = document_ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    unique_document_ids.sort();
+    unique_document_ids.dedup();
+
+    if unique_document_ids.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "At least one document ID is required".to_string(),
+        )));
+    }
+
+    let space_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
+            .bind(&space_id)
+            .fetch_one(container.db_pool())
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!("Failed to verify space: {}", e)))
+            })?;
+
+    if space_exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Space not found: {}",
+            space_id
+        ))));
+    }
+
+    let mut existing_document_ids = HashSet::with_capacity(unique_document_ids.len());
+    for document_id_batch in unique_document_ids.chunks(DOCUMENT_BATCH_SIZE) {
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT id FROM documents WHERE id IN (");
+        {
+            let mut separated = qb.separated(", ");
+            for document_id in document_id_batch {
+                separated.push_bind(document_id.as_str());
+            }
+        }
+        qb.push(")");
+
+        let found = qb
+            .build_query_scalar::<String>()
+            .fetch_all(container.db_pool())
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to verify documents: {}",
+                    e
+                )))
+            })?;
+
+        for existing_id in found {
+            existing_document_ids.insert(existing_id);
+        }
+    }
+
+    if let Some(missing_document_id) = unique_document_ids
+        .iter()
+        .find(|document_id| !existing_document_ids.contains(*document_id))
+    {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Document not found: {}",
+            missing_document_id
+        ))));
+    }
+
+    if assigned {
+        let now = Utc::now().to_rfc3339();
+        for document_id_batch in unique_document_ids.chunks(DOCUMENT_BATCH_SIZE) {
+            let mut qb = QueryBuilder::<Sqlite>::new(
+                "INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at) ",
+            );
+            qb.push_values(document_id_batch.iter(), |mut builder, document_id| {
+                builder
+                    .push_bind(document_id.as_str())
+                    .push_bind(space_id.as_str())
+                    .push_bind(now.as_str());
+            });
+
+            qb.build().execute(container.db_pool()).await.map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to assign documents to space: {}",
+                    e
+                )))
+            })?;
+        }
+    } else {
+        for document_id_batch in unique_document_ids.chunks(DOCUMENT_BATCH_SIZE) {
+            let mut qb = QueryBuilder::<Sqlite>::new(
+                "DELETE FROM document_space_memberships WHERE space_id = ",
+            );
+            qb.push_bind(space_id.as_str())
+                .push(" AND document_id IN (");
+            {
+                let mut separated = qb.separated(", ");
+                for document_id in document_id_batch {
+                    separated.push_bind(document_id.as_str());
+                }
+            }
+            qb.push(")");
+
+            qb.build().execute(container.db_pool()).await.map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to remove documents from space: {}",
+                    e
+                )))
+            })?;
+        }
+    }
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+async fn set_conversation_state(
+    pool: &SqlitePool,
+    conversation_id: &str,
+    column_name: &str,
+    timestamp_column: &str,
+    value: bool,
+) -> Result<(), ApiError> {
+    let now = Utc::now().to_rfc3339();
+    let mut qb = QueryBuilder::<Sqlite>::new("UPDATE conversations SET ");
+    qb.push(column_name)
+        .push(" = ")
+        .push_bind(if value { 1_i64 } else { 0_i64 })
+        .push(", ")
+        .push(timestamp_column)
+        .push(" = ")
+        .push_bind(if value {
+            Some(now.clone())
+        } else {
+            None::<String>
+        })
+        .push(", updated_at = ")
+        .push_bind(now)
+        .push(" WHERE id = ")
+        .push_bind(conversation_id);
+
+    let result = qb.build().execute(pool).await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to update conversation state: {}",
+            e
+        )))
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Conversation not found: {}",
+            conversation_id
+        ))));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_conversation_saved(
+    request: SetConversationStateRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    set_conversation_state(
+        container.db_pool(),
+        &request.conversation_id,
+        "is_saved",
+        "saved_at",
+        request.value,
+    )
+    .await?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_conversation_bookmarked(
+    request: SetConversationStateRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    set_conversation_state(
+        container.db_pool(),
+        &request.conversation_id,
+        "is_bookmarked",
+        "bookmarked_at",
+        request.value,
+    )
+    .await?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_conversation_pinned(
+    request: SetConversationStateRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    set_conversation_state(
+        container.db_pool(),
+        &request.conversation_id,
+        "is_pinned",
+        "pinned_at",
+        request.value,
+    )
+    .await?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_conversation_archived(
+    request: SetConversationStateRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    set_conversation_state(
+        container.db_pool(),
+        &request.conversation_id,
+        "is_archived",
+        "archived_at",
+        request.value,
+    )
+    .await?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn bookmark_conversation_message(
+    request: BookmarkConversationMessageRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM conversation_messages
+        WHERE id = ? AND conversation_id = ?
+        "#,
+    )
+    .bind(&request.message_id)
+    .bind(&request.conversation_id)
+    .fetch_one(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to verify message bookmark target: {}",
+            e
+        )))
+    })?;
+
+    if exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Message {} does not belong to conversation {}",
+            request.message_id, request.conversation_id
+        ))));
+    }
+
+    let id = format!("cmb_{}", uuid::Uuid::new_v4().simple());
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_message_bookmarks (
+            id, conversation_id, message_id, title, note, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id, message_id)
+        DO UPDATE SET
+            title = excluded.title,
+            note = excluded.note,
+            created_at = excluded.created_at
+        "#,
+    )
+    .bind(id)
+    .bind(&request.conversation_id)
+    .bind(&request.message_id)
+    .bind(request.title)
+    .bind(request.note)
+    .bind(now)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to bookmark conversation message: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn unbookmark_conversation_message(
+    request: UnbookmarkConversationMessageRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_message_bookmarks
+        WHERE conversation_id = ? AND message_id = ?
+        "#,
+    )
+    .bind(&request.conversation_id)
+    .bind(&request.message_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to remove message bookmark: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_message_bookmarks(
+    query: ListMessageBookmarksQueryDto,
+    container: State<'_, Container>,
+) -> Result<ListMessageBookmarksResponseDto, ApiError> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let search_query = query
+        .query
+        .as_ref()
+        .map(|q| q.trim())
+        .filter(|q| !q.is_empty());
+    let fts_query = search_query.and_then(build_fts_query);
+
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            b.id,
+            b.conversation_id,
+            c.title AS conversation_title,
+            c.space_id AS space_id,
+            b.message_id,
+            m.role AS message_role,
+            SUBSTR(m.content, 1, 280) AS message_preview,
+            b.title,
+            b.note,
+            b.created_at
+        FROM conversation_message_bookmarks b
+        INNER JOIN conversations c ON c.id = b.conversation_id
+        INNER JOIN conversation_messages m ON m.id = b.message_id
+        WHERE 1 = 1
+        "#,
+    );
+
+    if let Some(conversation_id) = &query.conversation_id {
+        qb.push(" AND b.conversation_id = ")
+            .push_bind(conversation_id);
+    }
+
+    if let Some(fts) = &fts_query {
+        qb.push(
+            " AND EXISTS (
+                SELECT 1
+                FROM conversation_search_fts fts
+                WHERE fts.conversation_id = b.conversation_id
+                  AND fts.content MATCH ",
+        )
+        .push_bind(fts.clone())
+        .push(
+            "
+                  AND (
+                    (fts.source = 'bookmark' AND fts.message_id = b.message_id)
+                    OR (fts.source = 'message' AND fts.message_id = b.message_id)
+                    OR fts.source = 'title'
+                  )
+            )",
+        );
+    }
+
+    if let Some(fts) = &fts_query {
+        qb.push(
+            " ORDER BY
+                COALESCE((
+                    SELECT MIN(bm25(conversation_search_fts))
+                    FROM conversation_search_fts
+                    WHERE conversation_id = b.conversation_id
+                      AND content MATCH ",
+        )
+        .push_bind(fts.clone())
+        .push(
+            "
+                ), 999999.0),
+                b.created_at DESC",
+        );
+    } else {
+        qb.push(" ORDER BY b.created_at DESC");
+    }
+
+    qb.push(" LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
+
+    let rows = qb
+        .build_query_as::<MessageBookmarkRow>()
+        .fetch_all(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to list message bookmarks: {}",
+                e
+            )))
+        })?;
+
+    let bookmarks = rows
+        .into_iter()
+        .map(|row| ConversationMessageBookmarkDto {
+            id: row.id,
+            conversation_id: row.conversation_id,
+            conversation_title: row.conversation_title,
+            space_id: row.space_id,
+            message_id: row.message_id,
+            message_role: row.message_role,
+            message_preview: row.message_preview,
+            title: row.title,
+            note: row.note,
+            created_at: row.created_at,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(ListMessageBookmarksResponseDto {
+        total: bookmarks.len(),
+        bookmarks,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversations_explorer(
+    query: ListConversationsExplorerQueryDto,
+    container: State<'_, Container>,
+) -> Result<ListConversationsResponseDto, ApiError> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let include_archived = query.include_archived.unwrap_or(false);
+    let search_query = query
+        .query
+        .as_ref()
+        .map(|q| q.trim())
+        .filter(|q| !q.is_empty());
+    let fts_query = search_query.and_then(build_fts_query);
+
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            c.id,
+            c.title,
+            c.model_name,
+            c.system_prompt,
+            c.created_at,
+            c.updated_at,
+            c.message_count,
+            c.total_tokens,
+            c.space_id,
+            c.is_saved,
+            c.is_bookmarked,
+            c.is_pinned,
+            c.is_archived,
+            c.saved_at,
+            c.bookmarked_at,
+            c.pinned_at,
+            c.archived_at,
+            (
+                SELECT m.content
+                FROM conversation_messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) AS last_message_preview
+        FROM conversations c
+        WHERE 1 = 1
+        "#,
+    );
+
+    if let Some(space_id) = &query.space_id {
+        qb.push(" AND c.space_id = ").push_bind(space_id);
+    }
+
+    if query.saved_only.unwrap_or(false) {
+        qb.push(" AND c.is_saved = 1");
+    }
+
+    if query.bookmarked_only.unwrap_or(false) {
+        qb.push(" AND c.is_bookmarked = 1");
+    }
+
+    if query.pinned_only.unwrap_or(false) {
+        qb.push(" AND c.is_pinned = 1");
+    }
+
+    if query.has_message_bookmarks.unwrap_or(false) {
+        qb.push(
+            " AND EXISTS (SELECT 1 FROM conversation_message_bookmarks b WHERE b.conversation_id = c.id)",
+        );
+    }
+
+    if !include_archived {
+        qb.push(" AND c.is_archived = 0");
+    }
+
+    if let Some(fts) = &fts_query {
+        qb.push(
+            " AND EXISTS (
+                SELECT 1
+                FROM conversation_search_fts fts
+                WHERE fts.conversation_id = c.id
+                  AND fts.content MATCH ",
+        )
+        .push_bind(fts.clone())
+        .push(")");
+    }
+
+    if let Some(fts) = &fts_query {
+        qb.push(
+            " ORDER BY
+                c.is_pinned DESC,
+                COALESCE((
+                    SELECT MIN(bm25(conversation_search_fts))
+                    FROM conversation_search_fts
+                    WHERE conversation_id = c.id
+                      AND content MATCH ",
+        )
+        .push_bind(fts.clone())
+        .push(
+            "
+                ), 999999.0),
+                c.updated_at DESC",
+        );
+    } else {
+        qb.push(" ORDER BY c.is_pinned DESC, c.updated_at DESC");
+    }
+
+    qb.push(" LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
+
+    let rows = qb
+        .build_query_as::<ConversationExplorerRow>()
+        .fetch_all(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to list explorer conversations: {}",
+                e
+            )))
+        })?;
+
+    let conversations = rows
+        .into_iter()
+        .map(
+            |row| crate::application::dtos::conversation_dto::ConversationDto {
+                id: row.id,
+                title: row.title,
+                model_name: row.model_name,
+                system_prompt: row.system_prompt,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                message_count: row.message_count,
+                total_tokens: row.total_tokens,
+                space_id: Some(row.space_id),
+                is_saved: Some(row.is_saved != 0),
+                is_bookmarked: Some(row.is_bookmarked != 0),
+                is_pinned: Some(row.is_pinned != 0),
+                is_archived: Some(row.is_archived != 0),
+                saved_at: row.saved_at,
+                bookmarked_at: row.bookmarked_at,
+                pinned_at: row.pinned_at,
+                archived_at: row.archived_at,
+                last_message_preview: row.last_message_preview,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    Ok(ListConversationsResponseDto {
+        total: conversations.len(),
+        conversations,
+    })
+}
+
+pub fn init() -> TauriPlugin<tauri::Wry> {
+    Builder::new("conversation")
+        .invoke_handler(tauri::generate_handler![
+            create_conversation,
+            get_conversation,
+            list_conversations,
+            delete_conversation,
+            get_conversation_messages,
+            rename_conversation,
+            chat_with_conversation_wrapper,
+            chat_with_conversation,
+            create_conversation_space,
+            list_conversation_spaces,
+            list_conversation_space_members,
+            upsert_conversation_space_member,
+            remove_conversation_space_member,
+            update_conversation_space,
+            archive_conversation_space,
+            move_conversation_to_space,
+            set_conversation_saved,
+            set_conversation_bookmarked,
+            set_conversation_pinned,
+            set_conversation_archived,
+            list_conversation_linked_documents,
+            remove_conversation_linked_document,
+            list_document_space_memberships,
+            set_document_space_membership,
+            set_documents_space_membership,
+            bookmark_conversation_message,
+            unbookmark_conversation_message,
+            list_message_bookmarks,
+            list_conversations_explorer,
+        ])
+        .build()
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE batch_jobs\n            SET completed_items = ?1,\n                failed_items = ?2,\n                progress = ?3\n            WHERE id = ?4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "0637637caf20e74cfae7e0b8f3e52caf6fba138ab1851d5c75c649c7539ffd71"
+}

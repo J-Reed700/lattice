@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3ee7a7908f2171a3fd5e95e9ab5efb3415701a861682d97d7ce53ab75c449293"
+}

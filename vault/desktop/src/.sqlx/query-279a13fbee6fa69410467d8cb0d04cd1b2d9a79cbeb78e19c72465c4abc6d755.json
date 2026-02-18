@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_path FROM documents WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_path",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "279a13fbee6fa69410467d8cb0d04cd1b2d9a79cbeb78e19c72465c4abc6d755"
+}

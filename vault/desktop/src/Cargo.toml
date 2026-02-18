@@ -1,0 +1,186 @@
+[package]
+name = "recall-desktop"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+default-run = "recall-desktop"
+
+[lints.rustdoc]
+# Phase 2: Suppress missing documentation warnings (Phase 4 will add docs)
+missing_doc_code_examples = "allow"
+
+[lints.rust]
+# Phase 2: Suppress missing documentation warnings (Phase 4 will add docs)
+missing_docs = "allow"
+
+[lints.clippy]
+# Error handling - prevent panics in production
+unwrap_used = "deny"           # Deny .unwrap() - Phase 1 immaculate hardening
+expect_used = "deny"           # Deny .expect() - Phase 1 immaculate hardening
+panic = "deny"                 # Deny explicit panic!()
+
+# Additional safety lints - Phase 1 immaculate hardening
+unwrap_in_result = "deny"      # Deny unwrap inside Result-returning functions
+indexing_slicing = "deny"      # Deny array indexing without bounds check
+
+# Code quality
+missing_errors_doc = "allow"    # Phase 2: Suppress (Phase 4 will add docs)
+
+[lib]
+name = "vault"
+path = "src/crates/recall/lib.rs"
+
+[[bin]]
+name = "recall-desktop"
+path = "src/crates/recall/main.rs"
+
+[[bin]]
+name = "export_bindings"
+path = "src/export_bindings.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+tauri-specta = { version = "2.0.0-rc.14", features = ["derive"] }  # Phase 5: Crystal Conduit - TypeScript generation
+
+[dependencies]
+tauri = { version = "=2.9.5", features = [] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-dialog = "2.6.0"
+
+# Phase 5: Crystal Conduit - Type-safe IPC with code generation
+specta = { version = "=2.0.0-rc.20", features = ["derive", "serde", "chrono", "uuid", "serde_json"] }
+specta-typescript = "0.0.7"
+tauri-specta = { version = "2.0.0-rc.14", features = ["derive", "typescript"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+jsonschema = "0.17"
+tokio = { version = "1.35", features = ["full"] }
+notify = "6.1"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+ort = "=2.0.0-rc.10"
+tokenizers = "0.15"
+ndarray = "0.16.1"
+anyhow = "1.0"
+thiserror = "1.0"
+rayon = "1.10"
+memmap2 = "0.9"
+usearch = "2.23"
+bytemuck = "1.14"
+bincode = "1.3"
+lru = "0.12"
+sha2 = "0.10"
+futures = "0.3"
+async-stream = "0.3"
+reqwest = { version = "0.11", features = ["stream", "json"] }
+hex = "0.4"
+lopdf = "0.38"
+docx-rs = "0.4"
+zip = "0.6"
+unicode-segmentation = "1.10"
+urlencoding = "2.1.3"  # URL decoding for path validation (CWE-22)
+dirs = "5.0"
+opener = "0.7"
+md5 = "0.7"
+keyring = "3.6"
+infer = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "0.2"
+opentelemetry = "0.31"
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.32"
+once_cell = "1.19"
+regex = "1.10"
+lazy-regex = "3"
+rust-stemmers = "1.2"
+async-trait = "0.1"
+ollama-rs = "0.2"
+tokio-stream = "0.1"
+fastembed = "5.5"
+# Rust modernization dependencies
+derive_more = { version = "1.0", features = ["from", "into", "display", "deref"] }
+parking_lot = "0.12"
+fs4 = "0.8"
+rand = "0.8"
+
+# LLM and web ingestion dependencies
+sysinfo = "0.30"
+scraper = "0.18"
+url = "2.5"
+html5ever = "0.26"
+ego-tree = "0.6"
+select = "0.6"
+readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extraction
+
+# Platform-specific Metal GPU support for macOS (M-series chips)
+[target.'cfg(target_os = "macos")'.dependencies]
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["metal"] }
+
+# Uncomment to enable CUDA on Windows/Linux
+# [target.'cfg(target_os = "windows")'.dependencies]
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["cuda"] }
+#
+# [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["cuda"] }
+
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+winreg = "0.52"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+proptest = "1.5"
+insta = { version = "1.45", features = ["json", "redactions"] }
+mockall = "0.13"
+rand = "0.8"
+futures = "0.3"
+mockito = "1.0"
+wiremock = "0.6"
+
+
+[features]
+default = ["custom-protocol", "search", "indexing", "qa", "extraction"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# Feature flags for optional functionality
+search = []       # Semantic search and embedding generation
+indexing = []     # Document processing and chunking
+qa = []           # Question-answering and LLM integration
+extraction = []   # Content extraction from documents
+test-utils = []   # Testing utilities and mocks
+
+# Quarantine features for temporarily disabled tests
+quarantine_download_tests = []  # Download command tests requiring refactoring
+quarantine_function_tests = []  # Function calling integration tests requiring refactoring
+
+
+# Profile configurations for stack size optimization
+# Increases stack size to prevent overflow with heavy ML dependencies (ONNX, mistralrs)
+# and complex HTML parsing (e.g., Reddit pages)
+[profile.dev]
+# Increase stack size to 8MB for development (default is ~2MB)
+# This prevents stack overflow during:
+# - ONNX Runtime model initialization
+# - Deep async call chains in tokio workers
+# - Complex HTML parsing with scraper/html5ever
+# - Recursive content extraction algorithms
+split-debuginfo = "unpacked"
+
+[profile.release]
+# Production optimizations with 8MB stack
+# LTO improves binary size and performance
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.test]
+# Test profile - includes dev dependencies and cfg(test) code
+# This profile is used for `cargo test`
+inherits = "dev"

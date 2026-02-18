@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE custom_models\n            SET validation_status = ?1,\n                validation_error = ?2,\n                last_validated_at = ?3\n            WHERE id = ?4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "12ec40bbdcb92f1e88d0bbceebea3c01aa556246b7cd6d5657e9cb5ff26e2d12"
+}

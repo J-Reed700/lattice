@@ -1,0 +1,87 @@
+//! # Application DTOs
+//!
+//! Data Transfer Objects for crossing application boundaries.
+//!
+//! DTOs provide a flat, serialization-friendly representation of data
+//! that is independent of domain models and infrastructure concerns.
+//!
+//! ## Purpose
+//!
+//! - **Decoupling**: DTOs decouple the API from domain models
+//! - **Serialization**: DTOs use simple types (String, i64) for JSON serialization
+//! - **Stability**: DTO changes don't affect domain logic
+//! - **Versioning**: DTOs can evolve independently for API compatibility
+//!
+//! ## Organization
+//!
+//! - `search_dto` - Search requests and responses
+//! - `indexing_dto` - Document indexing operations
+//! - `qa_dto` - Question-answering operations
+//! - `tag_dto` - Tag management
+//! - `document_dto` - Document metadata and operations
+//! - `file_dto` - File management operations
+//! - `conversation_dto` - Conversation management
+//! - `mention_dto` - Mention extraction and management
+//! - `credential_dto` - Credential storage and retrieval
+//! - `cache_dto` - Cache statistics and metrics
+//! - `backup_dto` - Backup and restore operations
+//! - `update_dto` - Update checking
+//! - `metric_dto` - Application metrics
+//! - `daily_notes_dto` - Daily notes operations
+
+pub mod backup_dto;
+pub mod batch_dto;
+pub mod cache_dto;
+pub mod conversation_dto;
+pub mod conversation_message_bookmark_dto;
+pub mod conversation_space_dto;
+pub mod credential_dto;
+// DELETED: pub mod daily_notes_dto; - Feature removed
+pub mod document_dto;
+pub mod embedding_dto;
+pub mod extraction_dto;
+pub mod favorite_dto;
+pub mod file_dto;
+pub mod function_calling_dto;
+pub mod health_dto;
+pub mod indexing_dto;
+pub mod initialization_dto;
+pub mod llm_dto;
+pub mod mention_dto;
+pub mod metric_dto;
+pub mod qa_dto;
+pub mod recent_dto;
+pub mod search_dto;
+pub mod settings;
+pub mod tag_dto;
+pub mod update_dto;
+pub mod web_dto;
+
+// Re-export commonly used DTOs
+pub use backup_dto::*;
+pub use batch_dto::*;
+pub use cache_dto::*;
+pub use conversation_dto::*;
+pub use conversation_message_bookmark_dto::*;
+pub use conversation_space_dto::*;
+pub use credential_dto::*;
+// DELETED: pub use daily_notes_dto::*; - Feature removed
+pub use document_dto::*;
+pub use embedding_dto::*;
+pub use extraction_dto::*;
+pub use favorite_dto::*;
+pub use file_dto::*;
+pub use function_calling_dto::*;
+pub use health_dto::*;
+pub use indexing_dto::*;
+pub use initialization_dto::*;
+pub use llm_dto::*;
+pub use mention_dto::*;
+pub use metric_dto::*;
+pub use qa_dto::*;
+pub use recent_dto::*;
+pub use search_dto::*;
+pub use settings::*;
+pub use tag_dto::*;
+pub use update_dto::*;
+pub use web_dto::*;

@@ -1,0 +1,1 @@
+export { DailyNotesWorkspace } from './DailyNotesWorkspace';

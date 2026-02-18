@@ -1,0 +1,173 @@
+{
+  "dashboard": {
+    "title": "Vault - System Metrics",
+    "tags": ["vault", "system"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "10s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "title": "CPU Usage",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_system_cpu_usage_percent",
+            "legendFormat": "CPU Usage",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "CPU %", "min": 0, "max": 100},
+          {"format": "short"}
+        ],
+        "thresholds": [
+          {"value": 85, "colorMode": "critical", "op": "gt", "fill": true, "line": true}
+        ]
+      },
+      {
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_system_memory_usage_bytes / 1024 / 1024 / 1024",
+            "legendFormat": "Used",
+            "refId": "A"
+          },
+          {
+            "expr": "vault_system_memory_available_bytes / 1024 / 1024 / 1024",
+            "legendFormat": "Available",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "gbytes", "label": "Memory"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Disk Usage",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_system_disk_usage_bytes / 1024 / 1024 / 1024",
+            "legendFormat": "Used - {{path}}",
+            "refId": "A"
+          },
+          {
+            "expr": "vault_system_disk_available_bytes / 1024 / 1024 / 1024",
+            "legendFormat": "Available - {{path}}",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "gbytes", "label": "Disk Space"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Disk Usage Percentage",
+        "type": "gauge",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_system_disk_usage_bytes / (vault_system_disk_usage_bytes + vault_system_disk_available_bytes) * 100",
+            "legendFormat": "{{path}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "showThresholdLabels": true,
+          "showThresholdMarkers": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 100,
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 70, "color": "yellow"},
+                {"value": 85, "color": "orange"},
+                {"value": 95, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Open File Descriptors",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_system_open_file_descriptors",
+            "legendFormat": "Open FDs",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "File Descriptors"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Thread Count",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_system_thread_count",
+            "legendFormat": "Threads",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Threads"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Cache Hit Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(vault_cache_hits_total[5m]) / (rate(vault_cache_hits_total[5m]) + rate(vault_cache_misses_total[5m])) * 100",
+            "legendFormat": "{{cache_name}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "Hit Rate %", "min": 0, "max": 100},
+          {"format": "short"}
+        ]
+      },
+      {
+        "title": "Cache Size",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "vault_cache_size_bytes / 1024 / 1024",
+            "legendFormat": "{{cache_name}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "mbytes", "label": "Cache Size"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}

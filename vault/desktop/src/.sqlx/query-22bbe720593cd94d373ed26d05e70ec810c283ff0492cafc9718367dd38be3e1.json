@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE model_files\n            SET status = ?1, downloaded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, size_bytes = ?2\n            WHERE model_id = ?3 AND file_name = ?4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "22bbe720593cd94d373ed26d05e70ec810c283ff0492cafc9718367dd38be3e1"
+}

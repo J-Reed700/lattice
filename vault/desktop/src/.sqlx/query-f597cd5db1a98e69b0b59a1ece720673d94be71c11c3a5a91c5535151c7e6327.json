@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE batch_job_items\n        SET status = 'cancelled'\n        WHERE job_id = ?1 AND status = 'pending'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f597cd5db1a98e69b0b59a1ece720673d94be71c11c3a5a91c5535151c7e6327"
+}

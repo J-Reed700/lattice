@@ -1,0 +1,1 @@
+export { RecentDocumentsPanel } from './RecentDocumentsPanel';

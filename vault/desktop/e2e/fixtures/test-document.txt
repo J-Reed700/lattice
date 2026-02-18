@@ -1,0 +1,20 @@
+This is a comprehensive test document for search functionality testing.
+
+It contains various topics including:
+- Artificial Intelligence and Machine Learning
+- Natural Language Processing
+- Vector embeddings and semantic search
+- Knowledge management systems
+- Document indexing and retrieval
+
+The document is designed to test:
+1. Keyword search capabilities
+2. Semantic search with embeddings
+3. Hybrid search combining both approaches
+4. Text extraction and processing
+5. Search result ranking
+
+Additional test content:
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+Technical terms for testing: database, indexing, vector, embedding, transformer, neural network, deep learning, information retrieval, full-text search, BM25 algorithm.
