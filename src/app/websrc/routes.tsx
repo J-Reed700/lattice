@@ -20,6 +20,7 @@ const FileTree = lazy(() => import('./components/FileTree').then(m => ({ default
 const ChatView = lazy(() => import('./components/Chat').then(m => ({ default: m.ChatView })));
 const IngestHub = lazy(() => import('./components/IngestHub').then(m => ({ default: m.IngestHub })));
 const DailyNotesWorkspace = lazy(() => import('./components/DailyNotes').then(m => ({ default: m.DailyNotesWorkspace })));
+const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then(m => ({ default: m.ReferenceInbox })));
 const Settings = lazy(() => import('./components/Settings').then(m => ({ default: m.Settings })));
 
 // Loading fallback component with smooth animation
@@ -156,6 +157,23 @@ export const router = createBrowserRouter([
               >
                 <Suspense fallback={<PageLoading />}>
                   <DailyNotesWorkspace />
+                </Suspense>
+              </motion.div>
+            ),
+          },
+          {
+            path: 'references',
+            element: (
+              <motion.div
+                key="references"
+                variants={pageTransition}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="h-full"
+              >
+                <Suspense fallback={<PageLoading />}>
+                  <ReferenceInbox />
                 </Suspense>
               </motion.div>
             ),

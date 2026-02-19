@@ -514,6 +514,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 )}
               </button>
             )}
+            {isMessageBookmarked && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-300/35 bg-amber-500/12 px-2 py-0.5 text-[11px] text-amber-100">
+                <Bookmark className="h-3 w-3 fill-current" />
+                Reference Saved
+              </span>
+            )}
           </div>
 
           <div className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
@@ -837,17 +843,24 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
         </div>
 
-        <div className="flex-shrink-0 flex items-start gap-1">
+        <div className="flex-shrink-0 flex items-start">
+          <div
+            className={`flex items-center gap-1 rounded-xl border px-1 py-1 backdrop-blur-md transition-all duration-200 ${
+              isMessageBookmarked
+                ? 'opacity-100 border-cyan-300/35 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.14)]'
+                : 'opacity-0 group-hover:opacity-100 border-white/15 bg-white/[0.04]'
+            }`}
+          >
           {canBookmarkMessage && (
             <button
               onClick={() => void handleBookmarkToggle()}
-              aria-label={isMessageBookmarked ? 'Remove message bookmark' : 'Bookmark message'}
+              aria-label={isMessageBookmarked ? 'Remove saved reference' : 'Save message as reference'}
               className={`transition-all duration-200 p-2 rounded-lg ${
                 isMessageBookmarked
-                  ? 'opacity-100 bg-amber-500/15 text-amber-300'
-                  : 'opacity-0 group-hover:opacity-100 bg-white/5 hover:bg-white/10 text-white/60 hover:text-amber-300'
+                  ? 'bg-amber-500/18 text-amber-200'
+                  : 'bg-white/5 hover:bg-amber-400/15 text-white/60 hover:text-amber-300'
               }`}
-              title={isMessageBookmarked ? 'Remove bookmark' : 'Bookmark message'}
+              title={isMessageBookmarked ? 'Remove saved reference' : 'Save as reference'}
             >
               <Bookmark className={`w-4 h-4 ${isMessageBookmarked ? 'fill-current' : ''}`} />
             </button>
@@ -855,7 +868,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <button
             onClick={handleCopy}
             aria-label="Copy message to clipboard"
-            className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90"
+            className="transition-opacity duration-200 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90"
             title="Copy message"
           >
             {copied ? (
@@ -864,6 +877,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               <Copy className="w-4 h-4" />
             )}
           </button>
+          </div>
         </div>
       </div>
 

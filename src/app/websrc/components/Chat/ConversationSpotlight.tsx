@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Loader2, MessageSquare, Search, Sparkles, Bookmark } from 'lucide-react';
 
@@ -91,8 +91,8 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
     return map;
   }, [spaces]);
 
-  const combinedResults = useMemo<SpotlightItem[]>(() => {
-    return [
+  const combinedResults = useMemo<SpotlightItem[]>(
+    () => [
       ...conversations.map((conversation) => ({
         kind: 'conversation' as const,
         key: `conversation:${conversation.id}`,
@@ -103,8 +103,9 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
         key: `bookmark:${bookmark.id}`,
         bookmark,
       })),
-    ];
-  }, [conversations, bookmarks]);
+    ],
+    [conversations, bookmarks]
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -161,7 +162,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
     };
   }, [debouncedQuery, isOpen]);
 
-  const activateResult = async (item: SpotlightItem) => {
+  const activateResult = useCallback(async (item: SpotlightItem) => {
     if (item.kind === 'conversation') {
       await selectConversation(item.conversation.id);
       onClose();
@@ -171,7 +172,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
     await selectConversation(item.bookmark.conversationId);
     onClose();
     scrollToMessage(item.bookmark.messageId);
-  };
+  }, [onClose, selectConversation]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -227,7 +228,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search conversations and snippets..."
+              placeholder="Search conversations and references..."
               className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.03] text-sm text-white/95 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/70"
             />
           </div>

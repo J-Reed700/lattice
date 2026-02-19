@@ -1649,7 +1649,7 @@ pub async fn list_message_bookmarks(
             c.space_id AS space_id,
             b.message_id,
             m.role AS message_role,
-            SUBSTR(m.content, 1, 280) AS message_preview,
+            m.content AS message_preview,
             b.title,
             b.note,
             b.created_at
