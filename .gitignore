@@ -73,13 +73,13 @@ mock_http
 *.db-wal
 
 # Runtime artifacts
-vault/desktop/src/crashes/
-vault/desktop/src/test_output.txt
-vault/desktop/src/build_output.txt
-vault/desktop/src/build_error.txt
-vault/desktop/build_output.txt
-vault/desktop/CHAT_QA_TEST_REPORT.md
-vault/desktop/SEARCH_E2E_TEST_REPORT.md
+src/app/src/crashes/
+src/app/src/test_output.txt
+src/app/src/build_output.txt
+src/app/src/build_error.txt
+src/app/build_output.txt
+src/app/CHAT_QA_TEST_REPORT.md
+src/app/SEARCH_E2E_TEST_REPORT.md
 test_list_all_documents.html
 
 # Audit reports (generated artifacts)

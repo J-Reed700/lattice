@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify soft delete schema implementation."""
 
-from vault.backend.src.models.sync import Document, SyncLog
+from src.api.src.models.sync import Document, SyncLog
 from sqlalchemy import inspect
 
 def verify_document_model():

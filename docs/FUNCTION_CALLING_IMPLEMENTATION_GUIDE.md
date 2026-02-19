@@ -17,7 +17,7 @@ This guide shows how to implement the 5 function calling tools in both **Python 
 
 ### 1. Service Layer
 
-Create service in `/vault/backend/src/services/function_calling_service.py`:
+Create service in `/src/api/src/services/function_calling_service.py`:
 
 ```python
 """Service for LLM function calling tools.
@@ -188,7 +188,7 @@ class FunctionCallingService:
 
 ### 2. API Routes
 
-Create routes in `/vault/backend/src/api/v1/function_calling.py`:
+Create routes in `/src/api/src/api/v1/function_calling.py`:
 
 ```python
 """API routes for LLM function calling."""
@@ -270,7 +270,7 @@ async def list_documents(
 
 ### 3. Register Routes
 
-Add to `/vault/backend/src/api/v1/__init__.py`:
+Add to `/src/api/src/api/v1/__init__.py`:
 
 ```python
 from src.api.v1 import function_calling
@@ -285,7 +285,7 @@ api_router.include_router(function_calling.router)
 
 ### 1. Service Layer
 
-Create service in `/vault/desktop/src-tauri/src/services/function_calling_service.rs`:
+Create service in `/src/app/src-tauri/src/services/function_calling_service.rs`:
 
 ```rust
 //! Function calling service for LLM tools.
@@ -476,7 +476,7 @@ impl FunctionCallingService {
 
 ### 2. Tauri Commands
 
-Create commands in `/vault/desktop/src-tauri/src/commands/function_calling.rs`:
+Create commands in `/src/app/src-tauri/src/commands/function_calling.rs`:
 
 ```rust
 //! Tauri commands for function calling.
@@ -579,7 +579,7 @@ pub async fn list_documents(
 
 ### 3. Register Commands
 
-Add to `/vault/desktop/src-tauri/src/main.rs`:
+Add to `/src/app/src-tauri/src/main.rs`:
 
 ```rust
 mod commands {
@@ -606,7 +606,7 @@ fn main() {
 
 ### Custom Hook
 
-Create `/vault/desktop/src/hooks/useFunctionCalling.ts`:
+Create `/src/app/src/hooks/useFunctionCalling.ts`:
 
 ```typescript
 /**

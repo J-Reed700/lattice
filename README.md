@@ -1,19 +1,19 @@
 # Recall Monorepo
 
 Recall is a local-first knowledge system with:
-- a desktop app (`Tauri + Rust + React`) for indexing/searching local content
-- an optional backend service (`FastAPI + PostgreSQL/pgvector`) for API/sync workflows
+- an app (`Tauri + Rust + React`) for indexing/searching local content
+- an optional API service (`FastAPI + PostgreSQL/pgvector`) for API/sync workflows
 
 ## Repository Layout
 
 ```text
 .
-├── vault/
-│   ├── desktop/                  # Tauri desktop app
+├── src/
+│   ├── app/                      # Tauri app
 │   │   ├── websrc/               # React/TypeScript frontend
 │   │   └── src/                  # Rust crate root (Cargo.toml)
-│   │       └── src/crates/recall # Main Rust application crate
-│   ├── backend/                  # FastAPI service
+│   │       └── src/crates/recall  # Main Rust application crate
+│   ├── api/                      # FastAPI service
 │   │   ├── src/                  # Python source
 │   │   ├── migrations/           # Alembic + SQL migration assets
 │   │   └── tests/                # pytest suite
@@ -25,15 +25,15 @@ Recall is a local-first knowledge system with:
 
 ## Tech Stack
 
-- Desktop UI: React 19, TypeScript, Vite, Tailwind
-- Desktop Runtime: Tauri 2, Rust, SQLite (`sqlx`), ONNX/ML tooling
-- Backend API: FastAPI, SQLAlchemy, Alembic
-- Backend Storage: PostgreSQL + `pgvector`
-- Testing: Vitest/Playwright (desktop), pytest (backend)
+- App UI: React 19, TypeScript, Vite, Tailwind
+- App Runtime: Tauri 2, Rust, SQLite (`sqlx`), ONNX/ML tooling
+- API: FastAPI, SQLAlchemy, Alembic
+- API Storage: PostgreSQL + `pgvector`
+- Testing: Vitest/Playwright (app), pytest (api)
 
 ## Quick Start
 
-### Desktop App
+### App
 
 Prereqs:
 - Node.js 18+
@@ -43,33 +43,33 @@ Prereqs:
 Commands:
 
 ```bash
-cd vault/desktop
+cd src/app
 npm install
 npm run tauri:dev
 ```
 
 Notes:
-- `npm run tauri:dev` launches the full desktop app dev loop (frontend + Tauri shell + Rust backend).
-- You do not need to run a separate `cargo build` just to start local desktop development.
+- `npm run tauri:dev` launches the full app dev loop (frontend + Tauri shell + Rust).
+- You do not need to run a separate `cargo build` just to start local development.
 
 Rust-only workflows (from repo root):
 
 ```bash
-cargo check --manifest-path vault/desktop/src/Cargo.toml
-cargo build --manifest-path vault/desktop/src/Cargo.toml
-cargo test --manifest-path vault/desktop/src/Cargo.toml
-cargo fmt --manifest-path vault/desktop/src/Cargo.toml
+cargo check --manifest-path src/app/src/Cargo.toml
+cargo build --manifest-path src/app/src/Cargo.toml
+cargo test --manifest-path src/app/src/Cargo.toml
+cargo fmt --manifest-path src/app/src/Cargo.toml
 ```
 
-Frontend-only workflows (desktop web UI):
+Frontend-only workflows (app web UI):
 
 ```bash
-npm run -C vault/desktop type-check
-npm run -C vault/desktop test
-npm run -C vault/desktop lint
+npm run -C src/app type-check
+npm run -C src/app test
+npm run -C src/app lint
 ```
 
-Useful desktop commands:
+Useful app commands:
 
 ```bash
 npm run lint
@@ -78,13 +78,13 @@ npm run test:e2e
 npm run tauri:build
 ```
 
-Release build (desktop bundle):
+Release build (app bundle):
 
 ```bash
-npm run -C vault/desktop tauri:build
+npm run -C src/app tauri:build
 ```
 
-### Backend Service
+### API Service
 
 Prereqs:
 - Python 3.11+
@@ -94,14 +94,14 @@ Prereqs:
 Commands:
 
 ```bash
-cd vault/backend
+cd src/api
 poetry install
 cp .env.example .env
 poetry run alembic upgrade head
-poetry run vault-api
+poetry run recall-api
 ```
 
-Useful backend commands:
+Useful API commands:
 
 ```bash
 poetry run pytest
@@ -111,18 +111,18 @@ poetry run mypy src/
 
 ## Primary Entry Points
 
-- Backend app factory: `vault/backend/src/api/app.py`
-- Backend runner: `vault/backend/src/main.py`
-- Desktop Rust binary entry: `vault/desktop/src/src/crates/recall/main.rs`
-- Desktop React entry: `vault/desktop/websrc/main.tsx`
+- API app factory: `src/api/src/api/app.py`
+- API runner: `src/api/src/main.py`
+- App Rust binary entry: `src/app/src/src/crates/recall/main.rs`
+- App React entry: `src/app/websrc/main.tsx`
 
 ## Documentation Conventions
 
 - Cross-cutting architecture/API contracts: `docs/`
-- Backend-specific technical docs: `vault/backend/docs/`
-- Desktop-specific technical docs: `vault/desktop/docs/` and `vault/desktop/src/docs/`
-- User-facing product docs: `vault/docs/user/`
-- Historical/one-off implementation notes: `vault/backend/docs/archive/` and `vault/desktop/src/docs/archive/`
+- API-specific technical docs: `src/api/docs/`
+- App-specific technical docs: `src/app/docs/` and `src/app/src/docs/`
+- User-facing product docs: `src/docs/user/`
+- Historical/one-off implementation notes: `src/api/docs/archive/` and `src/app/src/docs/archive/`
 
 Generated artifacts (test reports, build logs, ad-hoc output files) should not be committed.
 
