@@ -16,15 +16,20 @@ import {
   RotateCcw,
   ArrowUpRight,
   Save,
-  Copy,
   Settings2,
   FolderPlus,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 import { useDebounce } from '../../hooks/useDebounce';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { useDownloadedModelsStore } from '../../stores/downloadedModelsStore';
+import {
+  buildCapturedChatReferenceIndex,
+  chatReferenceKey,
+  type CapturedChatReference,
+} from '../../utils/chatReferenceIndex';
 import { handleAsyncEvent } from '../../utils/promiseHandlers';
 
 import type { ConversationMessageBookmarkDto } from '../../types';
@@ -127,7 +132,18 @@ const SPACES_MODAL_LAYER_CLASSES = {
   section: 'relative z-[222]',
 } as const;
 
+const isReferenceInboxEnabled = (): boolean => {
+  try {
+    const stored = localStorage.getItem('feature.referenceInbox.v1');
+    if (stored === null) return true;
+    return stored !== 'false';
+  } catch {
+    return true;
+  }
+};
+
 export function ConversationSidebar() {
+  const navigate = useNavigate();
   const {
     spaces,
     selectedSpaceId,
@@ -158,10 +174,9 @@ export function ConversationSidebar() {
   const [snippetResults, setSnippetResults] = useState<ConversationMessageBookmarkDto[]>([]);
   const [isLoadingSnippets, setIsLoadingSnippets] = useState(false);
   const [selectedSnippetId, setSelectedSnippetId] = useState<string | null>(null);
-  const [snippetTitleDraft, setSnippetTitleDraft] = useState('');
-  const [snippetNoteDraft, setSnippetNoteDraft] = useState('');
-  const [isSavingSnippet, setIsSavingSnippet] = useState(false);
-  const [isRemovingSnippet, setIsRemovingSnippet] = useState(false);
+  const [snippetRoleFilter, setSnippetRoleFilter] = useState<'all' | 'assistant' | 'user' | 'system'>('all');
+  const [capturedReferenceIndex, setCapturedReferenceIndex] = useState<Map<string, CapturedChatReference>>(new Map());
+  const [isLoadingCaptureIndex, setIsLoadingCaptureIndex] = useState(false);
   const [isSpaceEditorOpen, setIsSpaceEditorOpen] = useState(false);
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
   const [newSpaceNameDraft, setNewSpaceNameDraft] = useState('');
@@ -179,6 +194,7 @@ export function ConversationSidebar() {
   const [spaceWebDefault, setSpaceWebDefault] = useState(false);
   const [spaceDeepResearchDefault, setSpaceDeepResearchDefault] = useState(false);
   const [ollamaDefaultModel, setOllamaDefaultModel] = useState('');
+  const [referenceInboxEnabled] = useState(isReferenceInboxEnabled);
   const debouncedQuery = useDebounce(localQuery, 250);
   const downloadedModelMap = useDownloadedModelsStore((state) => state.downloadedModels);
 
@@ -319,25 +335,68 @@ export function ConversationSidebar() {
     };
   }, [debouncedQuery, filterMode, selectedSpaceId]);
 
+  useEffect(() => {
+    if (!referenceInboxEnabled || filterMode !== 'snippets') return;
+
+    let cancelled = false;
+    const run = async () => {
+      setIsLoadingCaptureIndex(true);
+      const result = await VaultAPI.listWorkspaceNotes();
+      if (cancelled) return;
+
+      if (!result.ok) {
+        setIsLoadingCaptureIndex(false);
+        return;
+      }
+
+      setCapturedReferenceIndex(buildCapturedChatReferenceIndex(result.data.notes));
+      setIsLoadingCaptureIndex(false);
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [filterMode, referenceInboxEnabled]);
+
+  const roleFilteredSnippets = useMemo(() => {
+    if (snippetRoleFilter === 'all') return snippetResults;
+    return snippetResults.filter((snippet) => snippet.messageRole === snippetRoleFilter);
+  }, [snippetResults, snippetRoleFilter]);
+
+  const filteredSnippets = roleFilteredSnippets;
+
+  const snippetCaptureStats = useMemo(() => {
+    const total = roleFilteredSnippets.length;
+    if (total === 0) {
+      return { total: 0, captured: 0, pending: 0 };
+    }
+    const captured = roleFilteredSnippets.reduce((count, snippet) => {
+      const key = chatReferenceKey(snippet.conversationId, snippet.messageId);
+      return capturedReferenceIndex.has(key) ? count + 1 : count;
+    }, 0);
+    return {
+      total,
+      captured,
+      pending: Math.max(0, total - captured),
+    };
+  }, [capturedReferenceIndex, roleFilteredSnippets]);
+
   const selectedSnippet = useMemo(() => {
     if (!selectedSnippetId) return null;
-    return snippetResults.find((snippet) => snippet.id === selectedSnippetId) ?? null;
-  }, [selectedSnippetId, snippetResults]);
+    return filteredSnippets.find((snippet) => snippet.id === selectedSnippetId) ?? null;
+  }, [filteredSnippets, selectedSnippetId]);
 
   useEffect(() => {
     if (filterMode !== 'snippets') return;
-    if (snippetResults.length === 0) {
+    if (filteredSnippets.length === 0) {
       setSelectedSnippetId(null);
-      setSnippetTitleDraft('');
-      setSnippetNoteDraft('');
       return;
     }
 
-    const resolved = snippetResults.find((snippet) => snippet.id === selectedSnippetId) ?? snippetResults[0];
+    const resolved = filteredSnippets.find((snippet) => snippet.id === selectedSnippetId) ?? filteredSnippets[0];
     setSelectedSnippetId(resolved.id);
-    setSnippetTitleDraft(resolved.title ?? '');
-    setSnippetNoteDraft(resolved.note ?? '');
-  }, [filterMode, selectedSnippetId, snippetResults]);
+  }, [filterMode, filteredSnippets, selectedSnippetId]);
 
   const handleNewConversation = async () => {
     setIsCreating(true);
@@ -385,13 +444,20 @@ export function ConversationSidebar() {
     { id: 'saved', label: 'Saved' },
     { id: 'bookmarked', label: 'Bookmarked' },
     { id: 'pinned', label: 'Pinned' },
-    { id: 'snippets', label: 'Snippets' },
+    { id: 'snippets', label: 'References' },
     { id: 'archived', label: 'Archived' },
   ];
 
   const openSnippet = async (bookmark: ConversationMessageBookmarkDto) => {
     await selectConversation(bookmark.conversationId);
     scrollToMessage(bookmark.messageId);
+  };
+
+  const getCapturedSnippetReference = (
+    bookmark: Pick<ConversationMessageBookmarkDto, 'conversationId' | 'messageId'>
+  ): CapturedChatReference | null => {
+    const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
+    return capturedReferenceIndex.get(key) ?? null;
   };
 
   const createSpace = async () => {
@@ -523,90 +589,9 @@ export function ConversationSidebar() {
     }
   };
 
-  const saveSnippetDetails = async () => {
-    if (!selectedSnippet) return;
-
-    setIsSavingSnippet(true);
-    try {
-      const result = await VaultAPI.bookmarkConversationMessage({
-        conversationId: selectedSnippet.conversationId,
-        messageId: selectedSnippet.messageId,
-        title: snippetTitleDraft.trim() ? snippetTitleDraft.trim() : null,
-        note: snippetNoteDraft.trim() ? snippetNoteDraft.trim() : null,
-      });
-      if (!result.ok) {
-        return;
-      }
-
-      setSnippetResults((current) =>
-        current.map((snippet) =>
-          snippet.id === selectedSnippet.id
-            ? {
-                ...snippet,
-                title: snippetTitleDraft.trim() || null,
-                note: snippetNoteDraft.trim() || null,
-              }
-            : snippet
-        )
-      );
-    } finally {
-      setIsSavingSnippet(false);
-    }
-  };
-
-  const removeSnippet = async () => {
-    if (!selectedSnippet) return;
-
-    setIsRemovingSnippet(true);
-    try {
-      const result = await VaultAPI.unbookmarkConversationMessage({
-        conversationId: selectedSnippet.conversationId,
-        messageId: selectedSnippet.messageId,
-      });
-      if (!result.ok) {
-        return;
-      }
-
-      setSnippetResults((current) =>
-        current.filter((snippet) => snippet.id !== selectedSnippet.id)
-      );
-      await loadConversations({ filterMode: 'snippets' });
-    } finally {
-      setIsRemovingSnippet(false);
-    }
-  };
-
-  const copySnippetText = async () => {
-    if (!selectedSnippet) return;
-
-    let content = selectedSnippet.messagePreview;
-    const loadedConversation = conversations.find(
-      (conversation) => conversation.id === selectedSnippet.conversationId
-    );
-    const loadedMessage = loadedConversation?.messages?.find(
-      (message) => message.id === selectedSnippet.messageId
-    );
-    if (loadedMessage?.content) {
-      content = loadedMessage.content;
-    } else {
-      const result = await VaultAPI.getConversationMessages(selectedSnippet.conversationId);
-      if (result.ok) {
-        const messages = Array.isArray(result.data) ? result.data : result.data.messages;
-        const matched = messages.find((message) => message.id === selectedSnippet.messageId);
-        if (matched?.content) {
-          content = matched.content;
-        }
-      }
-    }
-
-    await navigator.clipboard.writeText(content);
-  };
-
-  const hasSnippetChanges = Boolean(
-    selectedSnippet &&
-      (snippetTitleDraft !== (selectedSnippet.title ?? '') ||
-        snippetNoteDraft !== (selectedSnippet.note ?? ''))
-  );
+  const selectedSnippetCapture = selectedSnippet
+    ? getCapturedSnippetReference(selectedSnippet)
+    : null;
 
   return (
     <div
@@ -692,37 +677,116 @@ export function ConversationSidebar() {
 
       <div className="flex-1 overflow-y-auto">
         {filterMode === 'snippets' && (
-          <div className="p-2 border-b border-white/10">
-            <p className="px-2 pt-1 pb-2 text-[11px] uppercase tracking-wide text-white/45">
-              Bookmarked Snippets
-            </p>
+          <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.08),rgba(251,191,36,0.06)_35%,transparent_72%)] p-2.5">
+            <div className="rounded-xl border border-white/10 bg-black/25 p-3 backdrop-blur-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-cyan-100/65">
+                    Knowledge Capture
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-white/90">
+                    Saved References
+                  </p>
+                  <p className="mt-1 text-[11px] text-white/55">
+                    Review and process references in Reference Inbox.
+                  </p>
+                </div>
+                <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/35 bg-cyan-400/15 px-2.5 py-1 text-[11px] text-cyan-100">
+                  <Bookmark className="h-3 w-3" />
+                  {snippetResults.length}
+                </span>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  {([
+                    ['all', 'All'],
+                    ['assistant', 'AI'],
+                    ['user', 'You'],
+                    ['system', 'System'],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => setSnippetRoleFilter(value)}
+                      className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                        snippetRoleFilter === value
+                          ? 'border-cyan-300/60 bg-cyan-400/18 text-cyan-100'
+                          : 'border-white/15 bg-white/5 text-white/60 hover:text-white/85 hover:border-white/30'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => navigate('/references')}
+                  className="inline-flex items-center gap-1 rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-100/85 transition-colors hover:border-emerald-300/55 hover:text-emerald-100"
+                >
+                  <ArrowUpRight className="h-3 w-3" />
+                  Inbox
+                </button>
+              </div>
+
+              {referenceInboxEnabled && (
+                <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-white/55">
+                  {isLoadingCaptureIndex && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {snippetCaptureStats.pending} pending · {snippetCaptureStats.captured} captured
+                </div>
+              )}
+            </div>
+
             {isLoadingSnippets ? (
               <div className="h-12 flex items-center justify-center text-white/45">
                 <Loader2 className="h-4 w-4 animate-spin" />
               </div>
-            ) : snippetResults.length === 0 ? (
+            ) : filteredSnippets.length === 0 ? (
               <div className="px-2 py-3 text-xs text-white/45">
-                No message bookmarks yet.
+                {roleFilteredSnippets.length === 0
+                  ? 'No saved references yet.'
+                  : 'No references match the selected role filter.'}
               </div>
             ) : (
               <div className="space-y-2">
                 <div className="space-y-1">
-                  {snippetResults.slice(0, 20).map((bookmark) => {
+                  {filteredSnippets.slice(0, 20).map((bookmark) => {
                     const isSelected = bookmark.id === selectedSnippetId;
+                    const capturedReference = referenceInboxEnabled
+                      ? getCapturedSnippetReference(bookmark)
+                      : null;
                     return (
                       <div
                         key={bookmark.id}
-                        className={`rounded-lg border transition-colors ${
+                        className={`rounded-xl border transition-colors ${
                           isSelected
-                            ? 'border-amber-400/40 bg-amber-500/10'
-                            : 'border-white/10 bg-white/[0.02]'
+                            ? 'border-cyan-300/45 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.18)]'
+                            : 'border-white/10 bg-white/[0.02] hover:border-white/25'
                         }`}
                       >
                         <button
                           onClick={() => setSelectedSnippetId(bookmark.id)}
-                          className="w-full text-left px-3 pt-2 pb-1.5"
+                          className="w-full text-left px-3 pt-2.5 pb-2"
                         >
-                          <p className="text-xs text-amber-300 truncate">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-xs text-cyan-200 truncate">
+                                {bookmark.messageRole.toUpperCase()}
+                              </p>
+                              <span
+                                className={`rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                                  capturedReference
+                                    ? 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100'
+                                    : 'border-amber-300/40 bg-amber-500/15 text-amber-100'
+                                }`}
+                              >
+                                {capturedReference ? 'Captured' : 'Pending'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-white/45">
+                              {new Date(bookmark.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <p className="text-xs text-white/90 truncate">
                             {bookmark.title || bookmark.conversationTitle}
                           </p>
                           <p className="mt-0.5 text-[11px] text-white/40 truncate">
@@ -741,17 +805,17 @@ export function ConversationSidebar() {
                               {bookmark.conversationTitle}
                             </span>
                           </p>
-                          <p className="mt-1 text-[11px] text-white/55 line-clamp-2 break-all">
+                          <p className="mt-1.5 text-[11px] text-white/60 line-clamp-2 break-all">
                             {bookmark.messagePreview}
                           </p>
                         </button>
-                        <div className="px-3 pb-2">
+                        <div className="px-3 pb-2.5">
                           <button
                             onClick={handleAsyncEvent(() => openSnippet(bookmark))}
-                            className="text-[11px] inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-white/70 hover:text-white hover:border-white/30 transition-colors"
+                            className="text-[11px] inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-white/70 hover:text-white hover:border-cyan-300/40 transition-colors"
                           >
                             <ArrowUpRight className="w-3 h-3" />
-                            Open
+                            Open in Chat
                           </button>
                         </div>
                       </div>
@@ -760,56 +824,25 @@ export function ConversationSidebar() {
                 </div>
 
                 {selectedSnippet && (
-                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 space-y-2">
-                    <p className="text-[11px] text-white/50 uppercase tracking-wide">
-                      Snippet Details
+                  <div className="rounded-xl border border-white/10 bg-[linear-gradient(155deg,rgba(34,211,238,0.08),rgba(0,0,0,0.25)_45%)] p-3">
+                    <p className="text-[11px] text-cyan-100/70 uppercase tracking-wide">
+                      Selected Reference
                     </p>
-                    <input
-                      value={snippetTitleDraft}
-                      onChange={(e) => setSnippetTitleDraft(e.target.value)}
-                      placeholder="Snippet title"
-                      className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-amber-400/70"
-                    />
-                    <textarea
-                      value={snippetNoteDraft}
-                      onChange={(e) => setSnippetNoteDraft(e.target.value)}
-                      placeholder="Add a note"
-                      rows={3}
-                      className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-amber-400/70 resize-y"
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={handleAsyncEvent(saveSnippetDetails)}
-                        disabled={!hasSnippetChanges || isSavingSnippet}
-                        className="inline-flex items-center gap-1 text-[11px] rounded-md border border-emerald-400/35 px-2 py-1 text-emerald-200 hover:text-emerald-100 hover:border-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {isSavingSnippet ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Save className="w-3 h-3" />
-                        )}
-                        Save
-                      </button>
-                      <button
-                        onClick={handleAsyncEvent(copySnippetText)}
-                        className="inline-flex items-center gap-1 text-[11px] rounded-md border border-white/20 px-2 py-1 text-white/70 hover:text-white hover:border-white/35 transition-colors"
-                      >
-                        <Copy className="w-3 h-3" />
-                        Copy
-                      </button>
-                      <button
-                        onClick={handleAsyncEvent(removeSnippet)}
-                        disabled={isRemovingSnippet}
-                        className="inline-flex items-center gap-1 text-[11px] rounded-md border border-red-400/35 px-2 py-1 text-red-300 hover:text-red-200 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {isRemovingSnippet ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-3 h-3" />
-                        )}
-                        Remove
-                      </button>
-                    </div>
+                    <p className="mt-1 text-xs text-white/80 line-clamp-2">
+                      {selectedSnippet.title || selectedSnippet.conversationTitle}
+                    </p>
+                    <p className="mt-1 text-[11px] text-white/50">
+                      {selectedSnippetCapture
+                        ? `Captured in ${selectedSnippetCapture.noteTitle}.`
+                        : 'Pending capture.'}
+                    </p>
+                    <button
+                      onClick={() => navigate('/references')}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-1 text-[11px] rounded-md border border-white/20 px-2 py-1.5 text-white/70 hover:text-white hover:border-white/35 transition-colors"
+                    >
+                      <ArrowUpRight className="w-3 h-3" />
+                      Manage in Reference Inbox
+                    </button>
                   </div>
                 )}
               </div>

@@ -30,6 +30,7 @@ describe('Layout', () => {
       expect(screen.getAllByLabelText('Files').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByLabelText('Chat').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByLabelText('Daily Notes').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByLabelText('Reference Inbox').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByLabelText('Settings').length).toBeGreaterThanOrEqual(1);
     });
 
@@ -78,6 +79,7 @@ describe('Layout', () => {
         { view: 'files', label: 'Files' },
         { view: 'chat', label: 'Chat' },
         { view: 'daily', label: 'Daily Notes' },
+        { view: 'references', label: 'Reference Inbox' },
         { view: 'settings', label: 'Settings' }
       ] as const;
 
@@ -161,6 +163,7 @@ describe('Layout', () => {
         { label: 'Files', title: 'Files (⌘2)' },
         { label: 'Chat', title: 'Chat (⌘4)' },
         { label: 'Daily Notes', title: 'Daily Notes (⌘3)' },
+        { label: 'Reference Inbox', title: 'Reference Inbox (⌘5)' },
         { label: 'Settings', title: 'Settings (⌘,)' }
       ];
 
@@ -205,7 +208,7 @@ describe('Layout', () => {
     it('has accessible button labels', () => {
       renderLayout();
 
-      const labels = ['Home', 'Search', 'Files', 'Chat', 'Daily Notes', 'Settings'];
+      const labels = ['Home', 'Search', 'Files', 'Chat', 'Daily Notes', 'Reference Inbox', 'Settings'];
       labels.forEach(label => {
         const buttons = screen.getAllByLabelText(label);
         buttons.forEach(btn => {
@@ -258,8 +261,8 @@ describe('Layout', () => {
       const homeButtons = screen.getAllByLabelText('Home');
       // At least one should be active
       const activeButton = homeButtons.find(btn =>
-        btn.className.includes('bg-[var(--accent-primary)]') &&
-        btn.className.includes('shadow-lg')
+        btn.className.includes('bg-[var(--accent-primary)]/10') &&
+        btn.className.includes('text-[var(--accent-primary)]')
       );
       expect(activeButton).toBeDefined();
     });
@@ -270,7 +273,7 @@ describe('Layout', () => {
       const searchButtons = screen.getAllByLabelText('Search');
       // At least one should be inactive
       const inactiveButton = searchButtons.find(btn =>
-        btn.className.includes('bg-[var(--surface-elevated)]') &&
+        btn.className.includes('text-[var(--text-tertiary)]') &&
         btn.className.includes('hover:bg-[var(--surface-hover)]')
       );
       expect(inactiveButton).toBeDefined();
@@ -279,8 +282,8 @@ describe('Layout', () => {
     it('shows proper icons for each view', () => {
       const { container } = renderLayout();
 
-      const svgs = container.querySelectorAll('svg.w-6.h-6');
-      expect(svgs.length).toBeGreaterThanOrEqual(6);
+      const svgs = container.querySelectorAll('svg.w-5.h-5');
+      expect(svgs.length).toBeGreaterThanOrEqual(7);
     });
   });
 

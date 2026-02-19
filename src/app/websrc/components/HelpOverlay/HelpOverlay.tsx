@@ -52,7 +52,8 @@ const NAVIGATION_SHORTCUTS: KeyboardShortcut[] = [
   { keys: '⌘2', description: 'Go to Files', category: 'navigation' },
   { keys: '⌘3', description: 'Go to Daily Note', category: 'navigation' },
   { keys: '⌘4', description: 'Go to Chat', category: 'navigation' },
-  { keys: '⌘5', description: 'Go to Settings', category: 'navigation' },
+  { keys: '⌘5', description: 'Go to Reference Inbox', category: 'navigation' },
+  { keys: '⌘,', description: 'Go to Settings', category: 'navigation' },
 ];
 
 const EDITING_SHORTCUTS: KeyboardShortcut[] = [

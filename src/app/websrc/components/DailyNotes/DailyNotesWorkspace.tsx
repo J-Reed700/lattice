@@ -14,6 +14,7 @@ import {
   StickyNote,
   Trash2,
 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -34,6 +35,8 @@ type MessageRole = 'user' | 'assistant' | 'system';
 type StickyColor = 'amber' | 'sky' | 'rose' | 'mint';
 type PanelTab = 'editor' | 'annotations' | 'documents' | 'chats' | 'snapshots';
 type ActionTone = 'info' | 'success' | 'error';
+type AnnotationView = 'highlights' | 'stickies';
+type ResourceView = 'list' | 'preview';
 
 interface ConversationSummary {
   id: string;
@@ -154,6 +157,8 @@ function normalizeMessage(raw: MessageDto | Record<string, unknown>): SnapshotMe
 }
 
 export function DailyNotesWorkspace() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [notes, setNotes] = useState<WorkspaceNote[]>([]);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [isLoadingNotes, setIsLoadingNotes] = useState(true);
@@ -173,6 +178,9 @@ export function DailyNotesWorkspace() {
   const [newStickyText, setNewStickyText] = useState('');
   const [newStickyColor, setNewStickyColor] = useState<StickyColor>('amber');
   const [activePanel, setActivePanel] = useState<PanelTab>('editor');
+  const [annotationView, setAnnotationView] = useState<AnnotationView>('highlights');
+  const [documentsView, setDocumentsView] = useState<ResourceView>('list');
+  const [chatsView, setChatsView] = useState<ResourceView>('list');
   const [actionNotice, setActionNotice] = useState<{ tone: ActionTone; message: string } | null>(null);
   const [isSavingNow, setIsSavingNow] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
@@ -185,6 +193,8 @@ export function DailyNotesWorkspace() {
   const dirtyNoteIdsRef = useRef<Set<string>>(new Set());
   const notesRef = useRef<WorkspaceNote[]>([]);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const requestedNoteId = searchParams.get('noteId');
+  const requestedSnapshotId = searchParams.get('snapshotId');
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeNoteId) ?? notes[0] ?? null,
@@ -349,6 +359,48 @@ export function DailyNotesWorkspace() {
   }, [activeNote, notes]);
 
   useEffect(() => {
+    if (!requestedNoteId || notes.length === 0) {
+      return;
+    }
+    if (!notes.some((note) => note.id === requestedNoteId)) {
+      return;
+    }
+    setActiveNoteId(requestedNoteId);
+  }, [notes, requestedNoteId]);
+
+  useEffect(() => {
+    if (!requestedSnapshotId || !activeNote) {
+      return;
+    }
+    const hasSnapshot = activeNote.conversationSnapshots.some(
+      (snapshot) => snapshot.id === requestedSnapshotId
+    );
+    if (hasSnapshot) {
+      setActivePanel('snapshots');
+    }
+  }, [activeNote, requestedSnapshotId]);
+
+  useEffect(() => {
+    if (!requestedSnapshotId || activePanel !== 'snapshots') {
+      return;
+    }
+    const id = window.setTimeout(() => {
+      const selector = `[data-snapshot-id="${requestedSnapshotId}"]`;
+      const target = document.querySelector(selector);
+      if (target instanceof HTMLElement) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 80);
+
+    return () => window.clearTimeout(id);
+  }, [
+    activePanel,
+    activeNote?.id,
+    activeNote?.conversationSnapshots.length,
+    requestedSnapshotId,
+  ]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const loadContext = async () => {
@@ -430,6 +482,18 @@ export function DailyNotesWorkspace() {
   const selectedConversationMessages = selectedConversationPreviewId
     ? conversationMessages[selectedConversationPreviewId] ?? []
     : [];
+
+  useEffect(() => {
+    if (selectedDocumentPreviewId) {
+      setDocumentsView('preview');
+    }
+  }, [selectedDocumentPreviewId]);
+
+  useEffect(() => {
+    if (selectedConversationPreviewId) {
+      setChatsView('preview');
+    }
+  }, [selectedConversationPreviewId]);
 
   const updateNote = useCallback((noteId: string, updater: (note: WorkspaceNote) => WorkspaceNote) => {
     const existing = notesRef.current.find((note) => note.id === noteId);
@@ -628,6 +692,15 @@ export function DailyNotesWorkspace() {
     await captureConversation(targetConversationId);
   };
 
+  const openSnapshotInChat = (snapshot: ConversationSnapshot) => {
+    const params = new URLSearchParams({ conversationId: snapshot.conversationId });
+    const anchorMessageId = snapshot.messages[snapshot.messages.length - 1]?.id;
+    if (anchorMessageId) {
+      params.set('messageId', anchorMessageId);
+    }
+    navigate(`/chat?${params.toString()}`);
+  };
+
   const insertSnapshotIntoNote = (snapshot: ConversationSnapshot) => {
     const transcript = snapshot.messages
       .map(
@@ -742,11 +815,13 @@ export function DailyNotesWorkspace() {
 
   const selectDocumentForPreview = async (documentId: string) => {
     setSelectedDocumentPreviewId(documentId);
+    setDocumentsView('preview');
     await loadDocumentPreview(documentId);
   };
 
   const selectConversationForPreview = async (conversationId: string) => {
     setSelectedConversationPreviewId(conversationId);
+    setChatsView('preview');
     await ensureConversationMessages(conversationId);
   };
 
@@ -759,6 +834,12 @@ export function DailyNotesWorkspace() {
       activePanel === tab
         ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-100'
         : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+    }`;
+  const subviewButtonClass = (active: boolean): string =>
+    `px-2.5 py-1 rounded-md text-[11px] border transition-colors ${
+      active
+        ? 'border-cyan-300/60 bg-cyan-500/20 text-cyan-100'
+        : 'border-white/15 bg-white/5 text-white/65 hover:bg-white/10'
     }`;
 
   return (
@@ -842,14 +923,6 @@ export function DailyNotesWorkspace() {
               />
               <div className="flex items-center gap-2 flex-wrap">
                 <button
-                  onClick={captureActiveConversation}
-                  disabled={!activeNote}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-emerald-300/30 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-100 text-sm disabled:opacity-40"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  Capture Active Chat
-                </button>
-                <button
                   onClick={addHighlightFromSelection}
                   disabled={!activeNote}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-amber-300/30 bg-amber-500/15 hover:bg-amber-500/25 text-amber-100 text-sm disabled:opacity-40"
@@ -912,97 +985,136 @@ export function DailyNotesWorkspace() {
             )}
 
             {activePanel === 'annotations' && (
-              <div className="h-full grid grid-cols-1 xl:grid-cols-2 gap-4 overflow-y-auto">
-                <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
-                  <h2 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                    <Highlighter className="w-3.5 h-3.5" />
-                    Highlights
-                  </h2>
-                  {(activeNote?.highlights ?? []).length === 0 ? (
-                    <p className="text-xs text-white/45">No highlights yet.</p>
-                  ) : (
-                    activeNote?.highlights.map((highlight) => (
-                      <div key={highlight.id} className="p-2.5 rounded-md bg-amber-300/10 border border-amber-200/25">
-                        <p className="text-xs text-amber-100/90 line-clamp-4">{highlight.text}</p>
-                        <div className="mt-2 flex items-center justify-between">
-                          <span className="text-[11px] text-amber-200/60">{formatWhen(highlight.createdAt)}</span>
-                          <button
-                            onClick={() => removeHighlight(highlight.id)}
-                            className="text-[11px] text-amber-100/70 hover:text-amber-100"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </section>
-
-                <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
-                  <h2 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                    <StickyNote className="w-3.5 h-3.5" />
-                    Sticky Notes
-                  </h2>
-                  <div className="space-y-2">
-                    <textarea
-                      value={newStickyText}
-                      onChange={(event) => setNewStickyText(event.target.value)}
-                      className="w-full min-h-[68px] rounded-md border border-white/10 bg-black/20 p-2 text-xs outline-none focus:border-cyan-400/60"
-                      placeholder="Quick sticky thought..."
-                    />
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={newStickyColor}
-                        onChange={(event) => setNewStickyColor(event.target.value as StickyColor)}
-                        className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs outline-none"
-                      >
-                        {stickyColorOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={addStickyNote}
-                        className="px-2.5 py-1.5 text-xs rounded-md border border-cyan-300/30 bg-cyan-500/15 hover:bg-cyan-500/25"
-                      >
-                        Add
-                      </button>
-                    </div>
+              <div className="h-full overflow-y-auto rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-xs tracking-wide uppercase text-white/60">Annotations</h2>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setAnnotationView('highlights')}
+                      className={subviewButtonClass(annotationView === 'highlights')}
+                    >
+                      Highlights
+                    </button>
+                    <button
+                      onClick={() => setAnnotationView('stickies')}
+                      className={subviewButtonClass(annotationView === 'stickies')}
+                    >
+                      Stickies
+                    </button>
                   </div>
-                  {(activeNote?.stickyNotes ?? []).length === 0 ? (
-                    <p className="text-xs text-white/45">No stickies yet.</p>
-                  ) : (
-                    activeNote?.stickyNotes.map((sticky) => (
-                      <div key={sticky.id} className={`rounded-md border p-2 ${stickyClasses[normalizeStickyColor(sticky.color)]}`}>
-                        <textarea
-                          value={sticky.text}
-                          onChange={(event) => updateStickyText(sticky.id, event.target.value)}
-                          className="w-full min-h-[58px] bg-transparent resize-none text-xs leading-5 outline-none"
-                        />
-                        <div className="mt-1 flex items-center justify-between">
-                          <span className="text-[11px] opacity-70">{formatWhen(sticky.createdAt)}</span>
-                          <button
-                            onClick={() => removeSticky(sticky.id)}
-                            className="text-[11px] underline decoration-dotted"
-                          >
-                            Remove
-                          </button>
+                </div>
+
+                {annotationView === 'highlights' && (
+                  <section className="space-y-3">
+                    <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
+                      <Highlighter className="w-3.5 h-3.5" />
+                      Highlights
+                    </h3>
+                    {(activeNote?.highlights ?? []).length === 0 ? (
+                      <p className="text-xs text-white/45">No highlights yet.</p>
+                    ) : (
+                      activeNote?.highlights.map((highlight) => (
+                        <div key={highlight.id} className="p-2.5 rounded-md bg-amber-300/10 border border-amber-200/25">
+                          <p className="text-xs text-amber-100/90 line-clamp-4">{highlight.text}</p>
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="text-[11px] text-amber-200/60">{formatWhen(highlight.createdAt)}</span>
+                            <button
+                              onClick={() => removeHighlight(highlight.id)}
+                              className="text-[11px] text-amber-100/70 hover:text-amber-100"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
+                      ))
+                    )}
+                  </section>
+                )}
+
+                {annotationView === 'stickies' && (
+                  <section className="space-y-3">
+                    <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
+                      <StickyNote className="w-3.5 h-3.5" />
+                      Sticky Notes
+                    </h3>
+                    <div className="space-y-2">
+                      <textarea
+                        value={newStickyText}
+                        onChange={(event) => setNewStickyText(event.target.value)}
+                        className="w-full min-h-[68px] rounded-md border border-white/10 bg-black/20 p-2 text-xs outline-none focus:border-cyan-400/60"
+                        placeholder="Quick sticky thought..."
+                      />
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={newStickyColor}
+                          onChange={(event) => setNewStickyColor(event.target.value as StickyColor)}
+                          className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs outline-none"
+                        >
+                          {stickyColorOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={addStickyNote}
+                          className="px-2.5 py-1.5 text-xs rounded-md border border-cyan-300/30 bg-cyan-500/15 hover:bg-cyan-500/25"
+                        >
+                          Add
+                        </button>
                       </div>
-                    ))
-                  )}
-                </section>
+                    </div>
+                    {(activeNote?.stickyNotes ?? []).length === 0 ? (
+                      <p className="text-xs text-white/45">No stickies yet.</p>
+                    ) : (
+                      activeNote?.stickyNotes.map((sticky) => (
+                        <div key={sticky.id} className={`rounded-md border p-2 ${stickyClasses[normalizeStickyColor(sticky.color)]}`}>
+                          <textarea
+                            value={sticky.text}
+                            onChange={(event) => updateStickyText(sticky.id, event.target.value)}
+                            className="w-full min-h-[58px] bg-transparent resize-none text-xs leading-5 outline-none"
+                          />
+                          <div className="mt-1 flex items-center justify-between">
+                            <span className="text-[11px] opacity-70">{formatWhen(sticky.createdAt)}</span>
+                            <button
+                              onClick={() => removeSticky(sticky.id)}
+                              className="text-[11px] underline decoration-dotted"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </section>
+                )}
               </div>
             )}
 
             {activePanel === 'documents' && (
-              <div className="h-full grid grid-cols-1 xl:grid-cols-2 gap-4 overflow-y-auto">
+              <div className="h-full overflow-y-auto space-y-4">
                 <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
-                  <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                    <FileText className="w-3.5 h-3.5" />
-                    Documents
-                  </h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5" />
+                      Documents
+                    </h3>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setDocumentsView('list')}
+                        className={subviewButtonClass(documentsView === 'list')}
+                      >
+                        List
+                      </button>
+                      <button
+                        onClick={() => setDocumentsView('preview')}
+                        disabled={!selectedDocument}
+                        className={subviewButtonClass(documentsView === 'preview')}
+                      >
+                        Preview
+                      </button>
+                    </div>
+                  </div>
                   {contextError && <p className="text-xs text-rose-300">{contextError}</p>}
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-white/35" />
@@ -1048,36 +1160,55 @@ export function DailyNotesWorkspace() {
                     </p>
                   )}
                 </section>
-                <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-2">
-                  <h3 className="text-xs tracking-wide uppercase text-white/60">File Preview</h3>
-                  {!selectedDocument && <p className="text-xs text-white/45">Select a file to preview.</p>}
-                  {selectedDocument && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-white/90">{selectedDocument.fileName}</p>
-                      <p className="text-[11px] text-white/45">{selectedDocument.filePath}</p>
-                      <p className="text-[11px] text-white/45">
-                        {selectedDocument.fileType} · {selectedDocument.wordCount} words
-                      </p>
-                      {selectedDocumentPreview?.loading && <p className="text-[11px] text-white/45">Loading preview…</p>}
-                      {selectedDocumentPreview?.error && <p className="text-[11px] text-rose-300">{selectedDocumentPreview.error}</p>}
-                      {selectedDocumentPreview?.content && (
-                        <pre className="text-[11px] whitespace-pre-wrap max-h-[26rem] overflow-y-auto rounded bg-black/30 p-2 border border-white/10 text-white/70">
-                          {selectedDocumentPreview.content}
-                        </pre>
-                      )}
-                    </div>
-                  )}
-                </section>
+                {documentsView === 'preview' && (
+                  <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-2">
+                    <h3 className="text-xs tracking-wide uppercase text-white/60">File Preview</h3>
+                    {!selectedDocument && <p className="text-xs text-white/45">Select a file to preview.</p>}
+                    {selectedDocument && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-white/90">{selectedDocument.fileName}</p>
+                        <p className="text-[11px] text-white/45">{selectedDocument.filePath}</p>
+                        <p className="text-[11px] text-white/45">
+                          {selectedDocument.fileType} · {selectedDocument.wordCount} words
+                        </p>
+                        {selectedDocumentPreview?.loading && <p className="text-[11px] text-white/45">Loading preview…</p>}
+                        {selectedDocumentPreview?.error && <p className="text-[11px] text-rose-300">{selectedDocumentPreview.error}</p>}
+                        {selectedDocumentPreview?.content && (
+                          <pre className="text-[11px] whitespace-pre-wrap max-h-[26rem] overflow-y-auto rounded bg-black/30 p-2 border border-white/10 text-white/70">
+                            {selectedDocumentPreview.content}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
               </div>
             )}
 
             {activePanel === 'chats' && (
-              <div className="h-full grid grid-cols-1 xl:grid-cols-2 gap-4 overflow-y-auto">
+              <div className="h-full overflow-y-auto space-y-4">
                 <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
-                  <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    Chats
-                  </h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      Chats
+                    </h3>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setChatsView('list')}
+                        className={subviewButtonClass(chatsView === 'list')}
+                      >
+                        List
+                      </button>
+                      <button
+                        onClick={() => setChatsView('preview')}
+                        disabled={!selectedConversationPreviewId}
+                        className={subviewButtonClass(chatsView === 'preview')}
+                      >
+                        Preview
+                      </button>
+                    </div>
+                  </div>
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-white/35" />
                     <input
@@ -1127,59 +1258,97 @@ export function DailyNotesWorkspace() {
                     )}
                   </div>
                 </section>
-                <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs tracking-wide uppercase text-white/60">Chat Preview</h3>
-                    {selectedConversationPreviewId && conversationLoading[selectedConversationPreviewId] && (
-                      <span className="text-[11px] text-white/45">Loading…</span>
-                    )}
-                  </div>
-                  {!selectedConversationPreviewId && <p className="text-xs text-white/45">Select a chat to preview.</p>}
-                  {selectedConversationPreviewId && (
-                    <div className="max-h-[30rem] overflow-y-auto space-y-2">
-                      {selectedConversationMessages.length === 0 ? (
-                        <p className="text-[11px] text-white/45">No messages loaded.</p>
-                      ) : (
-                        selectedConversationMessages.map((message) => (
-                          <div key={message.id} className="rounded border border-white/10 p-2 bg-black/25">
-                            <p className="text-[10px] uppercase tracking-wide text-cyan-200/80">
-                              {message.role}
-                            </p>
-                            <p className="text-[11px] text-white/75 whitespace-pre-wrap line-clamp-6">
-                              {message.content}
-                            </p>
-                          </div>
-                        ))
+                {chatsView === 'preview' && (
+                  <section className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs tracking-wide uppercase text-white/60">Chat Preview</h3>
+                      {selectedConversationPreviewId && conversationLoading[selectedConversationPreviewId] && (
+                        <span className="text-[11px] text-white/45">Loading…</span>
                       )}
                     </div>
-                  )}
-                </section>
+                    {!selectedConversationPreviewId && <p className="text-xs text-white/45">Select a chat to preview.</p>}
+                    {selectedConversationPreviewId && (
+                      <div className="max-h-[30rem] overflow-y-auto space-y-2">
+                        {selectedConversationMessages.length === 0 ? (
+                          <p className="text-[11px] text-white/45">No messages loaded.</p>
+                        ) : (
+                          selectedConversationMessages.map((message) => (
+                            <div key={message.id} className="rounded border border-white/10 p-2 bg-black/25">
+                              <p className="text-[10px] uppercase tracking-wide text-cyan-200/80">
+                                {message.role}
+                              </p>
+                              <p className="text-[11px] text-white/75 whitespace-pre-wrap line-clamp-6">
+                                {message.content}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
               </div>
             )}
 
             {activePanel === 'snapshots' && (
               <div className="h-full overflow-y-auto rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
-                <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Captured Snapshots
-                </h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Captured Snapshots
+                  </h3>
+                  <button
+                    onClick={captureActiveConversation}
+                    disabled={!activeNote}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-300/30 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-100 text-[11px] disabled:opacity-40"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    Capture Active Chat
+                  </button>
+                </div>
                 {(activeNote?.conversationSnapshots ?? []).length === 0 ? (
                   <p className="text-xs text-white/45">No snapshots captured yet.</p>
                 ) : (
-                  activeNote?.conversationSnapshots.map((snapshot) => (
-                    <div key={snapshot.id} className="rounded-md border border-white/10 bg-black/20 p-3">
-                      <p className="text-sm text-white/90">{snapshot.conversationTitle}</p>
+                  activeNote?.conversationSnapshots.map((snapshot) => {
+                    const isLinkedSnapshot = requestedSnapshotId === snapshot.id;
+                    return (
+                    <div
+                      key={snapshot.id}
+                      data-snapshot-id={snapshot.id}
+                      className={`rounded-md border p-3 ${
+                        isLinkedSnapshot
+                          ? 'border-cyan-300/60 bg-cyan-500/12'
+                          : 'border-white/10 bg-black/20'
+                      }`}
+                    >
+                      <p className="text-sm text-white/90 flex items-center gap-2">
+                        <span>{snapshot.conversationTitle}</span>
+                        {isLinkedSnapshot && (
+                          <span className="rounded-full border border-cyan-300/45 bg-cyan-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-100">
+                            From chat capture
+                          </span>
+                        )}
+                      </p>
                       <p className="text-[11px] text-white/45">
                         {snapshot.messageCount} messages · {formatWhen(snapshot.capturedAt)}
                       </p>
-                      <button
-                        onClick={() => insertSnapshotIntoNote(snapshot)}
-                        className="mt-2 px-2.5 py-1.5 text-[11px] rounded border border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25"
-                      >
-                        Insert into note
-                      </button>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <button
+                          onClick={() => insertSnapshotIntoNote(snapshot)}
+                          className="px-2.5 py-1.5 text-[11px] rounded border border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25"
+                        >
+                          Insert into note
+                        </button>
+                        <button
+                          onClick={() => openSnapshotInChat(snapshot)}
+                          className="px-2.5 py-1.5 text-[11px] rounded border border-emerald-300/35 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25"
+                        >
+                          Open in Chat
+                        </button>
+                      </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             )}

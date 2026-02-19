@@ -10,6 +10,7 @@ import {
   Settings as SettingsIcon,
   Keyboard,
   BookOpen,
+  Bookmark,
   Trash2,
   Home,
   Sparkles,
@@ -26,7 +27,7 @@ import { KeyboardShortcutsModal } from '../KeyboardShortcutsModal'
 import '../../styles/command-palette.css'
 
 interface CommandPaletteProps {
-  onNavigate: (view: 'search' | 'files' | 'settings' | 'daily') => void
+  onNavigate: (view: 'search' | 'files' | 'settings' | 'daily' | 'references') => void
 }
 
 /**
@@ -218,6 +219,12 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
   const handleOpenDailyNote = useCallback(() => {
     executeCommand(() => {
       onNavigate('daily')
+    })
+  }, [executeCommand, onNavigate])
+
+  const handleOpenReferenceInbox = useCallback(() => {
+    executeCommand(() => {
+      onNavigate('references')
     })
   }, [executeCommand, onNavigate])
 
@@ -528,6 +535,13 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
                       description="Open today's daily note"
                       shortcut={`${cmdKey}D`}
                       onSelect={handleOpenDailyNote}
+                    />
+                    <CommandItem
+                      icon={Bookmark}
+                      label="Reference Inbox"
+                      description="Open captured and pending references"
+                      shortcut={`${cmdKey}5`}
+                      onSelect={handleOpenReferenceInbox}
                     />
                   </Command.Group>
                 )}

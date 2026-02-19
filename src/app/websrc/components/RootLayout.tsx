@@ -72,6 +72,14 @@ export function RootLayout() {
       global: true,
     },
     {
+      id: 'navigation.goToReferences',
+      keys: 'Mod+5',
+      description: 'Go to Reference Inbox',
+      category: 'navigation' as const,
+      handler: () => navigate('/references'),
+      global: true,
+    },
+    {
       id: 'navigation.goToIngest',
       keys: 'Mod+I',
       description: 'Add content / Import files',
@@ -83,7 +91,7 @@ export function RootLayout() {
 
   useKeyboardShortcuts(globalShortcuts, { enabled: true });
 
-  const handleNavigate = (view: 'search' | 'files' | 'settings' | 'daily') => {
+  const handleNavigate = (view: 'search' | 'files' | 'settings' | 'daily' | 'references') => {
     navigate(`/${view}`);
   };
 

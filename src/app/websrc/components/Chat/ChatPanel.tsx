@@ -3,10 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   Database,
   Globe,
   MessageSquarePlus,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Wrench,
@@ -17,6 +20,7 @@ import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsP
 import { MessageBubble } from './MessageBubble';
 import { VaultAPI } from '../../lib/api';
 import { getConversationMessages, useConversationsStore } from '../../stores/conversationsStore';
+
 import type { CustomToolSettings, ToolPreferences } from '../../types';
 
 const WEB_TOOL_NAMES = ['web_search', 'fetch_url_content'] as const;
@@ -143,6 +147,7 @@ export function ChatPanel() {
 
   const [input, setInput] = useState('');
   const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(loadInitialToolPreferences);
+  const [showComposerControls, setShowComposerControls] = useState(false);
   const [customTools, setCustomTools] = useState<CustomToolSettings[]>([]);
   const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
   const lastAppliedToolPreferenceConversationRef = useRef<string | null>(null);
@@ -389,6 +394,17 @@ export function ChatPanel() {
     }`;
   const turnMode =
     normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
+  const customEnabledCount = customTools.filter((tool) => enabledToolSet.has(tool.name)).length;
+  const activeComposerFlags = [
+    turnMode !== 'auto' ? `Mode: ${turnMode}` : null,
+    toolPreferences.knowledgeBase ? 'KB' : null,
+    toolPreferences.webSearch ? 'Web' : null,
+    wikiEnabled ? 'Wiki' : null,
+    toolPreferences.deepResearchMode ? 'Deep' : null,
+    customEnabledCount > 0 ? `${customEnabledCount} Custom` : null,
+  ].filter((value): value is string => Boolean(value));
+  const visibleComposerFlags = activeComposerFlags.slice(0, 3);
+  const hiddenComposerFlagCount = Math.max(0, activeComposerFlags.length - visibleComposerFlags.length);
 
   if (!activeConversationId) {
     return (
@@ -498,84 +514,102 @@ export function ChatPanel() {
               </button>
             )}
           </div>
-          <div className="mt-2 space-y-2 text-xs text-white/40">
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] uppercase tracking-wider text-white/35">Turn mode</span>
-                <button
-                  type="button"
-                  className={turnModeButtonClass(turnMode === 'auto')}
-                  aria-pressed={turnMode === 'auto'}
-                  onClick={() =>
-                    updateToolPreferences((prev) => ({
-                      ...prev,
-                      followupMode: false,
-                      turnMode: 'auto',
-                    }))
-                  }
-                  title="Auto: let the assistant infer whether this is a new topic or follow-up"
-                >
-                  Auto
-                </button>
-                <button
-                  type="button"
-                  className={turnModeButtonClass(turnMode === 'followup')}
-                  aria-pressed={turnMode === 'followup'}
-                  onClick={() =>
-                    updateToolPreferences((prev) => ({
-                      ...prev,
-                      followupMode: true,
-                      turnMode: 'followup',
-                    }))
-                  }
-                  title="Follow-up: treat this turn as context-dependent and prefer KB-first when KB and web are both enabled"
-                >
-                  <MessageSquarePlus className="h-3 w-3" />
-                  Follow-up
-                </button>
-                <button
-                  type="button"
-                  className={turnModeButtonClass(turnMode === 'query')}
-                  aria-pressed={turnMode === 'query'}
-                  onClick={() =>
-                    updateToolPreferences((prev) => ({
-                      ...prev,
-                      followupMode: false,
-                      turnMode: 'query',
-                    }))
-                  }
-                  title="Query: force full retrieval mode for this turn (knowledge base + enabled tools)"
-                >
-                  <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-                    <Database className="h-3 w-3" />
-                    <Wrench className="h-3 w-3" />
-                  </span>
-                  Query
-                </button>
-              </div>
-              <div className="mt-1 text-[11px] text-white/45">
-                {turnMode === 'followup' && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between gap-2 text-[11px] text-white/40">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {activeComposerFlags.length === 0 ? (
+                  <span className="truncate text-white/35">Auto mode · minimal controls</span>
+                ) : (
                   <>
-                    Use <span className="text-white/70">Follow-up</span> when your message refers to prior answers or context.
-                  </>
-                )}
-                {turnMode === 'query' && (
-                  <>
-                    <span className="text-white/70">Query</span> forces knowledge-base retrieval and runs all enabled retrieval tools for this turn.
-                  </>
-                )}
-                {turnMode === 'auto' && (
-                  <>
-                    <span className="text-white/70">Auto</span> lets the assistant infer whether this is a fresh question or a follow-up.
+                    {visibleComposerFlags.map((flag) => (
+                    <span
+                      key={flag}
+                      className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-white/65"
+                    >
+                      {flag}
+                    </span>
+                    ))}
+                    {hiddenComposerFlagCount > 0 && (
+                      <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-white/55">
+                        +{hiddenComposerFlagCount}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => setShowComposerControls((prev) => !prev)}
+                className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/[0.04] px-2 py-1 text-white/70 transition-colors hover:border-white/30 hover:text-white"
+              >
+                <SlidersHorizontal className="h-3 w-3" />
+                Controls
+                {showComposerControls ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-2.5">
-                <span className="text-[10px] uppercase tracking-wider text-white/35">Tools</span>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {showComposerControls && (
+              <div className="mt-2 space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-xs text-white/40">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-white/35">Turn</span>
+                  <button
+                    type="button"
+                    className={turnModeButtonClass(turnMode === 'auto')}
+                    aria-pressed={turnMode === 'auto'}
+                    onClick={() =>
+                      updateToolPreferences((prev) => ({
+                        ...prev,
+                        followupMode: false,
+                        turnMode: 'auto',
+                      }))
+                    }
+                    title="Auto: let the assistant infer whether this is a new topic or follow-up"
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    className={turnModeButtonClass(turnMode === 'followup')}
+                    aria-pressed={turnMode === 'followup'}
+                    onClick={() =>
+                      updateToolPreferences((prev) => ({
+                        ...prev,
+                        followupMode: true,
+                        turnMode: 'followup',
+                      }))
+                    }
+                    title="Follow-up: treat this turn as context-dependent and prefer KB-first when KB and web are both enabled"
+                  >
+                    <MessageSquarePlus className="h-3 w-3" />
+                    Follow-up
+                  </button>
+                  <button
+                    type="button"
+                    className={turnModeButtonClass(turnMode === 'query')}
+                    aria-pressed={turnMode === 'query'}
+                    onClick={() =>
+                      updateToolPreferences((prev) => ({
+                        ...prev,
+                        followupMode: false,
+                        turnMode: 'query',
+                      }))
+                    }
+                    title="Query: force full retrieval mode for this turn (knowledge base + enabled tools)"
+                  >
+                    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+                      <Database className="h-3 w-3" />
+                      <Wrench className="h-3 w-3" />
+                    </span>
+                    Query
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-white/35">Tools</span>
                   <button
                     type="button"
                     className={toolButtonClass(toolPreferences.knowledgeBase)}
@@ -596,28 +630,6 @@ export function ChatPanel() {
                     <Globe className="h-3 w-3" />
                     Web
                   </button>
-                  {customTools.map((tool) => {
-                    const enabled = enabledToolSet.has(tool.name);
-                    return (
-                      <button
-                        key={tool.name}
-                        type="button"
-                        className={toolButtonClass(enabled)}
-                        aria-pressed={enabled}
-                        onClick={() => toggleCustomTool(tool.name)}
-                        title={tool.description || tool.name}
-                      >
-                        <Wrench className="h-3 w-3" />
-                        {formatToolLabel(tool.name)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-2.5">
-                <span className="text-[10px] uppercase tracking-wider text-white/35">Enrichment</span>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     className={toolButtonClass(wikiEnabled)}
@@ -638,12 +650,28 @@ export function ChatPanel() {
                     <Sparkles className="h-3 w-3" />
                     Deep
                   </button>
+                  {customTools.map((tool) => {
+                    const enabled = enabledToolSet.has(tool.name);
+                    return (
+                      <button
+                        key={tool.name}
+                        type="button"
+                        className={toolButtonClass(enabled)}
+                        aria-pressed={enabled}
+                        onClick={() => toggleCustomTool(tool.name)}
+                        title={tool.description || tool.name}
+                      >
+                        <Wrench className="h-3 w-3" />
+                        {formatToolLabel(tool.name)}
+                      </button>
+                    );
+                  })}
                   {isSending && <span className="text-blue-400">Sending...</span>}
                 </div>
               </div>
-            </div>
+            )}
 
-            <div className="text-white/35">Press Enter to send, Shift+Enter for new line</div>
+            <div className="mt-2 text-[11px] text-white/35">Press Enter to send, Shift+Enter for new line</div>
           </div>
         </form>
       </div>

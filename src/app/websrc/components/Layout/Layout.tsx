@@ -14,7 +14,7 @@
 import { useState, type ReactNode } from 'react'
 
 import { AnimatePresence } from 'framer-motion'
-import { Home, Search, FolderOpen, PlusCircle, MessageCircle, CalendarDays, Settings, Menu, X } from 'lucide-react'
+import { Home, Search, FolderOpen, PlusCircle, MessageCircle, CalendarDays, Settings, Menu, X, Bookmark } from 'lucide-react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 
 import { DownloadsDrawer } from '../Downloads/DownloadsDrawer'
@@ -22,7 +22,7 @@ import { DrawerTrigger } from '../Downloads/DrawerTrigger'
 import { HeaderDownloadsIndicator } from '../Downloads/HeaderDownloadsIndicator'
 
 interface NavButtonProps {
-  view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'daily'
+  view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'daily' | 'references'
   activeView: string
   onClick: () => void
   icon: ReactNode
@@ -78,7 +78,7 @@ export function Layout() {
   // Extract active view from current path
   const activeView = location.pathname.slice(1) || 'home'
 
-  const handleNavClick = (view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'daily') => {
+  const handleNavClick = (view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'daily' | 'references') => {
     navigate(`/${view}`)
     setMobileMenuOpen(false)
   }
@@ -119,6 +119,12 @@ export function Layout() {
       label: 'Daily Notes',
       shortcut: '⌘3',
       icon: <CalendarDays className="w-5 h-5" />,
+    },
+    {
+      view: 'references' as const,
+      label: 'Reference Inbox',
+      shortcut: '⌘5',
+      icon: <Bookmark className="w-5 h-5" />,
     },
   ]
 
