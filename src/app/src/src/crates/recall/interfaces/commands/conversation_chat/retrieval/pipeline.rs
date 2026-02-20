@@ -348,6 +348,11 @@ pub(super) async fn run_retrieval_pipeline(
         } else {
             1
         };
+        let web_max_results = if deep_research_enabled {
+            tuning.web_search_max_results.max(10)
+        } else {
+            tuning.web_search_max_results
+        };
         let include_wikipedia = retrieval_plan.should_search_wiki || deep_research_enabled;
         let providers = if include_wikipedia {
             serde_json::json!(["duckduckgo", "bing", "wikipedia"])
@@ -361,7 +366,7 @@ pub(super) async fn run_retrieval_pipeline(
             "web_search",
             serde_json::json!({
                 "query": web_query,
-                "max_results": tuning.web_search_max_results,
+                "max_results": web_max_results,
                 "page": 1,
                 "offset": 0,
                 "providers": providers,
@@ -383,6 +388,33 @@ pub(super) async fn run_retrieval_pipeline(
                                 result_count = output.result_count,
                                 "Forced web search completed"
                             );
+                            if deep_research_enabled {
+                                let llm_context_domains = output
+                                    .results
+                                    .iter()
+                                    .filter_map(|result| {
+                                        result
+                                            .url
+                                            .split("://")
+                                            .nth(1)
+                                            .and_then(|rest| rest.split('/').next())
+                                            .map(|host| {
+                                                host.trim_start_matches("www.").to_ascii_lowercase()
+                                            })
+                                    })
+                                    .collect::<HashSet<_>>();
+
+                                info!(
+                                    unique_queries = output.unique_query_count,
+                                    unique_discovered_urls = output.unique_url_count,
+                                    unique_discovered_domains = output.unique_domain_count,
+                                    urls_passed_to_llm = output.results.len(),
+                                    domains_passed_to_llm = llm_context_domains.len(),
+                                    total_discovered_results = output.total_results,
+                                    returned_results = output.result_count,
+                                    "Deep research per-turn telemetry"
+                                );
+                            }
                             if !output.results.is_empty() {
                                 let web_sources = build_web_source_citations(
                                     &output.results,

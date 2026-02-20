@@ -68,7 +68,7 @@ function App() {
       if (!skipped) {
         try {
           // Command returns JSON string to minimize Future state machine size (stack overflow fix)
-          const statusJson = await invoke<string>('plugin:model|check_first_run_status_command');
+          const statusJson = await invoke<string>('plugin:model|check_first_run_status');
           const status: FirstRunStatusResponse = JSON.parse(statusJson);
           if (status.needs_setup) {
             console.log('[APP] First run detected, showing model setup');

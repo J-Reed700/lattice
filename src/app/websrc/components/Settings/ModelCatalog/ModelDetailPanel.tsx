@@ -226,7 +226,7 @@ export function ModelDetailPanel({
 
     try {
       // Use plugin pattern: model domain download command
-      const response = await invoke<DownloadModelCommandResponse>('plugin:model|download_model_command', {
+      const response = await invoke<DownloadModelCommandResponse>('plugin:model|download_model', {
         modelId: metadata.id
       });
 

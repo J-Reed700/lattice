@@ -50,7 +50,7 @@ use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
-use url::Url;
+use url::{form_urlencoded, Url};
 
 /// Web service implementation
 ///
@@ -237,6 +237,119 @@ impl WebService {
         true
     }
 
+    fn is_tracking_query_param(key: &str) -> bool {
+        let lower = key.to_ascii_lowercase();
+        lower.starts_with("utm_")
+            || matches!(
+                lower.as_str(),
+                "gclid"
+                    | "fbclid"
+                    | "msclkid"
+                    | "_hsenc"
+                    | "_hsmi"
+                    | "mc_cid"
+                    | "mc_eid"
+                    | "ref"
+                    | "source"
+            )
+    }
+
+    fn canonicalize_url_for_dedup(&self, raw: &str) -> String {
+        let trimmed = raw.trim();
+        let Ok(mut parsed) = Url::parse(trimmed) else {
+            return trimmed.to_ascii_lowercase();
+        };
+
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return trimmed.to_ascii_lowercase();
+        }
+
+        parsed.set_fragment(None);
+        let _ = parsed.set_username("");
+        let _ = parsed.set_password(None);
+
+        if let Some(host) = parsed.host_str() {
+            let normalized_host = host.to_ascii_lowercase();
+            let _ = parsed.set_host(Some(&normalized_host));
+        }
+
+        if let Some(port) = parsed.port() {
+            let is_default = (parsed.scheme() == "http" && port == 80)
+                || (parsed.scheme() == "https" && port == 443);
+            if is_default {
+                let _ = parsed.set_port(None);
+            }
+        }
+
+        let path = {
+            let raw_path = parsed.path().trim();
+            if raw_path.is_empty() || raw_path == "/" {
+                "/".to_string()
+            } else {
+                format!(
+                    "/{}",
+                    raw_path.trim_start_matches('/').trim_end_matches('/')
+                )
+            }
+        };
+        parsed.set_path(&path);
+
+        if let Some(query) = parsed.query() {
+            let mut pairs = form_urlencoded::parse(query.as_bytes())
+                .filter(|(key, _)| !Self::is_tracking_query_param(key))
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect::<Vec<_>>();
+            pairs.sort();
+
+            if pairs.is_empty() {
+                parsed.set_query(None);
+            } else {
+                let mut serializer = form_urlencoded::Serializer::new(String::new());
+                for (key, value) in pairs {
+                    serializer.append_pair(&key, &value);
+                }
+                parsed.set_query(Some(&serializer.finish()));
+            }
+        }
+
+        let mut canonical = parsed.to_string();
+        if canonical.ends_with('/') && parsed.query().is_none() && parsed.path() == "/" {
+            canonical.pop();
+        }
+        canonical
+    }
+
+    fn normalized_domain_key(&self, raw_url: &str) -> Option<String> {
+        let parsed = Url::parse(raw_url).ok()?;
+        let host = parsed.host_str()?.to_ascii_lowercase();
+        Some(host.trim_start_matches("www.").to_string())
+    }
+
+    fn reorder_results_for_domain_diversity(
+        &self,
+        results: Vec<WebSearchResult>,
+    ) -> Vec<WebSearchResult> {
+        let mut seen_domains = HashSet::new();
+        let mut domain_first = Vec::with_capacity(results.len());
+        let mut overflow = Vec::new();
+
+        for result in results {
+            let domain = self.normalized_domain_key(&result.url);
+            let is_new_domain = domain
+                .as_ref()
+                .is_some_and(|domain_key| seen_domains.insert(domain_key.clone()));
+
+            if is_new_domain {
+                domain_first.push(result);
+            } else {
+                overflow.push(result);
+            }
+        }
+
+        domain_first.extend(overflow);
+        domain_first
+    }
+
     fn parse_search_results(&self, html: &str, max_results: usize) -> Vec<WebSearchResult> {
         let document = Html::parse_document(html);
         let container_selector =
@@ -268,7 +381,8 @@ impl WebService {
                 let Some(url) = self.normalize_search_url(href) else {
                     continue;
                 };
-                if !seen.insert(url.clone()) {
+                let canonical = self.canonicalize_url_for_dedup(&url);
+                if !seen.insert(canonical) {
                     continue;
                 }
 
@@ -324,7 +438,8 @@ impl WebService {
                 let Some(url) = self.normalize_search_url(href) else {
                     continue;
                 };
-                if !seen.insert(url.clone()) {
+                let canonical = self.canonicalize_url_for_dedup(&url);
+                if !seen.insert(canonical) {
                     continue;
                 }
                 let title = link
@@ -363,7 +478,8 @@ impl WebService {
                 let Some(url) = self.normalize_search_url(href) else {
                     continue;
                 };
-                if !self.is_search_result_candidate_url(&url) || !seen.insert(url.clone()) {
+                let canonical = self.canonicalize_url_for_dedup(&url);
+                if !self.is_search_result_candidate_url(&url) || !seen.insert(canonical) {
                     continue;
                 }
 
@@ -589,7 +705,8 @@ impl WebService {
                         match resp.json::<serde_json::Value>().await {
                             Ok(payload) => {
                                 for result in self.parse_wikipedia_results(&payload, wiki_limit) {
-                                    if seen_urls.insert(result.url.clone()) {
+                                    let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                    if seen_urls.insert(canonical) {
                                         merged_results.push(result);
                                     }
                                 }
@@ -724,7 +841,8 @@ impl WebService {
                             providers_used.insert(provider.to_string());
                             page_has_results = true;
                             for result in results {
-                                if seen_urls.insert(result.url.clone()) {
+                                let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                if seen_urls.insert(canonical) {
                                     merged_results.push(result);
                                 }
                             }
@@ -898,6 +1016,8 @@ impl WebServiceTrait for WebService {
         let mut seen_urls = HashSet::new();
         let mut providers_used = HashSet::new();
         let mut seen_queries = HashSet::new();
+        let mut executed_queries: Vec<String> = Vec::new();
+        let mut seen_domains = HashSet::new();
         let mut last_error: Option<String> = None;
         let mut frontier = vec![query.to_string()];
 
@@ -911,6 +1031,7 @@ impl WebServiceTrait for WebService {
                 if normalized_query.is_empty() || !seen_queries.insert(normalized_query) {
                     continue;
                 }
+                executed_queries.push(frontier_query.clone());
 
                 let (results, used_by_query, maybe_error) = self
                     .search_single_query(&frontier_query, &providers, requested_total)
@@ -926,14 +1047,18 @@ impl WebServiceTrait for WebService {
                 }
 
                 for result in &results {
-                    if seen_urls.insert(result.url.clone()) {
+                    let canonical_url = self.canonicalize_url_for_dedup(&result.url);
+                    if seen_urls.insert(canonical_url) {
+                        if let Some(domain) = self.normalized_domain_key(&result.url) {
+                            seen_domains.insert(domain);
+                        }
                         merged_results.push(result.clone());
                     }
                 }
 
                 if depth > 1 {
                     for followup in self
-                        .derive_followup_queries(query, &results, branch_queries)
+                        .derive_followup_queries(&frontier_query, &results, branch_queries)
                         .into_iter()
                         .take(branch_queries)
                     {
@@ -950,6 +1075,7 @@ impl WebServiceTrait for WebService {
             })));
         }
 
+        let merged_results = self.reorder_results_for_domain_diversity(merged_results);
         let total_results = merged_results.len();
         let start_idx = effective_offset.min(total_results);
         let end_idx = (start_idx + max_results).min(total_results);
@@ -967,6 +1093,15 @@ impl WebServiceTrait for WebService {
             total_results,
             providers_used
         );
+        info!(
+            depth,
+            branch_queries,
+            unique_queries = seen_queries.len(),
+            unique_urls = seen_urls.len(),
+            unique_domains = seen_domains.len(),
+            executed_query_preview = ?executed_queries.iter().take(8).collect::<Vec<_>>(),
+            "Deep-research telemetry"
+        );
 
         let mut providers_used_vec = providers_used.into_iter().collect::<Vec<_>>();
         providers_used_vec.sort();
@@ -980,6 +1115,9 @@ impl WebServiceTrait for WebService {
             total_results,
             has_more: end_idx < total_results,
             providers_used: providers_used_vec,
+            unique_query_count: seen_queries.len(),
+            unique_url_count: seen_urls.len(),
+            unique_domain_count: seen_domains.len(),
         })
     }
 

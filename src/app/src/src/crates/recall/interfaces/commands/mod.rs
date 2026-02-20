@@ -5,6 +5,7 @@ pub mod cache;
 pub mod config;
 pub mod conversation;
 pub mod conversation_chat;
+pub mod conversation_plugin_impl;
 pub mod credentials;
 pub mod custom_model_commands;
 // DELETED: pub mod daily_notes_commands; - Feature removed

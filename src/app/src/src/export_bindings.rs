@@ -70,9 +70,9 @@ fn main() {
             vault::interfaces::commands::search_commands::search_with_recency,
             vault::interfaces::commands::search_commands::batch_search,
             // File Plugin (12 commands)
-            vault::plugins::file::commands::plugin_index_file,
-            vault::plugins::file::commands::plugin_index_directory,
-            vault::plugins::file::commands::plugin_get_file_metadata,
+            vault::plugins::file::commands::index_file,
+            vault::plugins::file::commands::index_directory,
+            vault::interfaces::commands::file::get_file_metadata,
             vault::plugins::file::commands::get_file_content,
             vault::plugins::file::commands::update_file_metadata,
             vault::plugins::file::commands::delete_file_index,

@@ -16,12 +16,6 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct FileMetadata {
-    pub path: String,
-    pub size: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct IndexingStatus {
     pub active: bool,
     pub progress: f32,
@@ -72,50 +66,6 @@ async fn resolve_indexing_defaults(container: &Container) -> (usize, Option<Vec<
 
 #[tauri::command]
 #[specta::specta]
-pub async fn plugin_index_file(
-    path: String,
-    space_id: Option<String>,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    // index_file_ddd now returns Result<serde_json::Value, String>
-    // We need to parse the JSON to check if it succeeded
-    match indexing_commands::index_file_ddd(container, path, space_id).await {
-        Ok(json_value) => {
-            // Check if the result was successful
-            if let Some(ok) = json_value.get("ok").and_then(|v| v.as_bool()) {
-                if ok {
-                    Ok(())
-                } else {
-                    // Extract error from JSON
-                    let error_msg = json_value
-                        .get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error");
-                    Err(ApiError {
-                        code: ErrorCode::InternalError,
-                        message: error_msg.to_string(),
-                        details: None,
-                    })
-                }
-            } else {
-                Err(ApiError {
-                    code: ErrorCode::InternalError,
-                    message: "Invalid response format".to_string(),
-                    details: None,
-                })
-            }
-        }
-        Err(e) => Err(ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        }),
-    }
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn index_file(
     path: String,
     space_id: Option<String>,
@@ -135,50 +85,6 @@ pub async fn index_file(
 
     let result = indexing_commands::index_file_impl(container.inner(), request).await;
     unwrap_api_result(result)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn plugin_index_directory(
-    path: String,
-    recursive: bool,
-    space_id: Option<String>,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    // index_directory_ddd now returns Result<serde_json::Value, String>
-    match indexing_commands::index_directory_ddd(container, path, recursive, space_id).await {
-        Ok(json_value) => {
-            // Check if the result was successful
-            if let Some(ok) = json_value.get("ok").and_then(|v| v.as_bool()) {
-                if ok {
-                    Ok(())
-                } else {
-                    // Extract error from JSON
-                    let error_msg = json_value
-                        .get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error");
-                    Err(ApiError {
-                        code: ErrorCode::InternalError,
-                        message: error_msg.to_string(),
-                        details: None,
-                    })
-                }
-            } else {
-                Err(ApiError {
-                    code: ErrorCode::InternalError,
-                    message: "Invalid response format".to_string(),
-                    details: None,
-                })
-            }
-        }
-        Err(e) => Err(ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        }),
-    }
 }
 
 #[tauri::command]
@@ -204,22 +110,6 @@ pub async fn index_directory(
     let result = indexing_commands::index_directory_impl(container.inner(), request).await;
     unwrap_api_result(result)?;
     Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn plugin_get_file_metadata(
-    path: String,
-    container: State<'_, Container>,
-) -> Result<FileMetadata, ApiError> {
-    let metadata = file_commands::get_file_metadata_impl(&container, path.clone())
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(FileMetadata {
-        path,
-        size: metadata.size_bytes as u64,
-    })
 }
 
 #[tauri::command]

@@ -212,6 +212,9 @@ impl WebServiceTrait for MockWebService {
             } else {
                 input.providers.clone()
             },
+            unique_query_count: 1,
+            unique_url_count: total_results,
+            unique_domain_count: total_results,
         })
     }
 

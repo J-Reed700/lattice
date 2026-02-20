@@ -85,16 +85,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("model")
         .setup(|_app, _api| Ok(()))
         .invoke_handler(tauri::generate_handler![
-            // Download/Management commands (14, including frontend alias)
+            // Download/Management commands
             commands::download_model,
-            commands::download_model_command,
-            commands::check_first_run_status_command,
-            commands::download_default_embedding_model_command,
+            commands::check_first_run_status,
+            commands::download_default_embedding_model,
             commands::cancel_download,
             commands::delete_model,
-            commands::delete_downloaded_model_and_file,
             commands::list_downloaded_models,
-            commands::get_models_with_metadata,
             commands::get_download_status,
             commands::is_model_already_downloaded,
             commands::set_active_embedding_model,

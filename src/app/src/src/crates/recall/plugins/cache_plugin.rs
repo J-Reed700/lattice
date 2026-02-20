@@ -1,34 +1,28 @@
 //! Cache Plugin - Search query cache management
 //!
-//! Migrated from ipc/domains/cache.rs as part of Operation Scorched Earth Batch 2
-//!
-//! NOTE: Cache commands are synchronous (no async) because cache is a global singleton
+//! NOTE: Cache commands are synchronous (no async) because cache is a global singleton.
 
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime,
 };
 
-// Re-export types and commands from the main cache commands module
+use crate::interfaces::commands::cache as cache_commands;
+
+// Re-export types and commands from the cache command module.
 pub use crate::interfaces::commands::cache::{
     cache_operation, clear_cache, clear_search_cache, get_cache_metrics, get_cache_stats,
     CacheMetrics, SearchCacheStats,
 };
 
-// Import the tauri command macros that were generated
-use crate::interfaces::commands::cache::{
-    __cmd__cache_operation, __cmd__clear_cache, __cmd__clear_search_cache,
-    __cmd__get_cache_metrics, __cmd__get_cache_stats,
-};
-
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("cache")
         .invoke_handler(tauri::generate_handler![
-            clear_cache,
-            get_cache_stats,
-            get_cache_metrics,
-            clear_search_cache,
-            cache_operation,
+            cache_commands::clear_cache,
+            cache_commands::get_cache_stats,
+            cache_commands::get_cache_metrics,
+            cache_commands::clear_search_cache,
+            cache_commands::cache_operation,
         ])
         .build()
 }

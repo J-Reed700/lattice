@@ -6,14 +6,11 @@ fn main() {
                 "model",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "download_model",
-                    "download_model_command",
-                    "check_first_run_status_command",
-                    "download_default_embedding_model_command",
+                    "check_first_run_status",
+                    "download_default_embedding_model",
                     "cancel_download",
                     "delete_model",
-                    "delete_downloaded_model_and_file",
                     "list_downloaded_models",
-                    "get_models_with_metadata",
                     "get_download_status",
                     "is_model_already_downloaded",
                     "set_active_embedding_model",
@@ -85,9 +82,6 @@ fn main() {
             .plugin(
                 "file",
                 tauri_build::InlinedPlugin::new().commands(&[
-                    "plugin_index_file",
-                    "plugin_index_directory",
-                    "plugin_get_file_metadata",
                     "index_file",
                     "index_directory",
                     "get_file_metadata",
