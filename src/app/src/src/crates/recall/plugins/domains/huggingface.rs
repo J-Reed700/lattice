@@ -1,7 +1,7 @@
 //! HuggingFace Plugin
 //!
 //! Tauri commands for HuggingFace token management.
-//! Routes to interfaces/commands/hf_settings.rs implementations.
+//! Routes to interfaces/commands/domains/hf_settings.rs implementations.
 
 use crate::{
     interfaces::commands::hf_settings::{self, HfTokenStatus},

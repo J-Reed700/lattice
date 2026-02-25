@@ -25,6 +25,7 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { useDownloadedModelsStore } from '../../stores/downloadedModelsStore';
+import { toast } from '../../stores/toastStore';
 import {
   buildCapturedChatReferenceIndex,
   chatReferenceKey,
@@ -586,6 +587,18 @@ export function ConversationSidebar() {
       await useConversationsStore.getState().loadSpaces();
     } finally {
       setIsRestoringSpace(false);
+    }
+  };
+
+  const toggleSpaceDeepResearchDefault = () => {
+    const next = !spaceDeepResearchDefault;
+    setSpaceDeepResearchDefault(next);
+    if (next) {
+      toast.warning('Space Deep Research default enabled', {
+        message:
+          'New turns in this space may take significantly longer because deep research performs recursive retrieval.',
+        duration: 5000,
+      });
     }
   };
 
@@ -1296,7 +1309,7 @@ export function ConversationSidebar() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setSpaceDeepResearchDefault((value) => !value)}
+                            onClick={toggleSpaceDeepResearchDefault}
                             className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
                               spaceDeepResearchDefault
                                 ? 'bg-blue-500/20 border-blue-400/45 text-blue-100'
@@ -1306,6 +1319,15 @@ export function ConversationSidebar() {
                             Deep Research
                           </button>
                         </div>
+                        {spaceDeepResearchDefault && (
+                          <div
+                            role="status"
+                            aria-live="polite"
+                            className="rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100/90"
+                          >
+                            Deep Research default is on for this space, so responses can take longer.
+                          </div>
+                        )}
                       </div>
                     </details>
 

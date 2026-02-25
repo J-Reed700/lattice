@@ -27,8 +27,9 @@ import {
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { type DocumentMetadata } from '../../types/fileBrowser';
-import type { ConversationSpaceDto } from '../../types';
 import { isSupportedFileType } from '../../utils/fileTypeDetector';
+
+import type { ConversationSpaceDto } from '../../types';
 
 interface ContextMenuProps {
   doc: DocumentMetadata;

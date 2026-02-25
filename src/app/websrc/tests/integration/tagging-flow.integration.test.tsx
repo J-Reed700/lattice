@@ -2,8 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { TagManager } from '../../components/TagManager/TagManager';
 import { VaultAPI } from '@/lib/api';
+
+import { TagManager } from '../../components/TagManager/TagManager';
 
 /**
  * Tagging Workflow Integration Tests

@@ -1,6 +1,6 @@
-//! File Plugin
+//! File plugin.
 //!
-//! Provides 13 commands for file operations.
+//! Provides file indexing, content, and metadata commands.
 
 pub mod commands;
 

@@ -1,7 +1,7 @@
 /**
  * TypeScript types for download operation states
  *
- * Mirrors the Rust DownloadOperationState enum from domain/download.rs
+ * Mirrors the Rust DownloadOperationState enum from domain/modules/download.rs
  */
 
 export type DownloadOperationState =

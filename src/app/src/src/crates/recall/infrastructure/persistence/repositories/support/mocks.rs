@@ -53,7 +53,7 @@ use crate::shared::error::{AppError, Result};
 // Mock Document Repository - REMOVED (migrated to DDD)
 // ============================================================================
 // Old MockDocumentRepository for legacy DocumentRepositoryTrait removed
-// See infrastructure/persistence/repositories/mocks.rs line ~400 for new DDD version
+// See infrastructure/persistence/repositories/support/mocks.rs line ~400 for new DDD version
 
 /*
 /// In-memory mock implementation of DocumentRepositoryTrait (LEGACY)
@@ -1042,7 +1042,6 @@ impl EmbeddingRepositoryPort for MockEmbeddingRepository {
 pub struct MockMentionRepository {
     mentions: Arc<RwLock<HashMap<String, Mention>>>,
     name_index: Arc<RwLock<HashMap<String, String>>>, // name -> id
-    // DELETED: document_mentions field (DocumentMention type doesn't exist in new architecture)
     mention_documents: Arc<RwLock<HashMap<String, Vec<String>>>>, // mention_id -> document_ids
 }
 

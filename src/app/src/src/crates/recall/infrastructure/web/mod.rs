@@ -18,10 +18,13 @@
 //! - Metadata extraction (title, description, author)
 //! - Web article detection (browser extension archives)
 
-// pub mod ingestion;  // TODO: Fix syntax errors in extractor.rs tests before exposing
+#[path = "modules/article_detector.rs"]
 pub mod article_detector;
+#[path = "modules/content_extractor.rs"]
 pub mod content_extractor;
+#[path = "modules/metadata.rs"]
 pub mod metadata;
+#[path = "modules/web_fetcher.rs"]
 pub mod web_fetcher;
 
 pub use article_detector::WebArticleDetector;

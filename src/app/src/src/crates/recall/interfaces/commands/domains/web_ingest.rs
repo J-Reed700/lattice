@@ -751,6 +751,5 @@ pub async fn reindex_web_archive(container: State<'_, Container>) -> Result<usiz
     Ok(reindexed_count)
 }
 
-// DELETED: Tests removed - validate_url is now a stub
 // #[cfg(test)]
 // mod tests { ... }

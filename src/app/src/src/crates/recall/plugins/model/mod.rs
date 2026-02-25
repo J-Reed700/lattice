@@ -1,33 +1,13 @@
-//! Model Management Plugin
+//! Model management plugin.
 //!
-//! Provides 20 commands for AI model management:
-//!
-//! ## Model Download/Management (13 commands):
-//! - download_model, cancel_download, delete_model
-//! - list_downloaded_models, get_download_status
-//! - set_active_embedding_model, set_active_inference_model
-//! - get_active_models, validate_model_compatibility
-//! - get_model_info, export_model, import_model, refresh_model_cache
-//!
-//! ## Model Catalog/Discovery (7 commands):
-//! - detect_system_capabilities, get_compatible_models
-//! - get_all_recommended_models, search_model_catalog
-//! - refresh_model_catalog, clear_model_catalog_cache
-//! - get_model_catalog_stats
-//!
-//! # Design
-//!
-//! - **Thin Wrapper**: Download/management commands delegate to `interfaces/commands/*_impl` functions
-//! - **Direct Implementation**: Catalog commands are direct implementations from `model_management.rs`
-//! - **Type Safety**: All types derive `specta::Type` for TypeScript generation
-//! - **No Logic Duplication**: Business logic stays in command implementations
+//! Registers model download/management and catalog/discovery commands.
 
 pub mod commands;
 
 use serde::Serialize;
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    Emitter, Manager, Runtime,
+    Runtime,
 };
 
 #[derive(Clone, Serialize)]
@@ -56,6 +36,7 @@ pub enum DownloadEventDto {
 impl From<crate::infrastructure::services::download_manager::DownloadEvent> for DownloadEventDto {
     fn from(event: crate::infrastructure::services::download_manager::DownloadEvent) -> Self {
         use crate::infrastructure::services::download_manager::DownloadEvent;
+
         match event {
             DownloadEvent::Started { id } => Self::Started { id },
             DownloadEvent::Progress {
@@ -76,16 +57,10 @@ impl From<crate::infrastructure::services::download_manager::DownloadEvent> for 
     }
 }
 
-/// Initialize the model management plugin
-///
-/// # Returns
-///
-/// A configured Tauri plugin ready for registration
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("model")
-        .setup(|_app, _api| Ok(()))
         .invoke_handler(tauri::generate_handler![
-            // Download/Management commands
+            // Download/management commands
             commands::download_model,
             commands::check_first_run_status,
             commands::download_default_embedding_model,
@@ -108,7 +83,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::export_model,
             commands::import_model,
             commands::refresh_model_cache,
-            // Catalog/Discovery commands (7)
+            // Catalog/discovery commands
             crate::interfaces::commands::model_management::detect_system_capabilities,
             crate::interfaces::commands::model_management::get_compatible_models,
             crate::interfaces::commands::model_management::get_all_recommended_models,

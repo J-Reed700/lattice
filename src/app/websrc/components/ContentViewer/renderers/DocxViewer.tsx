@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-import { AlertCircle, Loader2 } from 'lucide-react';
 import DOMPurify from 'dompurify';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import * as mammoth from 'mammoth';
 
 import VaultAPI from '../../../lib/api';

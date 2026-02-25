@@ -1,27 +1,76 @@
+// Domain service modules moved under domains/ for filesystem organization.
+#[path = "domains/article_extractor.rs"]
+pub mod article_extractor;
+#[path = "domains/backup_scheduler.rs"]
 pub mod backup_scheduler;
-pub mod conversation_service;
-pub mod database;
-pub mod download_engine;
-pub mod download_manager;
-pub mod embedding;
-pub mod file_cleanup;
-pub mod file_storage;
-pub mod file_type_detector;
-pub mod file_watch;
-pub mod llm_cache;
-pub mod metadata_extraction;
-pub mod model_manager;
-pub mod router;
-pub mod startup_reconciliation;
-pub mod sync;
-pub mod tag_service;
-pub mod tag_service_impl;
-pub mod validated_path;
-
-// Business logic services (extracted from fat controllers)
+#[path = "domains/batch_file_import.rs"]
+pub mod batch_file_import;
+#[path = "domains/batch_url_import.rs"]
+pub mod batch_url_import;
+#[path = "domains/context_manager.rs"]
 pub mod context_manager;
+#[path = "domains/conversation_service.rs"]
+pub mod conversation_service;
+#[path = "domains/conversational_qa_service.rs"]
 pub mod conversational_qa_service;
+#[path = "domains/database.rs"]
+pub mod database;
+#[path = "domains/download_engine.rs"]
+pub mod download_engine;
+#[path = "domains/download_manager.rs"]
+pub mod download_manager;
+#[path = "domains/file_cleanup.rs"]
+pub mod file_cleanup;
+#[path = "domains/file_type_detector.rs"]
+pub mod file_type_detector;
+#[path = "domains/file_watch.rs"]
+pub mod file_watch;
+#[path = "domains/function_executor.rs"]
+pub mod function_executor;
+#[path = "domains/function_registry.rs"]
+pub mod function_registry;
+#[path = "domains/llm_cache.rs"]
+pub mod llm_cache;
+#[path = "domains/metadata_extraction.rs"]
+pub mod metadata_extraction;
+#[path = "domains/model_manager.rs"]
+pub mod model_manager;
+#[path = "domains/router.rs"]
+pub mod router;
+#[path = "domains/search_enrichment_service.rs"]
 pub mod search_enrichment_service;
+#[path = "domains/startup_reconciliation.rs"]
+pub mod startup_reconciliation;
+#[path = "domains/sync.rs"]
+pub mod sync;
+#[path = "domains/tag_service.rs"]
+pub mod tag_service;
+#[path = "domains/tag_service_impl.rs"]
+pub mod tag_service_impl;
+#[path = "domains/validated_path.rs"]
+pub mod validated_path;
+#[path = "domains/web_archive_service.rs"]
+pub mod web_archive_service;
+#[path = "domains/web_capture.rs"]
+pub mod web_capture;
+#[path = "domains/web_ingestion.rs"]
+pub mod web_ingestion;
+#[path = "domains/web_service.rs"]
+pub mod web_service;
+
+// Directory-backed service modules
+pub mod custom_model;
+pub mod embedding;
+pub mod file_storage;
+pub mod hyde;
+pub mod mocks;
+
+// Service trait definitions for dependency injection
+pub mod traits;
+
+// Tests module
+#[cfg(test)]
+pub mod tests;
 
 // Re-export search enrichment types
 pub use search_enrichment_service::{DocumentMetadata, SearchEnrichmentService};
@@ -29,23 +78,6 @@ pub use search_enrichment_service::{DocumentMetadata, SearchEnrichmentService};
 // Re-export metadata extraction service
 pub use metadata_extraction::MetadataExtractor;
 pub use router::RouterService;
-
-// Function calling services (LLM tools integration)
-pub mod article_extractor;
-pub mod batch_file_import;
-pub mod batch_url_import;
-pub mod function_executor;
-pub mod function_registry;
-pub mod web_archive_service;
-pub mod web_capture;
-pub mod web_ingestion;
-pub mod web_service;
-
-// Service trait definitions for dependency injection
-pub mod traits;
-
-// Mock implementations for testing
-pub mod mocks;
 
 // Re-export conversation service
 pub use backup_scheduler::BackupScheduler;
@@ -69,13 +101,3 @@ pub use web_service::WebService;
 
 // Re-export search services
 pub use crate::infrastructure::search::hybrid::HybridSearchService;
-
-// HyDE query processing
-pub mod hyde;
-
-// Custom model services
-pub mod custom_model;
-
-// Tests module
-#[cfg(test)]
-pub mod tests;

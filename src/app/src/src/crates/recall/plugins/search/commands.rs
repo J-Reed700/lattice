@@ -1,6 +1,6 @@
 //! Search Plugin Commands - Direct DTO Exposure (Single Source of Truth)
 //!
-//! The actual command implementations live in `interfaces/commands/search_commands.rs`.
+//! The actual command implementations live in `interfaces/commands/domains/search_commands.rs`.
 //! This module re-exports them for plugin registration and compatibility aliases.
 
 pub use crate::interfaces::commands::search_commands::{

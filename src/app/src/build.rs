@@ -75,6 +75,7 @@ fn main() {
                     "set_documents_space_membership",
                     "bookmark_conversation_message",
                     "unbookmark_conversation_message",
+                    "delete_conversation_message",
                     "list_message_bookmarks",
                     "list_conversations_explorer",
                 ]),

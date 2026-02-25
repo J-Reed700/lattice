@@ -1,7 +1,7 @@
 //! Embeddings Plugin
 //!
 //! Tauri commands for embedding generation and model management.
-//! Routes to interfaces/commands/embeddings.rs implementations.
+//! Routes to interfaces/commands/domains/embeddings.rs implementations.
 
 use crate::{
     interfaces::commands::embeddings::{

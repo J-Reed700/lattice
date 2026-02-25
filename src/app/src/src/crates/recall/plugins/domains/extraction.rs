@@ -1,7 +1,7 @@
 //! Extraction Plugin
 //!
 //! Tauri commands for wikilink parsing, title extraction, and link resolution.
-//! Routes to interfaces/commands/extraction.rs implementations.
+//! Routes to interfaces/commands/domains/extraction.rs implementations.
 
 use crate::{
     application::dtos::extraction_dto::DocumentRefDto,

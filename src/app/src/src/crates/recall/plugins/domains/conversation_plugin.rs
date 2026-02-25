@@ -8,8 +8,9 @@ use crate::application::dtos::conversation_dto::{
     RenameConversationResponseDto,
 };
 use crate::application::dtos::conversation_message_bookmark_dto::{
-    BookmarkConversationMessageRequestDto, ListMessageBookmarksQueryDto,
-    ListMessageBookmarksResponseDto, UnbookmarkConversationMessageRequestDto,
+    BookmarkConversationMessageRequestDto, DeleteConversationMessageRequestDto,
+    ListMessageBookmarksQueryDto, ListMessageBookmarksResponseDto,
+    UnbookmarkConversationMessageRequestDto,
 };
 use crate::application::dtos::conversation_space_dto::{
     ArchiveConversationSpaceRequestDto, ConversationSpaceDto, ConversationSpaceMemberDto,
@@ -322,6 +323,15 @@ pub async fn unbookmark_conversation_message(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn delete_conversation_message(
+    request: DeleteConversationMessageRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::delete_conversation_message_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn list_message_bookmarks(
     query: ListMessageBookmarksQueryDto,
     container: State<'_, Container>,
@@ -368,6 +378,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             set_documents_space_membership,
             bookmark_conversation_message,
             unbookmark_conversation_message,
+            delete_conversation_message,
             list_message_bookmarks,
             list_conversations_explorer,
         ])

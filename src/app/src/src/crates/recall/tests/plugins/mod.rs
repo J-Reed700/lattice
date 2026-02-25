@@ -10,12 +10,5 @@ pub mod embeddings;
 pub mod file;
 pub mod model;
 pub mod search;
-// pub mod health;
-// pub mod tags;
-// pub mod favorites;
-// pub mod cache;
-// pub mod huggingface;
-// pub mod extraction;
-// pub mod conversation;
-// pub mod backup;
-// pub mod updates;
+// Additional plugin suites are temporarily disabled during refactor stabilization:
+// health, tags, favorites, cache, huggingface, extraction, conversation, backup, updates.

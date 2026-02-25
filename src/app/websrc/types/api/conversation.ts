@@ -2,7 +2,7 @@
  * Conversation API Types
  *
  * Type definitions for conversation management operations.
- * These types match the Rust backend structures from application/dtos/conversation_dto.rs
+ * These types match the Rust backend structures from application/dtos/modules/conversation_dto.rs
  */
 
 /**
@@ -272,6 +272,11 @@ export interface BookmarkConversationMessageRequest {
 }
 
 export interface UnbookmarkConversationMessageRequest {
+  conversationId: string;
+  messageId: string;
+}
+
+export interface DeleteConversationMessageRequest {
   conversationId: string;
   messageId: string;
 }

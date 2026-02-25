@@ -71,6 +71,35 @@ impl SqliteUnitOfWork {
             .clone()
             .ok_or_else(|| AppError::Database("Transaction already consumed".to_string()))
     }
+
+    fn take_unique_transaction(&mut self) -> Result<Transaction<'static, Sqlite>> {
+        let transaction_arc = self
+            .transaction
+            .as_ref()
+            .ok_or_else(|| AppError::Database("Transaction already consumed".to_string()))?;
+
+        // If repositories are still alive, keep transaction in place so caller can retry.
+        if Arc::strong_count(transaction_arc) > 1 {
+            return Err(AppError::Database(
+                "Transaction still has references".to_string(),
+            ));
+        }
+
+        let transaction_arc = self
+            .transaction
+            .take()
+            .ok_or_else(|| AppError::Database("Transaction already consumed".to_string()))?;
+
+        match Arc::try_unwrap(transaction_arc) {
+            Ok(mutex) => Ok(mutex.into_inner()),
+            Err(transaction_arc) => {
+                self.transaction = Some(transaction_arc);
+                Err(AppError::Database(
+                    "Transaction still has references".to_string(),
+                ))
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -117,7 +146,9 @@ impl UnitOfWorkTrait for SqliteUnitOfWork {
             .as_ref()
             .ok_or_else(|| AppError::InvalidState("Transaction already consumed".to_string()))?
             .clone();
-        Ok(Box::new(SqliteBatchJobRepositoryTx::new(tx)))
+        let repository: Box<dyn BatchJobRepositoryPort + Send + '_> =
+            Box::new(SqliteBatchJobRepositoryTx::new(tx));
+        Ok(repository)
     }
 
     fn system_repository(&self) -> Result<Box<dyn SystemRepository + Send + '_>> {
@@ -148,14 +179,7 @@ impl UnitOfWorkTrait for SqliteUnitOfWork {
     }
 
     async fn commit(&mut self) -> Result<()> {
-        let transaction_arc = self
-            .transaction
-            .take()
-            .ok_or_else(|| AppError::Database("Transaction already consumed".to_string()))?;
-
-        let transaction = Arc::try_unwrap(transaction_arc)
-            .map_err(|_| AppError::Database("Transaction still has references".to_string()))?
-            .into_inner();
+        let transaction = self.take_unique_transaction()?;
 
         transaction
             .commit()
@@ -164,14 +188,7 @@ impl UnitOfWorkTrait for SqliteUnitOfWork {
     }
 
     async fn rollback(&mut self) -> Result<()> {
-        let transaction_arc = self
-            .transaction
-            .take()
-            .ok_or_else(|| AppError::Database("Transaction already consumed".to_string()))?;
-
-        let transaction = Arc::try_unwrap(transaction_arc)
-            .map_err(|_| AppError::Database("Transaction still has references".to_string()))?
-            .into_inner();
+        let transaction = self.take_unique_transaction()?;
 
         transaction
             .rollback()
@@ -208,5 +225,62 @@ impl UnitOfWorkFactoryTrait for SqliteUnitOfWorkFactory {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         Ok(Box::new(SqliteUnitOfWork::new(transaction)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteUnitOfWork;
+    use crate::domain::repositories::UnitOfWork as UnitOfWorkTrait;
+    use sqlx::SqlitePool;
+
+    #[tokio::test]
+    async fn commit_with_live_reference_does_not_consume_transaction() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let tx = pool.begin().await.unwrap();
+        let mut uow = SqliteUnitOfWork::new(tx);
+
+        let live_ref = uow.transaction.as_ref().unwrap().clone();
+
+        let commit_err = UnitOfWorkTrait::commit(&mut uow).await.unwrap_err();
+        assert!(
+            commit_err
+                .to_string()
+                .contains("Transaction still has references"),
+            "unexpected commit error: {}",
+            commit_err
+        );
+        assert!(
+            uow.transaction.is_some(),
+            "transaction should remain available after failed commit"
+        );
+
+        drop(live_ref);
+        UnitOfWorkTrait::rollback(&mut uow).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rollback_with_live_reference_does_not_consume_transaction() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let tx = pool.begin().await.unwrap();
+        let mut uow = SqliteUnitOfWork::new(tx);
+
+        let live_ref = uow.transaction.as_ref().unwrap().clone();
+
+        let rollback_err = UnitOfWorkTrait::rollback(&mut uow).await.unwrap_err();
+        assert!(
+            rollback_err
+                .to_string()
+                .contains("Transaction still has references"),
+            "unexpected rollback error: {}",
+            rollback_err
+        );
+        assert!(
+            uow.transaction.is_some(),
+            "transaction should remain available after failed rollback"
+        );
+
+        drop(live_ref);
+        UnitOfWorkTrait::rollback(&mut uow).await.unwrap();
     }
 }

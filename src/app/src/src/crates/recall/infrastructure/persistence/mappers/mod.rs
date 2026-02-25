@@ -38,7 +38,6 @@
 
 pub mod chunk_mapper;
 pub mod conversation_mapper;
-// DELETED: pub mod daily_note_mapper; - Feature removed
 pub mod document_mapper;
 pub mod embedding_mapper;
 pub mod tag_mapper;
@@ -49,7 +48,6 @@ pub use chunk_mapper::ChunkMapper;
 pub use conversation_mapper::{
     ConversationMapper, ConversationMessageMapper, DocumentReferenceMapper,
 };
-// DELETED: pub use daily_note_mapper::DailyNoteMapper; - Feature removed
 pub use document_mapper::DocumentMapper;
 pub use embedding_mapper::EmbeddingMapper;
 pub use tag_mapper::TagMapper;

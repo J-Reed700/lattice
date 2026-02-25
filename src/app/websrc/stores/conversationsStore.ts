@@ -4,7 +4,18 @@ import { create } from 'zustand';
 import { VaultAPI } from '@/lib/api';
 
 import { useDownloadedModelsStore } from './downloadedModelsStore';
+import { ErrorCode } from '../types/api/errorCodes';
+import {
+  MessageVerificationSummarySchema,
+  SourceWithMetadataSchema,
+  SourcesArraySchema,
+} from '../types/conversation';
 
+import type {
+  ConversationSpaceDto,
+  ConversationLinkedDocumentDto,
+  DocumentSpaceMembershipDto,
+} from '../types';
 import type {
   OptimisticMessage,
   DisplayMessage,
@@ -14,17 +25,6 @@ import type {
   ConversationMessage,
   ConversationMessageBookmark,
   ToolPreferences,
-} from '../types/conversation';
-import { ErrorCode } from '../types/api/errorCodes';
-import type {
-  ConversationSpaceDto,
-  ConversationLinkedDocumentDto,
-  DocumentSpaceMembershipDto,
-} from '../types';
-import {
-  MessageVerificationSummarySchema,
-  SourceWithMetadataSchema,
-  SourcesArraySchema,
 } from '../types/conversation';
 
 const normalizeChunkExcerpt = (raw: unknown): Record<string, unknown> | null => {
@@ -221,6 +221,7 @@ interface ConversationsState {
     toolPreferences?: ToolPreferences
   ) => Promise<void>;
   cancelGeneration: (conversationId?: string | null) => Promise<void>;
+  deleteMessage: (conversationId: string, messageId: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   clearError: () => void;
 }
@@ -985,6 +986,111 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
     if (!result.ok) {
       pendingCancellationConversations.delete(targetId);
       set({ error: result.error });
+    }
+  },
+
+  deleteMessage: async (conversationId: string, messageId: string) => {
+    const state = get();
+    const existingConversation = state.conversations.find((conv) => conv.id === conversationId);
+    const existingMessages = existingConversation?.messages ?? [];
+    const messageToDelete = existingMessages.find((msg) => msg.id === messageId);
+
+    if (!existingConversation || !messageToDelete) {
+      set({ error: 'Message not found in the selected conversation.' });
+      return;
+    }
+
+    const previousSources = state.lastMessageSources.get(messageId);
+    const previousVerification = state.messageVerification.get(messageId);
+    const previousBookmark = state.messageBookmarkMap.get(messageId);
+    const previousBookmarkList = state.messageBookmarks;
+
+    set((currentState) => {
+      const updatedConversations = currentState.conversations.map((conv) => {
+        if (conv.id !== conversationId) return conv;
+
+        const nextMessages = (conv.messages ?? []).filter((msg) => msg.id !== messageId);
+        const lastMessage = nextMessages[nextMessages.length - 1];
+        const nextMessageCount = typeof conv.messageCount === 'number'
+          ? Math.max(0, conv.messageCount - 1)
+          : conv.messageCount;
+
+        return {
+          ...conv,
+          messages: nextMessages,
+          messageCount: nextMessageCount,
+          lastMessagePreview: lastMessage?.content ?? null,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      const nextSources = new Map(currentState.lastMessageSources);
+      nextSources.delete(messageId);
+
+      const nextVerification = new Map(currentState.messageVerification);
+      nextVerification.delete(messageId);
+
+      const nextBookmarkMap = new Map(currentState.messageBookmarkMap);
+      nextBookmarkMap.delete(messageId);
+
+      return {
+        conversations: updatedConversations,
+        lastMessageSources: nextSources,
+        messageVerification: nextVerification,
+        messageBookmarkMap: nextBookmarkMap,
+        messageBookmarks: currentState.messageBookmarks.filter(
+          (bookmark) => bookmark.messageId !== messageId
+        ),
+        error: null,
+      };
+    });
+
+    const result = await VaultAPI.deleteConversationMessage({
+      conversationId,
+      messageId,
+    });
+
+    if (!result.ok) {
+      set((currentState) => {
+        const restoredConversations = currentState.conversations.map((conv) =>
+          conv.id === conversationId ? existingConversation : conv
+        );
+
+        const restoredSources = new Map(currentState.lastMessageSources);
+        if (previousSources) {
+          restoredSources.set(messageId, previousSources);
+        } else {
+          restoredSources.delete(messageId);
+        }
+
+        const restoredVerification = new Map(currentState.messageVerification);
+        if (previousVerification) {
+          restoredVerification.set(messageId, previousVerification);
+        } else {
+          restoredVerification.delete(messageId);
+        }
+
+        const restoredBookmarkMap = new Map(currentState.messageBookmarkMap);
+        if (previousBookmark) {
+          restoredBookmarkMap.set(messageId, previousBookmark);
+        } else {
+          restoredBookmarkMap.delete(messageId);
+        }
+
+        return {
+          conversations: restoredConversations,
+          lastMessageSources: restoredSources,
+          messageVerification: restoredVerification,
+          messageBookmarkMap: restoredBookmarkMap,
+          messageBookmarks: previousBookmarkList,
+          error: result.error,
+        };
+      });
+      return;
+    }
+
+    if (get().activeConversationId === conversationId) {
+      await get().loadMessageBookmarks({ conversationId });
     }
   },
 

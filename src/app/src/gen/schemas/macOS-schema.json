@@ -783,6 +783,12 @@
           "markdownDescription": "Enables the delete_conversation command without any pre-configured scope."
         },
         {
+          "description": "Enables the delete_conversation_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-delete-conversation-message",
+          "markdownDescription": "Enables the delete_conversation_message command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-get-conversation",
@@ -937,6 +943,12 @@
           "type": "string",
           "const": "conversation:deny-delete-conversation",
           "markdownDescription": "Denies the delete_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_conversation_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-delete-conversation-message",
+          "markdownDescription": "Denies the delete_conversation_message command without any pre-configured scope."
         },
         {
           "description": "Denies the get_conversation command without any pre-configured scope.",

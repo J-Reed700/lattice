@@ -1,25 +1,12 @@
-//! Repository Implementations
+//! Repository implementations.
 //!
-//! This module contains concrete implementations of repository ports defined
-//! in the application layer. Repositories encapsulate data access logic.
-//!
-//! # Migrated Modules
-//! - [x] document_repository.rs - Migrated from `repositories/document_repository.rs`
-//! - [x] chunk_repository.rs - Migrated from `repositories/chunk_repository.rs`
-//! - [x] conversation_repository.rs - Conversation management with messages
-//! - [x] settings_repository.rs - File-based JSON settings storage
-//! - [x] daily_notes_repository.rs - Daily notes with date-based navigation
-//! - [ ] embedding_repository.rs - TODO: Migrate from `repositories/embedding_repository.rs`
-//! - [ ] tag_repository.rs - TODO: Migrate from `repositories/tag_repository.rs`
-//! - [ ] mention_repository.rs - TODO: Migrate from `repositories/mention_repository.rs`
-//! - [x] favorites_repository.rs - Favorites management
-//! - [x] recent_documents_repository.rs - Recent document tracking
+//! This module contains standalone repositories and domain-scoped transactional
+//! repository modules.
 
 pub mod batch_job_repository;
 pub mod chunk_repository;
 pub mod conversation_repository;
 pub mod custom_model_repository;
-// DELETED: pub mod daily_notes_repository; - Feature removed
 pub mod document_repository;
 pub mod downloaded_model_repository;
 pub mod embedding_repository;
@@ -40,14 +27,13 @@ pub mod model_file;
 pub mod search;
 pub mod system;
 
-// UnitOfWork pattern implementation
-pub mod unit_of_work;
-
-// Trait definitions for dependency injection
-pub mod traits;
-
-// Mock implementations for testing (also used in production DI container)
+// Support modules grouped under support/ for filesystem organization.
+#[path = "support/mocks.rs"]
 pub mod mocks;
+#[path = "support/traits.rs"]
+pub mod traits;
+#[path = "support/unit_of_work.rs"]
+pub mod unit_of_work;
 
 // Re-export main types for easier access
 pub use batch_job_repository::BatchJobRepository;
@@ -57,7 +43,6 @@ pub use conversation_repository::ConversationRepository;
 pub use custom_model_repository::{
     CustomModelRepository, CustomModelRepositoryTrait, MockCustomModelRepository,
 };
-// DELETED: pub use daily_notes_repository::DailyNotesRepository; - Feature removed
 // Document removed - use crate::domain::entities::Document (DDD)
 pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 pub use downloaded_model_repository::DownloadedModelRepository;

@@ -12,6 +12,7 @@ import { Database, FolderPlus, X, Plus } from 'lucide-react';
 import { VaultAPI } from '../../lib/api';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { toast } from '../../stores/toastStore';
+
 import type { AppConfig } from '../../types';
 
 type IndexingConfig = AppConfig;

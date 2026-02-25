@@ -100,6 +100,7 @@
     "conversation:allow-set-conversation-archived",
     "conversation:allow-bookmark-conversation-message",
     "conversation:allow-unbookmark-conversation-message",
+    "conversation:allow-delete-conversation-message",
     "conversation:allow-list-message-bookmarks",
     "conversation:allow-list-conversations-explorer",
     "conversation:allow-list-conversation-linked-documents",

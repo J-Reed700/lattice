@@ -40,9 +40,9 @@ use crate::application::dtos::function_calling_dto::*;
 use crate::infrastructure::services::traits::WebServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::utils::stealth;
 use async_trait::async_trait;
-use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, PRAGMA};
+use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
@@ -55,9 +55,9 @@ use url::{form_urlencoded, Url};
 /// Web service implementation
 ///
 /// Provides web search via DuckDuckGo and URL content fetching
-/// with comprehensive security controls.
+/// with comprehensive security controls and stealth anti-bot measures.
 pub struct WebService {
-    /// HTTP client with timeout
+    /// HTTP client with cookie jar and optional proxy
     client: Client,
 
     /// Maximum content length to fetch (50MB)
@@ -65,14 +65,10 @@ pub struct WebService {
 }
 
 impl WebService {
-    /// Browser-like user agent for public web endpoints that reject generic clients.
-    const BROWSER_USER_AGENT: &'static str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-
-    /// Create a new web service
+    /// Create a new web service with stealth features (cookie jar, proxy rotation).
     pub fn new() -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(WEB_REQUEST_TIMEOUT)
-            .user_agent(Self::BROWSER_USER_AGENT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -84,9 +80,8 @@ impl WebService {
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration) -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(timeout)
-            .user_agent(Self::BROWSER_USER_AGENT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -747,6 +742,8 @@ impl WebService {
                 let mut page_has_results = false;
 
                 for search_url in &search_urls {
+                    stealth::random_delay(300, 1500).await;
+
                     for attempt in 1..=MAX_RETRIES_PER_PROVIDER {
                         debug!(
                             "Web search attempt via {} provider={} (try {}/{})",
@@ -825,6 +822,33 @@ impl WebService {
                                 "Web search provider {} returned anti-bot challenge page on attempt {}",
                                 search_url, attempt
                             );
+
+                            if let Some(solver) = stealth::flaresolverr() {
+                                info!("Attempting FlareSolverr bypass for {}", search_url);
+                                match solver.solve(search_url).await {
+                                    Ok(solved_html) => {
+                                        let mut results = self.parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
+                                        for result in &mut results {
+                                            result.source = Some(provider.to_string());
+                                        }
+                                        if !results.is_empty() {
+                                            providers_used.insert(provider.to_string());
+                                            page_has_results = true;
+                                            for result in results {
+                                                let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                                if seen_urls.insert(canonical) {
+                                                    merged_results.push(result);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("FlareSolverr failed for {}: {}", search_url, e);
+                                    }
+                                }
+                            }
+
                             last_error = Some(format!(
                                 "Search provider challenge page from {} (attempt {})",
                                 search_url, attempt
@@ -873,15 +897,10 @@ impl WebService {
     }
 
     fn build_search_request(&self, url: &str) -> reqwest::RequestBuilder {
-        self.client
-            .get(url)
-            .header(
-                ACCEPT,
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            )
-            .header(ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-            .header(CACHE_CONTROL, "no-cache")
-            .header(PRAGMA, "no-cache")
+        let profile = stealth::random_profile();
+        let referer = stealth::search_referer_for_url(url);
+        let headers = stealth::search_headers(profile, referer);
+        self.client.get(url).headers(headers)
     }
 
     /// Check if IP is private or reserved (comprehensive check)
@@ -1127,12 +1146,17 @@ impl WebServiceTrait for WebService {
         // Validate URL for security
         self.validate_url(url)?;
 
-        let start = Instant::now();
+        stealth::random_delay(500, 2000).await;
 
-        // Fetch URL with timeout
+        let start = Instant::now();
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
+        // Fetch URL with timeout and browser-like headers
         let response = self
             .client
             .get(url)
+            .headers(headers)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;

@@ -194,7 +194,6 @@ pub mod cache;
 pub mod conversation;
 pub mod credentials;
 pub mod custom_model;
-// DELETED: pub mod daily_notes; - Feature removed
 pub mod embedding;
 pub mod extraction;
 pub mod favorites;
@@ -226,7 +225,6 @@ pub use custom_model::{
     AddFromFileUseCase, AddFromUrlUseCase, DeleteUseCase as DeleteCustomModelUseCase,
     ListUseCase as ListCustomModelsUseCase, ValidateUseCase as ValidateCustomModelUseCase,
 };
-// DELETED: Daily notes use case exports - Feature removed
 pub use embedding::{
     GenerateBatchEmbeddingsUseCase, GenerateSingleEmbeddingUseCase, GetEmbeddingModelInfoUseCase,
 };

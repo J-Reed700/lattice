@@ -2,8 +2,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { TagManager } from './TagManager';
 import { VaultAPI } from '@/lib/api';
+
+import { TagManager } from './TagManager';
 
 
 import type { Tag } from '../../types/api/tags';

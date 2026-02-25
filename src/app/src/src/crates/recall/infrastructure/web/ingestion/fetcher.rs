@@ -1,7 +1,7 @@
 use crate::infrastructure::web::ingestion::config::WebIngestionConfig;
 use crate::infrastructure::web::ingestion::error::{Result, WebIngestionError};
 use crate::infrastructure::web::ingestion::types::{is_safe_ip, is_safe_url, normalize_url};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::utils::stealth;
 use futures::StreamExt;
 use reqwest::{Client, Response};
 use std::time::Duration;
@@ -16,9 +16,8 @@ pub struct WebFetcher {
 
 impl WebFetcher {
     pub fn new(config: WebIngestionConfig) -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(config.timeout)
-            .user_agent(&config.user_agent)
             .redirect(if config.follow_redirects {
                 reqwest::redirect::Policy::limited(config.max_redirects)
             } else {
@@ -41,6 +40,8 @@ impl WebFetcher {
             warn!("Blocked potentially unsafe URL: {}", url);
             return Err(WebIngestionError::blocked_url(url));
         }
+
+        stealth::random_delay(500, 2000).await;
 
         // Retry loop with exponential backoff
         let mut attempt = 0;
@@ -119,16 +120,16 @@ impl WebFetcher {
     }
 
     async fn fetch_once(&self, parsed_url: &url::Url, original_url: &str) -> Result<String> {
-        // DNS resolution and IP validation
-        // This prevents DNS rebinding attacks where a domain resolves to a private IP
-        if let Some(host_str) = parsed_url.host_str() {
-            // For domains, we need to add the port for proper DNS resolution
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
+        // DNS resolution and IP validation (prevents DNS rebinding / SSRF)
+        let response = if let Some(host_str) = parsed_url.host_str() {
             let port = parsed_url.port_or_known_default().unwrap_or(80);
             let host_with_port = format!("{}:{}", host_str, port);
 
             debug!("Resolving DNS for: {}", host_str);
 
-            // Resolve all IP addresses for the hostname
             let socket_addrs: Vec<_> = lookup_host(&host_with_port)
                 .await
                 .map_err(|e| {
@@ -146,53 +147,42 @@ impl WebFetcher {
                 ));
             }
 
-            // Validate each resolved IP address
             for socket_addr in &socket_addrs {
                 let ip = socket_addr.ip();
                 debug!("Resolved IP: {}", ip);
-
                 if !is_safe_ip(&ip) {
-                    warn!(
-                        "Blocked URL that resolved to unsafe IP: {} -> {}",
-                        original_url, ip
-                    );
+                    warn!("Blocked URL that resolved to unsafe IP: {} -> {}", original_url, ip);
                     return Err(WebIngestionError::blocked_url(original_url));
                 }
             }
 
             debug!(
                 "DNS validation passed: {} resolved to {} safe address(es)",
-                host_str,
-                socket_addrs.len()
+                host_str, socket_addrs.len()
             );
 
-            // Store validated IPs for post-request verification
             let validated_ips: Vec<_> = socket_addrs.iter().map(|addr| addr.ip()).collect();
-
             debug!("Normalized URL: {}", parsed_url);
 
-            // Make the HTTP request
             let response = self
                 .client
                 .get(parsed_url.as_str())
+                .headers(headers)
                 .send()
                 .await?;
 
-            // SECURITY: Post-request DNS validation to prevent DNS rebinding attacks
-            // DNS could have changed between validation and request (TOCTOU vulnerability)
+            // Post-request DNS validation to detect DNS rebinding (TOCTOU)
             debug!("Performing post-request DNS validation to detect rebinding");
-
             let post_request_addrs: Vec<_> = lookup_host(&host_with_port)
                 .await
                 .map_err(|e| {
                     WebIngestionError::fetch_error(
                         original_url,
-                        &format!("Post-request DNS check failed: {}", e)
+                        &format!("Post-request DNS check failed: {}", e),
                     )
                 })?
                 .collect();
 
-            // Verify the IPs haven't changed to something unsafe
             for addr in &post_request_addrs {
                 if !is_safe_ip(&addr.ip()) {
                     warn!(
@@ -201,7 +191,7 @@ impl WebFetcher {
                     );
                     return Err(WebIngestionError::fetch_error(
                         original_url,
-                        "DNS rebinding attack detected: IP changed to unsafe address after validation"
+                        "DNS rebinding attack detected: IP changed to unsafe address after validation",
                     ));
                 }
             }
@@ -214,21 +204,22 @@ impl WebFetcher {
             );
 
             self.validate_response(&response, original_url).await?;
+            response
         } else {
             debug!("Normalized URL: {}", parsed_url);
 
             let response = self
                 .client
                 .get(parsed_url.as_str())
+                .headers(headers)
                 .send()
                 .await?;
 
             self.validate_response(&response, original_url).await?;
-        }
+            response
+        };
 
-        // SECURITY FIX: Check Content-Length BEFORE reading body
         if self.config.require_content_length {
-            // Strict mode: Require Content-Length header
             let content_length = response
                 .content_length()
                 .ok_or_else(|| {
@@ -236,7 +227,7 @@ impl WebFetcher {
                         original_url,
                         "Server did not provide Content-Length header. Cannot safely download content. \
                          This is a security measure to prevent memory exhaustion attacks. \
-                         If you trust this server, you can disable this check in the configuration."
+                         If you trust this server, you can disable this check in the configuration.",
                     )
                 })?;
 
@@ -249,15 +240,16 @@ impl WebFetcher {
                 ));
             }
 
-            // Safe to read now that size is validated
             let text = response.text().await.map_err(|e| {
-                WebIngestionError::fetch_error(original_url, format!("Failed to read response body: {}", e))
+                WebIngestionError::fetch_error(
+                    original_url,
+                    format!("Failed to read response body: {}", e),
+                )
             })?;
 
             info!("Successfully fetched {} bytes from {}", text.len(), original_url);
             Ok(text)
         } else {
-            // Default mode: Stream with size enforcement (safer, works without Content-Length)
             self.fetch_with_streaming(response, original_url).await
         }
     }

@@ -33,6 +33,14 @@ from src.schemas.function_calling import (
     WebSearchOutput,
     WebSearchResult,
 )
+from src.services.llm.function_calling.stealth import (
+    browser_headers,
+    build_stealth_httpx_client,
+    flaresolverr,
+    random_delay,
+    random_profile,
+    search_headers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,14 +108,13 @@ class WebService:
         self._http_client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
-        """Initialize HTTP client."""
+        """Initialize HTTP client with stealth features (cookies, proxy)."""
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(
+            self._http_client = build_stealth_httpx_client(
                 timeout=30.0,
                 follow_redirects=True,
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
             )
-            logger.info("WebService initialized")
+            logger.info("WebService initialized with stealth features")
 
     async def cleanup(self) -> None:
         """Cleanup HTTP client."""
@@ -316,9 +323,19 @@ class WebService:
             msg = "duckduckgo-search package not installed. Install with: pip install duckduckgo-search"
             raise ImportError(msg) from e
 
-        # Perform search
+        # Perform search with random delay
         try:
-            with DDGS() as ddgs:
+            await random_delay(300, 1500)
+
+            profile = random_profile()
+            hdrs = search_headers(profile)
+
+            try:
+                ddgs = DDGS(headers=hdrs)
+            except TypeError:
+                ddgs = DDGS()
+
+            with ddgs:
                 results = list(
                     ddgs.text(
                         keywords=input_data.query,
@@ -394,11 +411,16 @@ class WebService:
                 logger.debug(f"URL fetch cache hit: {input_data.url[:100]}")
                 return FetchUrlContentOutput(**cached)
 
-        # Fetch content
+        # Fetch content with stealth features
         start_time = datetime.now()
         try:
+            await random_delay(500, 2000)
+            profile = random_profile()
+            hdrs = browser_headers(profile)
+
             response = await self.http_client.get(
                 input_data.url,
+                headers=hdrs,
                 timeout=input_data.timeout_seconds,
             )
             response.raise_for_status()

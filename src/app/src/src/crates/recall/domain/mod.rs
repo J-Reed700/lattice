@@ -53,45 +53,53 @@
 //! # }
 //! ```
 
-// Declare submodules (DDD refactored structure)
+// Directory-based domain modules
 pub mod aggregates;
 pub mod entities;
-pub mod error;
 pub mod events;
-pub mod metadata;
 pub mod ports;
+pub mod qa;
 pub mod repositories;
 pub mod services;
 pub mod value_objects;
 
-// Master branch additions
+// Single-file domain modules moved under modules/ for filesystem organization
+#[path = "modules/conversation.rs"]
 pub mod conversation;
+#[path = "modules/conversation_summary.rs"]
 pub mod conversation_summary;
-pub mod function_call;
-
-// Web archive feature
-pub mod web_archive;
-
-// Q&A and HyDE feature
-pub mod qa;
-
-// Model management domain types
+#[path = "modules/curated_models.rs"]
 pub mod curated_models;
-pub mod embedding_constants;
-pub mod model_catalog;
-pub mod model_file_validator;
-pub mod model_management;
-pub mod model_metadata;
-pub mod model_paths;
-pub mod model_type_classifier;
-
-// Download management domain types
-pub mod download;
-pub mod download_snapshot;
-pub mod downloaded_model;
-
-// Custom model management domain types
+#[path = "modules/custom_model.rs"]
 pub mod custom_model;
+#[path = "modules/download.rs"]
+pub mod download;
+#[path = "modules/download_snapshot.rs"]
+pub mod download_snapshot;
+#[path = "modules/downloaded_model.rs"]
+pub mod downloaded_model;
+#[path = "modules/embedding_constants.rs"]
+pub mod embedding_constants;
+#[path = "modules/error.rs"]
+pub mod error;
+#[path = "modules/function_call.rs"]
+pub mod function_call;
+#[path = "modules/metadata.rs"]
+pub mod metadata;
+#[path = "modules/model_catalog.rs"]
+pub mod model_catalog;
+#[path = "modules/model_file_validator.rs"]
+pub mod model_file_validator;
+#[path = "modules/model_management.rs"]
+pub mod model_management;
+#[path = "modules/model_metadata.rs"]
+pub mod model_metadata;
+#[path = "modules/model_paths.rs"]
+pub mod model_paths;
+#[path = "modules/model_type_classifier.rs"]
+pub mod model_type_classifier;
+#[path = "modules/web_archive.rs"]
+pub mod web_archive;
 
 // ============================================================================
 // Phase 1: New DDD Structure (Pure Domain Layer)

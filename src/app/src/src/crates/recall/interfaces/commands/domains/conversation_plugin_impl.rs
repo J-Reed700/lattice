@@ -11,7 +11,8 @@ use crate::application::dtos::conversation_dto::{
 };
 use crate::application::dtos::conversation_message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, ConversationMessageBookmarkDto,
-    ListMessageBookmarksQueryDto, ListMessageBookmarksResponseDto,
+    DeleteConversationMessageRequestDto, ListMessageBookmarksQueryDto,
+    ListMessageBookmarksResponseDto,
     UnbookmarkConversationMessageRequestDto,
 };
 use crate::application::dtos::conversation_space_dto::{
@@ -1551,6 +1552,116 @@ pub async fn unbookmark_conversation_message_impl(
     .map_err(|e| {
         ApiError::from(AppError::Database(format!(
             "Failed to remove message bookmark: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn delete_conversation_message_impl(
+    request: DeleteConversationMessageRequestDto,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to start delete message transaction: {}",
+            e
+        )))
+    })?;
+
+    let exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM conversation_messages
+        WHERE id = ? AND conversation_id = ?
+        "#,
+    )
+    .bind(&request.message_id)
+    .bind(&request.conversation_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to verify message deletion target: {}",
+            e
+        )))
+    })?;
+
+    if exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Message {} does not belong to conversation {}",
+            request.message_id, request.conversation_id
+        ))));
+    }
+
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_messages
+        WHERE id = ? AND conversation_id = ?
+        "#,
+    )
+    .bind(&request.message_id)
+    .bind(&request.conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!("Failed to delete message: {}", e)))
+    })?;
+
+    #[derive(sqlx::FromRow)]
+    struct MessageStatsRow {
+        message_count: i64,
+        total_tokens: i64,
+    }
+
+    let stats = sqlx::query_as::<_, MessageStatsRow>(
+        r#"
+        SELECT
+            COUNT(*) AS message_count,
+            COALESCE(SUM(tokens), 0) AS total_tokens
+        FROM conversation_messages
+        WHERE conversation_id = ?
+        "#,
+    )
+    .bind(&request.conversation_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to recalculate conversation message stats: {}",
+            e
+        )))
+    })?;
+
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        UPDATE conversations
+        SET message_count = ?,
+            total_tokens = ?,
+            updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(stats.message_count)
+    .bind(stats.total_tokens)
+    .bind(now)
+    .bind(&request.conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to update conversation stats after message deletion: {}",
+            e
+        )))
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit delete message transaction: {}",
             e
         )))
     })?;

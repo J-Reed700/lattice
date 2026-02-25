@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { VaultAPI } from '@/lib/api';
+
 import Upload from '../Upload';
 
 const mockIndexFileResponse = {
