@@ -1010,10 +1010,7 @@ impl WebIngestionService {
                 ExtractionStrategy::Article,
             ]
         } else {
-            vec![
-                ExtractionStrategy::Article,
-                ExtractionStrategy::VideoMetadata,
-            ]
+            vec![ExtractionStrategy::Article]
         }
     }
 
@@ -1838,10 +1835,7 @@ This is a test
         );
         assert_eq!(
             article,
-            vec![
-                ExtractionStrategy::Article,
-                ExtractionStrategy::VideoMetadata
-            ]
+            vec![ExtractionStrategy::Article]
         );
     }
 

@@ -75,7 +75,7 @@ export namespace EventSchemas {
 
   export namespace Indexing {
     // Indexing events use a discriminated union with 'type' field
-    // Matches Rust IndexingEvent enum in src/crates/recall/infrastructure/indexing/events.rs
+    // Matches Rust IndexingEvent enum in src/crates/recall/infrastructure/indexing/modules/events.rs
 
     export const Started = z.object({
       type: z.literal('Started'),

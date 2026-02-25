@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
 import VaultAPI from '../../lib/api';
-import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 import { useConversationsStore } from '../../stores/conversationsStore';
+import { useFileBrowserStore } from '../../stores/fileBrowserStore';
+
 import type { CustomCollection } from '../../types/fileBrowser';
 
 interface UploadProps {

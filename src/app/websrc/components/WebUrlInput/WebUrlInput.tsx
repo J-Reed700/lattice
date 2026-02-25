@@ -19,8 +19,8 @@ import { useState, type FormEvent, type ChangeEvent } from 'react';
 
 import { Globe} from 'lucide-react';
 
-import { type WebIngestResponse } from '../../types';
 import { VaultAPI } from '../../lib/api';
+import { type WebIngestResponse } from '../../types';
 import { showSuccessToast, showErrorToast } from '../../utils/toast';
 import Button from '../ui/Button/Button';
 import Input from '../ui/input/Input';

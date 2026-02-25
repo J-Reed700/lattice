@@ -5,7 +5,7 @@
 // ## Architecture Note: Why Hardcoded URLs?
 //
 // While we have a domain-driven multi-file download infrastructure (see
-// `domain/model_metadata.rs` with `ModelFile` and `CuratedModel`), this manager
+// `domain/modules/model_metadata.rs` with `ModelFile` and `CuratedModel`), this manager
 // uses hardcoded constants for BGE-M3. This is intentional and follows the
 // "ruthless simplicity" principle:
 //

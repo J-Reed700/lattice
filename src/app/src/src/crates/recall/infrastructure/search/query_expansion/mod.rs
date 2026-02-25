@@ -31,8 +31,10 @@
 //! - **User-First**: User synonyms always take priority over domain dictionary
 //! - **Testable**: Comprehensive unit tests for each module
 
+#[path = "modules/config.rs"]
 pub mod config;
 pub mod dictionaries;
+#[path = "modules/expander.rs"]
 pub mod expander;
 
 // Re-export public API

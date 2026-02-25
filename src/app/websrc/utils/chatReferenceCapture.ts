@@ -36,6 +36,47 @@ const unique = (values: string[]): string[] => [...new Set(values.filter(Boolean
 const sanitizeForId = (value: string): string =>
   value.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 72);
 
+const escapeForRegex = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildCaptureMarker = (conversationId: string, messageId: string): string =>
+  `${sanitizeForId(conversationId)}::${sanitizeForId(messageId)}`;
+
+const replaceLegacyMarkerWrappedBlock = (
+  content: string,
+  marker: string,
+  replacement: string
+): string | null => {
+  const start = `<!-- recall-capture-start:${marker} -->`;
+  const end = `<!-- recall-capture-end:${marker} -->`;
+  const pattern = new RegExp(
+    `${escapeForRegex(start)}[\\s\\S]*?${escapeForRegex(end)}`,
+    'g'
+  );
+
+  if (!pattern.test(content)) {
+    return null;
+  }
+
+  const replaced = content.replace(pattern, replacement);
+  return replaced.replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const unwrapLegacyCaptureBlocks = (content: string): string => {
+  const blockPattern =
+    /<!--\s*recall-capture-start:[^>]+-->\s*([\s\S]*?)\s*<!--\s*recall-capture-end:[^>]+-->/g;
+
+  return content.replace(blockPattern, (_match, inner: string) => {
+    const normalizedInner = String(inner).replace(/\r\n/g, '\n');
+    const messageSplit = normalizedInner.split(/\n### Message\s*\n+/);
+    if (messageSplit.length > 1) {
+      const message = messageSplit.slice(1).join('\n### Message\n').trim();
+      if (message) return message;
+    }
+    return normalizedInner.trim();
+  });
+};
+
 const isoDateStamp = (capturedAt: Date): string => {
   const year = capturedAt.getFullYear();
   const month = String(capturedAt.getMonth() + 1).padStart(2, '0');
@@ -45,19 +86,6 @@ const isoDateStamp = (capturedAt: Date): string => {
 
 const defaultInboxTitle = (capturedAt: Date): string =>
   `Research Inbox · ${isoDateStamp(capturedAt)}`;
-
-const summarizeContent = (content: string): string => {
-  const compact = content.replace(/\s+/g, ' ').trim();
-  if (!compact) return 'Chat Reference';
-  return compact.length > 88 ? `${compact.slice(0, 88)}...` : compact;
-};
-
-const quoteBlock = (content: string): string =>
-  content
-    .trim()
-    .split('\n')
-    .map((line) => (line.length > 0 ? `> ${line}` : '>'))
-    .join('\n');
 
 const buildSnapshotId = (conversationId: string, messageId: string): string =>
   `capture_${sanitizeForId(conversationId)}_${sanitizeForId(messageId)}`;
@@ -85,52 +113,44 @@ const resolveTargetNote = async (capturedAt: Date): Promise<WorkspaceNote> => {
 export async function captureChatReferenceToWorkspaceNote(
   input: CaptureChatReferenceInput
 ): Promise<CaptureChatReferenceResult> {
-  const content = input.messageContent.trim();
-  if (!content) {
+  const content = input.messageContent;
+  if (!content.trim()) {
     throw new Error('Cannot capture an empty message.');
   }
 
   const capturedAt = input.capturedAt ?? new Date();
   const capturedAtIso = capturedAt.toISOString();
   const sourceReferences = input.sourceReferences ?? [];
-  const sourceLabels = unique(
-    sourceReferences
-      .map((source) => source.label?.trim() ?? '')
-      .filter((label) => label.length > 0)
-  );
   const sourceDocumentIds = unique(
     sourceReferences
       .map((source) => source.documentId?.trim() ?? '')
       .filter((id) => id.length > 0)
   );
-  const referenceTitle = input.referenceTitle?.trim() || summarizeContent(content);
   const conversationTitle = input.conversationTitle?.trim() || 'Untitled conversation';
-  const referenceNote = input.referenceNote?.trim();
   const shouldAddSnapshot = input.addSnapshot !== false;
-
-  const blockLines: string[] = [
-    `## Chat Reference · ${referenceTitle}`,
-    `Captured: ${capturedAt.toLocaleString()}`,
-    `Conversation: ${conversationTitle}`,
-    `Message Role: ${input.messageRole}`,
-    `Message ID: ${input.messageId}`,
-  ];
-
-  if (referenceNote) {
-    blockLines.push(`Note: ${referenceNote}`);
-  }
-
-  if (sourceLabels.length > 0) {
-    blockLines.push('Sources:');
-    blockLines.push(...sourceLabels.map((label) => `- ${label}`));
-  }
-
-  blockLines.push('', quoteBlock(content), '');
-  const block = blockLines.join('\n');
+  const captureMarker = buildCaptureMarker(input.conversationId, input.messageId);
 
   const targetNote = await resolveTargetNote(capturedAt);
   const currentContent = targetNote.content?.trimEnd() ?? '';
-  const nextContent = currentContent ? `${currentContent}\n\n${block}` : block.trim();
+  const markerReplacedContent = replaceLegacyMarkerWrappedBlock(
+    currentContent,
+    captureMarker,
+    content
+  );
+  const normalizedCurrentContent =
+    unwrapLegacyCaptureBlocks(markerReplacedContent ?? currentContent)
+      .replace(/^<!-- recall-capture-(?:start|end):.*? -->\s*$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trimEnd();
+
+  const nextContent = normalizedCurrentContent
+    ? (
+        normalizedCurrentContent.includes(content)
+          ? normalizedCurrentContent
+          : `${normalizedCurrentContent}\n\n${content}`
+      )
+    : content;
+
   const snapshotId = buildSnapshotId(input.conversationId, input.messageId);
 
   const snapshotMessage: SnapshotMessage = {

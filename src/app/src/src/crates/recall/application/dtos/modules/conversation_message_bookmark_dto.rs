@@ -35,6 +35,13 @@ pub struct UnbookmarkConversationMessageRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct DeleteConversationMessageRequestDto {
+    pub conversation_id: String,
+    pub message_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct ListMessageBookmarksQueryDto {
     pub conversation_id: Option<String>,
     pub query: Option<String>,

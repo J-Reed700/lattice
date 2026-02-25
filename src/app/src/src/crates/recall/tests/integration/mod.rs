@@ -2,5 +2,5 @@
 //!
 //! Tests for multi-service workflows and cross-cutting concerns.
 
-// Disabled for RC1 - Refactor Drift (see TEST_DEBT.md)
-// pub mod service_integration_tests;
+// `service_integration_tests` is temporarily disabled for RC1 refactor drift.
+// See TEST_DEBT.md for re-enable criteria.

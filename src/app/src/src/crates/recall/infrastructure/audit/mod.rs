@@ -58,7 +58,9 @@
 //! }
 //! ```
 
+#[path = "modules/event.rs"]
 pub mod event;
+#[path = "modules/logger.rs"]
 pub mod logger;
 pub mod sinks;
 

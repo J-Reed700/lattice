@@ -66,11 +66,15 @@ models/
 # Compiled test binaries
 test_context_manager
 mock_http
+src/app/src/test_web_archive_security
 
 # Database files
 *.db
 *.db-shm
 *.db-wal
+
+# Rust temp schema artifacts
+src/app/src/src/crates/recall/infrastructure/persistence/database/schema.rs.tmp*
 
 # Runtime artifacts
 src/app/src/crashes/

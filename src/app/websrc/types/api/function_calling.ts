@@ -2,7 +2,7 @@
  * Function Calling API Types
  *
  * Type definitions for LLM function calling operations.
- * These types match the Rust backend structures from domain/function_call.rs
+ * These types match the Rust backend structures from domain/modules/function_call.rs
  */
 
 /**

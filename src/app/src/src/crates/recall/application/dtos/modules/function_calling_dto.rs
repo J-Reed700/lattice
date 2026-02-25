@@ -503,6 +503,18 @@ pub struct WebSearchOutput {
     /// Providers that contributed results.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers_used: Vec<String>,
+
+    /// Number of unique normalized queries executed across deep-research recursion.
+    #[serde(default)]
+    pub unique_query_count: usize,
+
+    /// Number of unique canonical URLs discovered before pagination.
+    #[serde(default)]
+    pub unique_url_count: usize,
+
+    /// Number of unique domains discovered before pagination.
+    #[serde(default)]
+    pub unique_domain_count: usize,
 }
 
 /// Input for fetch_url_content function.

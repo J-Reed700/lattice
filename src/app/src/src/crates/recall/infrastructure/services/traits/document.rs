@@ -210,12 +210,12 @@
 //!
 //! 1. `src/shared/traits.rs` - Commented out legacy trait (+122 docs)
 //! 2. `src/interfaces/di/service_container.rs` - DDD ports (~50 lines)
-//! 3. `src/infrastructure/services/function_executor.rs` - DDD ports (~15 lines)
+//! 3. `src/infrastructure/services/domains/function_executor.rs` - DDD ports (~15 lines)
 //! 4. `src/infrastructure/setup/app.rs` - DDD initialization (~10 lines)
-//! 5. `src/infrastructure/persistence/repositories/mocks.rs` - Mock (+180 lines)
+//! 5. `src/infrastructure/persistence/repositories/support/mocks.rs` - Mock (+180 lines)
 //! 6. `src/infrastructure/services/traits/document.rs` - Migration guide (THIS FILE)
 //! 7. `src/interfaces/di/tests.rs` - Updated mocks (~15 lines)
-//! 8. `src/interfaces/commands/function_calling_commands.rs` - Updated mocks (~10 lines)
+//! 8. `src/interfaces/commands/domains/function_calling_commands.rs` - Updated mocks (~10 lines)
 //! 9. Additional test files as needed
 //!
 //! # Why This Migration?
@@ -234,4 +234,4 @@
 //! - `src/application/ports/document_repository_port.rs` - Specific port
 //! - `src/infrastructure/persistence/repositories/document_repository.rs` - Implementation
 //! - `src/infrastructure/persistence/mappers/document_mapper.rs` - Mapper
-//! - `src/infrastructure/persistence/repositories/mocks.rs` - Mock for testing
+//! - `src/infrastructure/persistence/repositories/support/mocks.rs` - Mock for testing

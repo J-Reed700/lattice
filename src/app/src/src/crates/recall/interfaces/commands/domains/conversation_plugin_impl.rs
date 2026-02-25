@@ -11,7 +11,8 @@ use crate::application::dtos::conversation_dto::{
 };
 use crate::application::dtos::conversation_message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, ConversationMessageBookmarkDto,
-    ListMessageBookmarksQueryDto, ListMessageBookmarksResponseDto,
+    DeleteConversationMessageRequestDto, ListMessageBookmarksQueryDto,
+    ListMessageBookmarksResponseDto,
     UnbookmarkConversationMessageRequestDto,
 };
 use crate::application::dtos::conversation_space_dto::{
@@ -23,7 +24,7 @@ use crate::application::dtos::conversation_space_dto::{
 };
 use crate::interfaces::commands::conversation;
 use crate::interfaces::commands::conversation_chat::{
-    chat_with_conversation as chat_with_conversation_impl, ChatResponse, ToolPreferences,
+    chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
 };
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
@@ -32,10 +33,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::collections::HashSet;
-use tauri::{
-    plugin::{Builder, TauriPlugin},
-    State,
-};
 
 const DEFAULT_SPACE_ID: &str = "space_general";
 const LOCAL_OWNER_MEMBER_ID: &str = "member_local_owner";
@@ -263,14 +260,12 @@ fn validate_space_role(role: &str) -> Result<&str, ApiError> {
     }
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn create_conversation(
+pub async fn create_conversation_impl(
     request: CreateConversationRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<CreateConversationResponseDto, ApiError> {
     let conversation = conversation::create_conversation_impl(
-        container.inner(),
+        container,
         request.title,
         request.model_name,
         request.system_prompt,
@@ -286,16 +281,13 @@ pub async fn create_conversation(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn get_conversation(
+pub async fn get_conversation_impl(
     request: GetConversationRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<GetConversationResponseDto, ApiError> {
-    let conversation =
-        conversation::get_conversation_impl(container.inner(), request.conversation_id)
-            .await
-            .map_err(ApiError::from)?;
+    let conversation = conversation::get_conversation_impl(container, request.conversation_id)
+        .await
+        .map_err(ApiError::from)?;
 
     Ok(GetConversationResponseDto {
         conversation: match conversation {
@@ -309,16 +301,13 @@ pub async fn get_conversation(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_conversations(
+pub async fn list_conversations_impl(
     query: ListConversationsQuery,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<ListConversationsResponseDto, ApiError> {
-    let conversations =
-        conversation::list_conversations_impl(container.inner(), query.limit, query.offset)
-            .await
-            .map_err(ApiError::from)?;
+    let conversations = conversation::list_conversations_impl(container, query.limit, query.offset)
+        .await
+        .map_err(ApiError::from)?;
 
     let mut items = Vec::with_capacity(conversations.len());
     for c in &conversations {
@@ -332,13 +321,11 @@ pub async fn list_conversations(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn delete_conversation(
+pub async fn delete_conversation_impl(
     request: DeleteConversationRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<DeleteConversationResponseDto, ApiError> {
-    conversation::delete_conversation_impl(container.inner(), request.conversation_id)
+    conversation::delete_conversation_impl(container, request.conversation_id)
         .await
         .map_err(ApiError::from)?;
 
@@ -347,16 +334,13 @@ pub async fn delete_conversation(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn get_conversation_messages(
+pub async fn get_conversation_messages_impl(
     request: GetConversationMessagesRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<GetConversationMessagesResponseDto, ApiError> {
-    let messages =
-        conversation::get_conversation_messages_impl(container.inner(), request.conversation_id)
-            .await
-            .map_err(ApiError::from)?;
+    let messages = conversation::get_conversation_messages_impl(container, request.conversation_id)
+        .await
+        .map_err(ApiError::from)?;
 
     Ok(GetConversationMessagesResponseDto {
         messages: messages
@@ -376,29 +360,21 @@ pub async fn get_conversation_messages(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn rename_conversation(
+pub async fn rename_conversation_impl(
     request: RenameConversationRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    conversation::rename_conversation_impl(
-        container.inner(),
-        request.conversation_id,
-        request.new_title,
-    )
-    .await
-    .map_err(ApiError::from)?;
+    conversation::rename_conversation_impl(container, request.conversation_id, request.new_title)
+        .await
+        .map_err(ApiError::from)?;
 
     Ok(RenameConversationResponseDto {
         status: "success".to_string(),
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn chat_with_conversation_wrapper(
-    container: State<'_, Container>,
+pub async fn chat_with_conversation_wrapper_impl(
+    container: &Container,
     conversation_id: Option<String>,
     message: String,
     tool_preferences: Option<ToolPreferences>,
@@ -413,7 +389,7 @@ pub async fn chat_with_conversation_wrapper(
         "chat_with_conversation_wrapper: START"
     );
 
-    let fut = chat_with_conversation_impl(
+    let fut = run_chat_with_conversation_impl(
         container,
         conversation_id,
         message,
@@ -442,17 +418,15 @@ pub async fn chat_with_conversation_wrapper(
 }
 
 /// Frontend-facing command: apiCall('chat_with_conversation') expects this name.
-#[tauri::command]
-#[specta::specta]
-pub async fn chat_with_conversation(
-    container: State<'_, Container>,
+pub async fn chat_with_conversation_impl(
+    container: &Container,
     conversation_id: Option<String>,
     message: String,
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
-    chat_with_conversation_wrapper(
+    chat_with_conversation_wrapper_impl(
         container,
         conversation_id,
         message,
@@ -463,11 +437,9 @@ pub async fn chat_with_conversation(
     .await
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn create_conversation_space(
+pub async fn create_conversation_space_impl(
     request: CreateConversationSpaceRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<ConversationSpaceDto, ApiError> {
     let name = request.name.trim();
     if name.is_empty() {
@@ -562,10 +534,8 @@ pub async fn create_conversation_space(
     Ok(created)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_conversation_spaces(
-    container: State<'_, Container>,
+pub async fn list_conversation_spaces_impl(
+    container: &Container,
 ) -> Result<Vec<ConversationSpaceDto>, ApiError> {
     let spaces = sqlx::query_as::<_, ConversationSpaceDto>(
         r#"
@@ -583,11 +553,9 @@ pub async fn list_conversation_spaces(
     Ok(spaces)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_conversation_space_members(
+pub async fn list_conversation_space_members_impl(
     space_id: String,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<Vec<ConversationSpaceMemberDto>, ApiError> {
     let members = sqlx::query_as::<_, ConversationSpaceMemberDto>(
         r#"
@@ -625,11 +593,9 @@ pub async fn list_conversation_space_members(
     Ok(members)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn upsert_conversation_space_member(
+pub async fn upsert_conversation_space_member_impl(
     request: UpsertConversationSpaceMemberRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<ConversationSpaceMemberDto, ApiError> {
     let role = validate_space_role(&request.role)?;
 
@@ -753,11 +719,9 @@ pub async fn upsert_conversation_space_member(
     Ok(member)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn remove_conversation_space_member(
+pub async fn remove_conversation_space_member_impl(
     request: RemoveConversationSpaceMemberRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     let current_role = sqlx::query_scalar::<_, String>(
         r#"
@@ -827,11 +791,9 @@ pub async fn remove_conversation_space_member(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn update_conversation_space(
+pub async fn update_conversation_space_impl(
     request: UpdateConversationSpaceRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<ConversationSpaceDto, ApiError> {
     let now = Utc::now().to_rfc3339();
     let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
@@ -897,11 +859,9 @@ pub async fn update_conversation_space(
     Ok(updated)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn archive_conversation_space(
+pub async fn archive_conversation_space_impl(
     request: ArchiveConversationSpaceRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     if request.space_id == DEFAULT_SPACE_ID && request.archived {
         return Err(ApiError::from(AppError::InvalidInput(
@@ -943,11 +903,9 @@ pub async fn archive_conversation_space(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn move_conversation_to_space(
+pub async fn move_conversation_to_space_impl(
     request: MoveConversationToSpaceRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
         .bind(&request.space_id)
@@ -1041,11 +999,9 @@ pub async fn move_conversation_to_space(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_conversation_linked_documents(
+pub async fn list_conversation_linked_documents_impl(
     conversation_id: String,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<Vec<ConversationLinkedDocumentDto>, ApiError> {
     let linked_docs = sqlx::query_as::<_, ConversationLinkedDocumentRow>(
         r#"
@@ -1090,12 +1046,10 @@ pub async fn list_conversation_linked_documents(
         .collect())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn remove_conversation_linked_document(
+pub async fn remove_conversation_linked_document_impl(
     conversation_id: String,
     document_id: String,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     let mut tx = container.db_pool().begin().await.map_err(|e| {
         ApiError::from(AppError::Database(format!(
@@ -1159,11 +1113,9 @@ pub async fn remove_conversation_linked_document(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_document_space_memberships(
+pub async fn list_document_space_memberships_impl(
     document_id: String,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<Vec<DocumentSpaceMembershipDto>, ApiError> {
     let memberships = sqlx::query_as::<_, DocumentSpaceMembershipRow>(
         r#"
@@ -1199,13 +1151,11 @@ pub async fn list_document_space_memberships(
         .collect())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn set_document_space_membership(
+pub async fn set_document_space_membership_impl(
     document_id: String,
     space_id: String,
     assigned: bool,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     let document_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
         .bind(&document_id)
@@ -1284,13 +1234,11 @@ pub async fn set_document_space_membership(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn set_documents_space_membership(
+pub async fn set_documents_space_membership_impl(
     document_ids: Vec<String>,
     space_id: String,
     assigned: bool,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     const DOCUMENT_BATCH_SIZE: usize = 250;
 
@@ -1452,11 +1400,9 @@ async fn set_conversation_state(
     Ok(())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn set_conversation_saved(
+pub async fn set_conversation_saved_impl(
     request: SetConversationStateRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     set_conversation_state(
         container.db_pool(),
@@ -1472,11 +1418,9 @@ pub async fn set_conversation_saved(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn set_conversation_bookmarked(
+pub async fn set_conversation_bookmarked_impl(
     request: SetConversationStateRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     set_conversation_state(
         container.db_pool(),
@@ -1492,11 +1436,9 @@ pub async fn set_conversation_bookmarked(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn set_conversation_pinned(
+pub async fn set_conversation_pinned_impl(
     request: SetConversationStateRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     set_conversation_state(
         container.db_pool(),
@@ -1512,11 +1454,9 @@ pub async fn set_conversation_pinned(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn set_conversation_archived(
+pub async fn set_conversation_archived_impl(
     request: SetConversationStateRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     set_conversation_state(
         container.db_pool(),
@@ -1532,11 +1472,9 @@ pub async fn set_conversation_archived(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn bookmark_conversation_message(
+pub async fn bookmark_conversation_message_impl(
     request: BookmarkConversationMessageRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     let exists: i64 = sqlx::query_scalar(
         r#"
@@ -1597,11 +1535,9 @@ pub async fn bookmark_conversation_message(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn unbookmark_conversation_message(
+pub async fn unbookmark_conversation_message_impl(
     request: UnbookmarkConversationMessageRequestDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     sqlx::query(
         r#"
@@ -1625,11 +1561,119 @@ pub async fn unbookmark_conversation_message(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_message_bookmarks(
+pub async fn delete_conversation_message_impl(
+    request: DeleteConversationMessageRequestDto,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to start delete message transaction: {}",
+            e
+        )))
+    })?;
+
+    let exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM conversation_messages
+        WHERE id = ? AND conversation_id = ?
+        "#,
+    )
+    .bind(&request.message_id)
+    .bind(&request.conversation_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to verify message deletion target: {}",
+            e
+        )))
+    })?;
+
+    if exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Message {} does not belong to conversation {}",
+            request.message_id, request.conversation_id
+        ))));
+    }
+
+    sqlx::query(
+        r#"
+        DELETE FROM conversation_messages
+        WHERE id = ? AND conversation_id = ?
+        "#,
+    )
+    .bind(&request.message_id)
+    .bind(&request.conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!("Failed to delete message: {}", e)))
+    })?;
+
+    #[derive(sqlx::FromRow)]
+    struct MessageStatsRow {
+        message_count: i64,
+        total_tokens: i64,
+    }
+
+    let stats = sqlx::query_as::<_, MessageStatsRow>(
+        r#"
+        SELECT
+            COUNT(*) AS message_count,
+            COALESCE(SUM(tokens), 0) AS total_tokens
+        FROM conversation_messages
+        WHERE conversation_id = ?
+        "#,
+    )
+    .bind(&request.conversation_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to recalculate conversation message stats: {}",
+            e
+        )))
+    })?;
+
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        UPDATE conversations
+        SET message_count = ?,
+            total_tokens = ?,
+            updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(stats.message_count)
+    .bind(stats.total_tokens)
+    .bind(now)
+    .bind(&request.conversation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to update conversation stats after message deletion: {}",
+            e
+        )))
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit delete message transaction: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn list_message_bookmarks_impl(
     query: ListMessageBookmarksQueryDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<ListMessageBookmarksResponseDto, ApiError> {
     let limit = query.limit.unwrap_or(100).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
@@ -1742,11 +1786,9 @@ pub async fn list_message_bookmarks(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn list_conversations_explorer(
+pub async fn list_conversations_explorer_impl(
     query: ListConversationsExplorerQueryDto,
-    container: State<'_, Container>,
+    container: &Container,
 ) -> Result<ListConversationsResponseDto, ApiError> {
     let limit = query.limit.unwrap_or(100).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
@@ -1894,40 +1936,4 @@ pub async fn list_conversations_explorer(
         total: conversations.len(),
         conversations,
     })
-}
-
-pub fn init() -> TauriPlugin<tauri::Wry> {
-    Builder::new("conversation")
-        .invoke_handler(tauri::generate_handler![
-            create_conversation,
-            get_conversation,
-            list_conversations,
-            delete_conversation,
-            get_conversation_messages,
-            rename_conversation,
-            chat_with_conversation_wrapper,
-            chat_with_conversation,
-            create_conversation_space,
-            list_conversation_spaces,
-            list_conversation_space_members,
-            upsert_conversation_space_member,
-            remove_conversation_space_member,
-            update_conversation_space,
-            archive_conversation_space,
-            move_conversation_to_space,
-            set_conversation_saved,
-            set_conversation_bookmarked,
-            set_conversation_pinned,
-            set_conversation_archived,
-            list_conversation_linked_documents,
-            remove_conversation_linked_document,
-            list_document_space_memberships,
-            set_document_space_membership,
-            set_documents_space_membership,
-            bookmark_conversation_message,
-            unbookmark_conversation_message,
-            list_message_bookmarks,
-            list_conversations_explorer,
-        ])
-        .build()
 }

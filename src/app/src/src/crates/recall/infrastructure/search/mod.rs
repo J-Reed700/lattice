@@ -146,41 +146,57 @@
 //! println!("Search took: {:?}", metrics.duration);
 //! ```
 
+// Single-file modules grouped under modules/ for filesystem organization.
+#[path = "modules/bm25.rs"]
 pub mod bm25;
+#[path = "modules/builder.rs"]
 pub mod builder;
+#[path = "modules/file_search.rs"]
 pub mod file_search;
+#[path = "modules/fusion.rs"]
 pub mod fusion;
-pub mod hybrid;
+#[path = "modules/index.rs"]
 pub mod index;
+#[path = "modules/profiler.rs"]
 pub mod profiler;
+#[path = "modules/recency.rs"]
 pub mod recency;
+#[path = "modules/reranker.rs"]
 pub mod reranker;
+#[path = "modules/service.rs"]
 pub mod service;
+#[path = "modules/snippet.rs"]
+pub mod snippet;
+#[path = "modules/vector_ops.rs"]
+pub mod vector_ops;
+
+// Directory-backed modules.
+pub mod hybrid;
+pub mod query_expansion;
 pub mod strategies;
 pub mod text_search;
-pub mod vector_ops;
 pub mod vector_search;
 
 pub use bm25::{BM25Result, BM25Search};
 pub use builder::{
     HybridSearchBuilder, Ready as SearchReady, Uninitialized as SearchUninitialized,
 };
+pub use file_search::{FileSearch, FileSearchResult};
 pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedFusion};
 pub use hybrid::{HybridSearchResult, HybridSearchService, SearchConfig, SearchMode};
 pub use index::EmbeddingIndex;
 pub use profiler::{PerformanceMetrics, Profiler};
+pub use query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
+pub use recency::{RecencyConfig, RecencyScorer};
 pub use reranker::{RerankResult, RerankerService};
 pub use service::{BruteForceSearch, SearchResult};
 pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_vector};
 pub use vector_search::USearchVectorIndex;
-pub mod query_expansion;
-pub mod snippet;
-pub use file_search::{FileSearch, FileSearchResult};
-pub use query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
-pub use recency::{RecencyConfig, RecencyScorer};
 
 #[cfg(test)]
+#[path = "modules/vector_ops_test.rs"]
 mod vector_ops_test;
 
 #[cfg(test)]
+#[path = "modules/index_tests.rs"]
 mod index_tests;

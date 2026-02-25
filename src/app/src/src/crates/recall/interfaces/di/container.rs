@@ -55,8 +55,6 @@ use crate::application::use_cases::settings::{
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
 
-// DELETED: Daily Notes Use Cases - Feature removed
-
 // Application Use Cases - File Operations
 use crate::application::use_cases::file::{
     GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
@@ -1410,11 +1408,6 @@ impl Container {
         Arc::clone(self.library.delete_tag_use_case())
     }
 
-    // DELETED: add_tag_to_document_use_case - old use case pattern
-    // pub fn add_tag_to_document_use_case(&self) -> Arc<AddTagToDocumentUseCase> {
-    //     Arc::clone(&self.add_tag_to_document_use_case)
-    // }
-
     pub fn remove_tag_from_document_use_case(&self) -> Arc<RemoveTagFromDocumentUseCase> {
         Arc::clone(self.library.remove_tag_from_document_use_case())
     }
@@ -1498,8 +1491,6 @@ impl Container {
     pub fn validate_settings_use_case(&self) -> Arc<ValidateSettingsUseCase> {
         Arc::clone(self.system.validate_settings_use_case())
     }
-
-    // DELETED: Daily Notes getters (7) - Feature removed
 
     // File Operations (from FileOpsModule)
     pub fn open_file_use_case(&self) -> Arc<OpenFileUseCase> {

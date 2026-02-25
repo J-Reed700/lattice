@@ -76,23 +76,12 @@ pub async fn download_model(
     }
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn download_model_command(
-    model_id: String,
-    container: State<'_, Container>,
-) -> Result<DownloadModelResponse, ApiError> {
-    download_model(model_id, container).await
-}
-
 /// Check whether first-run model setup is required.
 ///
 /// Returns a JSON string for compatibility with existing first-run flow.
 #[tauri::command]
 #[specta::specta]
-pub async fn check_first_run_status_command(
-    container: State<'_, Container>,
-) -> Result<String, ApiError> {
+pub async fn check_first_run_status(container: State<'_, Container>) -> Result<String, ApiError> {
     check_first_run_status_impl(container.inner())
         .await
         .map_err(|e| ApiError {
@@ -107,7 +96,7 @@ pub async fn check_first_run_status_command(
 /// Returns a JSON string for compatibility with existing first-run flow.
 #[tauri::command]
 #[specta::specta]
-pub async fn download_default_embedding_model_command(
+pub async fn download_default_embedding_model(
     container: State<'_, Container>,
 ) -> Result<String, ApiError> {
     download_default_embedding_model_impl(container.inner())
@@ -159,46 +148,10 @@ pub async fn delete_model(
         })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn delete_downloaded_model_and_file(
-    model_id: String,
-    delete_file: bool,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    delete_downloaded_model_and_file_impl(container.inner(), &model_id, delete_file)
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })
-}
-
 /// List all downloaded models
 #[tauri::command]
 #[specta::specta]
 pub async fn list_downloaded_models(
-    container: State<'_, Container>,
-) -> Result<Vec<DownloadedModelResponse>, ApiError> {
-    let json_str = get_models_with_metadata_impl(container.inner())
-        .await
-        .map_err(|e| ApiError {
-            code: ErrorCode::InternalError,
-            message: e,
-            details: None,
-        })?;
-
-    serde_json::from_str(&json_str).map_err(|e| ApiError {
-        code: ErrorCode::SerializationError,
-        message: format!("Failed to parse models: {}", e),
-        details: None,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_models_with_metadata(
     container: State<'_, Container>,
 ) -> Result<Vec<DownloadedModelResponse>, ApiError> {
     let json_str = get_models_with_metadata_impl(container.inner())

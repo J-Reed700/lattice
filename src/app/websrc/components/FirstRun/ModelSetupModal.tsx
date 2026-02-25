@@ -63,7 +63,7 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
     try {
       setLoading(true);
       setError(null);
-      const statusJson = await invoke<string>('plugin:model|check_first_run_status_command');
+      const statusJson = await invoke<string>('plugin:model|check_first_run_status');
       const status: FirstRunStatusResponse = JSON.parse(statusJson);
       setModelInfo(status);
     } catch (err) {
@@ -79,7 +79,7 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
       setDownloading(true);
       setError(null);
 
-      const responseJson = await invoke<string>('plugin:model|download_default_embedding_model_command');
+      const responseJson = await invoke<string>('plugin:model|download_default_embedding_model');
       const response: DownloadDefaultModelResponse = JSON.parse(responseJson);
       setDownloadId(response.download_id);
 

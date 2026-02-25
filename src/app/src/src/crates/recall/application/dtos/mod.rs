@@ -27,34 +27,57 @@
 //! - `backup_dto` - Backup and restore operations
 //! - `update_dto` - Update checking
 //! - `metric_dto` - Application metrics
-//! - `daily_notes_dto` - Daily notes operations
 
+#[path = "modules/backup_dto.rs"]
 pub mod backup_dto;
+#[path = "modules/batch_dto.rs"]
 pub mod batch_dto;
+#[path = "modules/cache_dto.rs"]
 pub mod cache_dto;
+#[path = "modules/conversation_dto.rs"]
 pub mod conversation_dto;
+#[path = "modules/conversation_message_bookmark_dto.rs"]
 pub mod conversation_message_bookmark_dto;
+#[path = "modules/conversation_space_dto.rs"]
 pub mod conversation_space_dto;
+#[path = "modules/credential_dto.rs"]
 pub mod credential_dto;
-// DELETED: pub mod daily_notes_dto; - Feature removed
+#[path = "modules/document_dto.rs"]
 pub mod document_dto;
+#[path = "modules/embedding_dto.rs"]
 pub mod embedding_dto;
+#[path = "modules/extraction_dto.rs"]
 pub mod extraction_dto;
+#[path = "modules/favorite_dto.rs"]
 pub mod favorite_dto;
+#[path = "modules/file_dto.rs"]
 pub mod file_dto;
+#[path = "modules/function_calling_dto.rs"]
 pub mod function_calling_dto;
+#[path = "modules/health_dto.rs"]
 pub mod health_dto;
+#[path = "modules/indexing_dto.rs"]
 pub mod indexing_dto;
+#[path = "modules/initialization_dto.rs"]
 pub mod initialization_dto;
+#[path = "modules/llm_dto.rs"]
 pub mod llm_dto;
+#[path = "modules/mention_dto.rs"]
 pub mod mention_dto;
+#[path = "modules/metric_dto.rs"]
 pub mod metric_dto;
+#[path = "modules/qa_dto.rs"]
 pub mod qa_dto;
+#[path = "modules/recent_dto.rs"]
 pub mod recent_dto;
+#[path = "modules/search_dto.rs"]
 pub mod search_dto;
 pub mod settings;
+#[path = "modules/tag_dto.rs"]
 pub mod tag_dto;
+#[path = "modules/update_dto.rs"]
 pub mod update_dto;
+#[path = "modules/web_dto.rs"]
 pub mod web_dto;
 
 // Re-export commonly used DTOs
@@ -65,7 +88,6 @@ pub use conversation_dto::*;
 pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;
 pub use credential_dto::*;
-// DELETED: pub use daily_notes_dto::*; - Feature removed
 pub use document_dto::*;
 pub use embedding_dto::*;
 pub use extraction_dto::*;

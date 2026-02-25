@@ -487,11 +487,8 @@ pub use infrastructure::{
 /// ```
 pub mod interfaces;
 
-// DEPRECATED: Old commands module replaced by Gateway Pattern
-// pub use interfaces::{commands, di::Container, event_handlers};
 pub use interfaces::{di::Container, event_handlers};
 
-// =============================================================================
 // =============================================================================
 // IPC LAYER - Anti-Corruption Boundary
 // =============================================================================
@@ -598,30 +595,6 @@ pub mod error {
 pub mod domain_types {
     pub use crate::shared::domain_types::*;
 }
-
-// Legacy services module (DEPRECATED).
-//
-// # Migration
-//
-// ```rust
-// // ❌ Old
-// use recall_desktop::services::traits::TagServiceTrait;
-//
-// // ✅ New
-// use recall_desktop::infrastructure::services::traits::TagServiceTrait;
-// // Or use re-export:
-// use recall_desktop::services;
-// ```
-//
-// Commenting out duplicate services module definition
-// Already re-exported at line 440 via: pub use infrastructure::{ ... services, ... }
-// #[deprecated(
-//     since = "0.2.0",
-//     note = "Use `infrastructure::services` module instead, or use re-exported types at crate root"
-// )]
-// pub mod services {
-//     pub use crate::infrastructure::services::*;
-// }
 
 // =============================================================================
 // PUBLIC UTILITY FUNCTIONS

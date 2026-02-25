@@ -9,12 +9,13 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
 import { useProgress } from '../../hooks/useProgressListener';
 import VaultAPI from '../../lib/api';
-import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 import { useConversationsStore } from '../../stores/conversationsStore';
-import type { CustomCollection } from '../../types/fileBrowser';
+import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { showIndexingToast } from '../IndexingStatus';
 import { MiniProgress } from '../Progress';
+
+import type { CustomCollection } from '../../types/fileBrowser';
 
 interface UploadWithProgressProps {
   onUploadComplete?: () => void;

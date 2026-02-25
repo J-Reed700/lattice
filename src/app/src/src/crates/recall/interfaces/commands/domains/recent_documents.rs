@@ -668,7 +668,6 @@ async fn clear_recent_documents_internal(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-// DELETED: list_all_documents command - moved to document_list.rs
 // The old implementation here queried the documents table but returned RecentDocument DTO,
 // which was incorrect. The new implementation in document_list.rs queries documents table
 // and returns proper DocumentMetadataDto with all fields needed for organization.

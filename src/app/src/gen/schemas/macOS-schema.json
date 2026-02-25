@@ -783,6 +783,12 @@
           "markdownDescription": "Enables the delete_conversation command without any pre-configured scope."
         },
         {
+          "description": "Enables the delete_conversation_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-delete-conversation-message",
+          "markdownDescription": "Enables the delete_conversation_message command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-get-conversation",
@@ -937,6 +943,12 @@
           "type": "string",
           "const": "conversation:deny-delete-conversation",
           "markdownDescription": "Denies the delete_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_conversation_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-delete-conversation-message",
+          "markdownDescription": "Denies the delete_conversation_message command without any pre-configured scope."
         },
         {
           "description": "Denies the get_conversation command without any pre-configured scope.",
@@ -3675,24 +3687,6 @@
           "markdownDescription": "Enables the pause_indexing command without any pre-configured scope."
         },
         {
-          "description": "Enables the plugin_get_file_metadata command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-plugin-get-file-metadata",
-          "markdownDescription": "Enables the plugin_get_file_metadata command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the plugin_index_directory command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-plugin-index-directory",
-          "markdownDescription": "Enables the plugin_index_directory command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the plugin_index_file command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-plugin-index-file",
-          "markdownDescription": "Enables the plugin_index_file command without any pre-configured scope."
-        },
-        {
           "description": "Enables the read_file_bytes command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-read-file-bytes",
@@ -3871,24 +3865,6 @@
           "type": "string",
           "const": "file:deny-pause-indexing",
           "markdownDescription": "Denies the pause_indexing command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the plugin_get_file_metadata command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-plugin-get-file-metadata",
-          "markdownDescription": "Denies the plugin_get_file_metadata command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the plugin_index_directory command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-plugin-index-directory",
-          "markdownDescription": "Denies the plugin_index_directory command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the plugin_index_file command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-plugin-index-file",
-          "markdownDescription": "Denies the plugin_index_file command without any pre-configured scope."
         },
         {
           "description": "Denies the read_file_bytes command without any pre-configured scope.",
@@ -4173,10 +4149,10 @@
           "markdownDescription": "Enables the cancel_download command without any pre-configured scope."
         },
         {
-          "description": "Enables the check_first_run_status_command command without any pre-configured scope.",
+          "description": "Enables the check_first_run_status command without any pre-configured scope.",
           "type": "string",
-          "const": "model:allow-check-first-run-status-command",
-          "markdownDescription": "Enables the check_first_run_status_command command without any pre-configured scope."
+          "const": "model:allow-check-first-run-status",
+          "markdownDescription": "Enables the check_first_run_status command without any pre-configured scope."
         },
         {
           "description": "Enables the clear_active_chat_model command without any pre-configured scope.",
@@ -4197,12 +4173,6 @@
           "markdownDescription": "Enables the clear_model_catalog_cache command without any pre-configured scope."
         },
         {
-          "description": "Enables the delete_downloaded_model_and_file command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-delete-downloaded-model-and-file",
-          "markdownDescription": "Enables the delete_downloaded_model_and_file command without any pre-configured scope."
-        },
-        {
           "description": "Enables the delete_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-delete-model",
@@ -4215,22 +4185,16 @@
           "markdownDescription": "Enables the detect_system_capabilities command without any pre-configured scope."
         },
         {
-          "description": "Enables the download_default_embedding_model_command command without any pre-configured scope.",
+          "description": "Enables the download_default_embedding_model command without any pre-configured scope.",
           "type": "string",
-          "const": "model:allow-download-default-embedding-model-command",
-          "markdownDescription": "Enables the download_default_embedding_model_command command without any pre-configured scope."
+          "const": "model:allow-download-default-embedding-model",
+          "markdownDescription": "Enables the download_default_embedding_model command without any pre-configured scope."
         },
         {
           "description": "Enables the download_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-download-model",
           "markdownDescription": "Enables the download_model command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the download_model_command command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-download-model-command",
-          "markdownDescription": "Enables the download_model_command command without any pre-configured scope."
         },
         {
           "description": "Enables the export_model command without any pre-configured scope.",
@@ -4285,12 +4249,6 @@
           "type": "string",
           "const": "model:allow-get-model-info",
           "markdownDescription": "Enables the get_model_info command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_models_with_metadata command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-get-models-with-metadata",
-          "markdownDescription": "Enables the get_models_with_metadata command without any pre-configured scope."
         },
         {
           "description": "Enables the import_model command without any pre-configured scope.",
@@ -4365,10 +4323,10 @@
           "markdownDescription": "Denies the cancel_download command without any pre-configured scope."
         },
         {
-          "description": "Denies the check_first_run_status_command command without any pre-configured scope.",
+          "description": "Denies the check_first_run_status command without any pre-configured scope.",
           "type": "string",
-          "const": "model:deny-check-first-run-status-command",
-          "markdownDescription": "Denies the check_first_run_status_command command without any pre-configured scope."
+          "const": "model:deny-check-first-run-status",
+          "markdownDescription": "Denies the check_first_run_status command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_active_chat_model command without any pre-configured scope.",
@@ -4389,12 +4347,6 @@
           "markdownDescription": "Denies the clear_model_catalog_cache command without any pre-configured scope."
         },
         {
-          "description": "Denies the delete_downloaded_model_and_file command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-delete-downloaded-model-and-file",
-          "markdownDescription": "Denies the delete_downloaded_model_and_file command without any pre-configured scope."
-        },
-        {
           "description": "Denies the delete_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-delete-model",
@@ -4407,22 +4359,16 @@
           "markdownDescription": "Denies the detect_system_capabilities command without any pre-configured scope."
         },
         {
-          "description": "Denies the download_default_embedding_model_command command without any pre-configured scope.",
+          "description": "Denies the download_default_embedding_model command without any pre-configured scope.",
           "type": "string",
-          "const": "model:deny-download-default-embedding-model-command",
-          "markdownDescription": "Denies the download_default_embedding_model_command command without any pre-configured scope."
+          "const": "model:deny-download-default-embedding-model",
+          "markdownDescription": "Denies the download_default_embedding_model command without any pre-configured scope."
         },
         {
           "description": "Denies the download_model command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-download-model",
           "markdownDescription": "Denies the download_model command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the download_model_command command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-download-model-command",
-          "markdownDescription": "Denies the download_model_command command without any pre-configured scope."
         },
         {
           "description": "Denies the export_model command without any pre-configured scope.",
@@ -4477,12 +4423,6 @@
           "type": "string",
           "const": "model:deny-get-model-info",
           "markdownDescription": "Denies the get_model_info command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_models_with_metadata command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-get-models-with-metadata",
-          "markdownDescription": "Denies the get_models_with_metadata command without any pre-configured scope."
         },
         {
           "description": "Denies the import_model command without any pre-configured scope.",

@@ -20,7 +20,7 @@ export interface MetricsSnapshot {
  * System Statistics (DDD)
  *
  * Type definition for DDD system statistics.
- * Matches SystemStatsDto from application/dtos/health_dto.rs
+ * Matches SystemStatsDto from application/dtos/modules/health_dto.rs
  */
 export interface SystemStats {
   total_documents: number;

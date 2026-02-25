@@ -1,12 +1,10 @@
+pub mod app;
 pub mod database;
 pub mod degraded_mocks;
 pub mod directories;
 pub mod embedding;
 pub mod observability;
 pub mod panic;
-// DEPRECATED: Old command_handler! macro - replaced by Gateway Pattern
-// pub mod commands;
-pub mod app;
 pub mod shutdown;
 
 #[cfg(test)]

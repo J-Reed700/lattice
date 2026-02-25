@@ -20,12 +20,15 @@ import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsP
 import { MessageBubble } from './MessageBubble';
 import { VaultAPI } from '../../lib/api';
 import { getConversationMessages, useConversationsStore } from '../../stores/conversationsStore';
+import { toast } from '../../stores/toastStore';
 
 import type { CustomToolSettings, ToolPreferences } from '../../types';
 
 const WEB_TOOL_NAMES = ['web_search', 'fetch_url_content'] as const;
 const WIKI_TOOL_NAMES = ['wiki_search', 'wiki_summary'] as const;
 type TurnMode = 'auto' | 'followup' | 'query';
+const DEEP_RESEARCH_WARNING_MESSAGE =
+  'Deep Research runs recursive multi-step retrieval and can take noticeably longer than standard replies.';
 
 const normalizeEnabledTools = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) {
@@ -315,10 +318,17 @@ export function ChatPanel() {
   };
 
   const toggleDeepResearch = () => {
+    const enabling = !(toolPreferencesRef.current.deepResearchMode ?? false);
     updateToolPreferences((prev) => ({
       ...prev,
       deepResearchMode: !(prev.deepResearchMode ?? false),
     }));
+    if (enabling) {
+      toast.warning('Deep Research enabled', {
+        message: DEEP_RESEARCH_WARNING_MESSAGE,
+        duration: 5000,
+      });
+    }
   };
 
   const toggleCustomTool = (toolName: string) => {
@@ -668,6 +678,18 @@ export function ChatPanel() {
                   })}
                   {isSending && <span className="text-blue-400">Sending...</span>}
                 </div>
+              </div>
+            )}
+
+            {toolPreferences.deepResearchMode && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mt-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100/90"
+              >
+                {isSending
+                  ? 'Deep Research is running and may take a while to finish.'
+                  : DEEP_RESEARCH_WARNING_MESSAGE}
               </div>
             )}
 

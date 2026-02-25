@@ -33,7 +33,6 @@ pub mod download_repository;
 pub mod helpers;
 pub mod mappers;
 pub mod migrations;
-// pub mod models; // TODO: Add models module
 pub mod repositories;
 
 pub use backup_adapter::BackupAdapter;

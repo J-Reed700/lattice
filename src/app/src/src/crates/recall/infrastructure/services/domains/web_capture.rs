@@ -33,10 +33,9 @@ use crate::application::dtos::function_calling_dto::UrlPreview;
 use crate::infrastructure::services::traits::WebCaptureServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::utils::stealth;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -55,16 +54,11 @@ pub struct WebCaptureService {
     max_content_length: usize,
 }
 
-const DESKTOP_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-const WEB_ACCEPT_HEADER: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-const WEB_ACCEPT_LANGUAGE_HEADER: &str = "en-US,en;q=0.9";
-
 impl WebCaptureService {
-    /// Create a new web capture service
+    /// Create a new web capture service with stealth features.
     pub fn new() -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(WEB_REQUEST_TIMEOUT)
-            .user_agent(DESKTOP_BROWSER_USER_AGENT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -76,9 +70,8 @@ impl WebCaptureService {
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration) -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(timeout)
-            .user_agent(DESKTOP_BROWSER_USER_AGENT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -397,12 +390,15 @@ impl WebCaptureServiceTrait for WebCaptureService {
         // Validate URL for security
         self.validate_url(url)?;
 
-        // Fetch URL with timeout
+        stealth::random_delay(500, 2000).await;
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
+        // Fetch URL with stealth headers
         let response = self
             .client
             .get(url)
-            .header(ACCEPT, WEB_ACCEPT_HEADER)
-            .header(ACCEPT_LANGUAGE, WEB_ACCEPT_LANGUAGE_HEADER)
+            .headers(headers)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;

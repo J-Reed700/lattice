@@ -44,7 +44,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
-use tauri::State;
 use tracing::{info, warn};
 
 mod cancellation;
@@ -237,8 +236,8 @@ impl SearchFlags {
 /// console.log(`Follow-up: ${followUp.message}`);
 /// console.log(`Context messages: ${followUp.contextUsed}`);
 /// ```
-pub async fn chat_with_conversation<R: tauri::Runtime>(
-    container: State<'_, Container>,
+pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
+    container: &Container,
     conversation_id: Option<String>,
     message: String,
     tool_preferences: Option<ToolPreferences>,
@@ -275,7 +274,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
     let mut flow_metrics = ConversationFlowTimingMetrics::default();
 
     let validate_start = Instant::now();
-    let validated_message = validate_and_guard_chat_request(container.inner(), &message).await?;
+    let validated_message = validate_and_guard_chat_request(container, &message).await?;
     flow_metrics.validate_request_ms = elapsed_ms(validate_start);
     let search_flags = SearchFlags::from_preferences(tool_preferences.as_ref());
 
@@ -294,8 +293,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
 
     let conversation_init_start = Instant::now();
     let conv_id =
-        get_or_create_conversation_id(container.inner(), conversation_id, &validated_message, &llm)
-            .await?;
+        get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
     flow_metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
 
     let conv_service = container.conversation_service();
@@ -318,7 +316,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
     let max_tokens = llm.max_context_tokens();
     let context_build_start = Instant::now();
     let (context, conversation_document_context) = build_conversation_context(
-        container.inner(),
+        container,
         &conv_service,
         &conv_id,
         &llm,
@@ -327,7 +325,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
     )
     .await?;
     trigger_background_summary_refresh_if_needed(
-        container.inner(),
+        container,
         &conv_service,
         &conv_id,
         &llm,
@@ -338,7 +336,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
 
     let router_start = Instant::now();
     let router_decision = resolve_router_decision(
-        container.inner(),
+        container,
         &conversation_document_context,
         &validated_message,
         search_flags.force_web_search,
@@ -357,7 +355,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
 
     let retrieval_start = Instant::now();
     let mut retrieval = run_retrieval_pipeline(
-        container.inner(),
+        container,
         &conv_service,
         &conv_id,
         &validated_message,
@@ -433,7 +431,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
     let tool_prep_start = Instant::now();
     let supports_tools = llm.supports_tool_calling();
     let tool_definitions = build_llm_tool_definitions(
-        container.inner(),
+        container,
         &llm,
         tool_preferences.as_ref(),
         &settings.llm.custom_tools,
@@ -470,7 +468,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
         Ok(response)
     } else {
         let tool_loop_outcome = run_agentic_tool_loop(
-            container.inner(),
+            container,
             &conv_service,
             &conv_id,
             &llm,
@@ -546,7 +544,7 @@ pub async fn chat_with_conversation<R: tauri::Runtime>(
 
             let finalize_start = Instant::now();
             let mut chat_response = finalize_successful_turn(
-                container.inner(),
+                container,
                 &conv_service,
                 &conv_id,
                 &user_message_id,

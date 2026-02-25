@@ -10,8 +10,6 @@ use crate::application::dtos::function_calling_dto::{
 use crate::infrastructure::services::traits::*;
 #[cfg(test)]
 use crate::shared::error::Result;
-// DELETED: Old web::ingestion module reference
-// use crate::infrastructure::web::ingestion::types::WebDocument;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
@@ -212,6 +210,9 @@ impl WebServiceTrait for MockWebService {
             } else {
                 input.providers.clone()
             },
+            unique_query_count: 1,
+            unique_url_count: total_results,
+            unique_domain_count: total_results,
         })
     }
 

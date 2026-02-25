@@ -27,51 +27,52 @@
 //! "Plugins must be thin wrappers. ALL business logic stays in domain implementation.
 //! Plugins delegate to `interfaces/commands/*_impl` functions without duplication." - Gemini 3 Pro
 
+// Directory-backed plugin modules
 pub mod config;
 pub mod credentials;
 pub mod file;
 pub mod health;
 pub mod model;
 pub mod search;
-
-pub mod backup_plugin;
-pub mod batch_plugin;
-pub mod cache_plugin;
-pub mod conversation_plugin;
-pub mod daily_notes_plugin;
-pub mod download_plugin;
-pub mod embeddings;
-pub mod extraction;
-pub mod favorites_plugin;
-pub mod functions_plugin;
-pub mod huggingface;
-pub mod mention_plugin;
-pub mod qa_plugin;
-pub mod settings_plugin;
-pub mod tags_plugin;
-pub mod updates_plugin;
 pub mod web;
 
-use tauri::{plugin::TauriPlugin, Runtime};
+// Single-file plugin modules moved to domains/ for filesystem organization
+#[path = "domains/backup_plugin.rs"]
+pub mod backup_plugin;
+#[path = "domains/batch_plugin.rs"]
+pub mod batch_plugin;
+#[path = "domains/cache_plugin.rs"]
+pub mod cache_plugin;
+#[path = "domains/conversation_plugin.rs"]
+pub mod conversation_plugin;
+#[path = "domains/daily_notes_plugin.rs"]
+pub mod daily_notes_plugin;
+#[path = "domains/download_plugin.rs"]
+pub mod download_plugin;
+#[path = "domains/embeddings.rs"]
+pub mod embeddings;
+#[path = "domains/extraction.rs"]
+pub mod extraction;
+#[path = "domains/favorites_plugin.rs"]
+pub mod favorites_plugin;
+#[path = "domains/functions_plugin.rs"]
+pub mod functions_plugin;
+#[path = "domains/huggingface.rs"]
+pub mod huggingface;
+#[path = "domains/mention_plugin.rs"]
+pub mod mention_plugin;
+#[path = "domains/qa_plugin.rs"]
+pub mod qa_plugin;
+#[path = "domains/settings_plugin.rs"]
+pub mod settings_plugin;
+#[path = "domains/tags_plugin.rs"]
+pub mod tags_plugin;
+#[path = "domains/updates_plugin.rs"]
+pub mod updates_plugin;
 
-/// Initialize all domain plugins
-///
-/// Returns a vector of Tauri plugins ready to be registered in the app builder.
-///
-/// # Usage
-///
-/// ```rust,no_run
-/// use vault_desktop::plugins::init_plugins;
-///
-/// tauri::Builder::default()
-///     .setup(|app| {
-///         for plugin in init_plugins() {
-///             app.handle().plugin(plugin)?;
-///         }
-///         Ok(())
-///     })
-///     // ...
-/// ```
+use tauri::plugin::TauriPlugin;
+
+/// Initialize all domain plugins.
 pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
     vec![
         // Batch 1: Core infrastructure (model, search, file, config, credentials, health)
@@ -94,7 +95,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         huggingface::init(),
         extraction::init(),
         web::init(),
-        // Batch 4: FINAL domains (conversations, batch, backup, updates, qa)
+        // Batch 4: Final domains (conversations, batch, backup, updates, QA)
         conversation_plugin::init(),
         download_plugin::init(),
         batch_plugin::init(),

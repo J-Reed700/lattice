@@ -2,7 +2,7 @@
  * Statistics and Metrics API Types
  *
  * Type definitions for application metrics and telemetry.
- * These types match the Rust backend structures from application/dtos/metric_dto.rs
+ * These types match the Rust backend structures from application/dtos/modules/metric_dto.rs
  */
 
 /**

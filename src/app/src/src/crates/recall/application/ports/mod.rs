@@ -80,7 +80,6 @@ pub mod content_extraction_port;
 pub mod conversation_repository_port;
 pub mod credentials_port;
 pub mod database_stats_port;
-// DELETED: pub mod daily_notes_port; - Feature removed
 pub mod document_repository_port;
 pub mod embedding_port;
 pub mod embedding_repository_port;
@@ -115,7 +114,6 @@ pub use content_extraction_port::{ContentExtractionPort, ExtractedContentData};
 pub use conversation_repository_port::ConversationRepositoryPort;
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
-// DELETED: Daily notes port exports - Feature removed
 pub use document_repository_port::DocumentRepositoryPort;
 pub use embedding_port::EmbeddingPort;
 pub use embedding_repository_port::EmbeddingRepositoryPort;
@@ -139,8 +137,6 @@ pub use vector_search_port::VectorSearchPort;
 
 // Unified trait for document repository (combines generic + specific)
 use crate::domain::entities::Document;
-use crate::shared::error::Result;
-use async_trait::async_trait;
 
 /// Unified document repository trait combining generic and specific interfaces.
 ///

@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   ShieldOff,
+  Trash2,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -77,6 +78,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const messageVerificationMap = useConversationsStore(s => s.messageVerification);
   const bookmarkMessage = useConversationsStore(s => s.bookmarkMessage);
   const unbookmarkMessage = useConversationsStore(s => s.unbookmarkMessage);
+  const deleteMessage = useConversationsStore(s => s.deleteMessage);
 
   // Get sources for this message from the store
   const lastMessageSources = useConversationsStore(s => s.lastMessageSources);
@@ -85,6 +87,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const verificationSummary = messageId ? messageVerificationMap.get(messageId) : undefined;
   const isMessageBookmarked = Boolean(messageBookmark);
   const canBookmarkMessage = Boolean(activeConversationId && messageId);
+  const canDeleteMessage = Boolean(messageId);
   const domMessageId = messageId ? `message-${messageId}` : undefined;
   const sources: SourceWithMetadata[] = useMemo(() => {
     // Check if message has direct sources (from ConversationMessage.sources)
@@ -170,6 +173,17 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     const compact = message.content.replace(/\s+/g, ' ').trim();
     const title = compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
     await bookmarkMessage(activeConversationId, messageId, title || null, null);
+  };
+
+  const handleDeleteMessage = async () => {
+    if (!messageId || !('conversationId' in message)) return;
+
+    const confirmed = window.confirm(
+      'Delete this message from the conversation? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    await deleteMessage(message.conversationId, messageId);
   };
 
   const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -863,6 +877,16 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               title={isMessageBookmarked ? 'Remove saved reference' : 'Save as reference'}
             >
               <Bookmark className={`w-4 h-4 ${isMessageBookmarked ? 'fill-current' : ''}`} />
+            </button>
+          )}
+          {canDeleteMessage && (
+            <button
+              onClick={() => void handleDeleteMessage()}
+              aria-label="Delete message"
+              className="transition-opacity duration-200 p-2 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-300"
+              title="Delete message"
+            >
+              <Trash2 className="w-4 h-4" />
             </button>
           )}
           <button

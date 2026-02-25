@@ -46,16 +46,15 @@
 use crate::application::dtos::function_calling_dto::CleanArticle;
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::utils::stealth;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lazy_regex::regex;
 use readability_js::Readability;
-use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 // Compile-time regex validation using lazy_regex (eliminates runtime panics)
 // Pre-compile HTML tag stripping regex at module level
@@ -74,16 +73,13 @@ const JAVASCRIPT_HEAVY_SITES: &[&str] = &[
     "youtube.com",
 ];
 
-const DESKTOP_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-const WEB_ACCEPT_HEADER: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-const WEB_ACCEPT_LANGUAGE_HEADER: &str = "en-US,en;q=0.9";
-
 /// Article extractor service implementation
 ///
 /// Extracts clean, readable article content from HTML using
 /// Mozilla's Readability.js algorithm (same as Firefox Reader Mode).
+/// Uses stealth HTTP features (UA rotation, cookies, proxy) to avoid bot detection.
 pub struct ArticleExtractorService {
-    /// HTTP client for fetching URLs
+    /// HTTP client with cookie jar and optional proxy
     client: Client,
 }
 
@@ -285,11 +281,14 @@ impl ArticleExtractorService {
 
     /// Fetch and extract YouTube metadata from URL.
     async fn extract_youtube_article_from_url(&self, fetch_url: &str) -> Result<CleanArticle> {
+        stealth::random_delay(500, 2000).await;
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
         let response = self
             .client
             .get(fetch_url)
-            .header(ACCEPT, WEB_ACCEPT_HEADER)
-            .header(ACCEPT_LANGUAGE, WEB_ACCEPT_LANGUAGE_HEADER)
+            .headers(headers)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
@@ -341,9 +340,8 @@ impl ArticleExtractorService {
     /// When this fails, app initialization will use a disabled fallback service
     /// that returns helpful error messages instead of crashing the app.
     pub fn new() -> Result<Self> {
-        let client = reqwest_client_builder()
-            .timeout(Duration::from_secs(10))
-            .user_agent(DESKTOP_BROWSER_USER_AGENT)
+        let client = stealth::stealth_client_builder()
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| {
                 AppError::InternalError(format!(
@@ -529,7 +527,7 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             return self.extract_youtube_article_from_url(&fetch_url).await;
         }
 
-        // Detect JavaScript-heavy sites
+        // Detect JavaScript-heavy sites — try FlareSolverr if available
         if let Ok(parsed_url) = url::Url::parse(&fetch_url) {
             if let Some(domain) = parsed_url.host_str() {
                 let domain_lower = domain.to_ascii_lowercase();
@@ -537,6 +535,18 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
                     .iter()
                     .any(|site| Self::host_matches_domain(&domain_lower, site))
                 {
+                    if let Some(solver) = stealth::flaresolverr() {
+                        info!(url = %fetch_url, "Using FlareSolverr for JS-heavy site");
+                        match solver.solve(&fetch_url).await {
+                            Ok(html) => {
+                                return self.extract_article(&html, &fetch_url).await;
+                            }
+                            Err(e) => {
+                                warn!("FlareSolverr failed for {}: {}", fetch_url, e);
+                            }
+                        }
+                    }
+
                     warn!(
                         url = fetch_url,
                         domain = domain,
@@ -548,7 +558,8 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
                         reason: format!(
                             "Site '{}' requires JavaScript for content rendering. \
                              Static HTML extraction is not supported for this site. \
-                             Consider using the official API or browser extension instead.",
+                             Consider using the official API or browser extension instead, \
+                             or configure FlareSolverr via RECALL_FLARESOLVERR_URL.",
                             domain
                         ),
                     });
@@ -556,12 +567,15 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             }
         }
 
-        // Fetch URL with timeout
+        stealth::random_delay(500, 2000).await;
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
+        // Fetch URL with stealth headers
         let response = self
             .client
             .get(&fetch_url)
-            .header(ACCEPT, WEB_ACCEPT_HEADER)
-            .header(ACCEPT_LANGUAGE, WEB_ACCEPT_LANGUAGE_HEADER)
+            .headers(headers)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;

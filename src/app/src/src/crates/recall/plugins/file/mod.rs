@@ -1,6 +1,6 @@
-//! File Plugin
+//! File plugin.
 //!
-//! Provides 13 commands for file operations.
+//! Provides file indexing, content, and metadata commands.
 
 pub mod commands;
 
@@ -28,9 +28,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::plugin_index_file,
-            commands::plugin_index_directory,
-            commands::plugin_get_file_metadata,
             commands::index_file,
             commands::index_directory,
             file_commands::get_file_metadata,

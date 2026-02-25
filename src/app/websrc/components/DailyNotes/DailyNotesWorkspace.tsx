@@ -14,7 +14,9 @@ import {
   StickyNote,
   Trash2,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import remarkGfm from 'remark-gfm';
 
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -37,6 +39,7 @@ type PanelTab = 'editor' | 'annotations' | 'documents' | 'chats' | 'snapshots';
 type ActionTone = 'info' | 'success' | 'error';
 type AnnotationView = 'highlights' | 'stickies';
 type ResourceView = 'list' | 'preview';
+type EditorView = 'edit' | 'preview' | 'split';
 
 interface ConversationSummary {
   id: string;
@@ -181,6 +184,7 @@ export function DailyNotesWorkspace() {
   const [annotationView, setAnnotationView] = useState<AnnotationView>('highlights');
   const [documentsView, setDocumentsView] = useState<ResourceView>('list');
   const [chatsView, setChatsView] = useState<ResourceView>('list');
+  const [editorView, setEditorView] = useState<EditorView>('split');
   const [actionNotice, setActionNotice] = useState<{ tone: ActionTone; message: string } | null>(null);
   const [isSavingNow, setIsSavingNow] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
@@ -705,7 +709,7 @@ export function DailyNotesWorkspace() {
     const transcript = snapshot.messages
       .map(
         (message) =>
-          `### ${message.role.toUpperCase()} · ${formatWhen(message.createdAt)}\n${message.content}`,
+          `### ${message.role.toUpperCase()} · ${formatWhen(message.createdAt)}\n\n${message.content}`,
       )
       .join('\n\n');
 
@@ -729,8 +733,9 @@ export function DailyNotesWorkspace() {
       if (!activeNote) {
         setActionNotice({ tone: 'error', message: 'Select a note first.' });
       } else {
+        setEditorView('edit');
         setActivePanel('editor');
-        setActionNotice({ tone: 'info', message: 'Switched to Editor. Select text, then click Highlight again.' });
+        setActionNotice({ tone: 'info', message: 'Switched to edit mode. Select text, then click Highlight again.' });
       }
       return;
     }
@@ -974,14 +979,135 @@ export function DailyNotesWorkspace() {
 
           <div className="flex-1 min-h-0 overflow-hidden p-4 md:p-5">
             {activePanel === 'editor' && (
-              <textarea
-                ref={editorRef}
-                value={activeNote?.content ?? ''}
-                onChange={(event) => updateActiveNote((note) => ({ ...note, content: event.target.value }))}
-                placeholder="Write, synthesize, and connect ideas. Use this space for your main note body."
-                className="w-full h-full min-h-[280px] rounded-xl border border-white/10 bg-black/20 backdrop-blur-sm p-4 text-sm leading-6 text-white/90 resize-none outline-none focus:border-cyan-400/60"
-                disabled={!activeNote}
-              />
+              <div className="h-full overflow-hidden rounded-xl border border-white/10 bg-black/15">
+                <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-white/50">Markdown Note</p>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setEditorView('edit')}
+                      className={subviewButtonClass(editorView === 'edit')}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => setEditorView('preview')}
+                      className={subviewButtonClass(editorView === 'preview')}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      onClick={() => setEditorView('split')}
+                      className={subviewButtonClass(editorView === 'split')}
+                    >
+                      Split
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className={`h-[calc(100%-41px)] min-h-0 ${
+                    editorView === 'split'
+                      ? 'grid grid-cols-1 gap-3 p-3 xl:grid-cols-2'
+                      : 'p-3'
+                  }`}
+                >
+                  {(editorView === 'edit' || editorView === 'split') && (
+                    <textarea
+                      ref={editorRef}
+                      value={activeNote?.content ?? ''}
+                      onChange={(event) => updateActiveNote((note) => ({ ...note, content: event.target.value }))}
+                      placeholder="Write, synthesize, and connect ideas. Use this space for your main note body."
+                      className="h-full min-h-[260px] w-full rounded-lg border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/90 outline-none focus:border-cyan-400/60 resize-none"
+                      disabled={!activeNote}
+                    />
+                  )}
+
+                  {(editorView === 'preview' || editorView === 'split') && (
+                    <div className="h-full min-h-[260px] w-full overflow-auto rounded-lg border border-white/10 bg-black/20 p-4">
+                      {activeNote?.content?.trim() ? (
+                        <div className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              p({ children }) {
+                                return (
+                                  <p className="text-white/80 leading-relaxed mb-3 last:mb-0 break-words whitespace-pre-wrap">
+                                    {children}
+                                  </p>
+                                );
+                              },
+                              ul({ children }) {
+                                return (
+                                  <ul className="list-disc list-inside space-y-1 text-white/80 break-words">
+                                    {children}
+                                  </ul>
+                                );
+                              },
+                              ol({ children }) {
+                                return (
+                                  <ol className="list-decimal list-inside space-y-1 text-white/80 break-words">
+                                    {children}
+                                  </ol>
+                                );
+                              },
+                              li({ children }) {
+                                return <li className="text-white/80 break-words">{children}</li>;
+                              },
+                              blockquote({ children }) {
+                                return (
+                                  <blockquote className="border-l-4 border-cyan-500/45 pl-4 italic text-white/65 my-3 break-words">
+                                    {children}
+                                  </blockquote>
+                                );
+                              },
+                              a({ children, href }) {
+                                return (
+                                  <a
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-cyan-300 hover:text-cyan-200 underline transition-colors"
+                                  >
+                                    {children}
+                                  </a>
+                                );
+                              },
+                              table({ children }) {
+                                return (
+                                  <div className="overflow-x-auto my-3">
+                                    <table className="min-w-full border border-white/10 rounded-lg">
+                                      {children}
+                                    </table>
+                                  </div>
+                                );
+                              },
+                              th({ children }) {
+                                return (
+                                  <th className="px-3 py-2 bg-white/5 border-b border-white/10 text-left text-white/90 font-semibold">
+                                    {children}
+                                  </th>
+                                );
+                              },
+                              td({ children }) {
+                                return (
+                                  <td className="px-3 py-2 border-b border-white/5 text-white/80 align-top">
+                                    {children}
+                                  </td>
+                                );
+                              },
+                            }}
+                          >
+                            {activeNote.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-white/45">
+                          Nothing to preview yet. Start writing markdown in the editor.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {activePanel === 'annotations' && (

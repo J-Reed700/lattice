@@ -1,7 +1,7 @@
 //! QA Plugin (Phase 4: Consolidation)
 //!
 //! Thin plugin wrapper for question-answering commands with Retrieval-Augmented Generation (RAG).
-//! Delegates all business logic to `interfaces/commands/qa_commands.rs`.
+//! Delegates all business logic to `interfaces/commands/domains/qa_commands.rs`.
 
 use crate::application::dtos::qa_dto::{QARequestDto, QAResponseDto};
 use crate::interfaces::commands::qa_commands::{

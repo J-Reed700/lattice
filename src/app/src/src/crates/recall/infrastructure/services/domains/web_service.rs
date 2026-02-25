@@ -40,9 +40,9 @@ use crate::application::dtos::function_calling_dto::*;
 use crate::infrastructure::services::traits::WebServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
-use crate::shared::utils::reqwest_client_builder;
+use crate::shared::utils::stealth;
 use async_trait::async_trait;
-use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, PRAGMA};
+use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
@@ -50,14 +50,14 @@ use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
-use url::Url;
+use url::{form_urlencoded, Url};
 
 /// Web service implementation
 ///
 /// Provides web search via DuckDuckGo and URL content fetching
-/// with comprehensive security controls.
+/// with comprehensive security controls and stealth anti-bot measures.
 pub struct WebService {
-    /// HTTP client with timeout
+    /// HTTP client with cookie jar and optional proxy
     client: Client,
 
     /// Maximum content length to fetch (50MB)
@@ -65,14 +65,10 @@ pub struct WebService {
 }
 
 impl WebService {
-    /// Browser-like user agent for public web endpoints that reject generic clients.
-    const BROWSER_USER_AGENT: &'static str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-
-    /// Create a new web service
+    /// Create a new web service with stealth features (cookie jar, proxy rotation).
     pub fn new() -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(WEB_REQUEST_TIMEOUT)
-            .user_agent(Self::BROWSER_USER_AGENT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -84,9 +80,8 @@ impl WebService {
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration) -> Result<Self> {
-        let client = reqwest_client_builder()
+        let client = stealth::stealth_client_builder()
             .timeout(timeout)
-            .user_agent(Self::BROWSER_USER_AGENT)
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -237,6 +232,119 @@ impl WebService {
         true
     }
 
+    fn is_tracking_query_param(key: &str) -> bool {
+        let lower = key.to_ascii_lowercase();
+        lower.starts_with("utm_")
+            || matches!(
+                lower.as_str(),
+                "gclid"
+                    | "fbclid"
+                    | "msclkid"
+                    | "_hsenc"
+                    | "_hsmi"
+                    | "mc_cid"
+                    | "mc_eid"
+                    | "ref"
+                    | "source"
+            )
+    }
+
+    fn canonicalize_url_for_dedup(&self, raw: &str) -> String {
+        let trimmed = raw.trim();
+        let Ok(mut parsed) = Url::parse(trimmed) else {
+            return trimmed.to_ascii_lowercase();
+        };
+
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return trimmed.to_ascii_lowercase();
+        }
+
+        parsed.set_fragment(None);
+        let _ = parsed.set_username("");
+        let _ = parsed.set_password(None);
+
+        if let Some(host) = parsed.host_str() {
+            let normalized_host = host.to_ascii_lowercase();
+            let _ = parsed.set_host(Some(&normalized_host));
+        }
+
+        if let Some(port) = parsed.port() {
+            let is_default = (parsed.scheme() == "http" && port == 80)
+                || (parsed.scheme() == "https" && port == 443);
+            if is_default {
+                let _ = parsed.set_port(None);
+            }
+        }
+
+        let path = {
+            let raw_path = parsed.path().trim();
+            if raw_path.is_empty() || raw_path == "/" {
+                "/".to_string()
+            } else {
+                format!(
+                    "/{}",
+                    raw_path.trim_start_matches('/').trim_end_matches('/')
+                )
+            }
+        };
+        parsed.set_path(&path);
+
+        if let Some(query) = parsed.query() {
+            let mut pairs = form_urlencoded::parse(query.as_bytes())
+                .filter(|(key, _)| !Self::is_tracking_query_param(key))
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect::<Vec<_>>();
+            pairs.sort();
+
+            if pairs.is_empty() {
+                parsed.set_query(None);
+            } else {
+                let mut serializer = form_urlencoded::Serializer::new(String::new());
+                for (key, value) in pairs {
+                    serializer.append_pair(&key, &value);
+                }
+                parsed.set_query(Some(&serializer.finish()));
+            }
+        }
+
+        let mut canonical = parsed.to_string();
+        if canonical.ends_with('/') && parsed.query().is_none() && parsed.path() == "/" {
+            canonical.pop();
+        }
+        canonical
+    }
+
+    fn normalized_domain_key(&self, raw_url: &str) -> Option<String> {
+        let parsed = Url::parse(raw_url).ok()?;
+        let host = parsed.host_str()?.to_ascii_lowercase();
+        Some(host.trim_start_matches("www.").to_string())
+    }
+
+    fn reorder_results_for_domain_diversity(
+        &self,
+        results: Vec<WebSearchResult>,
+    ) -> Vec<WebSearchResult> {
+        let mut seen_domains = HashSet::new();
+        let mut domain_first = Vec::with_capacity(results.len());
+        let mut overflow = Vec::new();
+
+        for result in results {
+            let domain = self.normalized_domain_key(&result.url);
+            let is_new_domain = domain
+                .as_ref()
+                .is_some_and(|domain_key| seen_domains.insert(domain_key.clone()));
+
+            if is_new_domain {
+                domain_first.push(result);
+            } else {
+                overflow.push(result);
+            }
+        }
+
+        domain_first.extend(overflow);
+        domain_first
+    }
+
     fn parse_search_results(&self, html: &str, max_results: usize) -> Vec<WebSearchResult> {
         let document = Html::parse_document(html);
         let container_selector =
@@ -268,7 +376,8 @@ impl WebService {
                 let Some(url) = self.normalize_search_url(href) else {
                     continue;
                 };
-                if !seen.insert(url.clone()) {
+                let canonical = self.canonicalize_url_for_dedup(&url);
+                if !seen.insert(canonical) {
                     continue;
                 }
 
@@ -324,7 +433,8 @@ impl WebService {
                 let Some(url) = self.normalize_search_url(href) else {
                     continue;
                 };
-                if !seen.insert(url.clone()) {
+                let canonical = self.canonicalize_url_for_dedup(&url);
+                if !seen.insert(canonical) {
                     continue;
                 }
                 let title = link
@@ -363,7 +473,8 @@ impl WebService {
                 let Some(url) = self.normalize_search_url(href) else {
                     continue;
                 };
-                if !self.is_search_result_candidate_url(&url) || !seen.insert(url.clone()) {
+                let canonical = self.canonicalize_url_for_dedup(&url);
+                if !self.is_search_result_candidate_url(&url) || !seen.insert(canonical) {
                     continue;
                 }
 
@@ -589,7 +700,8 @@ impl WebService {
                         match resp.json::<serde_json::Value>().await {
                             Ok(payload) => {
                                 for result in self.parse_wikipedia_results(&payload, wiki_limit) {
-                                    if seen_urls.insert(result.url.clone()) {
+                                    let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                    if seen_urls.insert(canonical) {
                                         merged_results.push(result);
                                     }
                                 }
@@ -630,6 +742,8 @@ impl WebService {
                 let mut page_has_results = false;
 
                 for search_url in &search_urls {
+                    stealth::random_delay(300, 1500).await;
+
                     for attempt in 1..=MAX_RETRIES_PER_PROVIDER {
                         debug!(
                             "Web search attempt via {} provider={} (try {}/{})",
@@ -708,6 +822,33 @@ impl WebService {
                                 "Web search provider {} returned anti-bot challenge page on attempt {}",
                                 search_url, attempt
                             );
+
+                            if let Some(solver) = stealth::flaresolverr() {
+                                info!("Attempting FlareSolverr bypass for {}", search_url);
+                                match solver.solve(search_url).await {
+                                    Ok(solved_html) => {
+                                        let mut results = self.parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
+                                        for result in &mut results {
+                                            result.source = Some(provider.to_string());
+                                        }
+                                        if !results.is_empty() {
+                                            providers_used.insert(provider.to_string());
+                                            page_has_results = true;
+                                            for result in results {
+                                                let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                                if seen_urls.insert(canonical) {
+                                                    merged_results.push(result);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("FlareSolverr failed for {}: {}", search_url, e);
+                                    }
+                                }
+                            }
+
                             last_error = Some(format!(
                                 "Search provider challenge page from {} (attempt {})",
                                 search_url, attempt
@@ -724,7 +865,8 @@ impl WebService {
                             providers_used.insert(provider.to_string());
                             page_has_results = true;
                             for result in results {
-                                if seen_urls.insert(result.url.clone()) {
+                                let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                if seen_urls.insert(canonical) {
                                     merged_results.push(result);
                                 }
                             }
@@ -755,15 +897,10 @@ impl WebService {
     }
 
     fn build_search_request(&self, url: &str) -> reqwest::RequestBuilder {
-        self.client
-            .get(url)
-            .header(
-                ACCEPT,
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            )
-            .header(ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-            .header(CACHE_CONTROL, "no-cache")
-            .header(PRAGMA, "no-cache")
+        let profile = stealth::random_profile();
+        let referer = stealth::search_referer_for_url(url);
+        let headers = stealth::search_headers(profile, referer);
+        self.client.get(url).headers(headers)
     }
 
     /// Check if IP is private or reserved (comprehensive check)
@@ -898,6 +1035,8 @@ impl WebServiceTrait for WebService {
         let mut seen_urls = HashSet::new();
         let mut providers_used = HashSet::new();
         let mut seen_queries = HashSet::new();
+        let mut executed_queries: Vec<String> = Vec::new();
+        let mut seen_domains = HashSet::new();
         let mut last_error: Option<String> = None;
         let mut frontier = vec![query.to_string()];
 
@@ -911,6 +1050,7 @@ impl WebServiceTrait for WebService {
                 if normalized_query.is_empty() || !seen_queries.insert(normalized_query) {
                     continue;
                 }
+                executed_queries.push(frontier_query.clone());
 
                 let (results, used_by_query, maybe_error) = self
                     .search_single_query(&frontier_query, &providers, requested_total)
@@ -926,14 +1066,18 @@ impl WebServiceTrait for WebService {
                 }
 
                 for result in &results {
-                    if seen_urls.insert(result.url.clone()) {
+                    let canonical_url = self.canonicalize_url_for_dedup(&result.url);
+                    if seen_urls.insert(canonical_url) {
+                        if let Some(domain) = self.normalized_domain_key(&result.url) {
+                            seen_domains.insert(domain);
+                        }
                         merged_results.push(result.clone());
                     }
                 }
 
                 if depth > 1 {
                     for followup in self
-                        .derive_followup_queries(query, &results, branch_queries)
+                        .derive_followup_queries(&frontier_query, &results, branch_queries)
                         .into_iter()
                         .take(branch_queries)
                     {
@@ -950,6 +1094,7 @@ impl WebServiceTrait for WebService {
             })));
         }
 
+        let merged_results = self.reorder_results_for_domain_diversity(merged_results);
         let total_results = merged_results.len();
         let start_idx = effective_offset.min(total_results);
         let end_idx = (start_idx + max_results).min(total_results);
@@ -967,6 +1112,15 @@ impl WebServiceTrait for WebService {
             total_results,
             providers_used
         );
+        info!(
+            depth,
+            branch_queries,
+            unique_queries = seen_queries.len(),
+            unique_urls = seen_urls.len(),
+            unique_domains = seen_domains.len(),
+            executed_query_preview = ?executed_queries.iter().take(8).collect::<Vec<_>>(),
+            "Deep-research telemetry"
+        );
 
         let mut providers_used_vec = providers_used.into_iter().collect::<Vec<_>>();
         providers_used_vec.sort();
@@ -980,6 +1134,9 @@ impl WebServiceTrait for WebService {
             total_results,
             has_more: end_idx < total_results,
             providers_used: providers_used_vec,
+            unique_query_count: seen_queries.len(),
+            unique_url_count: seen_urls.len(),
+            unique_domain_count: seen_domains.len(),
         })
     }
 
@@ -989,12 +1146,17 @@ impl WebServiceTrait for WebService {
         // Validate URL for security
         self.validate_url(url)?;
 
-        let start = Instant::now();
+        stealth::random_delay(500, 2000).await;
 
-        // Fetch URL with timeout
+        let start = Instant::now();
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
+        // Fetch URL with timeout and browser-like headers
         let response = self
             .client
             .get(url)
+            .headers(headers)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;

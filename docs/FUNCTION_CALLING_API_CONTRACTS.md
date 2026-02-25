@@ -865,9 +865,8 @@ When implementing these functions:
 ## References
 
 - **Pydantic Schemas**: `/src/api/src/schemas/function_calling.py`
-- **Rust DTOs**: `/src/app/src-tauri/src/application/dtos/function_calling_dto.rs`
+- **Rust DTOs**: `/src/app/src/src/crates/recall/application/dtos/modules/function_calling_dto.rs`
 - **Security Controls**: `CLAUDE.md` - Desktop Security Best Practices
 - **Rate Limiting**: CWE-770 (Uncontrolled Resource Consumption)
 - **Path Validation**: CWE-22 (Path Traversal)
 - **SSRF Prevention**: CWE-918 (Server-Side Request Forgery)
-

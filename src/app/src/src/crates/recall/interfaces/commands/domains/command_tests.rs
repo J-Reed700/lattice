@@ -139,8 +139,8 @@ mod tests {
     #[test]
     fn test_app_state_creation() {
         // Test that AppState can be created
-        use std::sync::Arc;
         use parking_lot::Mutex;
+        use std::sync::Arc;
 
         struct MockAppState {
             counter: Arc<Mutex<u32>>,
@@ -156,8 +156,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_state_access() {
-        use std::sync::Arc;
         use parking_lot::Mutex;
+        use std::sync::Arc;
         use std::thread;
 
         let counter = Arc::new(Mutex::new(0));
@@ -256,11 +256,7 @@ mod tests {
     fn test_permission_check() {
         use crate::infrastructure::security::Permission;
 
-        let permissions = vec![
-            Permission::Read,
-            Permission::Write,
-            Permission::Execute,
-        ];
+        let permissions = vec![Permission::Read, Permission::Write, Permission::Execute];
 
         assert_eq!(permissions.len(), 3);
     }
@@ -292,20 +288,23 @@ mod tests {
         use std::collections::HashSet;
         let unique: HashSet<_> = error_codes.iter().collect();
 
-        assert_eq!(unique.len(), error_codes.len(), "Error codes should be unique");
+        assert_eq!(
+            unique.len(),
+            error_codes.len(),
+            "Error codes should be unique"
+        );
     }
 
     #[test]
     fn test_error_code_format() {
-        let error_codes = vec![
-            "INVALID_INPUT",
-            "NOT_FOUND",
-            "DATABASE_ERROR",
-        ];
+        let error_codes = vec!["INVALID_INPUT", "NOT_FOUND", "DATABASE_ERROR"];
 
         for code in error_codes {
-            assert!(code.chars().all(|c| c.is_uppercase() || c == '_'),
-                "Error code should be UPPER_SNAKE_CASE: {}", code);
+            assert!(
+                code.chars().all(|c| c.is_uppercase() || c == '_'),
+                "Error code should be UPPER_SNAKE_CASE: {}",
+                code
+            );
         }
     }
 }

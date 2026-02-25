@@ -4,10 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Globe, Download, Loader2, FileText, Clock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { VaultAPI } from '@/lib/api';
 import Input from '@/components/ui/input/Input';
-import type { UrlPreview } from '@/types/api/web';
+import { VaultAPI } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import type { UrlPreview } from '@/types/api/web';
 
 interface UrlImportProps {
   onImport: (_url: string) => void;

@@ -26,7 +26,7 @@ oracle ask --files \
 "src/domain/entities/document.rs,\
 src/domain/entities/chunk.rs,\
 src/application/use_cases/indexing/index_file.rs,\
-src/infrastructure/indexing/chunker.rs" \
+src/infrastructure/indexing/modules/chunker.rs" \
 "Oracle verification: Week 4 Document Indexing Operations analysis (19 files) found 0 production unwraps.
 Please verify this code is production-ready and follows your IMMACULATE standards.
 Key files: document.rs (1800 lines), chunk.rs (550 lines), index_file.rs (910 lines), chunker.rs (317 lines)"
@@ -37,7 +37,7 @@ oracle ask --files \
 "src/domain/value_objects/search_query.rs,\
 src/domain/entities/search_result.rs,\
 src/application/use_cases/search/semantic_search.rs,\
-src/infrastructure/search/vector/hnsw_index.rs" \
+src/infrastructure/search/vector_search/usearch_index.rs" \
 "Oracle verification: Week 4 Search Operations analysis (49 files, 10,807 lines) found 0 production unwraps.
 Please verify this code is production-ready and follows your IMMACULATE standards.
 Pattern: 3/3 vertical slices IMMACULATE. Ready for Phase 5?"
