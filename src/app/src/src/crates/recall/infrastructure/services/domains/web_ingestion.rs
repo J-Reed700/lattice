@@ -1833,10 +1833,7 @@ This is a test
                 ExtractionStrategy::Article
             ]
         );
-        assert_eq!(
-            article,
-            vec![ExtractionStrategy::Article]
-        );
+        assert_eq!(article, vec![ExtractionStrategy::Article]);
     }
 
     #[test]

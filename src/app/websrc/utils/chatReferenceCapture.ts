@@ -22,6 +22,7 @@ export interface CaptureChatReferenceInput {
   sourceReferences?: ChatReferenceSource[];
   capturedAt?: Date;
   addSnapshot?: boolean;
+  preferredNoteId?: string | null;
 }
 
 export interface CaptureChatReferenceResult {
@@ -90,13 +91,23 @@ const defaultInboxTitle = (capturedAt: Date): string =>
 const buildSnapshotId = (conversationId: string, messageId: string): string =>
   `capture_${sanitizeForId(conversationId)}_${sanitizeForId(messageId)}`;
 
-const resolveTargetNote = async (capturedAt: Date): Promise<WorkspaceNote> => {
+const resolveTargetNote = async (
+  capturedAt: Date,
+  preferredNoteId?: string | null,
+): Promise<WorkspaceNote> => {
   const notesResult = await VaultAPI.listWorkspaceNotes();
   if (!notesResult.ok) {
     throw new Error(notesResult.error);
   }
 
   const notes = Array.isArray(notesResult.data.notes) ? notesResult.data.notes : [];
+  const preferred = preferredNoteId
+    ? notes.find((note) => note.id === preferredNoteId)
+    : null;
+  if (preferred) {
+    return preferred;
+  }
+
   const targetTitle = defaultInboxTitle(capturedAt);
   const existingDailyInbox = notes.find((note) => note.title.trim() === targetTitle);
   if (existingDailyInbox) {
@@ -130,7 +141,7 @@ export async function captureChatReferenceToWorkspaceNote(
   const shouldAddSnapshot = input.addSnapshot !== false;
   const captureMarker = buildCaptureMarker(input.conversationId, input.messageId);
 
-  const targetNote = await resolveTargetNote(capturedAt);
+  const targetNote = await resolveTargetNote(capturedAt, input.preferredNoteId);
   const currentContent = targetNote.content?.trimEnd() ?? '';
   const markerReplacedContent = replaceLegacyMarkerWrappedBlock(
     currentContent,

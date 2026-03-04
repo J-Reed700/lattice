@@ -1,5 +1,3 @@
-import type { SourceWithMetadata } from '@/types/conversation';
-
 export type SourcePreviewKind = 'local-file' | 'archived-web' | 'external-web';
 
 const WEB_ARCHIVE_SEGMENT = '/.recall/web-archive/';
@@ -105,18 +103,31 @@ export function getWebArchiveHtmlPath(filePath: string): string | null {
   return `${filePath.slice(0, slashIndex)}/page.html`;
 }
 
-type SourceWithOptionalPath = SourceWithMetadata & { path?: string | null };
+interface SourcePathLike {
+  filePath?: string | null;
+  path?: string | null;
+  documentId?: string | null;
+  category?: string | null;
+  mimeType?: string | null;
+}
 
-export function getSourceExternalUrl(source: SourceWithOptionalPath): string | null {
+export function getSourceExternalUrl(source: SourcePathLike): string | null {
   const filePath = source.filePath ?? '';
   const maybePath = source.path ?? '';
+  const documentId = source.documentId ?? '';
+  const webDocumentUrl = documentId.startsWith('web:')
+    ? safeDecodeUriComponent(documentId.slice(4))
+    : '';
 
-  const raw = normalizeExternalUrl(filePath) ?? normalizeExternalUrl(maybePath);
+  const raw =
+    normalizeExternalUrl(filePath) ??
+    normalizeExternalUrl(maybePath) ??
+    normalizeExternalUrl(webDocumentUrl);
   if (!raw) return null;
   return unwrapRedirectUrl(raw);
 }
 
-export function getSourcePreviewKind(source: SourceWithOptionalPath): SourcePreviewKind {
+export function getSourcePreviewKind(source: SourcePathLike): SourcePreviewKind {
   const filePath = source.filePath ?? '';
   const category = source.category?.toLowerCase().replace(/[_-]+/g, ' ').trim() ?? '';
   const mimeType = source.mimeType?.toLowerCase() ?? '';

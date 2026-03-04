@@ -202,8 +202,10 @@ impl HttpDownloadEngine {
         auth_token: Option<&String>,
         expected_total_bytes: Option<u64>,
     ) -> Result<DownloadResult, DownloadError> {
-        const MAX_RETRIES: u32 = 3;
-        const BACKOFF_DELAYS: [u64; 3] = [1, 2, 4];
+        // Remote model hosts occasionally terminate long streams mid-transfer.
+        // A few extra resume attempts drastically improves completion rates.
+        const MAX_RETRIES: u32 = 6;
+        const BACKOFF_DELAYS: [u64; 5] = [1, 2, 4, 8, 12];
 
         let mut resume_from = initial_resume_from;
         let mut last_error = None;

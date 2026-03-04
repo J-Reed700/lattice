@@ -140,12 +140,12 @@ export function FirstTimeDaily({ onCreate }: { onCreate?: () => void }) {
           />
         </svg>
       }
-      title="Start your daily note"
-      description="Daily notes help you capture thoughts, tasks, and ideas organized by date."
+      title="Start your journal"
+      description="Journals help you capture thoughts, tasks, and ideas in a structured notebook."
       action={
         onCreate
           ? {
-              label: "Create today's note",
+              label: 'Create journal page',
               onClick: onCreate,
             }
           : undefined

@@ -1,4 +1,4 @@
-import { type FC, useEffect, useState } from 'react';
+import { type FC, useEffect, useMemo, useState } from 'react';
 
 import * as Dialog from '@radix-ui/react-dialog';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
@@ -7,6 +7,7 @@ import { X, Download, ExternalLink, Loader2 } from 'lucide-react';
 import { HTMLViewer } from '@/components/ContentViewer/renderers/HTMLViewer';
 import { useFileContent } from '@/hooks/useFileContent';
 import VaultAPI from '@/lib/api';
+import { useConversationsStore } from '@/stores/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { formatFileSize, getLanguageFromFileName } from '@/utils/files';
@@ -42,6 +43,11 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   onClose,
   source,
 }) => {
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const conversations = useConversationsStore((state) => state.conversations);
+  const spaces = useConversationsStore((state) => state.spaces);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+
   // File size limits (10MB backend limit)
   const MAX_PREVIEW_SIZE = 10 * 1024 * 1024; // 10MB
   const WARN_SIZE = 5 * 1024 * 1024; // 5MB
@@ -80,6 +86,41 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   const [resolvedPreviewPath, setResolvedPreviewPath] = useState<string | undefined>(undefined);
   const [isResolvingPreviewPath, setIsResolvingPreviewPath] = useState(false);
   const [isImportingUrl, setIsImportingUrl] = useState(false);
+  const activeConversation = useMemo(
+    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [conversations, activeConversationId]
+  );
+  const defaultImportSpaceId = activeConversation?.spaceId ?? selectedSpaceId ?? null;
+  const [targetImportSpaceId, setTargetImportSpaceId] = useState<string>('');
+  const allowUnscopedImport = !activeConversationId;
+  const spaceNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const space of spaces) {
+      map.set(space.id, space.name);
+    }
+    return map;
+  }, [spaces]);
+
+  const renderImportScopeSelect = (extraClassName = '') => (
+    <label
+      className={`inline-flex items-center gap-2 rounded-xl border border-[var(--border-color)]/70 bg-[var(--bg-secondary)]/70 px-3 py-2 text-xs text-[var(--text-secondary)] ${extraClassName}`.trim()}
+    >
+      <span className="uppercase tracking-wide text-[var(--text-tertiary)]">Scope</span>
+      <select
+        value={targetImportSpaceId}
+        onChange={(event) => setTargetImportSpaceId(event.target.value)}
+        className="min-w-[12rem] rounded-md border border-[var(--border-color)]/70 bg-[var(--surface-primary)] px-2 py-1 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]"
+      >
+        {allowUnscopedImport && <option value="">No space scope</option>}
+        {spaces.map((space) => (
+          <option key={space.id} value={space.id}>
+            {space.name}
+            {space.isArchived ? ' (archived)' : ''}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -108,6 +149,21 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
       mounted = false;
     };
   }, [source, shouldFetchContent, hasDocumentId]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (defaultImportSpaceId) {
+      setTargetImportSpaceId(defaultImportSpaceId);
+      return;
+    }
+    if (!allowUnscopedImport && spaces.length > 0) {
+      setTargetImportSpaceId(spaces[0].id);
+      return;
+    }
+    setTargetImportSpaceId('');
+  }, [allowUnscopedImport, defaultImportSpaceId, isOpen, spaces]);
 
   const { content, isLoading, error } = useFileContent(
     shouldFetchContent ? resolvedPreviewPath : undefined,
@@ -197,9 +253,18 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
       return;
     }
 
+    const scopeId = targetImportSpaceId.trim() || undefined;
+    const conversationId = activeConversationId ?? undefined;
+    const scopedSpaceName =
+      (scopeId && spaceNameById.get(scopeId)) ||
+      (defaultImportSpaceId ? spaceNameById.get(defaultImportSpaceId) : undefined);
+
     setIsImportingUrl(true);
     try {
-      const result = await VaultAPI.ingestWebUrl(importableUrl);
+      const result = await VaultAPI.ingestWebUrl(importableUrl, {
+        spaceId: scopeId,
+        conversationId,
+      });
       if (!result.ok) {
         toast.error('Failed to import source URL', { message: result.error });
         return;
@@ -207,7 +272,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
 
       const imported = result.data;
       toast.success('Source imported', {
-        message: `${imported.title} (${imported.wordCount.toLocaleString()} words)`,
+        message: `${imported.title} (${imported.wordCount.toLocaleString()} words)${scopedSpaceName ? ` · ${scopedSpaceName}` : ''}`,
         action: {
           label: 'Open',
           onClick: () => {
@@ -222,6 +287,11 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
           },
         },
       });
+      if (conversationId) {
+        void useConversationsStore
+          .getState()
+          .loadConversationLinkedDocuments(conversationId);
+      }
     } finally {
       setIsImportingUrl(false);
     }
@@ -279,6 +349,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
             </div>
             {openableUrl && (
               <div className="inline-flex items-center gap-2">
+                {importableUrl && renderImportScopeSelect()}
                 {importableUrl && (
                   <button
                     type="button"
@@ -332,6 +403,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
             </div>
             {openableUrl && (
               <div className="inline-flex items-center gap-2">
+                {importableUrl && renderImportScopeSelect()}
                 {importableUrl && (
                   <button
                     type="button"
@@ -465,6 +537,10 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
                 <ExternalLink size={16} />
                 <span>Show in Folder</span>
               </button>
+            )}
+
+            {shouldUseUrlActions && importableUrl && (
+              renderImportScopeSelect('mr-1')
             )}
 
             {shouldUseUrlActions && importableUrl && (

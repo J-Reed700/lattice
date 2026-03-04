@@ -330,6 +330,24 @@ impl ExternalModelMetadata {
     fn estimate_size_gb(&self) -> f64 {
         let text = format!("{} {}", self.id, self.name).to_lowercase();
 
+        // Embedding models are typically much smaller than chat LLMs.
+        if matches!(self.infer_category(), Ok(ModelCategory::Embedding))
+            || text.contains("embed")
+            || self.tags.iter().any(|t| {
+                let tag = t.to_lowercase();
+                tag.contains("embedding")
+                    || tag.contains("feature-extraction")
+                    || tag.contains("sentence-transformers")
+            })
+        {
+            return 0.5;
+        }
+
+        // OCR/vision models tend to sit between embedding and LLM sizes.
+        if matches!(self.infer_category(), Ok(ModelCategory::OCR)) {
+            return 1.5;
+        }
+
         // Extract size hints from text
         // Pattern: "7b", "13b", "70b" (billions of parameters)
         if let Some(size) = Self::extract_param_count(&text) {
@@ -346,15 +364,6 @@ impl ExternalModelMetadata {
             } else if text.contains("3b") || text.contains("3.8b") {
                 return 2.3;
             }
-        }
-
-        // Embedding models are typically small
-        if self
-            .tags
-            .iter()
-            .any(|t| t.to_lowercase().contains("embedding"))
-        {
-            return 1.0;
         }
 
         // Default fallback

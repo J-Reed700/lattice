@@ -1,5 +1,33 @@
 use super::*;
 
+fn overlap_ratio(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let overlap = a.intersection(b).count() as f32;
+    overlap / (b.len() as f32)
+}
+
+fn dominant_result_terms(
+    results: &[crate::application::dtos::function_calling_dto::WebSearchResult],
+    limit: usize,
+) -> (Vec<(String, usize)>, usize) {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut total = 0usize;
+
+    for result in results {
+        let combined = format!("{} {}", result.title, result.snippet);
+        for token in tokenize_keyword_terms(&combined).into_iter().filter(|t| t.len() >= 4) {
+            *counts.entry(token).or_insert(0) += 1;
+            total += 1;
+        }
+    }
+
+    let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    (ranked.into_iter().take(limit).collect(), total)
+}
+
 pub(super) async fn run_retrieval_pipeline(
     container: &Container,
     conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
@@ -303,6 +331,14 @@ pub(super) async fn run_retrieval_pipeline(
             external_hyde_context =
                 build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
         }
+        let lexical_web_query = select_web_search_query_with_tuning(
+            validated_message,
+            &outcome.interpretation,
+            external_followup_anchor_terms.as_ref(),
+            tuning,
+        );
+        let mut generated_web_query: Option<String> = None;
+        let mut web_query_source = "hyde_generated";
         let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(llm));
         let web_query = match hyde_service
             .generate_web_search_query_with_context(
@@ -311,29 +347,70 @@ pub(super) async fn run_retrieval_pipeline(
             )
             .await
         {
-            Ok(query) if !query.trim().is_empty() => safe_truncate(
-                query.trim(),
-                tuning.external_search_query_max_chars as usize,
-            ),
-            Ok(_) => select_web_search_query_with_tuning(
-                validated_message,
-                &outcome.interpretation,
-                external_followup_anchor_terms.as_ref(),
-                tuning,
-            ),
+            Ok(query) if !query.trim().is_empty() => {
+                generated_web_query = Some(query.trim().to_string());
+                safe_truncate(query.trim(), tuning.external_search_query_max_chars as usize)
+            }
+            Ok(_) => {
+                web_query_source = "lexical_fallback_empty_hyde";
+                lexical_web_query.clone()
+            }
             Err(error) => {
                 warn!(
                     error = %error,
                     "Web-specific HyDE query generation failed; falling back to lexical web query builder"
                 );
-                select_web_search_query_with_tuning(
-                    validated_message,
-                    &outcome.interpretation,
-                    external_followup_anchor_terms.as_ref(),
-                    tuning,
-                )
+                web_query_source = "lexical_fallback_hyde_error";
+                lexical_web_query.clone()
             }
         };
+        let raw_terms = tokenize_keyword_terms(validated_message)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let hyde_terms = outcome
+            .interpretation
+            .hyde_text
+            .as_deref()
+            .map(tokenize_keyword_terms)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let generated_terms = generated_web_query
+            .as_deref()
+            .map(tokenize_keyword_terms)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let lexical_terms = tokenize_keyword_terms(&lexical_web_query)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let final_terms = tokenize_keyword_terms(&web_query)
+            .into_iter()
+            .collect::<HashSet<_>>();
+
+        debug!(
+            source = web_query_source,
+            raw_query_preview = %safe_truncate(validated_message, 160),
+            hyde_expansion_preview = %safe_truncate(
+                outcome
+                    .interpretation
+                    .hyde_text
+                    .as_deref()
+                    .unwrap_or(""),
+                180
+            ),
+            generated_query_preview = %safe_truncate(generated_web_query.as_deref().unwrap_or(""), 180),
+            lexical_query_preview = %safe_truncate(&lexical_web_query, 180),
+            final_query_preview = %safe_truncate(&web_query, 180),
+            generated_term_count = generated_terms.len(),
+            lexical_term_count = lexical_terms.len(),
+            final_term_count = final_terms.len(),
+            generated_overlap_with_hyde = overlap_ratio(&generated_terms, &hyde_terms),
+            lexical_overlap_with_hyde = overlap_ratio(&lexical_terms, &hyde_terms),
+            final_overlap_with_hyde = overlap_ratio(&final_terms, &hyde_terms),
+            final_overlap_with_raw = overlap_ratio(&final_terms, &raw_terms),
+            "Web query selection diagnostics"
+        );
         outcome.sub_timings.external_hyde_interpretation_ms +=
             elapsed_ms(web_query_generation_start);
 
@@ -416,6 +493,26 @@ pub(super) async fn run_retrieval_pipeline(
                                 );
                             }
                             if !output.results.is_empty() {
+                                let (top_terms, total_term_count) =
+                                    dominant_result_terms(&output.results, 8);
+                                if let Some((top_term, top_count)) = top_terms.first() {
+                                    let concentration =
+                                        (*top_count as f32) / (total_term_count.max(1) as f32);
+                                    debug!(
+                                        top_terms = ?top_terms,
+                                        total_term_count = total_term_count,
+                                        concentration = concentration,
+                                        "Web result topical diagnostics"
+                                    );
+                                    if concentration >= 0.20 {
+                                        warn!(
+                                            top_term = top_term.as_str(),
+                                            concentration = concentration,
+                                            query_preview = %safe_truncate(&web_query, 180),
+                                            "Web results appear topically concentrated; consider query diagnostics above"
+                                        );
+                                    }
+                                }
                                 let web_sources = build_web_source_citations(
                                     &output.results,
                                     highlight_terms,

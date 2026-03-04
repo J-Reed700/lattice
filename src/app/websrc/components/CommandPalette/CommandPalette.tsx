@@ -14,6 +14,7 @@ import {
   Trash2,
   Home,
   Sparkles,
+  NotebookPen,
 } from 'lucide-react'
 
 import type { SearchResult } from '@/types'
@@ -27,7 +28,7 @@ import { KeyboardShortcutsModal } from '../KeyboardShortcutsModal'
 import '../../styles/command-palette.css'
 
 interface CommandPaletteProps {
-  onNavigate: (view: 'search' | 'files' | 'settings' | 'daily' | 'references') => void
+  onNavigate: (view: 'search' | 'files' | 'settings' | 'journals' | 'references') => void
 }
 
 /**
@@ -216,9 +217,9 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
     })
   }, [executeCommand, onNavigate])
 
-  const handleOpenDailyNote = useCallback(() => {
+  const handleOpenJournals = useCallback(() => {
     executeCommand(() => {
-      onNavigate('daily')
+      onNavigate('journals')
     })
   }, [executeCommand, onNavigate])
 
@@ -530,11 +531,11 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
                       onSelect={handleViewAllDocuments}
                     />
                     <CommandItem
-                      icon={FileText}
-                      label="Daily Note"
-                      description="Open today's daily note"
-                      shortcut={`${cmdKey}D`}
-                      onSelect={handleOpenDailyNote}
+                      icon={NotebookPen}
+                      label="Journals"
+                      description="Open your journals workspace"
+                      shortcut={`${cmdKey}3`}
+                      onSelect={handleOpenJournals}
                     />
                     <CommandItem
                       icon={Bookmark}

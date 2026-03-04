@@ -13,10 +13,14 @@ use crate::application::dtos::conversation_message_bookmark_dto::{
     UnbookmarkConversationMessageRequestDto,
 };
 use crate::application::dtos::conversation_space_dto::{
-    ArchiveConversationSpaceRequestDto, ConversationSpaceDto, ConversationSpaceMemberDto,
-    CreateConversationSpaceRequestDto, ListConversationsExplorerQueryDto,
-    MoveConversationToSpaceRequestDto, RemoveConversationSpaceMemberRequestDto,
-    SetConversationStateRequestDto, UpdateConversationSpaceRequestDto,
+    AddConversationToJournalRequestDto, ArchiveConversationJournalRequestDto,
+    ArchiveConversationSpaceRequestDto, ConversationJournalDto, ConversationSpaceDto,
+    ConversationSpaceMemberDto, CreateConversationJournalRequestDto,
+    CreateConversationSpaceRequestDto, DeleteConversationJournalRequestDto,
+    ListConversationsExplorerQueryDto, ListJournalConversationsQueryDto,
+    MoveConversationToSpaceRequestDto, RemoveConversationFromJournalRequestDto,
+    RemoveConversationSpaceMemberRequestDto, SetConversationStateRequestDto,
+    UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
 use crate::interfaces::commands::conversation_chat::{ChatResponse, ToolPreferences};
@@ -29,7 +33,8 @@ use tauri::{
 };
 
 pub use crate::interfaces::commands::conversation_plugin_impl::{
-    ConversationLinkedDocumentDto, DocumentSpaceMembershipDto,
+    ConversationLinkedDocumentDto, ConversationWebSourceDto, DocumentSpaceMembershipDto,
+    SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
 };
 
 #[tauri::command]
@@ -147,6 +152,50 @@ pub async fn list_conversation_spaces(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn create_journal(
+    request: CreateConversationJournalRequestDto,
+    container: State<'_, Container>,
+) -> Result<ConversationJournalDto, ApiError> {
+    conversation_impl::create_journal_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journals(
+    container: State<'_, Container>,
+) -> Result<Vec<ConversationJournalDto>, ApiError> {
+    conversation_impl::list_journals_impl(container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_journal(
+    request: UpdateConversationJournalRequestDto,
+    container: State<'_, Container>,
+) -> Result<ConversationJournalDto, ApiError> {
+    conversation_impl::update_journal_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn archive_journal(
+    request: ArchiveConversationJournalRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::archive_journal_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_journal(
+    request: DeleteConversationJournalRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::delete_journal_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn list_conversation_space_members(
     space_id: String,
     container: State<'_, Container>,
@@ -201,6 +250,24 @@ pub async fn move_conversation_to_space(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn add_conversation_to_journal(
+    request: AddConversationToJournalRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::add_conversation_to_journal_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_conversation_from_journal(
+    request: RemoveConversationFromJournalRequestDto,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::remove_conversation_from_journal_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn list_conversation_linked_documents(
     conversation_id: String,
     container: State<'_, Container>,
@@ -219,6 +286,51 @@ pub async fn remove_conversation_linked_document(
     conversation_impl::remove_conversation_linked_document_impl(
         conversation_id,
         document_id,
+        container.inner(),
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn add_conversation_web_source(
+    conversation_id: String,
+    url: String,
+    title: Option<String>,
+    excerpt: Option<String>,
+    relevance_score: Option<f32>,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::add_conversation_web_source_impl(
+        conversation_id,
+        url,
+        title,
+        excerpt,
+        relevance_score,
+        container.inner(),
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversation_web_sources(
+    conversation_id: String,
+    container: State<'_, Container>,
+) -> Result<Vec<ConversationWebSourceDto>, ApiError> {
+    conversation_impl::list_conversation_web_sources_impl(conversation_id, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_conversation_web_source(
+    conversation_id: String,
+    source_id: String,
+    container: State<'_, Container>,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    conversation_impl::remove_conversation_web_source_impl(
+        conversation_id,
+        source_id,
         container.inner(),
     )
     .await
@@ -348,6 +460,25 @@ pub async fn list_conversations_explorer(
     conversation_impl::list_conversations_explorer_impl(query, container.inner()).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn list_journal_conversations(
+    query: ListJournalConversationsQueryDto,
+    container: State<'_, Container>,
+) -> Result<ListConversationsResponseDto, ApiError> {
+    conversation_impl::list_journal_conversations_impl(query, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn synthesize_journal_entries(
+    request: SynthesizeJournalEntriesRequestDto,
+    container: State<'_, Container>,
+    window: tauri::Window,
+) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
+    conversation_impl::synthesize_journal_entries_impl(request, container.inner(), window).await
+}
+
 pub fn init() -> TauriPlugin<tauri::Wry> {
     Builder::new("conversation")
         .invoke_handler(tauri::generate_handler![
@@ -361,18 +492,28 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             chat_with_conversation,
             create_conversation_space,
             list_conversation_spaces,
+            create_journal,
+            list_journals,
             list_conversation_space_members,
             upsert_conversation_space_member,
             remove_conversation_space_member,
             update_conversation_space,
             archive_conversation_space,
+            update_journal,
+            archive_journal,
+            delete_journal,
             move_conversation_to_space,
+            add_conversation_to_journal,
+            remove_conversation_from_journal,
             set_conversation_saved,
             set_conversation_bookmarked,
             set_conversation_pinned,
             set_conversation_archived,
             list_conversation_linked_documents,
             remove_conversation_linked_document,
+            add_conversation_web_source,
+            list_conversation_web_sources,
+            remove_conversation_web_source,
             list_document_space_memberships,
             set_document_space_membership,
             set_documents_space_membership,
@@ -381,6 +522,8 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             delete_conversation_message,
             list_message_bookmarks,
             list_conversations_explorer,
+            list_journal_conversations,
+            synthesize_journal_entries,
         ])
         .build()
 }

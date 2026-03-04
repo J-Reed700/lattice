@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -18,7 +18,11 @@ import {
   Save,
   Settings2,
   FolderPlus,
+  NotebookPen,
+  Pencil,
+  Check,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 
 import { useDebounce } from '../../hooks/useDebounce';
@@ -31,9 +35,11 @@ import {
   chatReferenceKey,
   type CapturedChatReference,
 } from '../../utils/chatReferenceIndex';
+import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 import { handleAsyncEvent } from '../../utils/promiseHandlers';
 
 import type { ConversationMessageBookmarkDto } from '../../types';
+import type { ConversationJournalDto } from '../../types/api/conversation';
 
 const scrollToMessage = (messageId: string) => {
   let attempts = 0;
@@ -65,6 +71,27 @@ interface SpaceToolPreferences {
   deepResearchMode: boolean;
   enabledTools: string[];
 }
+
+type SpaceKind = 'standard' | 'journal';
+
+const JOURNAL_SPACE_DEFAULT_ICON = '📓';
+const JOURNAL_SPACE_DEFAULT_ACCENT = '#14b8a6';
+
+const buildSpaceToolPreferencesJson = ({
+  knowledgeBase,
+  webSearch,
+  deepResearchMode,
+}: {
+  knowledgeBase: boolean;
+  webSearch: boolean;
+  deepResearchMode: boolean;
+}): string =>
+  JSON.stringify({
+    knowledgeBase,
+    webSearch,
+    deepResearchMode,
+    enabledTools: webSearch ? ['web_search', 'fetch_url_content'] : [],
+  });
 
 const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferences => {
   if (!raw) {
@@ -125,6 +152,29 @@ const withAlpha = (hexColor: string, alpha: number): string => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+const getLocalDayKey = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = `${value.getMonth() + 1}`.padStart(2, '0');
+  const day = `${value.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatJournalGroupLabel = (dateValue: Date): string => {
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const targetStart = new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+  const diffDays = Math.round((todayStart.getTime() - targetStart.getTime()) / 86_400_000);
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return targetStart.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: targetStart.getFullYear() === todayStart.getFullYear() ? undefined : 'numeric',
+  });
+};
+
 const SPACES_MODAL_LAYER_CLASSES = {
   root: 'z-[200]',
   backdrop: 'z-[210]',
@@ -164,13 +214,31 @@ export function ConversationSidebar() {
     setConversationBookmarked,
     setConversationPinned,
     setConversationArchived,
+    renameConversation,
     deleteConversation,
+    loadSpaces,
     clearError,
   } = useConversationsStore();
 
   const [isCreating, setIsCreating] = useState(false);
   const [isSpacesOpen, setIsSpacesOpen] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement | null>(null);
+  const [spacesPanelFrame, setSpacesPanelFrame] = useState<{
+    left: number;
+    top: number;
+    height: number;
+    width: number;
+  } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<Set<string>>(new Set());
+  const [bulkSpaceIdDraft, setBulkSpaceIdDraft] = useState('');
+  const [isBulkMoving, setIsBulkMoving] = useState(false);
+  const [journals, setJournals] = useState<ConversationJournalDto[]>([]);
+  const [isLoadingJournals, setIsLoadingJournals] = useState(false);
+  const [newSpaceKindDraft, setNewSpaceKindDraft] = useState<SpaceKind>('standard');
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const [snippetResults, setSnippetResults] = useState<ConversationMessageBookmarkDto[]>([]);
   const [isLoadingSnippets, setIsLoadingSnippets] = useState(false);
@@ -182,6 +250,7 @@ export function ConversationSidebar() {
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
   const [newSpaceNameDraft, setNewSpaceNameDraft] = useState('');
   const [isCreatingSpace, setIsCreatingSpace] = useState(false);
+  const [isCreatingQuickJournal, setIsCreatingQuickJournal] = useState(false);
   const [isSavingSpace, setIsSavingSpace] = useState(false);
   const [isArchivingSpace, setIsArchivingSpace] = useState(false);
   const [isRestoringSpace, setIsRestoringSpace] = useState(false);
@@ -213,10 +282,27 @@ export function ConversationSidebar() {
     }
     return map;
   }, [spaces]);
+  const spaceKindById = useMemo(() => {
+    const map = new Map<string, SpaceKind>();
+    for (const space of spaces) {
+      map.set(space.id, 'standard');
+    }
+    for (const journal of journals) {
+      map.set(journal.id, 'journal');
+    }
+    return map;
+  }, [journals, spaces]);
   const selectedSpace = useMemo(() => {
     if (!selectedSpaceId) return null;
     return spaces.find((space) => space.id === selectedSpaceId) ?? null;
   }, [selectedSpaceId, spaces]);
+  const selectedJournal = useMemo(() => {
+    if (!selectedSpaceId) return null;
+    return journals.find((journal) => journal.id === selectedSpaceId) ?? null;
+  }, [journals, selectedSpaceId]);
+  const isJournalScope = Boolean(
+    selectedJournal
+  );
 
   const archivedSpaces = useMemo(
     () => spaces.filter((space) => space.isArchived),
@@ -226,6 +312,18 @@ export function ConversationSidebar() {
     () => spaces.filter((space) => !space.isArchived),
     [spaces]
   );
+  const journalSpaces = useMemo(
+    () => journals.filter((journal) => !journal.isArchived),
+    [journals]
+  );
+  const standardSpaces = useMemo(
+    () => activeSpacesOrdered,
+    [activeSpacesOrdered]
+  );
+  const selectedConversationCount = selectedConversationIds.size;
+  const hasConversations = conversations.length > 0;
+  const areAllVisibleConversationsSelected = hasConversations
+    && conversations.every((conversation) => selectedConversationIds.has(conversation.id));
 
   const availableSpaceModels = useMemo(() => {
     const options = new Set<string>();
@@ -249,9 +347,122 @@ export function ConversationSidebar() {
     return Array.from(options).sort((a, b) => a.localeCompare(b));
   }, [downloadedModelMap, ollamaDefaultModel, spaceModelDraft]);
 
+  const loadJournals = useCallback(async (silent = true): Promise<boolean> => {
+    setIsLoadingJournals(true);
+    const result = await VaultAPI.listJournals();
+    if (!result.ok) {
+      if (!silent) {
+        toast.error('Failed to load journals', {
+          message: result.error,
+          duration: 4200,
+        });
+      }
+      setIsLoadingJournals(false);
+      return false;
+    }
+    setJournals(result.data);
+    setIsLoadingJournals(false);
+    return true;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: number | null = null;
+
+    const run = async () => {
+      const ok = await loadJournals(true);
+      if (!ok && !cancelled) {
+        retryTimer = window.setTimeout(() => {
+          void loadJournals(true);
+        }, 1200);
+      }
+    };
+
+    void run();
+
+    const handleFocus = () => {
+      void loadJournals(true);
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void loadJournals(true);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [loadJournals]);
+
+  useEffect(() => {
+    if (!isSelectionMode) {
+      return;
+    }
+    void loadJournals(true);
+  }, [isSelectionMode, loadJournals]);
+
+  useEffect(() => {
+    if (!isSpacesOpen) {
+      return;
+    }
+    void loadJournals(true);
+  }, [isSpacesOpen, loadJournals]);
+
+  const journalConversationGroups = useMemo(() => {
+    if (!isJournalScope) {
+      return [{
+        key: 'all-conversations',
+        label: null as string | null,
+        items: conversations,
+      }];
+    }
+
+    const groups = new Map<string, { label: string; dayValue: Date; items: typeof conversations }>();
+    for (const conversation of conversations) {
+      const updatedAt = new Date(conversation.updatedAt);
+      const baseDate = Number.isNaN(updatedAt.getTime()) ? new Date() : updatedAt;
+      const dayValue = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+      const key = getLocalDayKey(dayValue);
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          label: formatJournalGroupLabel(dayValue),
+          dayValue,
+          items: [conversation],
+        });
+      } else {
+        existing.items.push(conversation);
+      }
+    }
+
+    return Array.from(groups.entries())
+      .sort((a, b) => b[1].dayValue.getTime() - a[1].dayValue.getTime())
+      .map(([key, group]) => ({
+        key,
+        label: group.label,
+        items: group.items,
+      }));
+  }, [conversations, isJournalScope]);
+
   useEffect(() => {
     setLocalQuery(searchQuery);
   }, [searchQuery]);
+
+  useEffect(() => {
+    if (!selectedSpaceId) return;
+    if (!selectedJournal) return;
+    setSelectedSpace(null);
+    void loadConversations({ spaceId: null });
+  }, [loadConversations, selectedJournal, selectedSpaceId, setSelectedSpace]);
 
   useEffect(() => {
     if (!selectedSpace) {
@@ -284,6 +495,57 @@ export function ConversationSidebar() {
     setSearchQuery(debouncedQuery);
     void loadConversations({ searchQuery: debouncedQuery });
   }, [debouncedQuery, loadConversations, searchQuery, setSearchQuery]);
+
+  useEffect(() => {
+    if (!isSelectionMode) {
+      setSelectedConversationIds(new Set());
+      setBulkSpaceIdDraft('');
+      return;
+    }
+
+    setRenamingConversationId(null);
+    setRenameDraft('');
+  }, [isSelectionMode]);
+
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    const visibleConversationIds = new Set(conversations.map((conversation) => conversation.id));
+    setSelectedConversationIds((prev) => {
+      const next = new Set<string>();
+      prev.forEach((conversationId) => {
+        if (visibleConversationIds.has(conversationId)) {
+          next.add(conversationId);
+        }
+      });
+      return next;
+    });
+  }, [conversations, isSelectionMode]);
+
+  useEffect(() => {
+    if (filterMode !== 'snippets') return;
+    setIsSelectionMode(false);
+  }, [filterMode]);
+
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    if (bulkSpaceIdDraft) {
+      const existing = journalSpaces.some((space) => space.id === bulkSpaceIdDraft);
+      if (existing) return;
+    }
+
+    const selectedIsJournal = selectedSpaceId
+      ? journalSpaces.some((space) => space.id === selectedSpaceId)
+      : false;
+    const fallbackSpaceId = selectedIsJournal
+      ? selectedSpaceId ?? ''
+      : (journalSpaces[0]?.id ?? '');
+    setBulkSpaceIdDraft(fallbackSpaceId);
+  }, [
+    bulkSpaceIdDraft,
+    isSelectionMode,
+    journalSpaces,
+    selectedSpaceId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -402,7 +664,7 @@ export function ConversationSidebar() {
   const handleNewConversation = async () => {
     setIsCreating(true);
     try {
-      const title = `Conversation ${new Date().toLocaleDateString()}`;
+      const title = createDefaultConversationTitle();
       await createConversation(title);
     } finally {
       setIsCreating(false);
@@ -425,6 +687,159 @@ export function ConversationSidebar() {
     }
   };
 
+  const beginRenameConversation = (conversationId: string, title: string) => {
+    setRenamingConversationId(conversationId);
+    setRenameDraft(title);
+  };
+
+  const cancelRenameConversation = () => {
+    setRenamingConversationId(null);
+    setRenameDraft('');
+  };
+
+  const saveConversationRename = async (
+    conversationId: string,
+    currentTitle: string
+  ) => {
+    const nextTitle = renameDraft.trim();
+    if (!nextTitle) {
+      toast.warning('Title required', {
+        message: 'Conversation title cannot be empty.',
+        duration: 2800,
+      });
+      return;
+    }
+
+    if (nextTitle === currentTitle.trim()) {
+      cancelRenameConversation();
+      return;
+    }
+
+    const didRename = await renameConversation(conversationId, nextTitle);
+    if (didRename) {
+      cancelRenameConversation();
+    }
+  };
+
+  const toggleConversationSelection = (conversationId: string) => {
+    setSelectedConversationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(conversationId)) {
+        next.delete(conversationId);
+      } else {
+        next.add(conversationId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisibleConversations = () => {
+    if (!hasConversations) return;
+
+    if (areAllVisibleConversationsSelected) {
+      setSelectedConversationIds(new Set());
+      return;
+    }
+
+    setSelectedConversationIds(new Set(conversations.map((conversation) => conversation.id)));
+  };
+
+  const addSelectedConversationsToJournal = async () => {
+    const targetSpaceId = bulkSpaceIdDraft.trim();
+    const selectedIds = Array.from(selectedConversationIds);
+
+    if (selectedIds.length === 0) {
+      toast.warning('No conversations selected');
+      return;
+    }
+    if (!targetSpaceId) {
+      toast.warning('Choose a destination journal');
+      return;
+    }
+    if (!journalSpaces.some((journal) => journal.id === targetSpaceId)) {
+      toast.warning('Choose a destination journal');
+      return;
+    }
+
+    const destinationName = spaceNameById.get(targetSpaceId) ?? 'selected journal';
+    setIsBulkMoving(true);
+    try {
+      const moveResults = await Promise.all(
+        selectedIds.map(async (conversationId) => ({
+          conversationId,
+          result: await VaultAPI.addConversationToJournal({
+            journalSpaceId: targetSpaceId,
+            conversationId,
+          }),
+        }))
+      );
+
+      const failedMoves = moveResults.filter(({ result }) => !result.ok);
+      const addedCount = selectedIds.length - failedMoves.length;
+
+      if (failedMoves.length === 0) {
+        toast.success('Added to journal', {
+          message: `${addedCount} added to ${destinationName}. Conversations stay in their current space.`,
+          duration: 3200,
+        });
+        setSelectedConversationIds(new Set());
+        setIsSelectionMode(false);
+        return;
+      }
+
+      setSelectedConversationIds(
+        new Set(failedMoves.map(({ conversationId }) => conversationId))
+      );
+      toast.warning('Some conversations were not added', {
+        message: `${addedCount}/${selectedIds.length} added to ${destinationName}.`,
+        duration: 4500,
+      });
+    } finally {
+      setIsBulkMoving(false);
+    }
+  };
+
+  const createQuickJournal = async () => {
+    if (isCreatingQuickJournal) return;
+
+    setIsCreatingQuickJournal(true);
+    try {
+      const existingNames = new Set(journals.map((journal) => journal.name.toLowerCase()));
+      let idx = journals.length + 1;
+      let name = `Journal ${idx}`;
+      while (existingNames.has(name.toLowerCase())) {
+        idx += 1;
+        name = `Journal ${idx}`;
+      }
+
+      const result = await VaultAPI.createJournal({
+        name,
+        description: null,
+        icon: JOURNAL_SPACE_DEFAULT_ICON,
+        accentColor: JOURNAL_SPACE_DEFAULT_ACCENT,
+        spacePrompt: null,
+        defaultModelName: null,
+        toolPreferencesJson: null,
+      });
+      if (!result.ok) {
+        toast.error('Failed to create journal', {
+          message: result.error,
+          duration: 4200,
+        });
+        return;
+      }
+
+      setJournals((prev) => [result.data, ...prev]);
+      setBulkSpaceIdDraft(result.data.id);
+      toast.success('Journal created', {
+        message: `${result.data.name} is ready.`,
+        duration: 2600,
+      });
+    } finally {
+      setIsCreatingQuickJournal(false);
+    }
+  };
+
   const handleSpaceSelect = async (spaceId: string | null) => {
     setSelectedSpace(spaceId);
     await loadConversations({ spaceId });
@@ -440,18 +855,40 @@ export function ConversationSidebar() {
   const filterOptions: Array<{
     id: 'all' | 'saved' | 'bookmarked' | 'pinned' | 'archived' | 'snippets';
     label: string;
+    icon: typeof Star;
   }> = [
-    { id: 'all', label: 'All' },
-    { id: 'saved', label: 'Saved' },
-    { id: 'bookmarked', label: 'Bookmarked' },
-    { id: 'pinned', label: 'Pinned' },
-    { id: 'snippets', label: 'References' },
-    { id: 'archived', label: 'Archived' },
+    { id: 'all', label: 'All', icon: MessageSquare },
+    { id: 'saved', label: 'Saved', icon: Star },
+    { id: 'bookmarked', label: 'Bookmarked', icon: Bookmark },
+    { id: 'pinned', label: 'Pinned', icon: Pin },
+    { id: 'snippets', label: 'References', icon: Save },
+    { id: 'archived', label: 'Archived', icon: Archive },
   ];
 
   const openSnippet = async (bookmark: ConversationMessageBookmarkDto) => {
     await selectConversation(bookmark.conversationId);
     scrollToMessage(bookmark.messageId);
+  };
+
+  const openSelectedJournalNotebook = () => {
+    const targetJournalId = (
+      bulkSpaceIdDraft.trim()
+      && journalSpaces.some((journal) => journal.id === bulkSpaceIdDraft.trim())
+    )
+      ? bulkSpaceIdDraft.trim()
+      : (journalSpaces[0]?.id ?? null);
+    if (!targetJournalId) {
+      return;
+    }
+
+    const params = new URLSearchParams({
+      journalSpaceId: targetJournalId,
+      panel: 'entries',
+    });
+    if (activeConversationId) {
+      params.set('entryId', activeConversationId);
+    }
+    navigate(`/journals?${params.toString()}`);
   };
 
   const getCapturedSnippetReference = (
@@ -465,15 +902,20 @@ export function ConversationSidebar() {
     setIsCreatingSpace(true);
     try {
       const requestedName = newSpaceNameDraft.trim();
-      const existingNames = new Set(spaces.map((space) => space.name.toLowerCase()));
+      const existingNames = new Set(
+        (newSpaceKindDraft === 'journal' ? journals : spaces).map((item) =>
+          item.name.toLowerCase()
+        )
+      );
+      const defaultBaseName = newSpaceKindDraft === 'journal' ? 'Journal' : 'Space';
 
       let name = requestedName;
       if (!name) {
-        let idx = spaces.length + 1;
-        name = `Space ${idx}`;
+        let idx = (newSpaceKindDraft === 'journal' ? journals.length : spaces.length) + 1;
+        name = `${defaultBaseName} ${idx}`;
         while (existingNames.has(name.toLowerCase())) {
           idx += 1;
-          name = `Space ${idx}`;
+          name = `${defaultBaseName} ${idx}`;
         }
       } else if (existingNames.has(name.toLowerCase())) {
         let suffix = 2;
@@ -485,30 +927,51 @@ export function ConversationSidebar() {
         name = candidate;
       }
 
-      const result = await VaultAPI.createConversationSpace({
-        name,
-        description: null,
-        icon: null,
-        accentColor: null,
-        spacePrompt: null,
-        defaultModelName: null,
-        toolPreferencesJson: JSON.stringify({
-          knowledgeBase: false,
-          webSearch: false,
-          deepResearchMode: false,
-          enabledTools: [],
-        }),
-      });
-      if (!result.ok) {
-        return;
+      if (newSpaceKindDraft === 'journal') {
+        const result = await VaultAPI.createJournal({
+          name,
+          description: null,
+          icon: JOURNAL_SPACE_DEFAULT_ICON,
+          accentColor: JOURNAL_SPACE_DEFAULT_ACCENT,
+          spacePrompt: null,
+          defaultModelName: null,
+          toolPreferencesJson: null,
+        });
+        if (!result.ok) {
+          return;
+        }
+
+        await loadJournals();
+        setSelectedSpace(null);
+        await loadConversations({ spaceId: null });
+        navigate(`/journals?journalSpaceId=${encodeURIComponent(result.data.id)}&panel=entries`);
+      } else {
+        const result = await VaultAPI.createConversationSpace({
+          name,
+          description: null,
+          icon: null,
+          accentColor: null,
+          spacePrompt: null,
+          defaultModelName: null,
+          toolPreferencesJson: buildSpaceToolPreferencesJson({
+            knowledgeBase: false,
+            webSearch: false,
+            deepResearchMode: false,
+          }),
+        });
+        if (!result.ok) {
+          return;
+        }
+
+        await loadSpaces();
+        setSelectedSpace(result.data.id);
+        await loadConversations({ spaceId: result.data.id });
+        setIsSpaceEditorOpen(true);
       }
 
-      await useConversationsStore.getState().loadSpaces();
-      setSelectedSpace(result.data.id);
-      await loadConversations({ spaceId: result.data.id });
       setIsCreateSpaceOpen(false);
       setNewSpaceNameDraft('');
-      setIsSpaceEditorOpen(true);
+      setNewSpaceKindDraft('standard');
     } finally {
       setIsCreatingSpace(false);
     }
@@ -527,11 +990,10 @@ export function ConversationSidebar() {
         accentColor: normalizeHexColor(spaceAccentDraft),
         defaultModelName: spaceModelDraft.trim() ? spaceModelDraft.trim() : null,
         spacePrompt: spacePromptDraft.trim() ? spacePromptDraft.trim() : null,
-        toolPreferencesJson: JSON.stringify({
+        toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: spaceKbDefault,
           webSearch: spaceWebDefault,
           deepResearchMode: spaceDeepResearchDefault,
-          enabledTools: spaceWebDefault ? ['web_search', 'fetch_url_content'] : [],
         }),
       };
 
@@ -540,7 +1002,7 @@ export function ConversationSidebar() {
         return;
       }
 
-      await useConversationsStore.getState().loadSpaces();
+      await loadSpaces();
     } finally {
       setIsSavingSpace(false);
     }
@@ -563,11 +1025,11 @@ export function ConversationSidebar() {
         setIsSpaceEditorOpen(false);
         setSelectedSpace(null);
         await Promise.all([
-          useConversationsStore.getState().loadSpaces(),
+          loadSpaces(),
           loadConversations({ spaceId: null }),
         ]);
       } else {
-        await useConversationsStore.getState().loadSpaces();
+        await loadSpaces();
       }
     } finally {
       setIsArchivingSpace(false);
@@ -584,7 +1046,7 @@ export function ConversationSidebar() {
       if (!result.ok) {
         return;
       }
-      await useConversationsStore.getState().loadSpaces();
+      await loadSpaces();
     } finally {
       setIsRestoringSpace(false);
     }
@@ -606,13 +1068,47 @@ export function ConversationSidebar() {
     ? getCapturedSnippetReference(selectedSnippet)
     : null;
 
+  const updateSpacesPanelFrame = useCallback(() => {
+    const sidebarElement = sidebarRef.current;
+    if (!sidebarElement) return;
+
+    const rect = sidebarElement.getBoundingClientRect();
+    const availableWidth = Math.max(220, Math.floor(window.innerWidth - rect.right - 12));
+    const width = Math.min(360, availableWidth);
+
+    setSpacesPanelFrame({
+      left: Math.round(rect.right),
+      top: Math.round(rect.top),
+      height: Math.round(rect.height),
+      width,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isSpacesOpen) {
+      setSpacesPanelFrame(null);
+      return;
+    }
+
+    updateSpacesPanelFrame();
+    const handleLayoutChange = () => updateSpacesPanelFrame();
+    window.addEventListener('resize', handleLayoutChange);
+    window.addEventListener('scroll', handleLayoutChange, true);
+
+    return () => {
+      window.removeEventListener('resize', handleLayoutChange);
+      window.removeEventListener('scroll', handleLayoutChange, true);
+    };
+  }, [isSpacesOpen, updateSpacesPanelFrame]);
+
   return (
     <div
-      className={`relative w-80 h-full bg-black/30 backdrop-blur-2xl border-r border-white/[0.06] flex flex-col ${
+      ref={sidebarRef}
+      className={`relative h-full w-[clamp(16rem,28vw,20rem)] max-w-full shrink-0 bg-black/30 backdrop-blur-2xl border-r border-white/[0.06] flex flex-col overflow-hidden ${
         isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
       }`}
     >
-      <div className="p-4 border-b border-white/10">
+      <div className="p-4 border-b border-white/10 overflow-x-hidden">
         <button
           onClick={handleAsyncEvent(handleNewConversation)}
           disabled={isCreating}
@@ -624,7 +1120,7 @@ export function ConversationSidebar() {
           ) : (
             <Plus className="w-4 h-4" />
           )}
-          <span>New Conversation</span>
+          <span>{isJournalScope ? 'New Journal Entry' : 'New Conversation'}</span>
         </button>
 
         <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
@@ -633,32 +1129,73 @@ export function ConversationSidebar() {
             <p className="truncate text-xs text-white/80">
               {selectedSpace
                 ? `${selectedSpace.icon ? `${selectedSpace.icon} ` : ''}${selectedSpace.name}`
-                : 'All Spaces'}
+                : selectedJournal
+                  ? `${selectedJournal.icon ? `${selectedJournal.icon} ` : ''}${selectedJournal.name} · Journal`
+                  : 'All Spaces'}
             </p>
           </div>
-          <button
-            onClick={() => setIsSpacesOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white/90"
-          >
-            <Settings2 className="w-3.5 h-3.5" />
-            Spaces
-          </button>
+          <div className="flex items-center gap-1.5">
+            {isJournalScope && selectedJournal && (
+              <button
+                onClick={openSelectedJournalNotebook}
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/12 px-2.5 py-1.5 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60"
+              >
+                <NotebookPen className="w-3.5 h-3.5" />
+                Open Notebook
+              </button>
+            )}
+            <button
+              onClick={() => setIsSpacesOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white/90"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              Spaces
+            </button>
+          </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1">
-          {filterOptions.map((option) => (
+        {isJournalScope && (
+          <div className="mt-2 rounded-lg border border-emerald-300/30 bg-emerald-500/10 px-3 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-emerald-100/70">Notebook Mode</p>
+                <p className="mt-1 text-xs text-emerald-100/90">
+                  Journal v2 is active: entries, pinned highlights, and notebook pages.
+                </p>
+              </div>
+              {journalSpaces.length > 0 && (
+                <button
+                  onClick={openSelectedJournalNotebook}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-100 hover:border-emerald-200/70"
+                >
+                  <NotebookPen className="h-3 w-3" />
+                  Open
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {filterOptions.map((option) => {
+            const Icon = option.icon;
+            return (
             <button
               key={option.id}
               onClick={handleAsyncEvent(() => handleFilterSelect(option.id))}
-              className={`px-2.5 py-1 text-xs rounded-md border transition-colors whitespace-nowrap ${
+              aria-label={`${option.label} conversations`}
+              aria-pressed={filterMode === option.id}
+              title={option.label}
+              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
                 filterMode === option.id
                   ? 'bg-white/15 border-white/30 text-white'
                   : 'bg-white/5 border-white/10 text-white/60 hover:text-white/90'
               }`}
             >
-              {option.label}
+              <Icon className="h-3.5 w-3.5" />
             </button>
-          ))}
+          );
+          })}
         </div>
 
         <div className="mt-3 relative">
@@ -666,10 +1203,136 @@ export function ConversationSidebar() {
           <input
             value={localQuery}
             onChange={(e) => setLocalQuery(e.target.value)}
-            placeholder="Search conversations..."
+            placeholder={isJournalScope ? 'Search journal entries...' : 'Search conversations...'}
             className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.03] text-sm text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
           />
         </div>
+
+        {filterMode !== 'snippets' && (
+          <>
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <button
+                onClick={() => {
+                  const nextSelectionMode = !isSelectionMode;
+                  setIsSelectionMode(nextSelectionMode);
+                  if (nextSelectionMode) {
+                    void loadJournals(false);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] transition-colors ${
+                  isSelectionMode
+                    ? 'border-blue-400/45 bg-blue-500/20 text-blue-100'
+                    : 'border-white/15 bg-white/5 text-white/70 hover:border-white/30 hover:text-white/90'
+                }`}
+              >
+                {isSelectionMode ? (
+                  <>
+                    <X className="h-3.5 w-3.5" />
+                    Done Selecting
+                  </>
+                ) : (
+                  <>
+                    <Bookmark className="h-3.5 w-3.5" />
+                    Select Multiple
+                  </>
+                )}
+              </button>
+
+              {isSelectionMode && (
+                <button
+                  onClick={toggleSelectAllVisibleConversations}
+                  className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white"
+                >
+                  {areAllVisibleConversationsSelected ? 'Clear Page' : 'Select Page'}
+                </button>
+              )}
+            </div>
+
+            {isSelectionMode && (
+              <div className="mt-2 rounded-lg border border-blue-400/20 bg-blue-500/8 px-2.5 py-2.5">
+                <p className="text-[11px] text-blue-100/85">
+                  {selectedConversationCount} selected
+                </p>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <select
+                    value={bulkSpaceIdDraft}
+                    onChange={(e) => setBulkSpaceIdDraft(e.target.value)}
+                    disabled={isLoadingJournals}
+                    className="min-w-0 flex-1 rounded-md border border-white/15 bg-white/[0.05] px-2 py-1.5 text-[11px] text-white/85 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                  >
+                    {isLoadingJournals ? (
+                      <option value="" disabled>
+                        Loading journals...
+                      </option>
+                    ) : journalSpaces.length === 0 ? (
+                      <option value="" disabled>
+                        No journals yet
+                      </option>
+                    ) : (
+                      <>
+                        <option value="" disabled>
+                          Choose journal...
+                        </option>
+                        {journalSpaces.map((space) => (
+                          <option key={space.id} value={space.id} className="bg-slate-900 text-white">
+                            {space.name}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                  <button
+                    onClick={handleAsyncEvent(addSelectedConversationsToJournal)}
+                    disabled={
+                      selectedConversationCount === 0
+                      || !bulkSpaceIdDraft
+                      || isBulkMoving
+                      || journalSpaces.length === 0
+                    }
+                    className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isBulkMoving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <ArrowUpRight className="h-3.5 w-3.5" />
+                    )}
+                    Add to Journal
+                  </button>
+                </div>
+                {journalSpaces.length === 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    <p className="text-[11px] text-blue-100/65">
+                      No journals yet. Create one to organize selected conversations.
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleAsyncEvent(createQuickJournal)}
+                        disabled={isCreatingQuickJournal}
+                        className="inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-500/15 px-2 py-1 text-[11px] text-blue-100 transition-colors hover:border-blue-300/65 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isCreatingQuickJournal ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Plus className="h-3.5 w-3.5" />
+                        )}
+                        Create Journal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/journals')}
+                        className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60"
+                      >
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                        Open Journals
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {error && (
@@ -688,7 +1351,7 @@ export function ConversationSidebar() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
         {filterMode === 'snippets' && (
           <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.08),rgba(251,191,36,0.06)_35%,transparent_72%)] p-2.5">
             <div className="rounded-xl border border-white/10 bg-black/25 p-3 backdrop-blur-sm">
@@ -818,7 +1481,7 @@ export function ConversationSidebar() {
                               {bookmark.conversationTitle}
                             </span>
                           </p>
-                          <p className="mt-1.5 text-[11px] text-white/60 line-clamp-2 break-all">
+                          <p className="mt-1.5 text-[11px] text-white/60 line-clamp-2 break-words">
                             {bookmark.messagePreview}
                           </p>
                         </button>
@@ -870,191 +1533,345 @@ export function ConversationSidebar() {
         ) : conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-white/40 px-4 text-center">
             <MessageSquare className="w-8 h-8 mb-2 opacity-50" />
-            <p className="text-sm">No conversations yet</p>
+            <p className="text-sm">{isJournalScope ? 'No journal entries yet' : 'No conversations yet'}</p>
             <p className="text-xs mt-1">Start a new conversation above</p>
           </div>
         ) : (
-          <nav className="p-2 space-y-1" role="navigation" aria-label="Conversations">
-            {conversations.map((conversation) => {
-              const isActive = conversation.id === activeConversationId;
-              const isDeleting = deletingId === conversation.id;
-              const accent = conversation.spaceId
-                ? spaceAccentById.get(conversation.spaceId) ?? null
-                : null;
-              const rowStyle = accent
-                ? {
-                  borderColor: isActive ? withAlpha(accent, 0.65) : withAlpha(accent, 0.28),
-                  background: isActive
-                    ? `linear-gradient(90deg, ${withAlpha(accent, 0.2)} 0%, rgba(255,255,255,0.02) 100%)`
-                    : withAlpha(accent, 0.08),
-                  boxShadow: isActive ? `0 0 0 1px ${withAlpha(accent, 0.2)} inset` : undefined,
-                }
-                : undefined;
+          <nav
+            className={`p-2 pr-3 ${isJournalScope ? 'space-y-3' : 'space-y-1'}`}
+            role="navigation"
+            aria-label="Conversations"
+          >
+            {journalConversationGroups.map((group) => (
+              <section key={group.key} className={isJournalScope ? 'space-y-1.5' : 'space-y-1'}>
+                {isJournalScope && group.label && (
+                  <p className="px-2 text-[10px] uppercase tracking-wide text-emerald-100/55">
+                    Notebook · {group.label}
+                  </p>
+                )}
+                <div className="space-y-1">
+                  {group.items.map((conversation, groupIndex) => {
+                    const isActive = conversation.id === activeConversationId;
+                    const isDeleting = deletingId === conversation.id;
+                    const accent = conversation.spaceId
+                      ? spaceAccentById.get(conversation.spaceId) ?? null
+                      : null;
+                    const conversationSpaceKind = conversation.spaceId
+                      ? (spaceKindById.get(conversation.spaceId) ?? 'standard')
+                      : 'standard';
+                    const rowStyle = accent
+                      ? {
+                        borderColor: isActive ? withAlpha(accent, 0.65) : withAlpha(accent, 0.28),
+                        background: isActive
+                          ? `linear-gradient(90deg, ${withAlpha(accent, 0.2)} 0%, rgba(255,255,255,0.02) 100%)`
+                          : withAlpha(accent, 0.08),
+                        boxShadow: isActive ? `0 0 0 1px ${withAlpha(accent, 0.2)} inset` : undefined,
+                      }
+                      : undefined;
 
-              return (
-                <div
-                  key={conversation.id}
-                  onClick={handleAsyncEvent(() => selectConversation(conversation.id))}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={handleAsyncEvent(async (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      await selectConversation(conversation.id);
-                    }
-                  })}
-                  aria-label={`Select conversation: ${conversation.title}`}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`group w-full text-left px-4 py-3 rounded-xl transition-all duration-300 cursor-pointer ${
-                    isActive
-                      ? 'bg-white/[0.08] backdrop-blur-xl shadow-lg shadow-blue-500/10 border border-blue-500/15'
-                      : 'bg-white/[0.02] hover:bg-white/[0.04] border border-transparent hover:border-white/[0.06]'
-                  }`}
-                  style={rowStyle}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <MessageSquare className="w-4 h-4 text-white/60 flex-shrink-0" />
-                        <h3 className="text-sm font-medium text-white/90 truncate">
-                          {conversation.title}
-                        </h3>
+                    return (
+                      <div
+                        key={conversation.id}
+                        onClick={handleAsyncEvent(async () => {
+                          if (isSelectionMode) {
+                            toggleConversationSelection(conversation.id);
+                            return;
+                          }
+                          if (renamingConversationId === conversation.id) {
+                            return;
+                          }
+                          await selectConversation(conversation.id);
+                        })}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={handleAsyncEvent(async (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            if (isSelectionMode) {
+                              e.preventDefault();
+                              toggleConversationSelection(conversation.id);
+                              return;
+                            }
+                            if (renamingConversationId === conversation.id) {
+                              return;
+                            }
+                            e.preventDefault();
+                            await selectConversation(conversation.id);
+                          }
+                        })}
+                        aria-label={`Select conversation: ${conversation.title}`}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`group w-full text-left px-4 py-3 rounded-xl transition-all duration-300 cursor-pointer ${
+                          isJournalScope
+                            ? (isActive
+                              ? 'bg-[linear-gradient(165deg,rgba(16,185,129,0.2),rgba(20,184,166,0.1))] shadow-lg shadow-emerald-900/25 border border-emerald-300/35'
+                              : 'bg-[linear-gradient(165deg,rgba(16,185,129,0.09),rgba(15,23,42,0.15))] hover:bg-[linear-gradient(165deg,rgba(16,185,129,0.14),rgba(15,23,42,0.2))] border border-emerald-300/20')
+                            : (isActive
+                              ? 'bg-white/[0.08] backdrop-blur-xl shadow-lg shadow-blue-500/10 border border-blue-500/15'
+                              : 'bg-white/[0.02] hover:bg-white/[0.04] border border-transparent hover:border-white/[0.06]')
+                        }`}
+                        style={rowStyle}
+                      >
+                        <div className="relative flex items-start gap-2">
+                          <div className={`flex-1 min-w-0 transition-[padding] duration-200 ${isSelectionMode ? '' : 'pr-28'}`}>
+                            {isJournalScope && (
+                              <p className="mb-1 text-[10px] uppercase tracking-wide text-emerald-100/65">
+                                Page {groupIndex + 1}
+                              </p>
+                            )}
+                            <div className="flex items-center gap-2 mb-1">
+                              {isSelectionMode && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedConversationIds.has(conversation.id)}
+                                  onChange={() => toggleConversationSelection(conversation.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="h-3.5 w-3.5 rounded border-white/25 bg-white/10 accent-blue-400"
+                                  aria-label={`Select conversation: ${conversation.title}`}
+                                />
+                              )}
+                              {isJournalScope ? (
+                                <NotebookPen className="w-4 h-4 text-emerald-100/80 flex-shrink-0" />
+                              ) : (
+                                <MessageSquare className="w-4 h-4 text-white/60 flex-shrink-0" />
+                              )}
+                              {renamingConversationId === conversation.id ? (
+                                <div
+                                  className="flex min-w-0 flex-1 items-center gap-1.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    autoFocus
+                                    value={renameDraft}
+                                    maxLength={120}
+                                    onChange={(e) => setRenameDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        void saveConversationRename(
+                                          conversation.id,
+                                          conversation.title
+                                        );
+                                        return;
+                                      }
+                                      if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        cancelRenameConversation();
+                                      }
+                                    }}
+                                    className="h-7 min-w-0 flex-1 rounded-md border border-white/20 bg-black/25 px-2 text-xs text-white/90 placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-blue-400/70"
+                                    aria-label={`Rename conversation: ${conversation.title}`}
+                                  />
+                                  <button
+                                    onClick={handleAsyncEvent(async (e) => {
+                                      e.stopPropagation();
+                                      await saveConversationRename(
+                                        conversation.id,
+                                        conversation.title
+                                      );
+                                    })}
+                                    className="rounded-md border border-emerald-300/35 bg-emerald-500/15 p-1 text-emerald-100 transition-colors hover:border-emerald-300/60"
+                                    aria-label="Save conversation title"
+                                    title="Save title"
+                                  >
+                                    <Check className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      cancelRenameConversation();
+                                    }}
+                                    className="rounded-md border border-white/20 bg-white/5 p-1 text-white/70 transition-colors hover:border-white/35 hover:text-white"
+                                    aria-label="Cancel rename"
+                                    title="Cancel"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <h3
+                                  className="text-sm font-medium text-white/90 break-words"
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    beginRenameConversation(conversation.id, conversation.title);
+                                  }}
+                                  title={conversation.title}
+                                >
+                                  {conversation.title}
+                                </h3>
+                              )}
+                            </div>
+                            {conversation.spaceId && (
+                              <p className={`text-[11px] mb-1 break-words ${isJournalScope ? 'text-emerald-100/65' : 'text-white/35'}`}>
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border ${
+                                    isJournalScope
+                                      ? 'border-emerald-300/30 bg-emerald-500/10'
+                                      : 'border-white/15 bg-white/5'
+                                  }`}
+                                  style={(() => {
+                                    const spaceAccent = spaceAccentById.get(conversation.spaceId) ?? null;
+                                    if (!spaceAccent) return undefined;
+                                    return {
+                                      borderColor: withAlpha(spaceAccent, 0.55),
+                                      backgroundColor: withAlpha(spaceAccent, 0.16),
+                                      color: '#e2e8f0',
+                                    };
+                                  })()}
+                                >
+                                  {spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}
+                                  {conversationSpaceKind === 'journal' && (
+                                    <span className="rounded-full border border-emerald-300/35 bg-emerald-500/15 px-1 py-0 text-[9px] uppercase tracking-wide text-emerald-100">
+                                      Journal
+                                    </span>
+                                  )}
+                                </span>
+                              </p>
+                            )}
+                            <p className="text-xs text-white/40">
+                              {(() => {
+                                const date = new Date(conversation.updatedAt);
+                                return isNaN(date.getTime()) ? 'Recently' : formatDistanceToNow(date, { addSuffix: true });
+                              })()}
+                            </p>
+                          </div>
+
+                          <div className={`${
+                            isSelectionMode
+                              ? 'hidden'
+                              : isJournalScope
+                                ? 'absolute right-0 top-0'
+                                : 'absolute right-0 top-0 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                          } transition-opacity duration-300 flex items-center gap-1`}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                beginRenameConversation(conversation.id, conversation.title);
+                              }}
+                              aria-label={`Rename conversation: ${conversation.title}`}
+                              className="p-1.5 rounded-md bg-white/5 text-white/60 hover:text-cyan-200 transition-colors"
+                              title="Rename conversation"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={handleAsyncEvent(async (e) => {
+                                e.stopPropagation();
+                                await setConversationSaved(conversation.id, !conversation.isSaved);
+                              })}
+                              aria-label={`Save conversation: ${conversation.title}`}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                conversation.isSaved
+                                  ? 'bg-amber-500/20 text-amber-300'
+                                  : 'bg-white/5 text-white/60 hover:text-amber-300'
+                              }`}
+                              title={conversation.isSaved ? 'Unsave' : 'Save'}
+                            >
+                              <Star className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={handleAsyncEvent(async (e) => {
+                                e.stopPropagation();
+                                await setConversationBookmarked(conversation.id, !conversation.isBookmarked);
+                              })}
+                              aria-label={`Bookmark conversation: ${conversation.title}`}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                conversation.isBookmarked
+                                  ? 'bg-sky-500/20 text-sky-300'
+                                  : 'bg-white/5 text-white/60 hover:text-sky-300'
+                              }`}
+                              title={conversation.isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+                            >
+                              <Bookmark className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={handleAsyncEvent(async (e) => {
+                                e.stopPropagation();
+                                await setConversationPinned(conversation.id, !conversation.isPinned);
+                              })}
+                              aria-label={`Pin conversation: ${conversation.title}`}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                conversation.isPinned
+                                  ? 'bg-violet-500/20 text-violet-300'
+                                  : 'bg-white/5 text-white/60 hover:text-violet-300'
+                              }`}
+                              title={conversation.isPinned ? 'Unpin' : 'Pin'}
+                            >
+                              <Pin className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={handleAsyncEvent(async (e) => {
+                                e.stopPropagation();
+                                await setConversationArchived(conversation.id, !conversation.isArchived);
+                              })}
+                              aria-label={`${conversation.isArchived ? 'Unarchive' : 'Archive'} conversation: ${conversation.title}`}
+                              className="p-1.5 rounded-md bg-white/5 text-white/60 hover:text-orange-300 transition-colors"
+                              title={conversation.isArchived ? 'Unarchive' : 'Archive'}
+                            >
+                              {conversation.isArchived ? (
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              ) : (
+                                <Archive className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+
+                            <button
+                              onClick={handleAsyncEvent((e) => handleDelete(conversation.id, e))}
+                              disabled={isDeleting}
+                              aria-label={`Delete conversation: ${conversation.title}`}
+                              className="p-1.5 rounded-md bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 disabled:opacity-50 transition-colors"
+                              title="Delete conversation"
+                            >
+                              {isDeleting ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {(conversation.lastMessagePreview || (conversation.messages && conversation.messages.length > 0)) && (
+                          <p className={`text-xs mt-2 break-words ${
+                            isJournalScope ? 'line-clamp-3 text-emerald-100/75' : 'line-clamp-2 text-white/50'
+                          }`}>
+                            {conversation.lastMessagePreview ?? conversation.messages?.[conversation.messages.length - 1]?.content}
+                          </p>
+                        )}
                       </div>
-                      {conversation.spaceId && (
-                        <p className="text-[11px] text-white/35 mb-1 truncate">
-                          <span
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-white/15 bg-white/5"
-                            style={(() => {
-                              const accent = spaceAccentById.get(conversation.spaceId) ?? null;
-                              if (!accent) return undefined;
-                              return {
-                                borderColor: withAlpha(accent, 0.55),
-                                backgroundColor: withAlpha(accent, 0.16),
-                                color: '#e2e8f0',
-                              };
-                            })()}
-                          >
-                            {spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}
-                          </span>
-                        </p>
-                      )}
-                      <p className="text-xs text-white/40">
-                        {(() => {
-                          const date = new Date(conversation.updatedAt);
-                          return isNaN(date.getTime()) ? 'Recently' : formatDistanceToNow(date, { addSuffix: true });
-                        })()}
-                      </p>
-                    </div>
-
-                    <div className="opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-300 flex items-center gap-1">
-                      <button
-                        onClick={handleAsyncEvent(async (e) => {
-                          e.stopPropagation();
-                          await setConversationSaved(conversation.id, !conversation.isSaved);
-                        })}
-                        aria-label={`Save conversation: ${conversation.title}`}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          conversation.isSaved
-                            ? 'bg-amber-500/20 text-amber-300'
-                            : 'bg-white/5 text-white/60 hover:text-amber-300'
-                        }`}
-                        title={conversation.isSaved ? 'Unsave' : 'Save'}
-                      >
-                        <Star className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={handleAsyncEvent(async (e) => {
-                          e.stopPropagation();
-                          await setConversationBookmarked(conversation.id, !conversation.isBookmarked);
-                        })}
-                        aria-label={`Bookmark conversation: ${conversation.title}`}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          conversation.isBookmarked
-                            ? 'bg-sky-500/20 text-sky-300'
-                            : 'bg-white/5 text-white/60 hover:text-sky-300'
-                        }`}
-                        title={conversation.isBookmarked ? 'Remove bookmark' : 'Bookmark'}
-                      >
-                        <Bookmark className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={handleAsyncEvent(async (e) => {
-                          e.stopPropagation();
-                          await setConversationPinned(conversation.id, !conversation.isPinned);
-                        })}
-                        aria-label={`Pin conversation: ${conversation.title}`}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          conversation.isPinned
-                            ? 'bg-violet-500/20 text-violet-300'
-                            : 'bg-white/5 text-white/60 hover:text-violet-300'
-                        }`}
-                        title={conversation.isPinned ? 'Unpin' : 'Pin'}
-                      >
-                        <Pin className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={handleAsyncEvent(async (e) => {
-                          e.stopPropagation();
-                          await setConversationArchived(conversation.id, !conversation.isArchived);
-                        })}
-                        aria-label={`${conversation.isArchived ? 'Unarchive' : 'Archive'} conversation: ${conversation.title}`}
-                        className="p-1.5 rounded-md bg-white/5 text-white/60 hover:text-orange-300 transition-colors"
-                        title={conversation.isArchived ? 'Unarchive' : 'Archive'}
-                      >
-                        {conversation.isArchived ? (
-                          <RotateCcw className="w-3.5 h-3.5" />
-                        ) : (
-                          <Archive className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-
-                      <button
-                        onClick={handleAsyncEvent((e) => handleDelete(conversation.id, e))}
-                        disabled={isDeleting}
-                        aria-label={`Delete conversation: ${conversation.title}`}
-                        className="p-1.5 rounded-md bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 disabled:opacity-50 transition-colors"
-                        title="Delete conversation"
-                      >
-                        {isDeleting ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {(conversation.lastMessagePreview || (conversation.messages && conversation.messages.length > 0)) && (
-                    <p className="text-xs text-white/50 mt-2 line-clamp-2 break-all">
-                      {conversation.lastMessagePreview ?? conversation.messages?.[conversation.messages.length - 1]?.content}
-                    </p>
-                  )}
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </section>
+            ))}
           </nav>
         )}
       </div>
 
       <div className="p-4 border-t border-white/10">
         <div className="text-xs text-white/40 text-center">
-          {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
+          {conversations.length} {isJournalScope ? 'entry' : 'conversation'}{conversations.length !== 1 ? 's' : ''}
         </div>
       </div>
 
-      {isSpacesOpen && (
+      {isSpacesOpen && createPortal(
         <>
           <button
             type="button"
             aria-label="Close spaces panel"
             onClick={() => setIsSpacesOpen(false)}
-            className={`absolute inset-0 bg-black/40 backdrop-blur-[1px] ${SPACES_MODAL_LAYER_CLASSES.backdrop}`}
+            className={`fixed inset-0 bg-black/40 backdrop-blur-[1px] ${SPACES_MODAL_LAYER_CLASSES.backdrop}`}
           />
-          <aside className={`absolute left-full top-0 h-full w-[360px] border-r border-white/10 bg-[#0b1118]/95 backdrop-blur-xl shadow-2xl shadow-black/40 ${SPACES_MODAL_LAYER_CLASSES.panel}`}>
-            <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col`}>
+          <aside
+            className={`fixed border-r border-white/10 bg-[#0b1118]/95 backdrop-blur-xl shadow-2xl shadow-black/40 ${SPACES_MODAL_LAYER_CLASSES.panel}`}
+            style={spacesPanelFrame ?? undefined}
+          >
+            <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col overflow-hidden`}>
               <div className={`flex items-center justify-between border-b border-white/10 px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
                 <div>
                   <p className="text-[10px] uppercase tracking-wide text-white/40">Per-Space Context</p>
@@ -1093,15 +1910,44 @@ export function ConversationSidebar() {
                     <input
                       value={newSpaceNameDraft}
                       onChange={(e) => setNewSpaceNameDraft(e.target.value)}
-                      placeholder="Space name (e.g. Product, Research, Personal)"
+                      placeholder={
+                        newSpaceKindDraft === 'journal'
+                          ? 'Journal name (e.g. Food Research, Weekly Notes)'
+                          : 'Space name (e.g. Product, Research, Personal)'
+                      }
                       className="w-full rounded-md border border-white/10 bg-white/[0.02] px-2.5 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
                     />
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setNewSpaceKindDraft('standard')}
+                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                          newSpaceKindDraft === 'standard'
+                            ? 'border-blue-400/45 bg-blue-500/20 text-blue-100'
+                            : 'border-white/15 bg-white/5 text-white/65 hover:border-white/30 hover:text-white'
+                        }`}
+                      >
+                        Standard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewSpaceKindDraft('journal')}
+                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                          newSpaceKindDraft === 'journal'
+                            ? 'border-emerald-400/45 bg-emerald-500/20 text-emerald-100'
+                            : 'border-white/15 bg-white/5 text-white/65 hover:border-white/30 hover:text-white'
+                        }`}
+                      >
+                        Journal
+                      </button>
+                    </div>
                     <div className="flex items-center justify-end gap-1.5">
                       <button
                         type="button"
                         onClick={() => {
                           setIsCreateSpaceOpen(false);
                           setNewSpaceNameDraft('');
+                          setNewSpaceKindDraft('standard');
                         }}
                         className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2.5 py-1 text-[11px] text-white/65 transition-colors hover:border-white/30 hover:text-white"
                       >
@@ -1149,7 +1995,13 @@ export function ConversationSidebar() {
                       </div>
                     </button>
 
-                    {activeSpacesOrdered.map((space) => {
+                    {standardSpaces.length > 0 && (
+                      <p className="px-1 pt-1 text-[10px] uppercase tracking-wide text-white/45">
+                        Spaces
+                      </p>
+                    )}
+
+                    {standardSpaces.map((space) => {
                       const isSelected = selectedSpaceId === space.id;
                       const accent = normalizeHexColor(space.accentColor);
                       const cardStyle = accent
@@ -1397,7 +2249,8 @@ export function ConversationSidebar() {
               </div>
             </div>
           </aside>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );

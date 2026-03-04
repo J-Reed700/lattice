@@ -66,9 +66,9 @@ export function RootLayout() {
     {
       id: 'navigation.goToDaily',
       keys: 'Mod+3',
-      description: 'Go to Daily Notes',
+      description: 'Go to Journals',
       category: 'navigation' as const,
-      handler: () => navigate('/daily'),
+      handler: () => navigate('/journals'),
       global: true,
     },
     {
@@ -91,7 +91,7 @@ export function RootLayout() {
 
   useKeyboardShortcuts(globalShortcuts, { enabled: true });
 
-  const handleNavigate = (view: 'search' | 'files' | 'settings' | 'daily' | 'references') => {
+  const handleNavigate = (view: 'search' | 'files' | 'settings' | 'journals' | 'references') => {
     navigate(`/${view}`);
   };
 

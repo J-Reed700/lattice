@@ -113,7 +113,7 @@ export function ChatView() {
   }, [activeConversationId, searchParams, setSearchParams]);
 
   return (
-    <div className="flex h-full w-full">
+    <div className="flex h-full w-full min-w-0 overflow-hidden">
       <ConversationSidebar />
       <ChatPanel />
       <ConversationSpotlight

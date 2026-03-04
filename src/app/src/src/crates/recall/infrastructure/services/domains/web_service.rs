@@ -827,7 +827,8 @@ impl WebService {
                                 info!("Attempting FlareSolverr bypass for {}", search_url);
                                 match solver.solve(search_url).await {
                                     Ok(solved_html) => {
-                                        let mut results = self.parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
+                                        let mut results = self
+                                            .parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
                                         for result in &mut results {
                                             result.source = Some(provider.to_string());
                                         }
@@ -835,7 +836,8 @@ impl WebService {
                                             providers_used.insert(provider.to_string());
                                             page_has_results = true;
                                             for result in results {
-                                                let canonical = self.canonicalize_url_for_dedup(&result.url);
+                                                let canonical =
+                                                    self.canonicalize_url_for_dedup(&result.url);
                                                 if seen_urls.insert(canonical) {
                                                     merged_results.push(result);
                                                 }

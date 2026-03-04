@@ -77,7 +77,7 @@ export const SHORTCUT_DESCRIPTIONS: Record<string, Record<string, string>> = {
     focusSearch: 'Focus search input',
     goToFiles: 'Go to files view',
     goToSearch: 'Go to search view',
-    goToDaily: 'Go to daily notes view',
+    goToDaily: 'Go to journals view',
   },
   search: {
     selectResult1: 'Select first result',

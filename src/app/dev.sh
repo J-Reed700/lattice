@@ -40,6 +40,80 @@ print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
 }
 
+# Remove a directory robustly. macOS can race with background writers (e.g. rust-analyzer).
+remove_dir_with_retries() {
+    local dir="$1"
+    local max_attempts="${2:-3}"
+    local attempt=1
+
+    while [ "$attempt" -le "$max_attempts" ]; do
+        command rm -rf "$dir" 2>/dev/null || true
+
+        if [ ! -d "$dir" ]; then
+            return 0
+        fi
+
+        chmod -R u+w "$dir" 2>/dev/null || true
+        find "$dir" -depth -delete 2>/dev/null || true
+        command rm -rf "$dir" 2>/dev/null || true
+
+        if [ ! -d "$dir" ]; then
+            return 0
+        fi
+
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+
+    return 1
+}
+
+ensure_npm_runtime_deps() {
+    cd "$PROJECT_ROOT"
+
+    if [ ! -f "node_modules/@tauri-apps/api/package.json" ]; then
+        print_warning "Missing @tauri-apps/api in node_modules. Installing npm dependencies..."
+        npm install
+    fi
+
+    if [ ! -f "node_modules/@tauri-apps/api/package.json" ]; then
+        print_error "@tauri-apps/api is still missing after npm install."
+        print_info "Run manually: npm install @tauri-apps/api@~2.9.0 @tauri-apps/cli@~2.9.0"
+        exit 1
+    fi
+}
+
+# Ensure Rust/Tauri builds can invoke Metal compiler on macOS.
+# Some Xcode installs require selecting the downloaded Metal toolchain explicitly.
+setup_rust_build_env() {
+    if [ "$(uname -s)" != "Darwin" ]; then
+        return
+    fi
+
+    # If default toolchain works, do nothing.
+    if xcrun -sdk macosx metal -v >/dev/null 2>&1; then
+        return
+    fi
+
+    local metal_toolchain_id=""
+    metal_toolchain_id=$(
+        xcodebuild -showComponent MetalToolchain -json 2>/dev/null \
+            | sed -n 's/.*"toolchainIdentifier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            | head -n 1
+    )
+
+    if [ -n "$metal_toolchain_id" ] && xcrun --toolchain "$metal_toolchain_id" metal -v >/dev/null 2>&1; then
+        export TOOLCHAINS="$metal_toolchain_id"
+        print_info "Using Metal toolchain: $metal_toolchain_id"
+        return
+    fi
+
+    print_error "Metal compiler is not usable from xcrun."
+    print_info "Run: xcodebuild -downloadComponent MetalToolchain"
+    print_info "Then retry: ./dev.sh <command>"
+    exit 1
+}
+
 # Kill all running processes
 kill_all() {
     print_header "Killing all processes"
@@ -66,18 +140,7 @@ clean_build() {
 
     if [ -d "node_modules" ]; then
         print_info "Removing node_modules..."
-        # Try standard rm first, fall back to aggressive cleanup if needed
-        if ! rm -rf node_modules 2>/dev/null; then
-            print_warning "Standard cleanup failed, using aggressive method..."
-            # Use find with -delete for stubborn nested directories
-            find node_modules -delete 2>/dev/null || true
-            # Final cleanup if directory still exists
-            if [ -d "node_modules" ]; then
-                chmod -R u+w node_modules 2>/dev/null || true
-                rm -rf node_modules 2>/dev/null || true
-            fi
-        fi
-        if [ ! -d "node_modules" ]; then
+        if remove_dir_with_retries "node_modules"; then
             print_success "node_modules removed"
         else
             print_warning "node_modules partially removed (you may need to run: sudo rm -rf node_modules)"
@@ -91,23 +154,28 @@ clean_build() {
     fi
 
     if [ -f "package-lock.json" ]; then
-        print_info "Removing package-lock.json..."
-        rm -f package-lock.json
-        print_success "package-lock.json removed"
+        print_info "Keeping package-lock.json (reproducible npm dependency resolution)"
     fi
 
     cd "$TAURI_DIR"
 
     if [ -d "target" ]; then
         print_info "Removing Cargo target directory..."
-        rm -rf target
-        print_success "Cargo target removed"
+        if remove_dir_with_retries "target"; then
+            print_success "Cargo target removed"
+        else
+            print_warning "Target cleanup raced with another process, running cargo clean..."
+            cargo clean >/dev/null 2>&1 || true
+            if [ -d "target" ]; then
+                print_warning "Cargo target still present (likely being recreated by rust-analyzer/flycheck)"
+            else
+                print_success "Cargo target removed"
+            fi
+        fi
     fi
 
     if [ -f "Cargo.lock" ]; then
-        print_info "Removing Cargo.lock..."
-        rm -f Cargo.lock
-        print_success "Cargo.lock removed"
+        print_info "Keeping Cargo.lock (reproducible Rust dependency resolution)"
     fi
 
     print_success "Build artifacts cleaned"
@@ -165,6 +233,7 @@ clean_all() {
 # Install dependencies (both npm and Rust)
 install_deps() {
     print_header "Installing dependencies"
+    setup_rust_build_env
 
     cd "$PROJECT_ROOT"
 
@@ -193,6 +262,7 @@ install_npm() {
 # Build Rust dependencies only
 install_rust() {
     print_header "Building Rust dependencies"
+    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -210,15 +280,7 @@ rebuild_npm() {
     # Clean npm artifacts
     if [ -d "node_modules" ]; then
         print_info "Removing node_modules..."
-        if ! rm -rf node_modules 2>/dev/null; then
-            print_warning "Standard cleanup failed, using aggressive method..."
-            find node_modules -delete 2>/dev/null || true
-            if [ -d "node_modules" ]; then
-                chmod -R u+w node_modules 2>/dev/null || true
-                rm -rf node_modules 2>/dev/null || true
-            fi
-        fi
-        if [ ! -d "node_modules" ]; then
+        if remove_dir_with_retries "node_modules"; then
             print_success "node_modules removed"
         else
             print_warning "node_modules partially removed"
@@ -226,9 +288,7 @@ rebuild_npm() {
     fi
 
     if [ -f "package-lock.json" ]; then
-        print_info "Removing package-lock.json..."
-        rm -f package-lock.json
-        print_success "package-lock.json removed"
+        print_info "Keeping package-lock.json (reproducible npm dependency resolution)"
     fi
 
     if [ -d "dist" ]; then
@@ -246,20 +306,28 @@ rebuild_npm() {
 # Rebuild Rust only (clean + build)
 rebuild_rust() {
     print_header "Rebuilding Rust dependencies"
+    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
     # Clean Rust artifacts
     if [ -d "target" ]; then
         print_info "Removing Cargo target directory..."
-        rm -rf target
-        print_success "Cargo target removed"
+        if remove_dir_with_retries "target"; then
+            print_success "Cargo target removed"
+        else
+            print_warning "Target cleanup raced with another process, running cargo clean..."
+            cargo clean >/dev/null 2>&1 || true
+            if [ -d "target" ]; then
+                print_warning "Cargo target still present (likely being recreated by rust-analyzer/flycheck)"
+            else
+                print_success "Cargo target removed"
+            fi
+        fi
     fi
 
     if [ -f "Cargo.lock" ]; then
-        print_info "Removing Cargo.lock..."
-        rm -f Cargo.lock
-        print_success "Cargo.lock removed"
+        print_info "Keeping Cargo.lock (reproducible Rust dependency resolution)"
     fi
 
     # Build
@@ -282,6 +350,7 @@ build_frontend() {
 # Build Tauri (release)
 build_tauri_release() {
     print_header "Building Tauri (Release)"
+    setup_rust_build_env
 
     cd "$PROJECT_ROOT"
 
@@ -295,6 +364,7 @@ build_tauri_release() {
 # Build Tauri (debug)
 build_tauri_debug() {
     print_header "Building Tauri (Debug)"
+    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -308,6 +378,7 @@ build_tauri_debug() {
 # Run dev server (frontend only)
 run_frontend() {
     print_header "Running frontend dev server"
+    ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
 
@@ -318,6 +389,8 @@ run_frontend() {
 # Run Tauri dev
 run_tauri_dev() {
     print_header "Running Tauri dev"
+    setup_rust_build_env
+    ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
 
@@ -329,6 +402,8 @@ run_tauri_dev() {
 # Quick start for testing (minimal build)
 quick_start() {
     print_header "Quick Start (Testing Mode)"
+    setup_rust_build_env
+    ensure_npm_runtime_deps
 
     cd "$PROJECT_ROOT"
 
@@ -348,6 +423,8 @@ quick_start() {
 # Run Tauri dev with logs
 run_tauri_dev_logs() {
     print_header "Running Tauri dev with logs"
+    setup_rust_build_env
+    ensure_npm_runtime_deps
 
     local LOG_FILE="/tmp/tauri_dev_$(date +%Y%m%d_%H%M%S).log"
 
@@ -360,6 +437,7 @@ run_tauri_dev_logs() {
 # Run tests
 run_tests() {
     print_header "Running tests"
+    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -375,6 +453,7 @@ run_tests() {
 # Run linter
 run_lint() {
     print_header "Running linters"
+    setup_rust_build_env
 
     cd "$TAURI_DIR"
 
@@ -506,6 +585,7 @@ watch_logs() {
 # Full rebuild
 full_rebuild() {
     print_header "FULL REBUILD"
+    setup_rust_build_env
 
     kill_all
     clean_build

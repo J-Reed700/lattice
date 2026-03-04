@@ -11,6 +11,7 @@ pub(super) struct PromptMessageBuilder<'a> {
     force_web_search: bool,
     followup_context: Option<String>,
     kb_context: Option<String>,
+    linked_web_sources_context: Option<String>,
     web_context: Option<String>,
     web_search_error: Option<String>,
     kb_unavailable_reason: Option<String>,
@@ -31,6 +32,7 @@ impl<'a> PromptMessageBuilder<'a> {
             force_web_search: search_flags.force_web_search,
             followup_context: None,
             kb_context: None,
+            linked_web_sources_context: None,
             web_context: None,
             web_search_error: None,
             kb_unavailable_reason: None,
@@ -44,6 +46,14 @@ impl<'a> PromptMessageBuilder<'a> {
 
     pub(super) fn with_kb_context(mut self, kb_context: Option<String>) -> Self {
         self.kb_context = kb_context;
+        self
+    }
+
+    pub(super) fn with_linked_web_sources_context(
+        mut self,
+        linked_web_sources_context: Option<String>,
+    ) -> Self {
+        self.linked_web_sources_context = linked_web_sources_context;
         self
     }
 
@@ -84,6 +94,12 @@ impl<'a> PromptMessageBuilder<'a> {
         }
         if let Some(context_text) = self.kb_context.as_ref() {
             context_sections.push(format!("Knowledge Base Results:\n{}", context_text));
+        }
+        if let Some(context_text) = self.linked_web_sources_context.as_ref() {
+            context_sections.push(format!(
+                "Linked Conversation Web Sources:\n{}",
+                context_text
+            ));
         }
         if let Some(context_text) = self.web_context.as_ref() {
             context_sections.push(format!("Web Results (Supplemental):\n{}", context_text));

@@ -31,24 +31,49 @@ const toSnapshotState = (state: string): TauriEvents.Downloads.Single['status'] 
   return 'pending';
 };
 
-const toDownloadStatus = (id: string, snapshot: TauriEvents.Downloads.Single, modelId?: string): DownloadStatus => ({
-  id,
-  url: '',
-  destination: snapshot.filename,
-  state: toStoreState(snapshot.status),
-  bytes_downloaded: snapshot.bytesDownloaded,
-  total_bytes: snapshot.totalBytes,
-  bytes_per_second: snapshot.bytesPerSecond,
-  percentage: snapshot.percentage,
-  eta_seconds: snapshot.etaSeconds,
-  error_message: null,
-  retry_count: 0,
-  created_at: new Date().toISOString(),
-  started_at: null,
-  completed_at: snapshot.status === 'completed' || snapshot.status === 'error' || snapshot.status === 'cancelled' ? new Date().toISOString() : null,
-  model_id: modelId,
-  model_name: modelId,
-});
+interface SnapshotIdentity {
+  modelId?: string;
+  modelName?: string;
+  existing?: DownloadStatus;
+}
+
+const toDownloadStatus = (
+  id: string,
+  snapshot: TauriEvents.Downloads.Single,
+  identity: SnapshotIdentity = {}
+): DownloadStatus => {
+  const now = new Date().toISOString();
+  const modelId = identity.modelId ?? identity.existing?.model_id;
+  const modelName =
+    identity.modelName ??
+    identity.existing?.model_name ??
+    modelId ??
+    snapshot.filename;
+  const isTerminal =
+    snapshot.status === 'completed' ||
+    snapshot.status === 'error' ||
+    snapshot.status === 'cancelled';
+
+  return {
+    id,
+    // Some UI elements still derive title from url; keep a human label here.
+    url: identity.existing?.url || snapshot.filename,
+    destination: identity.existing?.destination || snapshot.filename,
+    state: toStoreState(snapshot.status),
+    bytes_downloaded: snapshot.bytesDownloaded,
+    total_bytes: snapshot.totalBytes,
+    bytes_per_second: snapshot.bytesPerSecond,
+    percentage: snapshot.percentage,
+    eta_seconds: snapshot.etaSeconds,
+    error_message: identity.existing?.error_message ?? null,
+    retry_count: identity.existing?.retry_count ?? 0,
+    created_at: identity.existing?.created_at ?? now,
+    started_at: identity.existing?.started_at ?? null,
+    completed_at: isTerminal ? (identity.existing?.completed_at ?? now) : null,
+    model_id: modelId,
+    model_name: modelName,
+  };
+};
 
 export function useDownloads() {
   const [downloads, setDownloads] = useState<Map<string, TauriEvents.Downloads.StateSnapshot>>(new Map());
@@ -69,6 +94,7 @@ export function useDownloads() {
         const existing = await VaultAPI.listDownloads();
         if (existing.ok && mounted) {
           const seeded = new Map<string, TauriEvents.Downloads.StateSnapshot>();
+          const existingIds = new Set<string>();
           for (const item of existing.data) {
             const status = toSnapshotState(item.state);
             const snapshot: TauriEvents.Downloads.Single = {
@@ -83,10 +109,18 @@ export function useDownloads() {
               status,
             };
             seeded.set(item.id, snapshot);
+            existingIds.add(item.id);
             setStoreDownload(item.id, {
               ...item,
               state: toStoreState(item.state),
             });
+          }
+          // Remove stale entries not returned by backend.
+          const storeDownloads = useDownloadStore.getState().downloads;
+          for (const id of Array.from(storeDownloads.keys())) {
+            if (!existingIds.has(id)) {
+              removeStoreDownload(id);
+            }
           }
           setDownloads(seeded);
         }
@@ -108,7 +142,11 @@ export function useDownloads() {
               next.set(id, snapshot);
 
                if (snapshot.kind === 'single') {
-                 setStoreDownload(snapshot.id, toDownloadStatus(snapshot.id, snapshot));
+                 const existing = useDownloadStore.getState().getDownload(snapshot.id);
+                 setStoreDownload(
+                   snapshot.id,
+                   toDownloadStatus(snapshot.id, snapshot, { existing })
+                 );
                } else {
                  // Represent batch snapshots as synthetic per-file entries in store
                  for (const file of snapshot.files) {
@@ -125,21 +163,33 @@ export function useDownloads() {
                      status: file.status,
                    };
                    next.set(syntheticId, fileSnapshot);
+                   const existing = useDownloadStore.getState().getDownload(syntheticId);
                    setStoreDownload(
                      syntheticId,
-                     toDownloadStatus(syntheticId, fileSnapshot, snapshot.id)
+                     toDownloadStatus(syntheticId, fileSnapshot, {
+                       modelId: snapshot.id,
+                       modelName: snapshot.groupName,
+                       existing,
+                     })
                    );
                  }
                }
 
               // Remove completed downloads after 5 seconds
               if (snapshot.status === 'completed') {
+                const batchPrefix = snapshot.kind === 'batch' ? `${snapshot.id}:` : null;
                 setTimeout(() => {
                   if (mounted) {
                     setDownloads((current) => {
                       const updated = new Map(current);
-                      updated.delete(id);
-                      removeStoreDownload(id);
+                      for (const key of Array.from(updated.keys())) {
+                        const isRoot = key === id;
+                        const isBatchChild = batchPrefix !== null && key.startsWith(batchPrefix);
+                        if (isRoot || isBatchChild) {
+                          updated.delete(key);
+                          removeStoreDownload(key);
+                        }
+                      }
                       return updated;
                     });
                   }
@@ -242,17 +292,36 @@ export function useDownloads() {
   }, []);
 
   const removeDownload = useCallback(async (id: string): Promise<void> => {
-    const result = await VaultAPI.removeDownload(id);
-    if (result.ok) {
+    const backendId = id.includes(':') ? id.split(':')[0] : id;
+    const prefix = `${backendId}:`;
+    const removeFromUi = () => {
       setDownloads((prev) => {
         const next = new Map(prev);
-        next.delete(id);
+        for (const key of Array.from(next.keys())) {
+          if (key === backendId || key === id || key.startsWith(prefix)) {
+            next.delete(key);
+            removeStoreDownload(key);
+          }
+        }
         return next;
       });
-    } else {
-      throw new Error(`Failed to remove download: ${result.error}`);
+    };
+
+    const result = await VaultAPI.removeDownload(backendId);
+    if (result.ok) {
+      removeFromUi();
+      return;
     }
-  }, []);
+
+    // Idempotent UX: if backend already removed it, clear stale UI state anyway.
+    const err = (result.error || '').toLowerCase();
+    if (err.includes('not found') || err.includes('already removed')) {
+      removeFromUi();
+      return;
+    }
+
+    throw new Error(`Failed to remove download: ${result.error}`);
+  }, [removeStoreDownload]);
 
   const clearCompletedDownloads = useCallback(async (): Promise<number> => {
     const result = await VaultAPI.clearCompletedDownloads();
@@ -262,6 +331,7 @@ export function useDownloads() {
         for (const [id, download] of prev.entries()) {
           if (download.status === 'completed') {
             next.delete(id);
+            removeStoreDownload(id);
           }
         }
         return next;
@@ -279,6 +349,7 @@ export function useDownloads() {
     }
 
     const seeded = new Map<string, TauriEvents.Downloads.StateSnapshot>();
+    const existingIds = new Set<string>();
     for (const item of existing.data) {
       const snapshot: TauriEvents.Downloads.Single = {
         kind: 'single',
@@ -292,13 +363,21 @@ export function useDownloads() {
         status: toSnapshotState(item.state),
       };
       seeded.set(item.id, snapshot);
+      existingIds.add(item.id);
       setStoreDownload(item.id, {
         ...item,
         state: toStoreState(item.state),
       });
     }
+    // Remove stale entries not returned by backend.
+    const storeDownloads = useDownloadStore.getState().downloads;
+    for (const id of Array.from(storeDownloads.keys())) {
+      if (!existingIds.has(id)) {
+        removeStoreDownload(id);
+      }
+    }
     setDownloads(seeded);
-  }, [setStoreDownload]);
+  }, [removeStoreDownload, setStoreDownload]);
 
   const getDownload = useCallback((id: string): TauriEvents.Downloads.StateSnapshot | undefined => downloads.get(id), [downloads]);
 

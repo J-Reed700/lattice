@@ -4,7 +4,7 @@
  * Detailed view of a selected model with full information and compatibility breakdown
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
@@ -55,6 +55,7 @@ export function ModelDetailPanel({
   const [isSettingChatModel, setIsSettingChatModel] = useState(false);
   const [isSettingEmbeddingModel, setIsSettingEmbeddingModel] = useState(false);
   const [isSettingRouterModel, setIsSettingRouterModel] = useState(false);
+  const checkRequestRef = useRef(0);
 
   const { getActiveDownloadForModel, hasActiveDownloadForModel } = useDownloadState();
   const activeDownload = getActiveDownloadForModel(metadata.id);
@@ -67,14 +68,20 @@ export function ModelDetailPanel({
 
   // Check if model is already downloaded
   const checkDownloadStatus = useCallback(async () => {
+    const requestId = ++checkRequestRef.current;
+    const currentModelId = metadata.id;
     setIsCheckingDownload(true);
     try {
-      const downloaded = await isModelDownloaded(metadata.id);
-      setIsDownloaded(downloaded);
+      const downloaded = await isModelDownloaded(currentModelId);
+      if (checkRequestRef.current === requestId) {
+        setIsDownloaded(downloaded);
+      }
     } catch (error) {
       console.error('Failed to check download status:', error);
     } finally {
-      setIsCheckingDownload(false);
+      if (checkRequestRef.current === requestId) {
+        setIsCheckingDownload(false);
+      }
     }
   }, [isModelDownloaded, metadata.id]);
 

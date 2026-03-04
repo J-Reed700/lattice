@@ -37,8 +37,7 @@ pub struct BrowserProfile {
 const CHROME_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
 const FIREFOX_ACCEPT: &str =
     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
-const SAFARI_ACCEPT: &str =
-    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+const SAFARI_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
 const BROWSER_PROFILES: &[BrowserProfile] = &[
     BrowserProfile {
@@ -299,7 +298,10 @@ fn load_proxy_pool() -> Option<Vec<String>> {
             .filter(|s| !s.is_empty())
             .collect();
         if !proxies.is_empty() {
-            info!(count = proxies.len(), "Stealth: loaded proxy pool from RECALL_PROXY_URLS");
+            info!(
+                count = proxies.len(),
+                "Stealth: loaded proxy pool from RECALL_PROXY_URLS"
+            );
             return Some(proxies);
         }
     }

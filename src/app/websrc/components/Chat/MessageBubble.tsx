@@ -24,6 +24,7 @@ import remarkGfm from 'remark-gfm';
 import { CitationFootnote } from './CitationFootnote';
 import { FilePreviewModal } from './FilePreviewModal';
 import { useConversationsStore } from '../../stores/conversationsStore';
+import { normalizeAssistantMarkdown } from '../../utils/assistantMarkdown';
 import { parseCitations, createCitationMap } from '../../utils/citations';
 
 import type { DisplayMessage, SourceWithMetadata } from '../../types/conversation';
@@ -156,8 +157,13 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     };
   }, [claimsEvaluated, isUser, verificationSummary, unsupportedCount]);
 
+  const normalizedMarkdownContent = useMemo(
+    () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
+    [isUser, message.content]
+  );
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(message.content);
+    await navigator.clipboard.writeText(normalizedMarkdownContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -642,7 +648,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 },
               }}
             >
-              {message.content}
+              {normalizedMarkdownContent}
             </ReactMarkdown>
           </div>
 

@@ -569,10 +569,21 @@ impl DownloadModelUseCase {
             "Single-file download initiated, waiting for completion"
         );
 
+        // Prefer the verified session size discovered by DownloadManager (HEAD/Range),
+        // falling back to catalog metadata when unavailable.
+        let total_size_bytes = self
+            .download_manager
+            .get_download_status(&download_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|session| session.progress().total_bytes())
+            .unwrap_or(curated.total_size_bytes);
+
         // Return immediate success with DownloadStarted state
         Ok(DownloadModelResponseDto {
             state: DownloadOperationState::DownloadStarted {
-                total_size_bytes: curated.total_size_bytes,
+                total_size_bytes,
                 files_to_download: 1,
             },
             path: Some(model_path.to_string_lossy().to_string()),
@@ -917,10 +928,28 @@ impl DownloadModelUseCase {
             "All downloads initiated, returning immediately"
         );
 
+        // Sum concrete session sizes from DownloadManager to avoid surfacing stale/estimated
+        // catalog sizes in UI while download starts.
+        let mut detected_total_size_bytes = 0u64;
+        for (download_id, _) in &download_ids {
+            if let Ok(Some(session)) = self.download_manager.get_download_status(download_id).await
+            {
+                if let Some(total_bytes) = session.progress().total_bytes() {
+                    detected_total_size_bytes =
+                        detected_total_size_bytes.saturating_add(total_bytes);
+                }
+            }
+        }
+        let total_size_bytes = if detected_total_size_bytes > 0 {
+            detected_total_size_bytes
+        } else {
+            curated.total_size_bytes
+        };
+
         // Return immediate success with DownloadStarted state
         Ok(DownloadModelResponseDto {
             state: DownloadOperationState::DownloadStarted {
-                total_size_bytes: curated.total_size_bytes,
+                total_size_bytes,
                 files_to_download: curated.files.len(),
             },
             path: Some(model_path.to_string_lossy().to_string()),
