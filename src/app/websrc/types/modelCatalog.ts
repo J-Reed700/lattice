@@ -23,7 +23,7 @@ export type CompatibilityLevel = 'Incompatible' | 'Poor' | 'Good' | 'Excellent';
 
 export type ModelSource = 'Curated' | 'External';
 
-export type ModelSortBy = 'recommended' | 'popularity' | 'likes';
+export type ModelSortBy = 'recommended' | 'popularity' | 'likes' | 'size_asc' | 'size_desc' | 'name';
 
 // ============================================================================
 // Value Objects
@@ -86,6 +86,8 @@ export interface ModelMetadata {
   }>;
   /** Total size in bytes */
   total_size_bytes: number;
+  /** Output dimension for embedding models (e.g., 384, 768, 1024). Null for non-embedding models. */
+  embedding_dimensions: number | null;
 }
 
 /**
@@ -151,10 +153,14 @@ export interface SearchFilters {
   category: ModelCategory | null;
   /** Maximum model size in gigabytes */
   max_size_gb: number | null;
+  /** Minimum download count to filter obscure models */
+  min_downloads: number | null;
   /** Required capabilities (e.g., "chat", "code") */
   required_capabilities: string[];
   /** Text query to match against name/description */
   query_text: string | null;
+  /** Filter embedding models by output dimension (e.g., 768). Null = no filter. */
+  embedding_dimensions: number | null;
 }
 
 // ============================================================================

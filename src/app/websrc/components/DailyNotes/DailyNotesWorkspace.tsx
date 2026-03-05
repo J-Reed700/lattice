@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import {
   BookOpen,
   ChevronLeft,
@@ -17,27 +19,24 @@ import {
   StickyNote,
   Trash2,
 } from 'lucide-react';
-import { open as openExternal } from '@tauri-apps/plugin-shell';
-import ReactMarkdown from 'react-markdown';
+import { TiptapEditor, TiptapViewer } from '../TiptapEditor';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import remarkGfm from 'remark-gfm';
 
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import type { DocumentMetadata } from '@/types';
-import type { ConversationMessage as ChatConversationMessage } from '@/types/conversation';
-import { getSourceExternalUrl } from '@/utils/sourcePreview';
 import type {
   ConversationDto,
-  MessageDto,
   ConversationMessageBookmarkDto,
   ConversationJournalDto,
+  MessageDto,
 } from '@/types/api/conversation';
 import type {
-  WorkspaceNote,
   SnapshotMessage,
-  ConversationSnapshot,
+  WorkspaceNote,
 } from '@/types/api/dailyNotes';
+import type { ConversationMessage as ChatConversationMessage } from '@/types/conversation';
+import { getSourceExternalUrl } from '@/utils/sourcePreview';
 
 const DOCUMENT_LIMIT = 500;
 const CONVERSATION_LIMIT = 100;
@@ -46,17 +45,19 @@ const HIGHLIGHT_CHAR_LIMIT = 8000;
 const SYNTHESIS_ENTRY_LIMIT = 12;
 const JOURNAL_SOURCE_SCAN_LIMIT = 24;
 const LAST_JOURNAL_SPACE_KEY = 'journal.lastSpaceId';
+const DEFAULT_JOURNAL_ICON = '📓';
+const DEFAULT_JOURNAL_ACCENT = '#14b8a6';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type MessageRole = 'user' | 'assistant' | 'system';
 type StickyColor = 'amber' | 'sky' | 'rose' | 'mint';
-type PanelTab = 'editor' | 'annotations' | 'documents' | 'chats' | 'snapshots';
+type PanelTab = 'editor' | 'annotations' | 'documents' | 'chats';
 type ActionTone = 'info' | 'success' | 'error';
 type AnnotationView = 'highlights' | 'stickies';
 type ResourceView = 'list' | 'preview';
 type EditorView = 'edit' | 'preview' | 'split';
-type JournalPanelQuery = 'entries' | 'pages' | 'highlights' | 'sources' | 'timeline';
+type JournalPanelQuery = 'entries' | 'pages' | 'highlights' | 'sources';
 type JournalSynthesisScope = 'current' | 'deck' | 'pinned';
 
 interface ConversationSummary {
@@ -156,6 +157,36 @@ function defaultDailyTitle(): string {
 
 function defaultJournalTitle(spaceName: string): string {
   return `Journal · ${spaceName}`;
+}
+
+function nextJournalName(existing: ConversationJournalDto[]): string {
+  const existingNames = new Set(existing.map((journal) => journal.name.toLowerCase()));
+  let idx = existing.length + 1;
+  let candidate = `Journal ${idx}`;
+  while (existingNames.has(candidate.toLowerCase())) {
+    idx += 1;
+    candidate = `Journal ${idx}`;
+  }
+  return candidate;
+}
+
+function inferInitialJournalNameFromNotes(notes: WorkspaceNote[]): string | null {
+  const firstNamed = notes
+    .map((note) => note.title.trim())
+    .find((title) => title.length > 0);
+  if (!firstNamed) {
+    return null;
+  }
+
+  const lower = firstNamed.toLowerCase();
+  if (lower.startsWith('journal · ')) {
+    return null;
+  }
+  if (lower.startsWith('note ')) {
+    return null;
+  }
+
+  return firstNamed;
 }
 
 function normalizeStickyColor(color: string): StickyColor {
@@ -341,8 +372,6 @@ function mapJournalPanelToTab(panel: JournalPanelQuery | null): PanelTab | null 
       return 'annotations';
     case 'sources':
       return 'documents';
-    case 'timeline':
-      return 'snapshots';
     default:
       return null;
   }
@@ -375,6 +404,7 @@ export function DailyNotesWorkspace() {
   const requestedEntryId = searchParams.get('entryId');
   const [notes, setNotes] = useState<WorkspaceNote[]>([]);
   const [journalSpace, setJournalSpace] = useState<ConversationJournalDto | null>(null);
+  const [allJournals, setAllJournals] = useState<ConversationJournalDto[]>([]);
   const [journalBookmarks, setJournalBookmarks] = useState<ConversationMessageBookmarkDto[]>([]);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [isLoadingNotes, setIsLoadingNotes] = useState(true);
@@ -404,6 +434,8 @@ export function DailyNotesWorkspace() {
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const [isSynthesizingEntries, setIsSynthesizingEntries] = useState(false);
   const [synthesisProgress, setSynthesisProgress] = useState<string | null>(null);
+  const [journalNameDraft, setJournalNameDraft] = useState('');
+  const [isSavingJournalName, setIsSavingJournalName] = useState(false);
   const [isDeletingJournal, setIsDeletingJournal] = useState(false);
 
   const [isLoadingContext, setIsLoadingContext] = useState(true);
@@ -412,7 +444,6 @@ export function DailyNotesWorkspace() {
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(new Set());
   const [pinnedEntryIds, setPinnedEntryIds] = useState<Set<string>>(new Set());
 
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const persistTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const dirtyNoteIdsRef = useRef<Set<string>>(new Set());
   const notesRef = useRef<WorkspaceNote[]>([]);
@@ -423,7 +454,6 @@ export function DailyNotesWorkspace() {
     (state) => state.addConversationWebSource
   );
   const requestedNoteId = searchParams.get('noteId');
-  const requestedSnapshotId = searchParams.get('snapshotId');
   const pinnedBookmarkStorageKey = requestedJournalSpaceId
     ? `journal.pinnedBookmarks.${requestedJournalSpaceId}`
     : null;
@@ -444,11 +474,18 @@ export function DailyNotesWorkspace() {
 
     const routeToJournalNotebook = async () => {
       const journalsResult = await VaultAPI.listJournals();
-      if (cancelled || !journalsResult.ok) {
+      if (cancelled) {
         return;
       }
 
-      const activeJournals = journalsResult.data.filter((journal) => !journal.isArchived);
+      if (!journalsResult.ok) {
+        setNotesError(`Failed to load journals: ${journalsResult.error}`);
+        return;
+      }
+
+      const fetchedJournals = journalsResult.data;
+      const activeJournals = fetchedJournals.filter((journal) => !journal.isArchived);
+      setAllJournals(activeJournals);
 
       if (requestedJournalSpaceId) {
         const requestedIsActive = activeJournals.some((journal) => journal.id === requestedJournalSpaceId);
@@ -474,6 +511,46 @@ export function DailyNotesWorkspace() {
         params.set('journalSpaceId', activeJournals[0].id);
         if (!params.get('panel')) {
           params.set('panel', 'entries');
+        }
+        navigate(`/journals?${params.toString()}`, { replace: true });
+        return;
+      }
+
+      if (activeJournals.length === 0 && fetchedJournals.length === 0) {
+        let initialName = nextJournalName(fetchedJournals);
+        const existingNotes = await VaultAPI.listWorkspaceNotes();
+        if (!cancelled && existingNotes.ok) {
+          const inferredName = inferInitialJournalNameFromNotes(existingNotes.data.notes);
+          if (inferredName) {
+            initialName = inferredName;
+          }
+        }
+
+        const created = await VaultAPI.createJournal({
+          name: initialName,
+          description: null,
+          icon: DEFAULT_JOURNAL_ICON,
+          accentColor: DEFAULT_JOURNAL_ACCENT,
+          spacePrompt: null,
+          defaultModelName: null,
+          toolPreferencesJson: null,
+        });
+        if (cancelled) {
+          return;
+        }
+        if (!created.ok) {
+          setNotesError(`Failed to create initial journal: ${created.error}`);
+          return;
+        }
+        const params = new URLSearchParams(searchParams);
+        params.set('journalSpaceId', created.data.id);
+        if (!params.get('panel')) {
+          params.set('panel', 'entries');
+        }
+        try {
+          localStorage.setItem(LAST_JOURNAL_SPACE_KEY, created.data.id);
+        } catch {
+          // Ignore localStorage failures in constrained environments.
         }
         navigate(`/journals?${params.toString()}`, { replace: true });
         return;
@@ -602,26 +679,41 @@ export function DailyNotesWorkspace() {
       }
 
       if (isJournalMode && requestedJournalSpaceId) {
-        let matchedJournalSpace: ConversationJournalDto | null = null;
-        let journalName = 'Journal';
-
         const journalsResult = await VaultAPI.listJournals();
         if (cancelled) {
           return;
         }
-        if (journalsResult.ok) {
-          matchedJournalSpace = journalsResult.data.find(
-            (journal) => journal.id === requestedJournalSpaceId
-          ) ?? null;
-          if (matchedJournalSpace) {
-            journalName = matchedJournalSpace.name;
-          }
+        if (!journalsResult.ok) {
+          setJournalSpace(null);
+          setNotes([]);
+          setActiveNoteId(null);
+          setNotesError(`Failed to load journals: ${journalsResult.error}`);
+          setIsLoadingNotes(false);
+          return;
         }
+
+        const matchedJournalSpace = journalsResult.data.find(
+          (journal) => journal.id === requestedJournalSpaceId
+        ) ?? null;
+        if (!matchedJournalSpace) {
+          setJournalSpace(null);
+          setNotes([]);
+          setActiveNoteId(null);
+          setNotesError(`Journal not found: ${requestedJournalSpaceId}`);
+          setIsLoadingNotes(false);
+          return;
+        }
+        const journalName = matchedJournalSpace.name;
 
         setJournalSpace(matchedJournalSpace);
 
         const storageKey = `journal.noteBySpace.${requestedJournalSpaceId}`;
-        const storedNoteId = localStorage.getItem(storageKey);
+        let storedNoteId: string | null = null;
+        try {
+          storedNoteId = localStorage.getItem(storageKey);
+        } catch {
+          storedNoteId = null;
+        }
         let targetNote = storedNoteId
           ? (result.data.notes.find((note) => note.id === storedNoteId) ?? null)
           : null;
@@ -645,7 +737,11 @@ export function DailyNotesWorkspace() {
           targetNote = created.data;
         }
 
-        localStorage.setItem(storageKey, targetNote.id);
+        try {
+          localStorage.setItem(storageKey, targetNote.id);
+        } catch {
+          // Ignore localStorage failures in constrained environments.
+        }
         setNotes([targetNote]);
         setActiveNoteId(targetNote.id);
         setIsLoadingNotes(false);
@@ -721,6 +817,14 @@ export function DailyNotesWorkspace() {
     persistStoredIdSet(pinnedEntryStorageKey, pinnedEntryIds);
   }, [isJournalMode, pinnedEntryIds, pinnedEntryStorageKey]);
 
+  useEffect(() => {
+    if (!isJournalMode) {
+      setJournalNameDraft('');
+      return;
+    }
+    setJournalNameDraft(journalSpace?.name ?? '');
+  }, [isJournalMode, journalSpace?.id, journalSpace?.name]);
+
   useEffect(() => () => void saveAllNow(false), [saveAllNow]);
 
   useEffect(() => {
@@ -761,37 +865,6 @@ export function DailyNotesWorkspace() {
     setActiveNoteId(requestedNoteId);
   }, [notes, requestedNoteId]);
 
-  useEffect(() => {
-    if (!requestedSnapshotId || !activeNote) {
-      return;
-    }
-    const hasSnapshot = activeNote.conversationSnapshots.some(
-      (snapshot) => snapshot.id === requestedSnapshotId
-    );
-    if (hasSnapshot) {
-      setActivePanel('snapshots');
-    }
-  }, [activeNote, requestedSnapshotId]);
-
-  useEffect(() => {
-    if (!requestedSnapshotId || activePanel !== 'snapshots') {
-      return;
-    }
-    const id = window.setTimeout(() => {
-      const selector = `[data-snapshot-id="${requestedSnapshotId}"]`;
-      const target = document.querySelector(selector);
-      if (target instanceof HTMLElement) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }, 80);
-
-    return () => window.clearTimeout(id);
-  }, [
-    activePanel,
-    activeNote?.id,
-    activeNote?.conversationSnapshots.length,
-    requestedSnapshotId,
-  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -844,26 +917,6 @@ export function DailyNotesWorkspace() {
         errors.push(`conversations: ${conversationsResult.error}`);
       }
 
-      if (isJournalMode && requestedJournalSpaceId && !conversationsResult.ok) {
-        const fallbackResult = await VaultAPI.listConversationsExplorer({
-          spaceId: requestedJournalSpaceId,
-          includeArchived: true,
-          limit: CONVERSATION_LIMIT,
-          offset: 0,
-        });
-        if (fallbackResult.ok) {
-          rawConversations = parseRawConversations(fallbackResult.data);
-        } else {
-          errors.push(`fallback conversations: ${fallbackResult.error}`);
-        }
-      }
-
-      if (isJournalMode && requestedJournalSpaceId && !conversationsResult.ok) {
-        setActionNotice({
-          tone: 'info',
-          message: 'Loaded entries via fallback conversation source.',
-        });
-      }
       const normalizedConversations = rawConversations.map((conversation) => normalizeConversation(conversation));
       setConversations(normalizedConversations);
 
@@ -1338,8 +1391,9 @@ export function DailyNotesWorkspace() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Delete journal "${journalSpace.name}"?\n\nThis permanently deletes the journal and cannot be undone.`
+    const confirmed = await tauriConfirm(
+      `This permanently deletes the journal and cannot be undone.`,
+      { title: `Delete "${journalSpace.name}"?`, kind: 'warning' },
     );
     if (!confirmed) {
       return;
@@ -1400,6 +1454,60 @@ export function DailyNotesWorkspace() {
     }
   };
 
+  const commitJournalNameDraft = useCallback(async () => {
+    if (!isJournalMode || !requestedJournalSpaceId || !journalSpace || isSavingJournalName) {
+      return;
+    }
+
+    const nextName = journalNameDraft.trim();
+    if (!nextName) {
+      setJournalNameDraft(journalSpace.name);
+      setActionNotice({ tone: 'error', message: 'Journal name cannot be empty.' });
+      return;
+    }
+
+    if (nextName === journalSpace.name) {
+      return;
+    }
+
+    setIsSavingJournalName(true);
+    const result = await VaultAPI.updateJournal({
+      journalId: requestedJournalSpaceId,
+      name: nextName,
+    });
+    setIsSavingJournalName(false);
+
+    if (!result.ok) {
+      setJournalNameDraft(journalSpace.name);
+      setActionNotice({ tone: 'error', message: result.error });
+      return;
+    }
+
+    const previousJournalName = journalSpace.name;
+    setJournalSpace(result.data);
+    setJournalNameDraft(result.data.name);
+    setActionNotice({ tone: 'success', message: `Renamed journal to "${result.data.name}".` });
+
+    if (activeNote) {
+      updateActiveNote((note) => {
+        const trimmedTitle = note.title.trim();
+        const oldDefaultTitle = defaultJournalTitle(previousJournalName);
+        if (trimmedTitle === oldDefaultTitle) {
+          return { ...note, title: defaultJournalTitle(result.data.name) };
+        }
+        return note;
+      });
+    }
+  }, [
+    activeNote,
+    isJournalMode,
+    isSavingJournalName,
+    journalNameDraft,
+    journalSpace,
+    requestedJournalSpaceId,
+    updateActiveNote,
+  ]);
+
   const toggleLinkedDocument = (documentId: string) => {
     updateActiveNote((note) => {
       const exists = note.linkedDocumentIds.includes(documentId);
@@ -1424,43 +1532,6 @@ export function DailyNotesWorkspace() {
     });
   };
 
-  const captureConversation = async (conversationId: string) => {
-    if (!activeNote) {
-      setActionNotice({ tone: 'error', message: 'Select a note before capturing chat history.' });
-      return;
-    }
-
-    const messages = await ensureConversationMessages(conversationId);
-    const conversation = conversations.find((item) => item.id === conversationId);
-    const snapshot: ConversationSnapshot = {
-      id: makeId('snapshot'),
-      conversationId,
-      conversationTitle: conversation?.title ?? 'Conversation Snapshot',
-      capturedAt: nowIso(),
-      messageCount: messages.length,
-      messages: messages.map((message) => ({ ...message })),
-    };
-
-    updateActiveNote((note) => ({
-      ...note,
-      linkedConversationIds: unique([...note.linkedConversationIds, conversationId]),
-      conversationSnapshots: [snapshot, ...note.conversationSnapshots],
-    }));
-    setActionNotice({
-      tone: 'success',
-      message: `Captured ${snapshot.messageCount} messages from "${snapshot.conversationTitle}".`,
-    });
-  };
-
-  const captureActiveConversation = async () => {
-    const targetConversationId =
-      activeConversationId ?? selectedConversationPreviewId ?? conversations[0]?.id ?? null;
-    if (!targetConversationId) {
-      setActionNotice({ tone: 'error', message: 'No conversation available to capture yet.' });
-      return;
-    }
-    await captureConversation(targetConversationId);
-  };
 
   const focusJournalEntry = useCallback(async (conversationId: string) => {
     setActivePanel('chats');
@@ -1468,60 +1539,24 @@ export function DailyNotesWorkspace() {
     await ensureConversationMessages(conversationId);
   }, [ensureConversationMessages]);
 
-  const insertSnapshotIntoNote = (snapshot: ConversationSnapshot) => {
-    const transcript = snapshot.messages
-      .map(
-        (message) =>
-          `### ${message.role.toUpperCase()} · ${formatWhen(message.createdAt)}\n\n${message.content}`,
-      )
-      .join('\n\n');
-
-    const block = [
-      '',
-      `## Snapshot: ${snapshot.conversationTitle}`,
-      `Captured: ${formatWhen(snapshot.capturedAt)}`,
-      '',
-      transcript || '_No messages captured_',
-      '',
-    ].join('\n');
-
-    updateActiveNote((note) => ({
-      ...note,
-      content: note.content ? `${note.content}\n${block}` : block.trim(),
-    }));
-  };
 
   const addHighlightFromSelection = () => {
-    if (!activeNote || !editorRef.current) {
-      if (!activeNote) {
-        setActionNotice({ tone: 'error', message: 'Select a note first.' });
-      } else {
-        setEditorView('edit');
-        setActivePanel('editor');
-        setActionNotice({ tone: 'info', message: 'Switched to edit mode. Select text, then click Highlight again.' });
-      }
+    if (!activeNote) {
+      setActionNotice({ tone: 'error', message: 'Select a note first.' });
       return;
     }
 
-    const textarea = editorRef.current;
-    const { selectionStart, selectionEnd } = textarea;
-    if (selectionEnd <= selectionStart) {
-      setActionNotice({ tone: 'info', message: 'Select some text in the editor first.' });
-      return;
-    }
-
-    const selectedText = activeNote.content.slice(selectionStart, selectionEnd).trim();
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? '';
     if (!selectedText) {
-      setActionNotice({ tone: 'info', message: 'Select non-empty text in the editor first.' });
+      setEditorView('edit');
+      setActivePanel('editor');
+      setActionNotice({ tone: 'info', message: 'Select some text in the editor, then click Highlight again.' });
       return;
     }
-
-    const wrapped = `${activeNote.content.slice(0, selectionStart)}==${activeNote.content.slice(selectionStart, selectionEnd)}==${activeNote.content.slice(selectionEnd)}`;
-    const caret = selectionEnd + 4;
 
     updateActiveNote((note) => ({
       ...note,
-      content: wrapped,
       highlights: [
         {
           id: makeId('highlight'),
@@ -1531,11 +1566,6 @@ export function DailyNotesWorkspace() {
         ...note.highlights,
       ],
     }));
-
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(caret, caret);
-    });
     setActionNotice({ tone: 'success', message: 'Highlight added.' });
   };
 
@@ -1858,14 +1888,12 @@ export function DailyNotesWorkspace() {
       annotations: 'Highlights',
       documents: 'Sources',
       chats: 'Entries',
-      snapshots: 'Timeline',
     }
     : {
       editor: 'Page',
       annotations: 'Highlights',
       documents: 'Sources',
       chats: 'Chats',
-      snapshots: 'Snapshots',
     };
   const previewConversations = isJournalMode ? journalEntryConversations : filteredConversations;
   const currentPreviewIndex = selectedConversationPreviewId
@@ -1921,6 +1949,61 @@ export function DailyNotesWorkspace() {
               )}
             </div>
           </div>
+          {isJournalMode && (
+            <div className="px-4 pb-3 border-b border-white/10 space-y-2">
+              {allJournals.length > 1 && (
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1">Switch Journal</label>
+                  <select
+                    value={requestedJournalSpaceId ?? ''}
+                    onChange={(e) => {
+                      const params = new URLSearchParams(searchParams);
+                      params.set('journalSpaceId', e.target.value);
+                      params.delete('entryId');
+                      if (!params.get('panel')) params.set('panel', 'entries');
+                      navigate(`/journals?${params.toString()}`);
+                    }}
+                    className="w-full rounded-md border border-white/15 bg-black/30 px-2.5 py-1.5 text-xs text-white/90 outline-none focus:border-cyan-400/60 appearance-none cursor-pointer"
+                  >
+                    {allJournals.map((j) => (
+                      <option key={j.id} value={j.id}>
+                        {j.icon ?? '📓'} {j.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button
+                onClick={async () => {
+                  const name = nextJournalName(allJournals);
+                  const created = await VaultAPI.createJournal({
+                    name,
+                    description: null,
+                    icon: DEFAULT_JOURNAL_ICON,
+                    accentColor: DEFAULT_JOURNAL_ACCENT,
+                    spacePrompt: null,
+                    defaultModelName: null,
+                    toolPreferencesJson: null,
+                  });
+                  if (!created.ok) {
+                    setActionNotice({ tone: 'error', message: `Failed to create journal: ${created.error}` });
+                    return;
+                  }
+                  setAllJournals((prev) => [...prev, created.data]);
+                  const params = new URLSearchParams(searchParams);
+                  params.set('journalSpaceId', created.data.id);
+                  params.delete('entryId');
+                  params.set('panel', 'entries');
+                  navigate(`/journals?${params.toString()}`);
+                  setActionNotice({ tone: 'success', message: `Created "${name}".` });
+                }}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 text-cyan-100 text-xs transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New Journal
+              </button>
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
             {isLoadingNotes && (
@@ -2048,12 +2131,30 @@ export function DailyNotesWorkspace() {
             <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
               <input
                 type="text"
-                value={activeNote?.title ?? ''}
-                onChange={(event) => updateActiveNote((note) => ({ ...note, title: event.target.value }))}
+                value={isJournalMode ? journalNameDraft : (activeNote?.title ?? '')}
+                onChange={(event) => {
+                  if (isJournalMode) {
+                    setJournalNameDraft(event.target.value);
+                    return;
+                  }
+                  updateActiveNote((note) => ({ ...note, title: event.target.value }));
+                }}
+                onBlur={() => {
+                  if (isJournalMode) {
+                    void commitJournalNameDraft();
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (!isJournalMode || event.key !== 'Enter') {
+                    return;
+                  }
+                  event.preventDefault();
+                  void commitJournalNameDraft();
+                }}
                 className="flex-1 bg-white/[0.04] border border-white/10 focus:border-cyan-400/70 focus:shadow-[0_0_0_1px_rgba(34,211,238,0.25)] rounded-xl px-3.5 py-2.5 text-lg font-semibold outline-none"
-                placeholder={noteTitlePlaceholder}
+                placeholder={isJournalMode ? 'Journal name' : noteTitlePlaceholder}
                 maxLength={120}
-                disabled={!activeNote}
+                disabled={!activeNote || (isJournalMode && isSavingJournalName)}
               />
               <div className="flex items-center gap-2 flex-wrap">
                 {isJournalMode && (
@@ -2139,7 +2240,6 @@ export function DailyNotesWorkspace() {
               <button onClick={() => setActivePanel('annotations')} className={tabButtonClass('annotations')}>{tabLabels.annotations}</button>
               <button onClick={() => setActivePanel('documents')} className={tabButtonClass('documents')}>{tabLabels.documents}</button>
               <button onClick={() => setActivePanel('chats')} className={tabButtonClass('chats')}>{tabLabels.chats}</button>
-              <button onClick={() => setActivePanel('snapshots')} className={tabButtonClass('snapshots')}>{tabLabels.snapshots}</button>
             </div>
           </div>
 
@@ -2179,93 +2279,24 @@ export function DailyNotesWorkspace() {
                   }`}
                 >
                   {(editorView === 'edit' || editorView === 'split') && (
-                    <textarea
-                      ref={editorRef}
-                      value={activeNote?.content ?? ''}
-                      onChange={(event) => updateActiveNote((note) => ({ ...note, content: event.target.value }))}
-                      placeholder="Write your page content here. Use markdown for structure."
-                      className="h-full min-h-[260px] w-full rounded-lg border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/90 outline-none focus:border-cyan-400/60 resize-none"
-                      disabled={!activeNote}
-                    />
+                    <div className="h-full min-h-[260px] w-full rounded-lg border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/90 outline-none focus-within:border-cyan-400/60 overflow-auto">
+                      {activeNote ? (
+                        <TiptapEditor
+                          value={activeNote.content ?? ''}
+                          onChange={(md) => updateActiveNote((note) => ({ ...note, content: md }))}
+                          placeholder="Write your page content here..."
+                        />
+                      ) : (
+                        <p className="text-sm text-white/35">Select or create a page to start writing.</p>
+                      )}
+                    </div>
                   )}
 
                   {(editorView === 'preview' || editorView === 'split') && (
                     <div className="h-full min-h-[260px] w-full overflow-auto rounded-lg border border-white/10 bg-black/20 p-4">
                       {activeNote?.content?.trim() ? (
-                        <div className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              p({ children }) {
-                                return (
-                                  <p className="text-white/80 leading-relaxed mb-3 last:mb-0 break-words whitespace-pre-wrap">
-                                    {children}
-                                  </p>
-                                );
-                              },
-                              ul({ children }) {
-                                return (
-                                  <ul className="list-disc list-inside space-y-1 text-white/80 break-words">
-                                    {children}
-                                  </ul>
-                                );
-                              },
-                              ol({ children }) {
-                                return (
-                                  <ol className="list-decimal list-inside space-y-1 text-white/80 break-words">
-                                    {children}
-                                  </ol>
-                                );
-                              },
-                              li({ children }) {
-                                return <li className="text-white/80 break-words">{children}</li>;
-                              },
-                              blockquote({ children }) {
-                                return (
-                                  <blockquote className="border-l-4 border-cyan-500/45 pl-4 italic text-white/65 my-3 break-words">
-                                    {children}
-                                  </blockquote>
-                                );
-                              },
-                              a({ children, href }) {
-                                return (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-cyan-300 hover:text-cyan-200 underline transition-colors"
-                                  >
-                                    {children}
-                                  </a>
-                                );
-                              },
-                              table({ children }) {
-                                return (
-                                  <div className="overflow-x-auto my-3">
-                                    <table className="min-w-full border border-white/10 rounded-lg">
-                                      {children}
-                                    </table>
-                                  </div>
-                                );
-                              },
-                              th({ children }) {
-                                return (
-                                  <th className="px-3 py-2 bg-white/5 border-b border-white/10 text-left text-white/90 font-semibold">
-                                    {children}
-                                  </th>
-                                );
-                              },
-                              td({ children }) {
-                                return (
-                                  <td className="px-3 py-2 border-b border-white/5 text-white/80 align-top">
-                                    {children}
-                                  </td>
-                                );
-                              },
-                            }}
-                          >
-                            {activeNote.content}
-                          </ReactMarkdown>
+                        <div className="max-w-none break-words [overflow-wrap:anywhere]">
+                          <TiptapViewer content={activeNote.content} />
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -2768,11 +2799,11 @@ export function DailyNotesWorkspace() {
                     <section className="min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black/15 p-3 space-y-2">
                       <div>
                         <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                          <MessageSquare className="w-3.5 h-3.5" />
-                          Entry Deck
+                          <NotebookPen className="w-3.5 h-3.5" />
+                          Research Entries
                         </h3>
                         <p className="mt-1 text-[11px] text-white/45">
-                          Flip through chats like pages in your notebook.
+                          Browse insights from your research conversations.
                         </p>
                       </div>
 
@@ -2823,7 +2854,7 @@ export function DailyNotesWorkspace() {
                                   </button>
                                 </div>
                                 <p className="mt-1 text-[11px] text-white/45">
-                                  {conversation.messageCount} messages · {formatWhen(conversation.updatedAt)}
+                                  {formatWhen(conversation.updatedAt)}
                                 </p>
                               </button>
                             );
@@ -2835,7 +2866,7 @@ export function DailyNotesWorkspace() {
                     <section className="min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="text-xs tracking-wide uppercase text-white/60">Notebook Page View</h3>
+                          <h3 className="text-xs tracking-wide uppercase text-white/60">Research Insights</h3>
                           <p className="text-[11px] text-white/45">
                             Page {currentPreviewIndex >= 0 ? currentPreviewIndex + 1 : 0} of {previewConversations.length}
                           </p>
@@ -2861,7 +2892,7 @@ export function DailyNotesWorkspace() {
                       </div>
 
                       {!selectedJournalConversation && (
-                        <p className="text-xs text-white/45">Select an entry to open its notebook page.</p>
+                        <p className="text-xs text-white/45">Select an entry to view its research insights.</p>
                       )}
 
                       {selectedJournalConversation && (
@@ -2869,7 +2900,7 @@ export function DailyNotesWorkspace() {
                           <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                             <p className="text-sm font-medium text-white/90">{selectedJournalConversation.title}</p>
                             <p className="mt-1 text-[11px] text-white/50">
-                              {selectedJournalConversation.messageCount} messages · {formatWhen(selectedJournalConversation.updatedAt)}
+                              {selectedConversationMessages.filter((m) => m.role === 'assistant').length} insights · {formatWhen(selectedJournalConversation.updatedAt)}
                             </p>
                             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
                               <button
@@ -2882,13 +2913,6 @@ export function DailyNotesWorkspace() {
                               >
                                 <Pin className="h-3 w-3" />
                                 {pinnedEntryIds.has(selectedJournalConversation.id) ? 'Unpin Entry' : 'Pin Entry'}
-                              </button>
-                              <button
-                                onClick={() => void captureConversation(selectedJournalConversation.id)}
-                                className="inline-flex items-center gap-1 rounded-md border border-emerald-300/30 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/25"
-                              >
-                                <Sparkles className="h-3 w-3" />
-                                Add to Notebook
                               </button>
                               <button
                                 onClick={() => void startNewChatFromEntrySources(selectedJournalConversation)}
@@ -2904,23 +2928,26 @@ export function DailyNotesWorkspace() {
                             <p className="text-[11px] text-white/45">Loading entry…</p>
                           )}
 
-                          <div className="max-h-[calc(100%-178px)] overflow-y-auto space-y-2 pr-1">
-                            {selectedConversationMessages.length === 0 ? (
-                              <p className="text-[11px] text-white/45">No messages loaded.</p>
+                          <div className="max-h-[calc(100%-178px)] overflow-y-auto space-y-4 pr-1">
+                            {selectedConversationMessages.filter((m) => m.role === 'assistant').length === 0 ? (
+                              <p className="text-[11px] text-white/45">No insights loaded for this entry.</p>
                             ) : (
-                              selectedConversationMessages.map((message, idx) => (
-                                <div key={message.id} className="rounded-md border border-white/10 bg-black/25 p-3">
-                                  <div className="mb-1.5 flex items-center justify-between gap-2">
-                                    <p className="text-[10px] uppercase tracking-wide text-cyan-200/80">
-                                      {message.role}
-                                    </p>
-                                    <p className="text-[10px] text-white/45">Block {idx + 1}</p>
-                                  </div>
-                                  <p className="text-xs text-white/80 whitespace-pre-wrap">
-                                    {message.content}
-                                  </p>
-                                </div>
-                              ))
+                              selectedConversationMessages
+                                .filter((m) => m.role === 'assistant')
+                                .map((message, idx) => (
+                                  <article key={message.id} className="rounded-lg border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-2 flex items-center gap-2 text-[10px] text-white/40">
+                                      <NotebookPen className="w-3 h-3" />
+                                      <span>Insight {idx + 1}</span>
+                                      {message.createdAt && (
+                                        <span className="ml-auto">{formatWhen(message.createdAt)}</span>
+                                      )}
+                                    </div>
+                                    <div className="prose-sm text-sm text-white/85 break-words [overflow-wrap:anywhere]">
+                                      <TiptapViewer content={message.content} />
+                                    </div>
+                                  </article>
+                                ))
                             )}
                           </div>
                         </>
@@ -2987,13 +3014,6 @@ export function DailyNotesWorkspace() {
                                     {isActive ? ' · active' : ''}
                                   </p>
                                 </button>
-                                <button
-                                  onClick={() => captureConversation(conversation.id)}
-                                  className="px-2 py-1 rounded border border-emerald-300/30 bg-emerald-500/15 text-[11px] text-emerald-100 hover:bg-emerald-500/25"
-                                  title="Capture full chat into this note"
-                                >
-                                  Save
-                                </button>
                               </div>
                             );
                           })
@@ -3019,9 +3039,9 @@ export function DailyNotesWorkspace() {
                                   <p className="text-[10px] uppercase tracking-wide text-cyan-200/80">
                                     {message.role}
                                   </p>
-                                  <p className="text-[11px] text-white/75 whitespace-pre-wrap line-clamp-6">
-                                    {message.content}
-                                  </p>
+                                  <div className="text-[11px] text-white/75 break-words [overflow-wrap:anywhere] line-clamp-6">
+                                    <TiptapViewer content={message.content} />
+                                  </div>
                                 </div>
                               ))
                             )}
@@ -3034,70 +3054,6 @@ export function DailyNotesWorkspace() {
               </>
             )}
 
-            {activePanel === 'snapshots' && (
-              <div className="h-full overflow-y-auto rounded-xl border border-white/10 bg-black/15 p-4 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-xs tracking-wide uppercase text-white/60 flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {isJournalMode ? 'Captured Entries Timeline' : 'Captured Snapshots'}
-                  </h3>
-                  <button
-                    onClick={captureActiveConversation}
-                    disabled={!activeNote}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-300/30 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-100 text-[11px] disabled:opacity-40"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    {isJournalMode ? 'Add Active Entry' : 'Capture Active Chat'}
-                  </button>
-                </div>
-                {(activeNote?.conversationSnapshots ?? []).length === 0 ? (
-                  <p className="text-xs text-white/45">
-                    {isJournalMode ? 'No entries captured yet.' : 'No snapshots captured yet.'}
-                  </p>
-                ) : (
-                  activeNote?.conversationSnapshots.map((snapshot) => {
-                    const isLinkedSnapshot = requestedSnapshotId === snapshot.id;
-                    return (
-                    <div
-                      key={snapshot.id}
-                      data-snapshot-id={snapshot.id}
-                      className={`rounded-md border p-3 ${
-                        isLinkedSnapshot
-                          ? 'border-cyan-300/60 bg-cyan-500/12'
-                          : 'border-white/10 bg-black/20'
-                      }`}
-                    >
-                      <p className="text-sm text-white/90 flex items-center gap-2">
-                        <span>{snapshot.conversationTitle}</span>
-                        {isLinkedSnapshot && (
-                          <span className="rounded-full border border-cyan-300/45 bg-cyan-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-100">
-                            From chat capture
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-[11px] text-white/45">
-                        {snapshot.messageCount} messages · {formatWhen(snapshot.capturedAt)}
-                      </p>
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <button
-                          onClick={() => insertSnapshotIntoNote(snapshot)}
-                          className="px-2.5 py-1.5 text-[11px] rounded border border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25"
-                        >
-                          Insert into note
-                        </button>
-                        <button
-                          onClick={() => void focusJournalEntry(snapshot.conversationId)}
-                          className="px-2.5 py-1.5 text-[11px] rounded border border-emerald-300/35 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25"
-                        >
-                          Open Entry
-                        </button>
-                      </div>
-                    </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
           </div>
         </main>
       </div>

@@ -94,9 +94,16 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
           <h3 className="font-semibold text-[15px] leading-snug text-[var(--text-primary)] line-clamp-2 break-words">
             {metadata.name}
           </h3>
-          <p className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)] mt-1">
-            {metadata.category}
-          </p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <p className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)]">
+              {metadata.category}
+            </p>
+            {metadata.category === 'Embedding' && metadata.embedding_dimensions && (
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">
+                {metadata.embedding_dimensions}d
+              </span>
+            )}
+          </div>
         </div>
         <div className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${compatStyle.bg} ${compatStyle.text}`}>
           {compatStyle.icon}
@@ -113,7 +120,7 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
       <div className="grid grid-cols-3 gap-2 text-xs text-[var(--text-tertiary)]">
         <div className="min-w-0 flex items-center gap-1">
           <HardDrive className="w-3 h-3" />
-          <span className="truncate tabular-nums">{metadata.size_gb.toFixed(1)} GB</span>
+          <span className="truncate tabular-nums">{metadata.size_gb > 0 ? `${metadata.size_gb.toFixed(1)} GB` : 'Unknown'}</span>
         </div>
         <div className="min-w-0 flex items-center gap-1">
           {getTierIcon()}

@@ -238,6 +238,7 @@ export function ConversationSidebar() {
   const [isBulkMoving, setIsBulkMoving] = useState(false);
   const [journals, setJournals] = useState<ConversationJournalDto[]>([]);
   const [isLoadingJournals, setIsLoadingJournals] = useState(false);
+  const [journalsLoadError, setJournalsLoadError] = useState<string | null>(null);
   const [newSpaceKindDraft, setNewSpaceKindDraft] = useState<SpaceKind>('standard');
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const [snippetResults, setSnippetResults] = useState<ConversationMessageBookmarkDto[]>([]);
@@ -275,6 +276,13 @@ export function ConversationSidebar() {
     }
     return map;
   }, [spaces]);
+  const journalNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const journal of journals) {
+      map.set(journal.id, journal.name);
+    }
+    return map;
+  }, [journals]);
   const spaceAccentById = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const space of spaces) {
@@ -351,6 +359,7 @@ export function ConversationSidebar() {
     setIsLoadingJournals(true);
     const result = await VaultAPI.listJournals();
     if (!result.ok) {
+      setJournalsLoadError(result.error);
       if (!silent) {
         toast.error('Failed to load journals', {
           message: result.error,
@@ -360,6 +369,7 @@ export function ConversationSidebar() {
       setIsLoadingJournals(false);
       return false;
     }
+    setJournalsLoadError(null);
     setJournals(result.data);
     setIsLoadingJournals(false);
     return true;
@@ -761,7 +771,8 @@ export function ConversationSidebar() {
       return;
     }
 
-    const destinationName = spaceNameById.get(targetSpaceId) ?? 'selected journal';
+    const destinationName =
+      journalNameById.get(targetSpaceId) ?? spaceNameById.get(targetSpaceId) ?? 'selected journal';
     setIsBulkMoving(true);
     try {
       const moveResults = await Promise.all(
@@ -830,6 +841,7 @@ export function ConversationSidebar() {
       }
 
       setJournals((prev) => [result.data, ...prev]);
+      setJournalsLoadError(null);
       setBulkSpaceIdDraft(result.data.id);
       toast.success('Journal created', {
         message: `${result.data.name} is ready.`,
@@ -1264,6 +1276,10 @@ export function ConversationSidebar() {
                       <option value="" disabled>
                         Loading journals...
                       </option>
+                    ) : journalsLoadError ? (
+                      <option value="" disabled>
+                        Failed to load journals
+                      </option>
                     ) : journalSpaces.length === 0 ? (
                       <option value="" disabled>
                         No journals yet
@@ -1287,6 +1303,7 @@ export function ConversationSidebar() {
                       selectedConversationCount === 0
                       || !bulkSpaceIdDraft
                       || isBulkMoving
+                      || Boolean(journalsLoadError)
                       || journalSpaces.length === 0
                     }
                     className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1299,7 +1316,11 @@ export function ConversationSidebar() {
                     Add to Journal
                   </button>
                 </div>
-                {journalSpaces.length === 0 && (
+                {journalsLoadError ? (
+                  <p className="mt-2 text-[11px] text-rose-200/85">
+                    Failed to load journals: {journalsLoadError}
+                  </p>
+                ) : journalSpaces.length === 0 && (
                   <div className="mt-2 space-y-1.5">
                     <p className="text-[11px] text-blue-100/65">
                       No journals yet. Create one to organize selected conversations.

@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Instant;
 
 // Application Use Cases - Core
 use crate::application::use_cases::health::HealthCheckUseCase;
@@ -265,6 +266,12 @@ pub struct Container {
 
     /// Conversation-scoped event bus for background workflows.
     conversation_event_bus: Arc<EventBus<ConversationEvent>>,
+
+    /// Cooldown timestamp for embedding load failures.
+    /// When a `ModelLoadFailed` error occurs, we record the time so that
+    /// subsequent calls within the cooldown window return the same error
+    /// immediately instead of retrying (and spamming logs).
+    embedding_error_cooldown: Arc<parking_lot::RwLock<Option<(Instant, AppError)>>>,
 }
 
 impl Container {
@@ -478,6 +485,7 @@ impl Container {
             function_executor,
             router_llm_cache,
             conversation_event_bus,
+            embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
         })
     }
 
@@ -1118,10 +1126,35 @@ impl Container {
             }
         }
 
+        // Check error cooldown: if we recently failed to load, return the cached
+        // error immediately instead of retrying (prevents log spam).
+        const EMBEDDING_ERROR_COOLDOWN_SECS: u64 = 60;
+        {
+            let cooldown = self.embedding_error_cooldown.read();
+            if let Some((failed_at, ref cached_err)) = *cooldown {
+                if failed_at.elapsed().as_secs() < EMBEDDING_ERROR_COOLDOWN_SECS {
+                    return Err(cached_err.clone());
+                }
+            }
+        }
+
         // SLOW PATH: Load embedding service (NO LOCK HELD)
         // Multiple threads may execute this simultaneously - that's OK!
         // The I/O-heavy operation happens without blocking other threads.
-        let embedding_service = self.load_embedding_with_fallback().await?;
+        let embedding_service = match self.load_embedding_with_fallback().await {
+            Ok(service) => {
+                // Clear any cached error on success
+                let mut cooldown = self.embedding_error_cooldown.write();
+                *cooldown = None;
+                service
+            }
+            Err(e) => {
+                // Cache the error with a timestamp to prevent retry spam
+                let mut cooldown = self.embedding_error_cooldown.write();
+                *cooldown = Some((Instant::now(), e.clone()));
+                return Err(e);
+            }
+        };
 
         // Cache only real/ready embedding services.
         // Degraded mock services are intentionally NOT cached to avoid stale mock lock-in.
@@ -1160,6 +1193,9 @@ impl Container {
             tracing::info!("Invalidating embedding cache - next access will reload");
             *cache = None;
         }
+        // Also clear error cooldown so the next attempt retries immediately
+        let mut cooldown = self.embedding_error_cooldown.write();
+        *cooldown = None;
     }
 
     /// Try to load the active embedding model
@@ -1243,9 +1279,32 @@ impl Container {
         let path_str = validated_path.to_string_lossy();
         match OnnxEmbeddingService::new(path_str.as_ref()) {
             Ok(service) => {
+                // Verify the model's output dimension matches the vector index dimension
+                let expected_dim = self.search.vector_search().dimension();
+                let actual_dim = service.dimension();
+                if actual_dim != expected_dim {
+                    tracing::error!(
+                        "Embedding dimension mismatch: model '{}' produces {}-dim vectors \
+                         but the vector index expects {}-dim. Choose a {}-dim embedding model \
+                         or re-index with a different dimension.",
+                        active_model.model_name(),
+                        actual_dim,
+                        expected_dim,
+                        expected_dim
+                    );
+                    return Err(AppError::ModelLoadFailed(format!(
+                        "Model '{}' produces {}-dimensional embeddings but the search index \
+                         requires {}. Please select a compatible embedding model.",
+                        active_model.model_name(),
+                        actual_dim,
+                        expected_dim
+                    )));
+                }
+
                 tracing::info!(
-                    "✅ Successfully loaded active embedding model: {}",
-                    active_model.model_name()
+                    "Successfully loaded active embedding model: {} ({}-dim)",
+                    active_model.model_name(),
+                    actual_dim
                 );
                 Ok(Some(Arc::new(service) as Arc<dyn EmbeddingPort>))
             }

@@ -8,7 +8,7 @@ import { Filter, X } from 'lucide-react';
 
 import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
 
-import type { ModelCategory, PerformanceTier } from '../../../types/modelCatalog';
+import type { ModelCategory, ModelSortBy, PerformanceTier } from '../../../types/modelCatalog';
 
 export function ModelFilterPanel() {
   const filters = useModelCatalogStore((state) => state.filters);
@@ -28,19 +28,40 @@ export function ModelFilterPanel() {
     { value: 'Accurate', label: 'Accurate', desc: 'Best quality' },
   ];
 
+  const embeddingDimensions = [
+    { value: null, label: 'Any' },
+    { value: 384, label: '384' },
+    { value: 768, label: '768' },
+    { value: 1024, label: '1024' },
+  ];
+
+  const showDimensionFilter = filters.category === null || filters.category === 'Embedding';
+
   const hasActiveFilters =
     filters.category !== null ||
     filters.max_size_gb !== null ||
-    filters.required_capabilities.length > 0;
+    filters.min_downloads !== null ||
+    filters.required_capabilities.length > 0 ||
+    filters.embedding_dimensions !== null;
 
   const clearFilters = () => {
     setFilters({
       category: null,
       max_size_gb: null,
+      min_downloads: null,
       required_capabilities: [],
       query_text: filters.query_text, // Keep search query
+      embedding_dimensions: null,
     });
   };
+
+  const downloadThresholds = [
+    { value: null, label: 'Any' },
+    { value: 1000, label: '1K+' },
+    { value: 10000, label: '10K+' },
+    { value: 100000, label: '100K+' },
+    { value: 1000000, label: '1M+' },
+  ];
 
   return (
     <div className="space-y-5 p-5 bg-[linear-gradient(165deg,var(--surface-elevated),var(--bg-secondary))] border border-[var(--border-color)] rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.14)]">
@@ -72,12 +93,19 @@ export function ModelFilterPanel() {
         <select
           id="model-sort-order"
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          onChange={(e) => {
+            const val = e.target.value as ModelSortBy;
+            console.log('[ModelFilterPanel] Sort changed to:', val);
+            setSortBy(val);
+          }}
           className="w-full px-3 py-2 text-xs font-medium bg-[var(--bg-tertiary)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
         >
+          <option value="popularity">Downloads</option>
           <option value="recommended">Recommended</option>
-          <option value="popularity">Popularity (Downloads)</option>
           <option value="likes">Likes</option>
+          <option value="size_asc">Size (smallest)</option>
+          <option value="size_desc">Size (largest)</option>
+          <option value="name">Name</option>
         </select>
       </div>
 
@@ -108,6 +136,40 @@ export function ModelFilterPanel() {
         </div>
       </div>
 
+      {/* Embedding Dimensions Filter */}
+      {showDimensionFilter && (
+        <div className="space-y-2">
+          <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
+            Embedding Dimensions
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {embeddingDimensions.map((dim) => {
+              const isActive = filters.embedding_dimensions === dim.value;
+              return (
+                <button
+                  key={dim.label}
+                  onClick={() =>
+                    setFilters({
+                      embedding_dimensions: isActive ? null : dim.value,
+                    })
+                  }
+                  className={`
+                    px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-all
+                    ${
+                      isActive
+                        ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
+                        : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-[var(--accent-primary)]'
+                    }
+                  `}
+                >
+                  {dim.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Size Filter */}
       <div className="space-y-2">
         <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
@@ -129,6 +191,38 @@ export function ModelFilterPanel() {
         <div className="flex justify-between text-xs text-[var(--text-tertiary)]">
           <span>1 GB</span>
           <span>20 GB</span>
+        </div>
+      </div>
+
+      {/* Min Downloads Filter */}
+      <div className="space-y-2">
+        <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
+          Min Downloads
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          {downloadThresholds.map((threshold) => {
+            const isActive = filters.min_downloads === threshold.value;
+            return (
+              <button
+                key={threshold.label}
+                onClick={() =>
+                  setFilters({
+                    min_downloads: isActive ? null : threshold.value,
+                  })
+                }
+                className={`
+                  px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-all
+                  ${
+                    isActive
+                      ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
+                      : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-[var(--accent-primary)]'
+                  }
+                `}
+              >
+                {threshold.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 

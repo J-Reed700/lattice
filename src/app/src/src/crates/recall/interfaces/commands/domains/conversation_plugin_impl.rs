@@ -1851,11 +1851,10 @@ pub async fn list_journal_conversations_impl(
                 LIMIT 1
             ) AS last_message_preview
         FROM conversations c
-        WHERE (
-            EXISTS (
+        WHERE EXISTS (
                 SELECT 1
                 FROM journal_conversation_entries jce
-                WHERE jce.journal_space_id = 
+                WHERE jce.journal_space_id =
         "#,
     );
     qb.push_bind(journal_space_id)

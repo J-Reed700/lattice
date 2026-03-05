@@ -563,7 +563,7 @@ export function ModelDetailPanel({
                 </div>
                 <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
                   <HardDrive className="w-4 h-4" />
-                  {metadata.size_gb.toFixed(2)} GB
+                  {metadata.size_gb > 0 ? `${metadata.size_gb.toFixed(2)} GB` : 'Unknown'}
                 </div>
               </div>
               <div>
@@ -593,6 +593,16 @@ export function ModelDetailPanel({
                   {metadata.context_length.toLocaleString()} tokens
                 </div>
               </div>
+              {metadata.category === 'Embedding' && metadata.embedding_dimensions && (
+                <div>
+                  <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                    Embedding Dimensions
+                  </div>
+                  <div className="text-sm text-[var(--text-primary)]">
+                    {metadata.embedding_dimensions}
+                  </div>
+                </div>
+              )}
               <div>
                 <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
                   Downloads

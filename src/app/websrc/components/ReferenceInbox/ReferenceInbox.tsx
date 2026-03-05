@@ -12,9 +12,9 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
-import remarkGfm from 'remark-gfm';
+
+import { TiptapViewer } from '../TiptapEditor';
 
 import { useDebounce } from '@/hooks/useDebounce';
 import { VaultAPI } from '@/lib/api';
@@ -774,80 +774,8 @@ export function ReferenceInbox() {
                         {isResolvingPreview && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/45" />}
                       </div>
                       <div className="max-h-[28rem] overflow-y-auto rounded-md border border-white/10 bg-black/20 p-2.5">
-                        <div className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              p({ children }) {
-                                return (
-                                  <p className="text-white/80 leading-relaxed mb-3 last:mb-0 break-words whitespace-pre-wrap">
-                                    {children}
-                                  </p>
-                                );
-                              },
-                              ul({ children }) {
-                                return (
-                                  <ul className="list-disc list-inside space-y-1 text-white/80 break-words">
-                                    {children}
-                                  </ul>
-                                );
-                              },
-                              ol({ children }) {
-                                return (
-                                  <ol className="list-decimal list-inside space-y-1 text-white/80 break-words">
-                                    {children}
-                                  </ol>
-                                );
-                              },
-                              li({ children }) {
-                                return <li className="text-white/80 break-words">{children}</li>;
-                              },
-                              blockquote({ children }) {
-                                return (
-                                  <blockquote className="border-l-4 border-cyan-500/45 pl-4 italic text-white/65 my-3 break-words">
-                                    {children}
-                                  </blockquote>
-                                );
-                              },
-                              a({ children, href }) {
-                                return (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-cyan-300 hover:text-cyan-200 underline transition-colors"
-                                  >
-                                    {children}
-                                  </a>
-                                );
-                              },
-                              table({ children }) {
-                                return (
-                                  <div className="overflow-x-auto my-3">
-                                    <table className="min-w-full border border-white/10 rounded-lg">
-                                      {children}
-                                    </table>
-                                  </div>
-                                );
-                              },
-                              th({ children }) {
-                                return (
-                                  <th className="px-3 py-2 bg-white/5 border-b border-white/10 text-left text-white/90 font-semibold">
-                                    {children}
-                                  </th>
-                                );
-                              },
-                              td({ children }) {
-                                return (
-                                  <td className="px-3 py-2 border-b border-white/5 text-white/80 align-top">
-                                    {children}
-                                  </td>
-                                );
-                              },
-                            }}
-                          >
-                            {selectedPreview}
-                          </ReactMarkdown>
+                        <div className="max-w-none break-words [overflow-wrap:anywhere]">
+                          <TiptapViewer content={selectedPreview} />
                         </div>
                       </div>
                     </div>

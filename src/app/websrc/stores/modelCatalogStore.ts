@@ -124,11 +124,13 @@ export const useModelCatalogStore = create<ModelCatalogState & ModelCatalogActio
   filters: {
     category: null,
     max_size_gb: null,
+    min_downloads: null,
     required_capabilities: [],
     query_text: null,
+    embedding_dimensions: null,
   },
   searchQuery: '',
-  sortBy: 'recommended',
+  sortBy: 'popularity',
 
   selectedModel: null,
 

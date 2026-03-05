@@ -163,6 +163,9 @@ pub struct ModelMetadataDto {
     pub files: Vec<ModelFileMetadataDto>,
     /// Total size in bytes
     pub total_size_bytes: u64,
+    /// Output dimension for embedding models (e.g., 384, 768, 1024).
+    /// Null for non-embedding models.
+    pub embedding_dimensions: Option<usize>,
 }
 
 impl From<crate::domain::model_management::ModelMetadata> for ModelMetadataDto {
@@ -186,6 +189,7 @@ impl From<crate::domain::model_management::ModelMetadata> for ModelMetadataDto {
             default_filename: domain.default_filename,
             files: domain.files.into_iter().map(Into::into).collect(),
             total_size_bytes: domain.total_size_bytes,
+            embedding_dimensions: domain.embedding_dimensions,
         }
     }
 }

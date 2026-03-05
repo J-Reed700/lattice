@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
-import { HardDrive, Trash2, Check, Calendar, TrendingUp, Info, AlertCircle, Sparkles, ChevronRight , PackageOpen } from 'lucide-react';
+import { HardDrive, Trash2, Check, Calendar, TrendingUp, Info, AlertCircle, Sparkles, ChevronRight, PackageOpen, Search, X } from 'lucide-react';
 
 import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
@@ -454,8 +454,20 @@ function DownloadedModelsTabContent() {
   const [error, setError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<DownloadedModel | null>(null);
   const [routerModelId, setRouterModelId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const downloadedModels = getAllDownloadedModels();
+
+  const filteredModels = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return downloadedModels;
+    return downloadedModels.filter(
+      (m) =>
+        m.model_name.toLowerCase().includes(q) ||
+        m.model_id.toLowerCase().includes(q) ||
+        m.model_type?.toLowerCase().includes(q)
+    );
+  }, [downloadedModels, searchQuery]);
 
   useEffect(() => {
     const loadModels = async () => {
@@ -658,21 +670,47 @@ function DownloadedModelsTabContent() {
         </Tooltip>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {downloadedModels.map((model) => (
-          <ModelCard
-            key={model.id}
-            model={model}
-            routerModelId={routerModelId}
-            onSetActiveChatModel={handleSetActiveChatModel}
-            onWarmUpActiveChatModel={warmUpActiveChatModel}
-            onSetActiveEmbeddingModel={handleSetActiveEmbeddingModel}
-            onDelete={handleDelete}
-            onViewDetails={setSelectedModel}
-            onRefresh={handleRefresh}
-          />
-        ))}
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-tertiary)]" />
+        <input
+          type="text"
+          placeholder="Filter models..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-primary)] placeholder:text-[var(--text-quaternary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)] focus:border-[var(--accent-primary)]"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
+
+      {filteredModels.length === 0 ? (
+        <div className="text-center py-8 text-sm text-[var(--text-tertiary)]">
+          No models matching "{searchQuery}"
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredModels.map((model) => (
+            <ModelCard
+              key={model.id}
+              model={model}
+              routerModelId={routerModelId}
+              onSetActiveChatModel={handleSetActiveChatModel}
+              onWarmUpActiveChatModel={warmUpActiveChatModel}
+              onSetActiveEmbeddingModel={handleSetActiveEmbeddingModel}
+              onDelete={handleDelete}
+              onViewDetails={setSelectedModel}
+              onRefresh={handleRefresh}
+            />
+          ))}
+        </div>
+      )}
 
       {selectedModel && (
         <ModelDetailsModal

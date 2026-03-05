@@ -286,6 +286,7 @@ impl ExternalModelMetadata {
             total_size_bytes: self
                 .preferred_size_bytes
                 .unwrap_or((size_gb * 1_000_000_000.0) as u64),
+            embedding_dimensions: None,
         })
     }
 
@@ -330,7 +331,8 @@ impl ExternalModelMetadata {
     fn estimate_size_gb(&self) -> f64 {
         let text = format!("{} {}", self.id, self.name).to_lowercase();
 
-        // Embedding models are typically much smaller than chat LLMs.
+        // Embedding models vary widely in size and we don't want to show a
+        // misleading estimate.  Return 0.0 so the frontend can display "Unknown".
         if matches!(self.infer_category(), Ok(ModelCategory::Embedding))
             || text.contains("embed")
             || self.tags.iter().any(|t| {
@@ -340,7 +342,7 @@ impl ExternalModelMetadata {
                     || tag.contains("sentence-transformers")
             })
         {
-            return 0.5;
+            return 0.0;
         }
 
         // OCR/vision models tend to sit between embedding and LLM sizes.

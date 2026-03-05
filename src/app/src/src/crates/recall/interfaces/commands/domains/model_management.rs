@@ -262,9 +262,21 @@ pub async fn get_all_recommended_models(
     };
     tracing::info!("get_all_recommended_models: Built system capabilities");
 
-    // Get downloadable Hugging Face models
+    // Get downloadable Hugging Face models (GGUF for LLMs + ONNX for embeddings)
     tracing::info!("get_all_recommended_models: Getting Hugging Face models");
-    let models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
+    let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
+
+    // Also fetch ONNX embedding models (the "gguf" query only returns GGUF repos)
+    let embedding_models =
+        fetch_downloadable_hf_models(container.inner(), "onnx embedding", 30).await?;
+    let existing_ids: std::collections::HashSet<String> =
+        models.iter().map(|m| m.model.id.clone()).collect();
+    for entry in embedding_models {
+        if !existing_ids.contains(&entry.model.id) {
+            models.push(entry);
+        }
+    }
+
     let downloads_by_model_id: HashMap<String, u64> = models
         .iter()
         .map(|entry| (entry.model.id.clone(), entry.downloads))
@@ -279,9 +291,17 @@ pub async fn get_all_recommended_models(
     );
 
     // Score compatibility for each model
+    // Filter out GGUF embedding models — our embedding service only supports ONNX
     let scorer = CompatibilityScorer::new();
     let mut recommendations: Vec<ModelRecommendation> = models
         .into_iter()
+        .filter(|entry| {
+            if entry.model.category == ModelCategory::Embedding {
+                !is_gguf_only_model(&entry.model)
+            } else {
+                true
+            }
+        })
         .filter_map(|entry| {
             scorer
                 .score_compatibility(&entry.model, &capabilities)
@@ -319,6 +339,24 @@ pub async fn get_all_recommended_models(
 
 fn is_downloadable_model(model: &ModelMetadata) -> bool {
     model.default_filename.is_some() || !model.files.is_empty()
+}
+
+/// Check if a model is GGUF-only (no ONNX files).
+///
+/// Embedding models require ONNX format with tokenizer.json. GGUF embedding
+/// models cannot be loaded by our OnnxEmbeddingService, so they must be
+/// filtered from search results to prevent users from downloading unusable models.
+fn is_gguf_only_model(model: &ModelMetadata) -> bool {
+    let has_gguf_default = model
+        .default_filename
+        .as_ref()
+        .is_some_and(|f| f.ends_with(".gguf"));
+    let has_onnx_files = model.files.iter().any(|f| f.filename.ends_with(".onnx"));
+    let has_gguf_in_name =
+        model.name.to_lowercase().contains("gguf") || model.id.to_lowercase().contains("gguf");
+
+    // Model is GGUF-only if it has a GGUF default file or GGUF in name, and no ONNX files
+    (has_gguf_default || has_gguf_in_name) && !has_onnx_files
 }
 
 #[derive(Debug, Clone)]
@@ -590,6 +628,14 @@ pub async fn search_model_catalog(
     let external_models: Vec<_> = discovered_models
         .into_iter()
         .map(|entry| (entry.model, ModelSource::External))
+        // Filter out GGUF embedding models — our embedding service only supports ONNX
+        .filter(|(model, _)| {
+            if model.category == ModelCategory::Embedding {
+                !is_gguf_only_model(model)
+            } else {
+                true
+            }
+        })
         .collect();
 
     // Use ModelCatalogService to search and rank

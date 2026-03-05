@@ -9,9 +9,9 @@ import { useState } from 'react';
 
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { Settings as SettingsIcon, Search, Database, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive } from 'lucide-react';
+import { Settings as SettingsIcon, Search, Database, MessageSquare, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive, FileText, Settings2, Wrench } from 'lucide-react';
 
-import { AITab } from './AITab';
+import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
 import { DisplayTab } from './DisplayTab';
 import { DownloadedModelsTab } from './DownloadedModelsTab';
 import { IndexingTab } from './IndexingTab';
@@ -20,7 +20,7 @@ import { SearchTab } from './SearchTab';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { toast } from '../../stores/toastStore';
 
-type SettingsTab = 'search' | 'indexing' | 'ai' | 'downloaded-models' | 'display' | 'privacy';
+type SettingsTab = 'search' | 'indexing' | 'chat' | 'models' | 'downloaded-models' | 'prompts' | 'tuning' | 'tools' | 'display' | 'privacy';
 
 interface Tab {
   id: SettingsTab;
@@ -29,14 +29,35 @@ interface Tab {
   component: React.ComponentType;
 }
 
-const tabs: Tab[] = [
-  { id: 'search', label: 'Search', icon: Search, component: SearchTab },
-  { id: 'indexing', label: 'Indexing', icon: Database, component: IndexingTab },
-  { id: 'ai', label: 'AI Models', icon: Brain, component: AITab },
-  { id: 'downloaded-models', label: 'Downloaded Models', icon: HardDrive, component: DownloadedModelsTab },
-  { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
-  { id: 'privacy', label: 'Privacy', icon: Shield, component: PrivacyTab },
+type TabGroup = {
+  label: string;
+  tabs: Tab[];
+};
+
+const tabGroups: TabGroup[] = [
+  {
+    label: 'General',
+    tabs: [
+      { id: 'search', label: 'Search', icon: Search, component: SearchTab },
+      { id: 'indexing', label: 'Indexing', icon: Database, component: IndexingTab },
+      { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
+      { id: 'privacy', label: 'Privacy', icon: Shield, component: PrivacyTab },
+    ],
+  },
+  {
+    label: 'AI',
+    tabs: [
+      { id: 'chat', label: 'Chat', icon: MessageSquare, component: ChatTab },
+      { id: 'models', label: 'Models', icon: Brain, component: ModelsTab },
+      { id: 'downloaded-models', label: 'Downloaded', icon: HardDrive, component: DownloadedModelsTab },
+      { id: 'prompts', label: 'Prompts', icon: FileText, component: PromptsTab },
+      { id: 'tuning', label: 'Tuning', icon: Settings2, component: TuningTab },
+      { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },
+    ],
+  },
 ];
+
+const tabs: Tab[] = tabGroups.flatMap((group) => group.tabs);
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('search');
@@ -113,7 +134,7 @@ export function Settings() {
   };
 
   const ActiveTabComponent = tabs.find((tab) => tab.id === activeTab)?.component || SearchTab;
-  const isWideContentTab = activeTab === 'ai' || activeTab === 'downloaded-models';
+  const isWideContentTab = activeTab === 'models' || activeTab === 'downloaded-models' || activeTab === 'tools';
 
   return (
     <div className="flex h-full bg-[var(--bg-primary)]">
@@ -133,27 +154,36 @@ export function Settings() {
         </div>
 
         {/* Tabs */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`
-                  w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all duration-200
-                  ${
-                    activeTab === tab.id
-                      ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] font-semibold'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
-                  }
-                `}
-              >
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                <span className="font-medium">{tab.label}</span>
-              </button>
-            );
-          })}
+        <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
+          {tabGroups.map((group) => (
+            <div key={group.label}>
+              <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                {group.label}
+              </div>
+              <div className="space-y-1">
+                {group.tabs.map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`
+                        w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all duration-200
+                        ${
+                          activeTab === tab.id
+                            ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] font-semibold'
+                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                        }
+                      `}
+                    >
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      <span className="font-medium">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         {/* Actions */}
@@ -195,7 +225,9 @@ export function Settings() {
               : 'max-w-3xl mx-auto p-8'
           }
         >
-          <ActiveTabComponent />
+          <LlmSettingsProvider>
+            <ActiveTabComponent />
+          </LlmSettingsProvider>
         </div>
       </div>
 
