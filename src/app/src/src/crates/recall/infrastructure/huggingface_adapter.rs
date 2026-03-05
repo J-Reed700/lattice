@@ -152,8 +152,21 @@ impl HuggingFaceModel {
         }
     }
 
+    /// Check if this model looks like an embedding/feature-extraction model.
+    fn is_embedding_model(&self) -> bool {
+        let tags_lower: Vec<String> = self.tags.iter().map(|t| t.to_lowercase()).collect();
+        tags_lower.iter().any(|t| {
+            t.contains("sentence-transformers")
+                || t.contains("feature-extraction")
+                || t.contains("embedding")
+        }) || self.pipeline_tag.as_ref().is_some_and(|p| {
+            p.eq_ignore_ascii_case("feature-extraction")
+                || p.eq_ignore_ascii_case("sentence-similarity")
+        })
+    }
+
     /// Choose a preferred downloadable GGUF file from the repository.
-    fn select_preferred_file(&self) -> Option<(String, Option<u64>)> {
+    fn select_preferred_gguf_file(&self) -> Option<(String, Option<u64>)> {
         let mut candidates: Vec<&HuggingFaceSibling> = self
             .siblings
             .iter()
@@ -180,6 +193,62 @@ impl HuggingFaceModel {
 
         let chosen = candidates.first().copied()?;
         Some((chosen.filename.clone(), chosen.size))
+    }
+
+    /// Choose a preferred ONNX file for embedding models.
+    ///
+    /// Embedding models require ONNX format with tokenizer.json. This method
+    /// finds ONNX files in the repo siblings, preferring `model.onnx` or
+    /// files in `onnx/` subdirectories.
+    fn select_preferred_onnx_file(&self) -> Option<(String, Option<u64>)> {
+        let mut candidates: Vec<&HuggingFaceSibling> = self
+            .siblings
+            .iter()
+            .filter(|s| {
+                let lower = s.filename.to_lowercase();
+                lower.ends_with(".onnx") && !lower.ends_with(".onnx_data")
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Also verify tokenizer.json exists — required for ONNX embeddings
+        let has_tokenizer = self
+            .siblings
+            .iter()
+            .any(|s| s.filename == "tokenizer.json" || s.filename.ends_with("/tokenizer.json"));
+
+        if !has_tokenizer {
+            return None;
+        }
+
+        // Prefer "model.onnx" or "onnx/model.onnx" over other ONNX files
+        candidates.sort_by(|a, b| {
+            let a_is_model = a.filename.ends_with("model.onnx");
+            let b_is_model = b.filename.ends_with("model.onnx");
+            b_is_model
+                .cmp(&a_is_model)
+                .then(a.filename.len().cmp(&b.filename.len()))
+        });
+
+        let chosen = candidates.first().copied()?;
+        Some((chosen.filename.clone(), chosen.size))
+    }
+
+    /// Choose a preferred downloadable file from the repository.
+    ///
+    /// For embedding models, prefers ONNX files (required by OnnxEmbeddingService),
+    /// falling back to GGUF so the model is still discoverable (filtered later).
+    /// For all other models, prefers GGUF files.
+    fn select_preferred_file(&self) -> Option<(String, Option<u64>)> {
+        if self.is_embedding_model() {
+            self.select_preferred_onnx_file()
+                .or_else(|| self.select_preferred_gguf_file())
+        } else {
+            self.select_preferred_gguf_file()
+        }
     }
 
     fn compact_text(text: &str, max_chars: usize) -> String {
@@ -298,10 +367,13 @@ impl HuggingFaceModel {
                 tags.insert(0, pipeline.clone());
             }
         }
-        if preferred_file.is_some() && !tags.iter().any(|t| t.eq_ignore_ascii_case("gguf")) {
+        let preferred_is_gguf = preferred_file
+            .as_ref()
+            .is_some_and(|(f, _)| f.to_lowercase().ends_with(".gguf"));
+        if preferred_is_gguf && !tags.iter().any(|t| t.eq_ignore_ascii_case("gguf")) {
             tags.push("gguf".into());
         }
-        let description = self.build_description(&id, preferred_file.is_some());
+        let description = self.build_description(&id, preferred_is_gguf);
 
         ExternalModelMetadata {
             id: id.clone(),

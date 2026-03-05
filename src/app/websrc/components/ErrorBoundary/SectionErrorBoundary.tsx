@@ -113,7 +113,7 @@ export function SettingsSectionErrorBoundary({ children }: { children: React.Rea
 
 export function DailySectionErrorBoundary({ children }: { children: React.ReactNode }) {
   return (
-    <SectionErrorBoundary sectionName="Daily Note">
+    <SectionErrorBoundary sectionName="Journals">
       {children}
     </SectionErrorBoundary>
   );

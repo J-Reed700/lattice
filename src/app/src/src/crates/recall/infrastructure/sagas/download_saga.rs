@@ -25,7 +25,9 @@ impl DownloadSaga {
     ) -> Option<&'a crate::domain::entities::model_file::ModelFile> {
         files
             .iter()
-            .find(|file| file.file_name == "model.onnx")
+            .find(|file| {
+                file.file_name == "model.onnx" || file.file_name.ends_with("/model.onnx")
+            })
             .or_else(|| {
                 files.iter().find(|file| {
                     file.file_name.ends_with(".onnx") && !file.file_name.ends_with(".onnx_data")
@@ -369,6 +371,18 @@ mod tests {
 
         let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
         assert_eq!(selected.file_name, "model.onnx");
+    }
+
+    #[test]
+    fn select_primary_prefers_onnx_in_subdirectory() {
+        let files = vec![
+            make_file("config.json", "/tmp/config.json"),
+            make_file("onnx/model.onnx", "/tmp/onnx/model.onnx"),
+            make_file("tokenizer.json", "/tmp/tokenizer.json"),
+        ];
+
+        let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
+        assert_eq!(selected.file_name, "onnx/model.onnx");
     }
 
     #[test]

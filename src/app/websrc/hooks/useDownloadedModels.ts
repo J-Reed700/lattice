@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react';
 
+import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
 import { VaultAPI } from '../lib/api';
@@ -12,6 +13,7 @@ import type { DownloadedModel } from '../types/downloadedModels';
 export const useDownloadedModels = () => {
   const {
     setDownloadedModel,
+    clearDownloadedModels,
     removeDownloadedModel,
     setActiveModel,
     setActiveEmbeddingModel,
@@ -21,29 +23,35 @@ export const useDownloadedModels = () => {
   } = useDownloadedModelsStore();
 
   const fetchDownloadedModels = useCallback(async (): Promise<DownloadedModel[]> => {
-    try {
-      const result = await VaultAPI.getDownloadedModels();
-      if (!result.ok) {
-        console.debug('[useDownloadedModels] No models downloaded yet, returning empty array');
-        return [];
-      }
-
-      result.data.forEach((model) => {
-        setDownloadedModel(model.id, model);
-      });
-
-      return result.data;
-    } catch {
-      // Don't log error - empty model list is expected on first run
-      console.debug('[useDownloadedModels] No models downloaded yet, returning empty array');
-      return [];
+    const result = await VaultAPI.getDownloadedModels();
+    let models: DownloadedModel[];
+    if (result.ok) {
+      models = result.data;
+    } else {
+      // Fallback to direct plugin invocation for environments with legacy API routing.
+      models = await invoke<DownloadedModel[]>('plugin:model|list_downloaded_models');
     }
-  }, [setDownloadedModel]);
+
+    // Treat backend response as source of truth so deletions/removals don't leave stale entries.
+    clearDownloadedModels();
+    models.forEach((model) => {
+      setDownloadedModel(model.id, model);
+    });
+
+    return models;
+  }, [clearDownloadedModels, setDownloadedModel]);
 
   const isModelDownloaded = useCallback(async (model_id: string): Promise<boolean> => {
     const result = await VaultAPI.isModelDownloaded(model_id);
     if (!result.ok) {
-      console.error('Failed to check model download status:', result.error);
+      try {
+        return await invoke<boolean>('plugin:model|is_model_already_downloaded', {
+          modelId: model_id,
+          model_id,
+        });
+      } catch {
+        console.error('Failed to check model download status:', result.error);
+      }
       return isModelDownloadedInStore(model_id);
     }
     return result.data;
@@ -81,7 +89,13 @@ export const useDownloadedModels = () => {
     try {
       const result = await VaultAPI.deleteDownloadedModel(id, deleteFile);
       if (!result.ok) {
-        throw new Error(result.error);
+        // Fallback to direct plugin invocation for environments with legacy API routing.
+        await invoke<void>('plugin:model|delete_model', {
+          modelId: id,
+          model_id: id,
+          deleteFile,
+          delete_file: deleteFile,
+        });
       }
 
       removeDownloadedModel(id);

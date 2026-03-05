@@ -8,6 +8,6 @@ export { Settings } from './Settings';
 
 export { SearchTab } from './SearchTab';
 export { IndexingTab } from './IndexingTab';
-export { AITab } from './AITab';
+export { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab } from './AITab';
 export { DisplayTab } from './DisplayTab';
 export { PrivacyTab } from './PrivacyTab';

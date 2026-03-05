@@ -1,7 +1,7 @@
 use crate::domain::entities::model_file::ModelFile;
 use crate::domain::value_objects::model_status::FileStatus;
 use crate::shared::error::{AppError, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{Row, SqliteConnection};
 use std::str::FromStr;
 use tracing::{debug, error, info};
@@ -305,24 +305,10 @@ fn parse_model_file_from_row(row: ModelFileRow) -> Result<ModelFile> {
     let status_enum = FileStatus::from_str(&row.status)
         .map_err(|e| AppError::InvalidData(format!("Invalid file status: {}", e)))?;
 
-    let downloaded_at_dt = match row.downloaded_at {
-        Some(timestamp) => Some(
-            DateTime::parse_from_rfc3339(&timestamp)
-                .map_err(|e| {
-                    AppError::InvalidData(format!("Invalid downloaded_at timestamp: {}", e))
-                })?
-                .with_timezone(&Utc),
-        ),
-        None => None,
-    };
-
-    let created_at_dt = DateTime::parse_from_rfc3339(&row.created_at)
-        .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
-        .with_timezone(&Utc);
-
-    let updated_at_dt = DateTime::parse_from_rfc3339(&row.updated_at)
-        .map_err(|e| AppError::InvalidData(format!("Invalid updated_at timestamp: {}", e)))?
-        .with_timezone(&Utc);
+    let downloaded_at_dt =
+        parse_optional_db_timestamp(row.downloaded_at.as_deref(), "downloaded_at")?;
+    let created_at_dt = parse_required_db_timestamp(&row.created_at, "created_at")?;
+    let updated_at_dt = parse_required_db_timestamp(&row.updated_at, "updated_at")?;
 
     Ok(ModelFile {
         id: row.id,
@@ -339,4 +325,57 @@ fn parse_model_file_from_row(row: ModelFileRow) -> Result<ModelFile> {
         updated_at: updated_at_dt,
         downloaded_at: downloaded_at_dt,
     })
+}
+
+fn parse_required_db_timestamp(value: &str, field_name: &str) -> Result<DateTime<Utc>> {
+    parse_db_timestamp(value)
+        .ok_or_else(|| AppError::InvalidData(format!("Invalid {} timestamp format", field_name)))
+}
+
+fn parse_optional_db_timestamp(
+    value: Option<&str>,
+    field_name: &str,
+) -> Result<Option<DateTime<Utc>>> {
+    match value {
+        Some(v) => {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            parse_db_timestamp(trimmed).map(Some).ok_or_else(|| {
+                AppError::InvalidData(format!("Invalid {} timestamp format", field_name))
+            })
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_db_timestamp(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_db_timestamp_accepts_rfc3339() {
+        let ts = "2026-03-04T19:53:19Z";
+        let parsed = parse_db_timestamp(ts).expect("should parse rfc3339 timestamp");
+        assert_eq!(parsed.to_rfc3339(), "2026-03-04T19:53:19+00:00");
+    }
+
+    #[test]
+    fn parse_db_timestamp_accepts_sqlite_current_timestamp_format() {
+        let ts = "2026-03-04 19:53:19";
+        let parsed = parse_db_timestamp(ts).expect("should parse sqlite timestamp");
+        assert_eq!(parsed.to_rfc3339(), "2026-03-04T19:53:19+00:00");
+    }
 }

@@ -184,9 +184,52 @@ export interface ListConversationsResponse {
 }
 
 /**
+ * Request to synthesize multiple journal conversations into one structured summary.
+ */
+export interface SynthesizeJournalEntriesRequest {
+  /** Ordered conversation IDs to include in synthesis */
+  conversationIds: string[];
+  /** Scope label for synthesis metadata */
+  scope?: 'current' | 'deck' | 'pinned' | string;
+  /** Optional cap for backend processing */
+  maxEntries?: number;
+}
+
+/**
+ * Response from journal synthesis command.
+ */
+export interface SynthesizeJournalEntriesResponse {
+  /** Final synthesis markdown */
+  synthesis: string;
+  /** Scope echoed by backend */
+  scope: string;
+  /** Entries actually synthesized */
+  entryCount: number;
+  /** Number of map chunks processed */
+  chunkCount: number;
+  /** Conversation IDs used in synthesis */
+  conversationIds: string[];
+}
+
+/**
  * Conversation space/environment DTO.
  */
 export interface ConversationSpaceDto {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  accentColor: string | null;
+  spacePrompt: string | null;
+  defaultModelName: string | null;
+  toolPreferencesJson: string | null;
+  isArchived: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationJournalDto {
   id: string;
   name: string;
   description: string | null;
@@ -211,8 +254,31 @@ export interface CreateConversationSpaceRequest {
   toolPreferencesJson?: string | null;
 }
 
+export interface CreateConversationJournalRequest {
+  name: string;
+  description?: string | null;
+  icon?: string | null;
+  accentColor?: string | null;
+  spacePrompt?: string | null;
+  defaultModelName?: string | null;
+  toolPreferencesJson?: string | null;
+}
+
 export interface UpdateConversationSpaceRequest {
   spaceId: string;
+  name?: string;
+  description?: string | null;
+  icon?: string | null;
+  accentColor?: string | null;
+  spacePrompt?: string | null;
+  defaultModelName?: string | null;
+  toolPreferencesJson?: string | null;
+  isArchived?: boolean;
+  sortOrder?: number;
+}
+
+export interface UpdateConversationJournalRequest {
+  journalId: string;
   name?: string;
   description?: string | null;
   icon?: string | null;
@@ -229,9 +295,28 @@ export interface ArchiveConversationSpaceRequest {
   archived: boolean;
 }
 
+export interface ArchiveConversationJournalRequest {
+  journalId: string;
+  archived: boolean;
+}
+
+export interface DeleteConversationJournalRequest {
+  journalId: string;
+}
+
 export interface MoveConversationToSpaceRequest {
   conversationId: string;
   spaceId: string;
+}
+
+export interface AddConversationToJournalRequest {
+  journalSpaceId: string;
+  conversationId: string;
+}
+
+export interface RemoveConversationFromJournalRequest {
+  journalSpaceId: string;
+  conversationId: string;
 }
 
 export interface SetConversationStateRequest {
@@ -246,6 +331,14 @@ export interface ListConversationsExplorerQuery {
   bookmarkedOnly?: boolean;
   pinnedOnly?: boolean;
   hasMessageBookmarks?: boolean;
+  includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListJournalConversationsQuery {
+  journalSpaceId: string;
+  query?: string;
   includeArchived?: boolean;
   limit?: number;
   offset?: number;
@@ -302,6 +395,16 @@ export interface ConversationLinkedDocumentDto {
   indexedAt: string;
   lastReferencedAt: string;
   referenceCount: number;
+}
+
+export interface ConversationWebSourceDto {
+  id: string;
+  url: string;
+  normalizedUrl: string;
+  title?: string | null;
+  excerpt?: string | null;
+  relevanceScore?: number | null;
+  addedAt: string;
 }
 
 export interface DocumentSpaceMembershipDto {

@@ -34,6 +34,7 @@ export interface SnapshotMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: string;
+  metadata?: string | null;
 }
 
 export interface ConversationSnapshot {

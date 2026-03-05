@@ -245,6 +245,12 @@ impl ModelSearchResult {
 ///         capabilities: vec!["chat".into(), "code".into()],
 ///         download_url: None,
 ///         license: "MIT".into(),
+///         requires_auth: false,
+///         model_id: None,
+///         default_filename: None,
+///         files: vec![],
+///         total_size_bytes: 0,
+///         embedding_dimensions: None,
 ///     },
 /// ];
 ///
@@ -399,6 +405,7 @@ mod tests {
             default_filename: None,
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         }
     }
 

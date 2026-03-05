@@ -107,8 +107,17 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
         let last_used_at_dt = parse_optional_db_timestamp(record.last_used_at.as_deref())?;
 
         // Parse metadata JSON
-        let metadata_val = DownloadedModel::metadata_from_json(record.metadata.as_deref())
-            .map_err(|e| AppError::InvalidData(format!("Invalid metadata JSON: {}", e)))?;
+        let metadata_val = match DownloadedModel::metadata_from_json(record.metadata.as_deref()) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                warn!(
+                    model_id = %record.model_id,
+                    error = %e,
+                    "Ignoring invalid model metadata JSON"
+                );
+                None
+            }
+        };
 
         // Convert is_active flags from integer to bool
         let is_active_chat = record.is_active_for_chat != 0;
@@ -971,12 +980,21 @@ fn build_model_select_query(suffix: &str) -> String {
 }
 
 fn parse_optional_db_timestamp(value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
-    match value {
-        Some(v) => parse_db_timestamp(v)
-            .map(Some)
-            .ok_or_else(|| AppError::InvalidData("Invalid timestamp format".to_string())),
-        None => Ok(None),
+    let Some(v) = value else {
+        return Ok(None);
+    };
+
+    let trimmed = v.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
     }
+
+    if let Some(parsed) = parse_db_timestamp(trimmed) {
+        return Ok(Some(parsed));
+    }
+
+    warn!(timestamp = %trimmed, "Ignoring invalid timestamp format in downloaded model row");
+    Ok(None)
 }
 
 fn parse_db_timestamp(value: &str) -> Option<DateTime<Utc>> {
@@ -988,4 +1006,29 @@ fn parse_db_timestamp(value: &str) -> Option<DateTime<Utc>> {
                 .ok()
                 .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_optional_db_timestamp;
+
+    #[test]
+    fn parse_optional_timestamp_accepts_sqlite_format() {
+        let parsed = parse_optional_db_timestamp(Some("2026-03-04 19:53:19"))
+            .expect("expected parse to succeed");
+        assert!(parsed.is_some());
+    }
+
+    #[test]
+    fn parse_optional_timestamp_treats_empty_as_none() {
+        let parsed = parse_optional_db_timestamp(Some("   ")).expect("expected parse to succeed");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn parse_optional_timestamp_treats_invalid_as_none() {
+        let parsed =
+            parse_optional_db_timestamp(Some("not-a-timestamp")).expect("expected no error");
+        assert!(parsed.is_none());
+    }
 }

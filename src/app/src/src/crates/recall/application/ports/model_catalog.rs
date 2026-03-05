@@ -286,6 +286,7 @@ impl ExternalModelMetadata {
             total_size_bytes: self
                 .preferred_size_bytes
                 .unwrap_or((size_gb * 1_000_000_000.0) as u64),
+            embedding_dimensions: None,
         })
     }
 
@@ -330,6 +331,25 @@ impl ExternalModelMetadata {
     fn estimate_size_gb(&self) -> f64 {
         let text = format!("{} {}", self.id, self.name).to_lowercase();
 
+        // Embedding models vary widely in size and we don't want to show a
+        // misleading estimate.  Return 0.0 so the frontend can display "Unknown".
+        if matches!(self.infer_category(), Ok(ModelCategory::Embedding))
+            || text.contains("embed")
+            || self.tags.iter().any(|t| {
+                let tag = t.to_lowercase();
+                tag.contains("embedding")
+                    || tag.contains("feature-extraction")
+                    || tag.contains("sentence-transformers")
+            })
+        {
+            return 0.0;
+        }
+
+        // OCR/vision models tend to sit between embedding and LLM sizes.
+        if matches!(self.infer_category(), Ok(ModelCategory::OCR)) {
+            return 1.5;
+        }
+
         // Extract size hints from text
         // Pattern: "7b", "13b", "70b" (billions of parameters)
         if let Some(size) = Self::extract_param_count(&text) {
@@ -346,15 +366,6 @@ impl ExternalModelMetadata {
             } else if text.contains("3b") || text.contains("3.8b") {
                 return 2.3;
             }
-        }
-
-        // Embedding models are typically small
-        if self
-            .tags
-            .iter()
-            .any(|t| t.to_lowercase().contains("embedding"))
-        {
-            return 1.0;
         }
 
         // Default fallback

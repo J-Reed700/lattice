@@ -27,32 +27,43 @@
 //! When file commands are fully implemented with _impl functions (not requiring
 //! tauri::State), these tests can be updated to test the actual command logic.
 
-use crate::plugins::file::commands::{FileMetadata, IndexingStatus, MetadataUpdate};
+use crate::application::dtos::file_dto::FileMetadataDto;
+use crate::plugins::file::commands::{IndexingStatus, MetadataUpdate};
 use std::collections::HashMap;
 
 /// Test that FileMetadata DTO can be created
 #[test]
 fn smoke_test_file_metadata_dto() {
-    let metadata = FileMetadata {
+    let metadata = FileMetadataDto {
+        file_name: "test.txt".to_string(),
+        mime_type: "text/plain".to_string(),
+        size_bytes: 1024,
+        modified_at: "2024-01-01T00:00:00Z".to_string(),
+        is_readable: true,
+        is_writable: true,
         path: "/tmp/test.txt".to_string(),
-        size: 1024,
     };
 
     assert_eq!(metadata.path, "/tmp/test.txt");
-    assert_eq!(metadata.size, 1024);
+    assert_eq!(metadata.size_bytes, 1024);
     println!("✅ FileMetadata DTO created successfully");
 }
 
 /// Test that FileMetadata handles empty path
 #[test]
 fn smoke_test_file_metadata_dto_empty_path() {
-    let metadata = FileMetadata {
-        path: String::new(),
-        size: 0,
+    let metadata = FileMetadataDto {
+        file_name: "".to_string(),
+        mime_type: "".to_string(),
+        size_bytes: 0,
+        modified_at: "".to_string(),
+        is_readable: false,
+        is_writable: false,
+        path: "".to_string(),
     };
 
-    assert!(metadata.path.is_empty());
-    assert_eq!(metadata.size, 0);
+    assert!(metadata.file_name.is_empty());
+    assert_eq!(metadata.size_bytes, 0);
     println!("✅ FileMetadata DTO handles empty path");
 }
 
@@ -61,12 +72,17 @@ fn smoke_test_file_metadata_dto_empty_path() {
 fn smoke_test_file_metadata_dto_large_size() {
     let large_size = u64::MAX;
 
-    let metadata = FileMetadata {
+    let metadata = FileMetadataDto {
+        file_name: "large.bin".to_string(),
+        mime_type: "application/octet-stream".to_string(),
+        size_bytes: large_size as i64,
+        modified_at: "2024-01-01T00:00:00Z".to_string(),
+        is_readable: true,
+        is_writable: true,
         path: "/tmp/large.bin".to_string(),
-        size: large_size,
     };
 
-    assert_eq!(metadata.size, large_size);
+    assert_eq!(metadata.size_bytes, large_size as i64);
     println!(
         "✅ FileMetadata DTO handles large file size: {} bytes",
         large_size

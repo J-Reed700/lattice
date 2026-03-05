@@ -741,10 +741,28 @@
           "markdownDescription": "Denies the save_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the add_conversation_to_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-add-conversation-to-journal",
+          "markdownDescription": "Enables the add_conversation_to_journal command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the add_conversation_web_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-add-conversation-web-source",
+          "markdownDescription": "Enables the add_conversation_web_source command without any pre-configured scope."
+        },
+        {
           "description": "Enables the archive_conversation_space command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-archive-conversation-space",
           "markdownDescription": "Enables the archive_conversation_space command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the archive_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-archive-journal",
+          "markdownDescription": "Enables the archive_journal command without any pre-configured scope."
         },
         {
           "description": "Enables the bookmark_conversation_message command without any pre-configured scope.",
@@ -777,6 +795,12 @@
           "markdownDescription": "Enables the create_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-create-journal",
+          "markdownDescription": "Enables the create_journal command without any pre-configured scope."
+        },
+        {
           "description": "Enables the delete_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-delete-conversation",
@@ -787,6 +811,12 @@
           "type": "string",
           "const": "conversation:allow-delete-conversation-message",
           "markdownDescription": "Enables the delete_conversation_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-delete-journal",
+          "markdownDescription": "Enables the delete_journal command without any pre-configured scope."
         },
         {
           "description": "Enables the get_conversation command without any pre-configured scope.",
@@ -807,10 +837,22 @@
           "markdownDescription": "Enables the list_conversation_linked_documents command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_conversation_space_members command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-conversation-space-members",
+          "markdownDescription": "Enables the list_conversation_space_members command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_conversation_spaces command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-list-conversation-spaces",
           "markdownDescription": "Enables the list_conversation_spaces command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_conversation_web_sources command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-conversation-web-sources",
+          "markdownDescription": "Enables the list_conversation_web_sources command without any pre-configured scope."
         },
         {
           "description": "Enables the list_conversations command without any pre-configured scope.",
@@ -831,6 +873,18 @@
           "markdownDescription": "Enables the list_document_space_memberships command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_journal_conversations command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-journal-conversations",
+          "markdownDescription": "Enables the list_journal_conversations command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_journals command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-journals",
+          "markdownDescription": "Enables the list_journals command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_message_bookmarks command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-list-message-bookmarks",
@@ -843,10 +897,28 @@
           "markdownDescription": "Enables the move_conversation_to_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_conversation_from_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-remove-conversation-from-journal",
+          "markdownDescription": "Enables the remove_conversation_from_journal command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_conversation_linked_document command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-remove-conversation-linked-document",
           "markdownDescription": "Enables the remove_conversation_linked_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_conversation_space_member command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-remove-conversation-space-member",
+          "markdownDescription": "Enables the remove_conversation_space_member command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_conversation_web_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-remove-conversation-web-source",
+          "markdownDescription": "Enables the remove_conversation_web_source command without any pre-configured scope."
         },
         {
           "description": "Enables the rename_conversation command without any pre-configured scope.",
@@ -891,6 +963,12 @@
           "markdownDescription": "Enables the set_documents_space_membership command without any pre-configured scope."
         },
         {
+          "description": "Enables the synthesize_journal_entries command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-synthesize-journal-entries",
+          "markdownDescription": "Enables the synthesize_journal_entries command without any pre-configured scope."
+        },
+        {
           "description": "Enables the unbookmark_conversation_message command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-unbookmark-conversation-message",
@@ -903,10 +981,40 @@
           "markdownDescription": "Enables the update_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the update_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-update-journal",
+          "markdownDescription": "Enables the update_journal command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the upsert_conversation_space_member command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-upsert-conversation-space-member",
+          "markdownDescription": "Enables the upsert_conversation_space_member command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_conversation_to_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-add-conversation-to-journal",
+          "markdownDescription": "Denies the add_conversation_to_journal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_conversation_web_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-add-conversation-web-source",
+          "markdownDescription": "Denies the add_conversation_web_source command without any pre-configured scope."
+        },
+        {
           "description": "Denies the archive_conversation_space command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-archive-conversation-space",
           "markdownDescription": "Denies the archive_conversation_space command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the archive_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-archive-journal",
+          "markdownDescription": "Denies the archive_journal command without any pre-configured scope."
         },
         {
           "description": "Denies the bookmark_conversation_message command without any pre-configured scope.",
@@ -939,6 +1047,12 @@
           "markdownDescription": "Denies the create_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Denies the create_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-create-journal",
+          "markdownDescription": "Denies the create_journal command without any pre-configured scope."
+        },
+        {
           "description": "Denies the delete_conversation command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-delete-conversation",
@@ -949,6 +1063,12 @@
           "type": "string",
           "const": "conversation:deny-delete-conversation-message",
           "markdownDescription": "Denies the delete_conversation_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-delete-journal",
+          "markdownDescription": "Denies the delete_journal command without any pre-configured scope."
         },
         {
           "description": "Denies the get_conversation command without any pre-configured scope.",
@@ -969,10 +1089,22 @@
           "markdownDescription": "Denies the list_conversation_linked_documents command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_conversation_space_members command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-conversation-space-members",
+          "markdownDescription": "Denies the list_conversation_space_members command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_conversation_spaces command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-list-conversation-spaces",
           "markdownDescription": "Denies the list_conversation_spaces command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_conversation_web_sources command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-conversation-web-sources",
+          "markdownDescription": "Denies the list_conversation_web_sources command without any pre-configured scope."
         },
         {
           "description": "Denies the list_conversations command without any pre-configured scope.",
@@ -993,6 +1125,18 @@
           "markdownDescription": "Denies the list_document_space_memberships command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_journal_conversations command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-journal-conversations",
+          "markdownDescription": "Denies the list_journal_conversations command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_journals command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-journals",
+          "markdownDescription": "Denies the list_journals command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_message_bookmarks command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-list-message-bookmarks",
@@ -1005,10 +1149,28 @@
           "markdownDescription": "Denies the move_conversation_to_space command without any pre-configured scope."
         },
         {
+          "description": "Denies the remove_conversation_from_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-remove-conversation-from-journal",
+          "markdownDescription": "Denies the remove_conversation_from_journal command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_conversation_linked_document command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-remove-conversation-linked-document",
           "markdownDescription": "Denies the remove_conversation_linked_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_conversation_space_member command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-remove-conversation-space-member",
+          "markdownDescription": "Denies the remove_conversation_space_member command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_conversation_web_source command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-remove-conversation-web-source",
+          "markdownDescription": "Denies the remove_conversation_web_source command without any pre-configured scope."
         },
         {
           "description": "Denies the rename_conversation command without any pre-configured scope.",
@@ -1053,6 +1215,12 @@
           "markdownDescription": "Denies the set_documents_space_membership command without any pre-configured scope."
         },
         {
+          "description": "Denies the synthesize_journal_entries command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-synthesize-journal-entries",
+          "markdownDescription": "Denies the synthesize_journal_entries command without any pre-configured scope."
+        },
+        {
           "description": "Denies the unbookmark_conversation_message command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-unbookmark-conversation-message",
@@ -1063,6 +1231,18 @@
           "type": "string",
           "const": "conversation:deny-update-conversation-space",
           "markdownDescription": "Denies the update_conversation_space command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_journal command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-update-journal",
+          "markdownDescription": "Denies the update_journal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the upsert_conversation_space_member command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-upsert-conversation-space-member",
+          "markdownDescription": "Denies the upsert_conversation_space_member command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

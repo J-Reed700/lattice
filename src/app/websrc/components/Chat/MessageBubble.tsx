@@ -16,29 +16,16 @@ import {
   ShieldOff,
   Trash2,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import remarkGfm from 'remark-gfm';
 
 import { CitationFootnote } from './CitationFootnote';
 import { FilePreviewModal } from './FilePreviewModal';
+import { TiptapViewer } from '../TiptapEditor';
 import { useConversationsStore } from '../../stores/conversationsStore';
-import { parseCitations, createCitationMap } from '../../utils/citations';
+import { normalizeAssistantMarkdown } from '../../utils/assistantMarkdown';
+import { createCitationMap } from '../../utils/citations';
 
 import type { DisplayMessage, SourceWithMetadata } from '../../types/conversation';
 
-
-interface MarkdownCodeProps {
-  inline?: boolean;
-  className?: string;
-  children?: React.ReactNode;
-}
-
-interface MarkdownComponentProps {
-  children?: React.ReactNode;
-  href?: string;
-}
 
 interface MessageBubbleProps {
   message: DisplayMessage;
@@ -156,8 +143,13 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     };
   }, [claimsEvaluated, isUser, verificationSummary, unsupportedCount]);
 
+  const normalizedMarkdownContent = useMemo(
+    () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
+    [isUser, message.content]
+  );
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(message.content);
+    await navigator.clipboard.writeText(normalizedMarkdownContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -258,61 +250,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <span key={`hl-${idx}`}>{part}</span>
       )
     );
-  };
-
-  // Render text with inline citation footnotes
-  const renderContentWithCitations = (text: string) => {
-    if (sources.length === 0) return text;
-    
-    const segments = parseCitations(text, sources.length);
-    const hasAnyCitation = segments.some(s => s.citationNumber !== undefined);
-    if (!hasAnyCitation) return text;
-
-    return segments.map((segment, idx) => {
-      if (segment.citationNumber !== undefined) {
-        const source = citationMap.get(segment.citationNumber);
-        if (source) {
-          return (
-            <CitationFootnote
-              key={`cite-${idx}`}
-              number={segment.citationNumber}
-              source={source}
-              onViewFile={() => setPreviewSource(source)}
-            />
-          );
-        }
-        // Citation number doesn't match a source, render as text
-        return (
-          <span key={`cite-${idx}`} className="break-words whitespace-pre-wrap">
-            [{segment.citationNumber}]
-          </span>
-        );
-      }
-      return (
-        <span key={`text-${idx}`} className="break-words whitespace-pre-wrap">
-          {segment.text}
-        </span>
-      );
-    });
-  };
-
-  const renderNodeWithCitations = (children?: React.ReactNode): React.ReactNode => {
-    if (!isAssistantWithSources || children === undefined || children === null) {
-      return children;
-    }
-
-    if (typeof children === 'string') {
-      return renderContentWithCitations(children);
-    }
-
-    if (Array.isArray(children)) {
-      const onlyText = children.every((child) => typeof child === 'string');
-      if (onlyText) {
-        return renderContentWithCitations(children.join(''));
-      }
-    }
-
-    return children;
   };
 
   const toggleSourcePreview = (sourceKey: string) => {
@@ -452,6 +389,24 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     return `Relevance ${(normalized * 100).toFixed(1)}%`;
   };
 
+  // Build inline citation footnotes to render below the Tiptap content
+  const citationFootnotes = useMemo(() => {
+    if (!isAssistantWithSources || citationMap.size === 0) return null;
+    const entries = Array.from(citationMap.entries()).sort(([a], [b]) => a - b);
+    return (
+      <div className="flex flex-wrap gap-1 mt-2">
+        {entries.map(([num, source]) => (
+          <CitationFootnote
+            key={`cite-${num}`}
+            number={num}
+            source={source}
+            onViewFile={() => setPreviewSource(source)}
+          />
+        ))}
+      </div>
+    );
+  }, [isAssistantWithSources, citationMap]);
+
   return (
     <>
       <div
@@ -537,114 +492,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
 
           <div className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ inline, className, children, ...props }: MarkdownCodeProps) {
-                  const match = /language-(\w+)/.exec(className || '');
-                  return !inline && match ? (
-                    <div className="relative group/code">
-                      <SyntaxHighlighter
-                        style={vscDarkPlus}
-                        language={match[1]}
-                        PreTag="div"
-                        className="rounded-lg !bg-black/40 !mt-2 !mb-2"
-                        wrapLongLines
-                        customStyle={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                        {...props}
-                      >
-                        {String(children).replace(/\n$/, '')}
-                      </SyntaxHighlighter>
-                    </div>
-                  ) : (
-                    <code
-                      className="px-1.5 py-0.5 rounded bg-white/10 text-blue-300 font-mono text-sm break-words whitespace-pre-wrap"
-                      {...props}
-                    >
-                      {children}
-                    </code>
-                  );
-                },
-                p({ children }: MarkdownComponentProps) {
-                  return (
-                    <p className="text-white/80 leading-relaxed mb-3 last:mb-0 break-words whitespace-pre-wrap">
-                      {renderNodeWithCitations(children)}
-                    </p>
-                  );
-                },
-                ul({ children }: MarkdownComponentProps) {
-                  return (
-                    <ul className="list-disc list-inside space-y-1 text-white/80 break-words">
-                      {children}
-                    </ul>
-                  );
-                },
-                ol({ children }: MarkdownComponentProps) {
-                  return (
-                    <ol className="list-decimal list-inside space-y-1 text-white/80 break-words">
-                      {children}
-                    </ol>
-                  );
-                },
-                li({ children }: MarkdownComponentProps) {
-                  return <li className="text-white/80 break-words">{renderNodeWithCitations(children)}</li>;
-                },
-                blockquote({ children }: MarkdownComponentProps) {
-                  return (
-                    <blockquote className="border-l-4 border-blue-500/50 pl-4 italic text-white/60 my-3 break-words">
-                      {children}
-                    </blockquote>
-                  );
-                },
-                a({ children, href }: MarkdownComponentProps) {
-                  return (
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 hover:text-blue-300 underline transition-colors"
-                    >
-                      {children}
-                    </a>
-                  );
-                },
-                h1({ children }: MarkdownComponentProps) {
-                  return <h1 className="text-2xl font-bold text-white/90 mb-3 mt-4">{children}</h1>;
-                },
-                h2({ children }: MarkdownComponentProps) {
-                  return <h2 className="text-xl font-bold text-white/90 mb-2 mt-3">{children}</h2>;
-                },
-                h3({ children }: MarkdownComponentProps) {
-                  return <h3 className="text-lg font-bold text-white/90 mb-2 mt-2">{children}</h3>;
-                },
-                table({ children }: MarkdownComponentProps) {
-                  return (
-                    <div className="overflow-x-auto my-3">
-                      <table className="min-w-full border border-white/10 rounded-lg">
-                        {children}
-                      </table>
-                    </div>
-                  );
-                },
-                th({ children }: MarkdownComponentProps) {
-                  return (
-                    <th className="px-4 py-2 bg-white/5 border-b border-white/10 text-left text-white/90 font-semibold">
-                      {children}
-                    </th>
-                  );
-                },
-                td({ children }: MarkdownComponentProps) {
-                  return (
-                    <td className="px-4 py-2 border-b border-white/5 text-white/80">
-                      {children}
-                    </td>
-                  );
-                },
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
+            <TiptapViewer content={normalizedMarkdownContent} />
           </div>
+
+          {citationFootnotes}
 
           {/* Verification details panel for assistant messages */}
           {!isUser && verificationSummary && verificationSummary.enabled && claimsEvaluated > 0 && isVerificationPanelExpanded && (

@@ -2,9 +2,68 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { AITab } from './AITab';
+import { ChatTab } from './AITab/ChatTab';
+import { PromptsTab } from './AITab/PromptsTab';
 import { VaultAPI } from '../../lib/api';
 import { useSettingsStore } from '../../stores/settingsStore';
+
+import type { LlmSettingsContextValue } from './AITab/useLlmSettings';
+
+const mockLlmSettings: LlmSettingsContextValue = {
+  llmSettings: {
+    provider: 'auto',
+    ollamaUrl: 'http://localhost:11434',
+    model: '',
+    ollamaAuthHeaderName: '',
+    ollamaAuthHeaderValue: '',
+    externalModelDirectories: [],
+    temperature: 0.7,
+    topP: 0.9,
+    topK: 40,
+    repeatPenalty: 1.1,
+    maxTokens: 131072,
+    contextWindow: 131072,
+    timeoutSeconds: 30,
+    streamResponses: true,
+    prompts: {
+      systemPrompt: '',
+      greetingPromptTemplate: '',
+      ragPromptTemplate: '',
+      noContextPromptTemplate: '',
+      toolFollowupPromptTemplate: '',
+    },
+    router: {
+      enabled: true,
+      model: '',
+      timeoutMs: 2000,
+      maxTokens: 256,
+      temperature: 0.1,
+      ambiguityThreshold: 0.3,
+      preferLastDocument: false,
+      promptTemplate: '',
+      clarifyPromptTemplate: '',
+    },
+    toolOutput: {
+      maxChars: 50000,
+      excerptChars: 500,
+      maxResults: 10,
+      highlightTermsMax: 8,
+      templates: {
+        defaultTemplate: '',
+        getDocumentTemplate: '',
+        semanticSearchTemplate: '',
+      },
+    },
+    verification: { enabled: true },
+    customTools: [],
+  } as never,
+  isLoading: false,
+  saveLlmUpdates: vi.fn().mockResolvedValue(true),
+};
+
+vi.mock('./AITab/useLlmSettings', () => ({
+  useLlmSettings: () => mockLlmSettings,
+}));
 
 vi.mock('../../stores/settingsStore');
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -20,7 +79,7 @@ vi.mock('./ModelCatalog', () => ({
   ModelCatalogBrowser: () => <div data-testid="model-catalog-mock">Mocked Catalog</div>,
 }));
 
-describe('AITab', () => {
+describe('ChatTab', () => {
   const mockUpdateAI = vi.fn();
   const mockSettings = {
     embeddingModel: 'bge-m3' as const,
@@ -40,23 +99,15 @@ describe('AITab', () => {
     });
   });
 
-  it('renders AI settings header', () => {
-    render(<AITab />);
-    expect(screen.getByText('AI Settings')).toBeInTheDocument();
-    expect(screen.getByText('Configure chat and downloadable local models')).toBeInTheDocument();
-  });
-
-  it('does not render embedding/ocr model selection cards', () => {
-    render(<AITab />);
-
-    expect(screen.queryByText('Model Selection')).not.toBeInTheDocument();
-    expect(screen.queryByText('BGE-M3')).not.toBeInTheDocument();
-    expect(screen.queryByText('Qwen 2.5 VL 2B')).not.toBeInTheDocument();
+  it('renders Chat settings header', () => {
+    render(<ChatTab />);
+    expect(screen.getByText('Chat')).toBeInTheDocument();
+    expect(screen.getByText('Provider connection, active models, and runtime options')).toBeInTheDocument();
   });
 
   describe('Performance Options', () => {
     it('displays quantization checkbox with current state', () => {
-      render(<AITab />);
+      render(<ChatTab />);
 
       const checkbox = screen.getByLabelText(/Use Quantization/) as HTMLInputElement;
       expect(checkbox).toBeChecked();
@@ -64,7 +115,7 @@ describe('AITab', () => {
 
     it('toggles quantization when checkbox clicked', async () => {
       const user = userEvent.setup();
-      render(<AITab />);
+      render(<ChatTab />);
 
       const checkbox = screen.getByLabelText(/Use Quantization/);
       await user.click(checkbox);
@@ -73,7 +124,7 @@ describe('AITab', () => {
     });
 
     it('displays quantization description', () => {
-      render(<AITab />);
+      render(<ChatTab />);
 
       expect(
         screen.getByText(/Reduce model size and improve speed with minimal quality loss/)
@@ -81,50 +132,16 @@ describe('AITab', () => {
     });
   });
 
-  describe('Agentic RAG Option', () => {
-    it('displays agentic RAG checkbox with current state', () => {
-      render(<AITab />);
-
-      const checkbox = screen.getByLabelText(/Agentic RAG/) as HTMLInputElement;
-      expect(checkbox).not.toBeChecked();
-    });
-
-    it('toggles agentic RAG when checkbox clicked', async () => {
-      const user = userEvent.setup();
-      render(<AITab />);
-
-      const checkbox = screen.getByLabelText(/Agentic RAG/);
-      await user.click(checkbox);
-
-      expect(mockUpdateAI).toHaveBeenCalledWith({ enableAgenticRAG: true });
-    });
-
-    it('shows experimental badge for agentic RAG', () => {
-      render(<AITab />);
-
-      expect(screen.getByText('Experimental')).toBeInTheDocument();
-    });
-
-    it('displays agentic RAG description', () => {
-      render(<AITab />);
-
-      expect(
-        screen.getByText(/AI agents autonomously refine searches/)
-      ).toBeInTheDocument();
-    });
-  });
-
   it('renders section headers with icons', () => {
-    render(<AITab />);
+    render(<ChatTab />);
 
     expect(screen.getByText('Chat Provider')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Download Models' })).toBeInTheDocument();
     expect(screen.getByText('Options')).toBeInTheDocument();
   });
 
   describe('Ollama Connection', () => {
     it('shows a model dropdown and connection test button', async () => {
-      render(<AITab />);
+      render(<ChatTab />);
 
       expect(await screen.findByRole('button', { name: 'Test Connection' })).toBeInTheDocument();
       const ollamaModel = await screen.findByLabelText('Model');
@@ -143,7 +160,7 @@ describe('AITab', () => {
       });
       vi.spyOn(VaultAPI, 'testOllamaConnection').mockImplementation(testConnectionMock);
 
-      render(<AITab />);
+      render(<ChatTab />);
       const testConnection = await screen.findByRole('button', { name: 'Test Connection' });
       await user.click(testConnection);
 
@@ -151,6 +168,60 @@ describe('AITab', () => {
       expect(await screen.findByRole('option', { name: 'llama3.2:latest' })).toBeInTheDocument();
       expect(await screen.findByRole('option', { name: 'qwen2.5:latest' })).toBeInTheDocument();
       expect(await screen.findByLabelText('Model')).not.toBeDisabled();
+    });
+  });
+});
+
+describe('PromptsTab', () => {
+  const mockUpdateAI = vi.fn();
+  const mockSettings = {
+    embeddingModel: 'bge-m3' as const,
+    ocrModel: 'qwen2.5-vl-2b' as const,
+    useQuantization: true,
+    enableAgenticRAG: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useSettingsStore).mockImplementation((selector) => {
+      const state = {
+        settings: { ai: mockSettings },
+        updateAI: mockUpdateAI,
+      };
+      return selector(state as never);
+    });
+  });
+
+  describe('Agentic RAG Option', () => {
+    it('displays agentic RAG checkbox with current state', () => {
+      render(<PromptsTab />);
+
+      const checkbox = screen.getByLabelText(/Agentic RAG/) as HTMLInputElement;
+      expect(checkbox).not.toBeChecked();
+    });
+
+    it('toggles agentic RAG when checkbox clicked', async () => {
+      const user = userEvent.setup();
+      render(<PromptsTab />);
+
+      const checkbox = screen.getByLabelText(/Agentic RAG/);
+      await user.click(checkbox);
+
+      expect(mockUpdateAI).toHaveBeenCalledWith({ enableAgenticRAG: true });
+    });
+
+    it('shows experimental badge for agentic RAG', () => {
+      render(<PromptsTab />);
+
+      expect(screen.getByText('Experimental')).toBeInTheDocument();
+    });
+
+    it('displays agentic RAG description', () => {
+      render(<PromptsTab />);
+
+      expect(
+        screen.getByText(/AI agents autonomously refine searches/)
+      ).toBeInTheDocument();
     });
   });
 });

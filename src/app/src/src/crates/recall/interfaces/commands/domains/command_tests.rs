@@ -92,6 +92,10 @@ mod tests {
             file_extension: Some("txt".to_string()),
             file_category: Some("document".to_string()),
             is_indexed: Some(true),
+            document_id: Some("document_1".to_string()),
+            snippet: Some("Test snippet".to_string()),
+            chunk_index: Some(0),
+            updated_at: Some("2024-01-01T00:00:00Z".to_string()),
         };
 
         let serialized = serde_json::to_string(&result).unwrap();
@@ -123,6 +127,10 @@ mod tests {
             file_extension: None,
             file_category: None,
             is_indexed: None,
+            document_id: None,
+            snippet: None,
+            chunk_index: None,
+            updated_at: None,
         };
 
         let serialized = serde_json::to_string(&result).unwrap();
@@ -254,16 +262,21 @@ mod tests {
 
     #[test]
     fn test_permission_check() {
-        use crate::infrastructure::security::Permission;
+        use crate::infrastructure::security::auth::Permission;
 
-        let permissions = vec![Permission::Read, Permission::Write, Permission::Execute];
+        let permissions = vec![
+            Permission::Read,
+            Permission::Write,
+            Permission::Delete,
+            Permission::Admin,
+        ];
 
         assert_eq!(permissions.len(), 3);
     }
 
     #[test]
     fn test_permission_serialization() {
-        use crate::infrastructure::security::Permission;
+        use crate::infrastructure::security::auth::Permission;
         use serde_json;
 
         let permission = Permission::Read;

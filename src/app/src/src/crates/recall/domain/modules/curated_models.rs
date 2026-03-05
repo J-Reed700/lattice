@@ -65,6 +65,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
         ModelMetadata {
             id: "phi-3-mini-4k-instruct-q4_k_m".into(),
@@ -85,6 +86,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("Phi-3-mini-4k-instruct-q4.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
         ModelMetadata {
             id: "phi-3.5-mini-instruct-q4_k_m".into(),
@@ -105,6 +107,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("Phi-3.5-mini-instruct-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
 
         // === Medium Models (2-8GB) ===
@@ -127,6 +130,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("mistral-7b-instruct-v0.2.Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
         ModelMetadata {
             id: "llama-3.2-7b-instruct-q4_k_m".into(),
@@ -147,6 +151,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("Llama-3.2-7B-Instruct-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
         ModelMetadata {
             id: "qwen2.5-7b-instruct-q4_k_m".into(),
@@ -167,6 +172,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("qwen2.5-7b-instruct-q4_k_m.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
 
         // === Large Models (8-16GB) ===
@@ -189,6 +195,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("Llama-3.1-13B-Instruct-Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
         ModelMetadata {
             id: "mixtral-8x7b-instruct-v0.1-q4_k_m".into(),
@@ -209,6 +216,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             default_filename: Some("mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
     ]
 }
@@ -278,6 +286,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
                 ),
             ],
             total_size_bytes: 428_004_096,
+            embedding_dimensions: Some(768),
         },
         ModelMetadata {
             id: "bge-m3".into(),
@@ -340,6 +349,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             ],
             // Total size: model.onnx (725KB) + model.onnx_data (2.27GB) + other files (22.8MB) ≈ 2.29GB
             total_size_bytes: 725_000_u64 + 2_270_000_000_u64 + 65_600_u64 + 698_u64 + 5_070_000_u64 + 964_u64 + 17_100_000_u64 + 1_170_u64,
+            embedding_dimensions: Some(1024),
         },
         ModelMetadata {
             id: "all-minilm-l6-v2".into(),
@@ -386,6 +396,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
                 ),
             ],
             total_size_bytes: 90_704_096,
+            embedding_dimensions: Some(384),
         },
         ModelMetadata {
             id: "instructor-xl".into(),
@@ -409,6 +420,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             default_filename: Some("onnx/model.onnx".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: Some(768),
         },
     ]
 }
@@ -445,6 +457,7 @@ pub fn get_curated_ocr_models() -> Vec<ModelMetadata> {
             default_filename: None,
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
         ModelMetadata {
             id: "florence-2-large".into(),
@@ -465,6 +478,7 @@ pub fn get_curated_ocr_models() -> Vec<ModelMetadata> {
             default_filename: None,
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         },
     ]
 }

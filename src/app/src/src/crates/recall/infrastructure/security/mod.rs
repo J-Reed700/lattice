@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod credentials_adapter;
 pub mod file_access_config;
 pub mod input_validator;

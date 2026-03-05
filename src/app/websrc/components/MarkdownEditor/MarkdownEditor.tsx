@@ -3,6 +3,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 import { MentionAutocomplete } from '../MentionAutocomplete';
+import { TiptapEditor } from '../TiptapEditor';
 
 interface Mention {
   id: string;
@@ -26,9 +27,13 @@ interface AutocompleteState {
   query: string;
   type: 'mention' | 'wikilink';
   position: { top: number; left: number };
-  startPos: number;
+  triggerOffset: number;
 }
 
+/**
+ * Markdown editor with wikilink and mention autocomplete.
+ * Now powered by Tiptap instead of a plain textarea.
+ */
 export function MarkdownEditor({
   value,
   onChange,
@@ -37,122 +42,67 @@ export function MarkdownEditor({
   documentId: _documentId,
   onWikilinkClick,
 }: MarkdownEditorProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorWrapperRef = useRef<HTMLDivElement>(null);
+  const lastMarkdownRef = useRef(value);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>({
     show: false,
     query: '',
     type: 'wikilink',
     position: { top: 0, left: 0 },
-    startPos: 0,
+    triggerOffset: 0,
   });
 
-  const getCaretCoordinates = useCallback(() => {
-    if (!textareaRef.current) return { top: 0, left: 0 };
-
-    const textarea = textareaRef.current;
-    const style = window.getComputedStyle(textarea);
-    const lineHeight = parseInt(style.lineHeight);
-
-    const mirror = document.createElement('div');
-    mirror.style.cssText = `
-      position: absolute;
-      visibility: hidden;
-      white-space: pre-wrap;
-      word-wrap: break-word;
-      font-family: ${style.fontFamily};
-      font-size: ${style.fontSize};
-      line-height: ${style.lineHeight};
-      padding: ${style.padding};
-      border: ${style.border};
-      width: ${textarea.offsetWidth}px;
-    `;
-
-    const textBeforeCaret = value.substring(0, textarea.selectionStart);
-    mirror.textContent = textBeforeCaret;
-
-    document.body.appendChild(mirror);
-    const rect = textarea.getBoundingClientRect();
-    const mirrorRect = mirror.getBoundingClientRect();
-    document.body.removeChild(mirror);
-
-    return {
-      top: rect.top + mirrorRect.height + lineHeight,
-      left: rect.left + (mirrorRect.width % textarea.offsetWidth),
-    };
-  }, [value]);
-
-  const detectMentionTrigger = useCallback((text: string, cursorPos: number) => {
-    const beforeCursor = text.substring(0, cursorPos);
-
-    const wikilinkMatch = beforeCursor.match(/\[\[([^\]]*?)$/);
+  const detectAutocomplete = useCallback((md: string) => {
+    // Detect [[wikilink or @[mention patterns at end of text
+    const wikilinkMatch = md.match(/\[\[([^\]]*?)$/);
     if (wikilinkMatch) {
-      return {
-        type: 'wikilink' as const,
-        query: wikilinkMatch[1],
-        startPos: cursorPos - wikilinkMatch[1].length,
-      };
+      return { type: 'wikilink' as const, query: wikilinkMatch[1], offset: md.length - wikilinkMatch[0].length };
     }
-
-    const mentionMatch = beforeCursor.match(/@\[([^\]]*?)$/);
+    const mentionMatch = md.match(/@\[([^\]]*?)$/);
     if (mentionMatch) {
-      return {
-        type: 'mention' as const,
-        query: mentionMatch[1],
-        startPos: cursorPos - mentionMatch[1].length,
-      };
+      return { type: 'mention' as const, query: mentionMatch[1], offset: md.length - mentionMatch[0].length };
     }
-
     return null;
   }, []);
 
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const newValue = e.target.value;
-      const cursorPos = e.target.selectionStart;
+  const handleChange = useCallback(
+    (md: string) => {
+      lastMarkdownRef.current = md;
+      onChange(md);
 
-      onChange(newValue);
-
-      const trigger = detectMentionTrigger(newValue, cursorPos);
-
+      const trigger = detectAutocomplete(md);
       if (trigger) {
-        const coords = getCaretCoordinates();
+        // Position autocomplete near the editor bottom-left as a reasonable default
+        const wrapper = editorWrapperRef.current;
+        const rect = wrapper?.getBoundingClientRect();
         setAutocomplete({
           show: true,
           query: trigger.query,
           type: trigger.type,
-          position: coords,
-          startPos: trigger.startPos,
+          position: {
+            top: (rect?.bottom ?? 200) + 4,
+            left: rect?.left ?? 16,
+          },
+          triggerOffset: trigger.offset,
         });
       } else {
-        setAutocomplete((prev) => ({ ...prev, show: false }));
+        setAutocomplete((prev) => (prev.show ? { ...prev, show: false } : prev));
       }
     },
-    [onChange, detectMentionTrigger, getCaretCoordinates]
+    [onChange, detectAutocomplete],
   );
 
   const handleMentionSelect = useCallback(
     async (mention: Mention) => {
-      if (!textareaRef.current) return;
-
-      const textarea = textareaRef.current;
-      const cursorPos = textarea.selectionStart;
-
+      const md = lastMarkdownRef.current;
       const prefix = autocomplete.type === 'wikilink' ? '[[' : '@[';
       const suffix = autocomplete.type === 'wikilink' ? ']]' : ']';
 
-      const beforeMention = value.substring(0, autocomplete.startPos - prefix.length);
-      const afterCursor = value.substring(cursorPos);
+      const before = md.substring(0, autocomplete.triggerOffset);
+      const newMd = `${before}${prefix}${mention.name}${suffix} `;
 
-      const newValue = `${beforeMention}${prefix}${mention.name}${suffix}${afterCursor}`;
-      const newCursorPos = autocomplete.startPos - prefix.length + prefix.length + mention.name.length + suffix.length;
-
-      onChange(newValue);
-
-      setTimeout(() => {
-        textarea.focus();
-        textarea.setSelectionRange(newCursorPos, newCursorPos);
-      }, 0);
-
+      onChange(newMd);
+      lastMarkdownRef.current = newMd;
       setAutocomplete((prev) => ({ ...prev, show: false }));
 
       if (autocomplete.type === 'wikilink' && mention.type !== 'wikilink') {
@@ -167,46 +117,43 @@ export function MarkdownEditor({
         }
       }
     },
-    [autocomplete, value, onChange]
+    [autocomplete, onChange],
   );
 
   const handleCloseAutocomplete = useCallback(() => {
     setAutocomplete((prev) => ({ ...prev, show: false }));
   }, []);
 
+  // Close autocomplete on Escape key
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    const handleClick = (e: MouseEvent) => {
-      if (e.target instanceof HTMLElement && e.target.classList.contains('wikilink')) {
-        e.preventDefault();
-        const linkText = e.target.textContent?.replace(/^\[\[|\]\]$/g, '');
-        if (linkText && onWikilinkClick) {
-          onWikilinkClick(linkText);
-        }
+    if (!autocomplete.show) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setAutocomplete((prev) => ({ ...prev, show: false }));
       }
     };
-
-    textarea.addEventListener('click', handleClick);
-    return () => textarea.removeEventListener('click', handleClick);
-  }, [onWikilinkClick]);
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [autocomplete.show]);
 
   return (
-    <div className="relative">
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={handleInputChange}
-        placeholder={placeholder}
-        className={`w-full h-full min-h-[400px] p-4 font-mono text-sm border rounded-lg
-                   focus:outline-none focus:ring-2 ring-[var(--accent-primary)]
+    <div className="relative" ref={editorWrapperRef}>
+      <div
+        className={`w-full min-h-[400px] p-4 text-sm border rounded-lg
+                   focus-within:outline-none focus-within:ring-2 ring-[var(--accent-primary)]
                    bg-[var(--surface-elevated)]
                    text-[var(--text-primary)]
                    border-[var(--border-color)]
-                   placeholder-[var(--text-tertiary)]
-                   resize-none ${className}`}
-      />
+                   ${className}`}
+      >
+        <TiptapEditor
+          value={value}
+          onChange={handleChange}
+          placeholder={placeholder}
+          onWikilinkClick={onWikilinkClick}
+          autofocus
+        />
+      </div>
 
       {autocomplete.show && (
         <MentionAutocomplete

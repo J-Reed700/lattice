@@ -24,6 +24,13 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
   readTextFile: mockReadTextFile,
 }));
 
+vi.mock('../../lib/api', () => ({
+  VaultAPI: {
+    getSettings: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    getModelDownloadPath: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+  },
+}));
+
 describe('Settings', () => {
   const mockSettings = {
     version: 1,
@@ -81,7 +88,11 @@ describe('Settings', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('Search')).toBeInTheDocument();
     expect(screen.getByText('Indexing')).toBeInTheDocument();
-    expect(screen.getByText('AI Models')).toBeInTheDocument();
+    expect(screen.getByText('Chat')).toBeInTheDocument();
+    expect(screen.getByText('Models')).toBeInTheDocument();
+    expect(screen.getByText('Prompts')).toBeInTheDocument();
+    expect(screen.getByText('Tuning')).toBeInTheDocument();
+    expect(screen.getByText('Tools')).toBeInTheDocument();
     expect(screen.getByText('Display')).toBeInTheDocument();
     expect(screen.getByText('Privacy')).toBeInTheDocument();
   });
@@ -106,13 +117,13 @@ describe('Settings', () => {
     render(<Settings />);
 
     const searchTab = screen.getByRole('button', { name: /^search$/i });
-    expect(searchTab).toHaveClass('bg-[var(--accent-primary)]');
+    expect(searchTab).toHaveClass('text-[var(--accent-primary)]');
 
     const indexingTab = screen.getByRole('button', { name: /indexing/i });
     await user.click(indexingTab);
 
-    expect(indexingTab).toHaveClass('bg-[var(--accent-primary)]');
-    expect(searchTab).not.toHaveClass('bg-[var(--accent-primary)]');
+    expect(indexingTab).toHaveClass('text-[var(--accent-primary)]');
+    expect(searchTab).not.toHaveClass('text-[var(--accent-primary)]');
   });
 
   describe('Export functionality', () => {

@@ -418,7 +418,7 @@ export function ChatPanel() {
 
   if (!activeConversationId) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gradient-to-b from-[#0d1117] to-[#0a0e14]">
+      <div className="flex-1 min-w-0 flex items-center justify-center bg-gradient-to-b from-[#0d1117] to-[#0a0e14]">
         <div className="text-center px-8">
           <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/30 flex items-center justify-center backdrop-blur-xl">
             <MessageSquarePlus className="w-10 h-10 text-blue-400" />
@@ -435,7 +435,7 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-gradient-to-b from-[#0d1117] to-[#0a0e14]">
+    <div className="flex-1 min-w-0 flex flex-col bg-gradient-to-b from-[#0d1117] to-[#0a0e14]">
       {error && (
         <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">

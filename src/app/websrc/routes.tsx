@@ -145,10 +145,10 @@ export const router = createBrowserRouter([
             ),
           },
           {
-            path: 'daily',
+            path: 'journals',
             element: (
               <motion.div
-                key="daily"
+                key="journals"
                 variants={pageTransition}
                 initial="initial"
                 animate="animate"
@@ -160,6 +160,10 @@ export const router = createBrowserRouter([
                 </Suspense>
               </motion.div>
             ),
+          },
+          {
+            path: 'daily',
+            element: <Navigate to="/journals" replace />,
           },
           {
             path: 'references',

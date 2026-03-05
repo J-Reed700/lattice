@@ -39,7 +39,7 @@ use crate::infrastructure::events::ConversationEvent;
 use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::extract_highlight_terms;
+use crate::shared::text_utils::{extract_highlight_terms, safe_truncate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ mod retrieval;
 mod tool_loop;
 mod verification;
 
-use self::cancellation::{begin_turn, finish_turn};
+use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
 };
@@ -69,6 +69,25 @@ use self::verification::{verify_response_grounding_summary, GroundingReport};
 
 pub fn cancel_generation_for_conversation(conversation_id: &str) -> bool {
     cancellation::request_cancel(conversation_id)
+}
+
+struct TurnCancellationGuard {
+    conversation_id: String,
+}
+
+impl TurnCancellationGuard {
+    fn start(conversation_id: &str) -> Self {
+        begin_turn(conversation_id);
+        Self {
+            conversation_id: conversation_id.to_string(),
+        }
+    }
+}
+
+impl Drop for TurnCancellationGuard {
+    fn drop(&mut self) {
+        finish_turn(&self.conversation_id);
+    }
 }
 
 /// Single conversation message for frontend
@@ -294,6 +313,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let conversation_init_start = Instant::now();
     let conv_id =
         get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
+    let _turn_guard = TurnCancellationGuard::start(&conv_id);
     flow_metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
 
     let conv_service = container.conversation_service();
@@ -315,15 +335,16 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
     let max_tokens = llm.max_context_tokens();
     let context_build_start = Instant::now();
-    let (context, conversation_document_context) = build_conversation_context(
-        container,
-        &conv_service,
-        &conv_id,
-        &llm,
-        max_tokens,
-        &prompt_settings.system_prompt,
-    )
-    .await?;
+    let (context, conversation_document_context, linked_web_sources_context) =
+        build_conversation_context(
+            container,
+            &conv_service,
+            &conv_id,
+            &llm,
+            max_tokens,
+            &prompt_settings.system_prompt,
+        )
+        .await?;
     trigger_background_summary_refresh_if_needed(
         container,
         &conv_service,
@@ -373,6 +394,10 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     .await;
     flow_metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);
     flow_metrics.retrieval_subtimings = Some(retrieval.sub_timings.clone());
+    let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
+    if is_cancel_requested(&conv_id) {
+        return Err(cancellation_error());
+    }
 
     let prompt_build_start = Instant::now();
     let budgeted_results = budget_search_results_for_prompt(
@@ -406,8 +431,11 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         } else {
             None
         };
-    let has_grounded_context =
-        followup_context_text.is_some() || kb_context.is_some() || retrieval.web_context.is_some();
+    let has_linked_web_sources_context = linked_web_sources_context.is_some();
+    let has_grounded_context = followup_context_text.is_some()
+        || kb_context.is_some()
+        || retrieval.web_context.is_some()
+        || has_linked_web_sources_context;
 
     let enhanced_message = PromptMessageBuilder::new(
         &prompt_settings,
@@ -417,6 +445,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     )
     .with_followup_context(followup_context_text)
     .with_kb_context(kb_context)
+    .with_linked_web_sources_context(linked_web_sources_context)
     .with_web_context(retrieval.web_context.clone())
     .with_web_search_error(retrieval.web_search_error.clone())
     .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
@@ -459,7 +488,6 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         "LLM capability check for conversation"
     );
 
-    begin_turn(&conv_id);
     let mut sources = retrieval.sources;
     let short_circuit_response = retrieval.short_circuit_response.take();
     let generation_start = Instant::now();
@@ -467,7 +495,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         flow_metrics.generation_subtimings = Some(ToolLoopTimingMetrics::default());
         Ok(response)
     } else {
-        let tool_loop_outcome = run_agentic_tool_loop(
+        match run_agentic_tool_loop(
             container,
             &conv_service,
             &conv_id,
@@ -482,13 +510,18 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             &mut sources,
             tools_ref,
         )
-        .await?;
-        flow_metrics.generation_subtimings = Some(tool_loop_outcome.timings);
-        Ok(tool_loop_outcome.response)
+        .await
+        {
+            Ok(tool_loop_outcome) => {
+                flow_metrics.generation_subtimings = Some(tool_loop_outcome.timings);
+                Ok(tool_loop_outcome.response)
+            }
+            Err(e) => Err(e),
+        }
     };
     flow_metrics.generation_ms = elapsed_ms(generation_start);
 
-    let outcome = match response_result {
+    match response_result {
         Ok(response) => {
             // DIAGNOSTIC: Log successful generation
             tracing::info!(
@@ -669,9 +702,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             // Return original error
             Err(e)
         }
-    };
-    finish_turn(&conv_id);
-    outcome
+    }
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -784,6 +815,103 @@ fn stable_prompt_signature(input: &str) -> u64 {
         })
 }
 
+const LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS: i64 = 10;
+const LINKED_WEB_SOURCE_PROMPT_MAX_EXCERPT_CHARS: usize = 280;
+const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO: f64 = 0.08;
+const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MIN: usize = 120;
+const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MAX: usize = 320;
+
+#[derive(Debug, sqlx::FromRow)]
+struct ConversationWebSourcePromptRow {
+    title: Option<String>,
+    url: String,
+    excerpt: Option<String>,
+}
+
+async fn build_linked_web_sources_prompt_context(
+    container: &Container,
+    conversation_id: &str,
+    llm: &Arc<dyn crate::application::ports::LLMPort>,
+    max_tokens: usize,
+) -> Result<Option<String>> {
+    let rows = sqlx::query_as::<_, ConversationWebSourcePromptRow>(
+        r#"
+        SELECT title, url, excerpt
+        FROM conversation_web_sources
+        WHERE conversation_id = ?
+        ORDER BY added_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS)
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|error| {
+        AppError::Database(format!(
+            "Failed to load linked web sources for conversation context: {}",
+            error
+        ))
+    })?;
+
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let raw_budget =
+        ((max_tokens as f64) * LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO).round() as usize;
+    let token_budget = raw_budget.clamp(
+        LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MIN,
+        LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MAX,
+    );
+
+    let mut entries: Vec<String> = Vec::new();
+    let mut used_tokens = 0usize;
+
+    for row in rows {
+        let url = row.url.trim();
+        if url.is_empty() {
+            continue;
+        }
+
+        let title = row
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(url);
+
+        let mut entry = format!("- {} ({})", title, url);
+        if let Some(excerpt) = row
+            .excerpt
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let truncated_excerpt =
+                safe_truncate(excerpt, LINKED_WEB_SOURCE_PROMPT_MAX_EXCERPT_CHARS);
+            entry.push_str(&format!("\n  Excerpt: {}", truncated_excerpt));
+        }
+
+        let entry_tokens = llm.count_tokens(&entry);
+        if !entries.is_empty() && used_tokens.saturating_add(entry_tokens) > token_budget {
+            break;
+        }
+
+        used_tokens = used_tokens.saturating_add(entry_tokens);
+        entries.push(entry);
+    }
+
+    if entries.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "User-linked web sources for this conversation (context links, not necessarily indexed):\n{}",
+        entries.join("\n")
+    )))
+}
+
 async fn build_conversation_context(
     container: &Container,
     conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
@@ -794,6 +922,7 @@ async fn build_conversation_context(
 ) -> Result<(
     Vec<String>,
     Vec<crate::domain::conversation::DocumentReference>,
+    Option<String>,
 )> {
     use crate::infrastructure::services::ConversationService as ConcreteConversationService;
 
@@ -862,7 +991,15 @@ async fn build_conversation_context(
         }
     }
 
-    Ok((context, conversation_document_context))
+    let linked_web_sources_context =
+        build_linked_web_sources_prompt_context(container, conversation_id, llm, max_tokens)
+            .await?;
+
+    Ok((
+        context,
+        conversation_document_context,
+        linked_web_sources_context,
+    ))
 }
 
 async fn trigger_background_summary_refresh_if_needed(

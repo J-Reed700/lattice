@@ -33,7 +33,7 @@ export interface HelpOverlayProps {
   onClose: () => void;
 
   /** Current view context for relevant shortcuts */
-  currentView?: 'search' | 'files' | 'chat' | 'settings' | 'daily';
+  currentView?: 'search' | 'files' | 'chat' | 'settings' | 'journals';
 
   /** Additional view-specific shortcuts */
   customShortcuts?: KeyboardShortcut[];
@@ -50,7 +50,7 @@ const GLOBAL_SHORTCUTS: KeyboardShortcut[] = [
 const NAVIGATION_SHORTCUTS: KeyboardShortcut[] = [
   { keys: '⌘1', description: 'Go to Search', category: 'navigation' },
   { keys: '⌘2', description: 'Go to Files', category: 'navigation' },
-  { keys: '⌘3', description: 'Go to Daily Note', category: 'navigation' },
+  { keys: '⌘3', description: 'Go to Journals', category: 'navigation' },
   { keys: '⌘4', description: 'Go to Chat', category: 'navigation' },
   { keys: '⌘5', description: 'Go to Reference Inbox', category: 'navigation' },
   { keys: '⌘,', description: 'Go to Settings', category: 'navigation' },
@@ -271,8 +271,8 @@ export function HelpOverlay({
                   description="Use [[wiki-style links]] or @mentions to connect notes and build a knowledge graph."
                 />
                 <QuickTip
-                  title="Daily Notes"
-                  description="Create a new daily note each day to capture fleeting thoughts, tasks, and ideas."
+                  title="Journals"
+                  description="Capture entries, synthesize threads, and keep highlights and sources in one notebook flow."
                 />
                 <QuickTip
                   title="Semantic Search"

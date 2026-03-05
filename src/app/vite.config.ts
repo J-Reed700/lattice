@@ -33,7 +33,8 @@ export default defineConfig({
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'zustand'],
           'pdf-viewer': ['pdfjs-dist', 'react-pdf'],
-          'markdown': ['react-markdown', 'react-syntax-highlighter', 'remark-gfm', 'rehype-raw'],
+          'tiptap': ['@tiptap/react', '@tiptap/starter-kit', 'tiptap-markdown', 'lowlight'],
+          'syntax-highlighter': ['react-syntax-highlighter'],
           'ui-components': ['lucide-react', 'date-fns', 'cmdk'],
           'radix-ui': ['@radix-ui/react-tooltip'],
           'tauri': ['@tauri-apps/api', '@tauri-apps/plugin-dialog', '@tauri-apps/plugin-fs', '@tauri-apps/plugin-shell'],

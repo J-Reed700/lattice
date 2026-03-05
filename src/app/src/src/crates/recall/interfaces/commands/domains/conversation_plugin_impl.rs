@@ -12,14 +12,17 @@ use crate::application::dtos::conversation_dto::{
 use crate::application::dtos::conversation_message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, ConversationMessageBookmarkDto,
     DeleteConversationMessageRequestDto, ListMessageBookmarksQueryDto,
-    ListMessageBookmarksResponseDto,
-    UnbookmarkConversationMessageRequestDto,
+    ListMessageBookmarksResponseDto, UnbookmarkConversationMessageRequestDto,
 };
 use crate::application::dtos::conversation_space_dto::{
-    ArchiveConversationSpaceRequestDto, ConversationSpaceDto, ConversationSpaceMemberDto,
-    CreateConversationSpaceRequestDto, ListConversationsExplorerQueryDto,
-    MoveConversationToSpaceRequestDto, RemoveConversationSpaceMemberRequestDto,
-    SetConversationStateRequestDto, UpdateConversationSpaceRequestDto,
+    AddConversationToJournalRequestDto, ArchiveConversationJournalRequestDto,
+    ArchiveConversationSpaceRequestDto, ConversationJournalDto, ConversationSpaceDto,
+    ConversationSpaceMemberDto, CreateConversationJournalRequestDto,
+    CreateConversationSpaceRequestDto, DeleteConversationJournalRequestDto,
+    ListConversationsExplorerQueryDto, ListJournalConversationsQueryDto,
+    MoveConversationToSpaceRequestDto, RemoveConversationFromJournalRequestDto,
+    RemoveConversationSpaceMemberRequestDto, SetConversationStateRequestDto,
+    UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
 use crate::interfaces::commands::conversation;
@@ -31,11 +34,17 @@ use crate::shared::api_result::ApiError;
 use crate::shared::error::AppError;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::collections::HashSet;
 
 const DEFAULT_SPACE_ID: &str = "space_general";
 const LOCAL_OWNER_MEMBER_ID: &str = "member_local_owner";
+const JOURNAL_SYNTHESIS_ENTRY_LIMIT_DEFAULT: usize = 12;
+const JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX: usize = 24;
+const JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT: usize = 900;
+const JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT: usize = 6000;
+const JOURNAL_SYNTHESIS_CHUNK_CHAR_LIMIT: usize = 14000;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationStateRow {
@@ -114,6 +123,29 @@ struct ConversationLinkedDocumentRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct ConversationWebSourceDto {
+    pub id: String,
+    pub url: String,
+    pub normalized_url: String,
+    pub title: Option<String>,
+    pub excerpt: Option<String>,
+    pub relevance_score: Option<f32>,
+    pub added_at: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ConversationWebSourceRow {
+    id: String,
+    url: String,
+    normalized_url: String,
+    title: Option<String>,
+    excerpt: Option<String>,
+    relevance_score: Option<f32>,
+    added_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct DocumentSpaceMembershipDto {
     pub space_id: String,
     pub space_name: String,
@@ -127,6 +159,33 @@ struct DocumentSpaceMembershipRow {
     space_name: String,
     is_archived: i64,
     created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesizeJournalEntriesRequestDto {
+    pub conversation_ids: Vec<String>,
+    pub scope: Option<String>,
+    pub max_entries: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesizeJournalEntriesResponseDto {
+    pub synthesis: String,
+    pub scope: String,
+    pub entry_count: usize,
+    pub chunk_count: usize,
+    pub conversation_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct JournalSynthesisEntry {
+    conversation_id: String,
+    title: String,
+    updated_at: String,
+    message_count: usize,
+    transcript: String,
 }
 
 async fn fetch_conversation_state(
@@ -234,6 +293,10 @@ fn to_conversation_dto(
     }
 }
 
+fn normalize_web_source_url(url: &str) -> String {
+    url.trim().to_ascii_lowercase()
+}
+
 fn build_fts_query(raw: &str) -> Option<String> {
     let terms = raw
         .split_whitespace()
@@ -258,6 +321,242 @@ fn validate_space_role(role: &str) -> Result<&str, ApiError> {
             "Role must be one of: owner, editor, viewer".to_string(),
         ))),
     }
+}
+
+fn preferences_declares_journal(raw: Option<&str>) -> bool {
+    let Some(raw_json) = raw else {
+        return false;
+    };
+
+    if raw_json.trim().is_empty() {
+        return false;
+    }
+
+    let parsed: Result<Value, _> = serde_json::from_str(raw_json);
+    let Ok(value) = parsed else {
+        return false;
+    };
+
+    let kind = value
+        .get("spaceType")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("space_type").and_then(Value::as_str))
+        .unwrap_or("standard");
+
+    kind.eq_ignore_ascii_case("journal")
+}
+
+fn validate_space_preferences_not_journal(
+    raw: Option<&str>,
+    context: &str,
+) -> Result<(), ApiError> {
+    if preferences_declares_journal(raw) {
+        return Err(ApiError::from(AppError::InvalidInput(format!(
+            "{} cannot declare `spaceType=journal`; journals are a separate entity",
+            context
+        ))));
+    }
+    Ok(())
+}
+
+async fn ensure_journal_space(pool: &SqlitePool, journal_space_id: &str) -> Result<(), ApiError> {
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM journals WHERE id = ?")
+        .bind(journal_space_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to verify journal: {}",
+                e
+            )))
+        })?;
+
+    if exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Journal not found: {}",
+            journal_space_id
+        ))));
+    }
+
+    Ok(())
+}
+
+async fn ensure_standard_space(pool: &SqlitePool, space_id: &str) -> Result<(), ApiError> {
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
+            .bind(space_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!("Failed to verify space: {}", e)))
+            })?;
+
+    if exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Space not found: {}",
+            space_id
+        ))));
+    }
+
+    Ok(())
+}
+
+fn truncate_for_synthesis(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut output = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    output.push('…');
+    output
+}
+
+fn build_synthesis_transcript(
+    messages: &[crate::domain::conversation::ConversationMessage],
+) -> String {
+    let mut lines = Vec::new();
+    for message in messages {
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "{}: {}",
+            message.role.to_string().to_uppercase(),
+            truncate_for_synthesis(content, JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT)
+        ));
+    }
+
+    truncate_for_synthesis(&lines.join("\n"), JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT)
+}
+
+fn chunk_journal_synthesis_entries(
+    entries: &[JournalSynthesisEntry],
+) -> Vec<Vec<JournalSynthesisEntry>> {
+    let mut chunks: Vec<Vec<JournalSynthesisEntry>> = Vec::new();
+    let mut current: Vec<JournalSynthesisEntry> = Vec::new();
+    let mut current_chars: usize = 0;
+
+    for entry in entries {
+        let entry_chars = entry.transcript.len() + entry.title.len() + 120;
+        if !current.is_empty() && current_chars + entry_chars > JOURNAL_SYNTHESIS_CHUNK_CHAR_LIMIT {
+            chunks.push(current);
+            current = Vec::new();
+            current_chars = 0;
+        }
+        current.push(entry.clone());
+        current_chars += entry_chars;
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    chunks
+}
+
+fn format_entries_for_synthesis_prompt(entries: &[JournalSynthesisEntry]) -> String {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            [
+                format!("ENTRY {}", index + 1),
+                format!("Title: {}", entry.title),
+                format!("Updated: {}", entry.updated_at),
+                format!("Message Count: {}", entry.message_count),
+                "Transcript:".to_string(),
+                if entry.transcript.is_empty() {
+                    "(No message text captured.)".to_string()
+                } else {
+                    entry.transcript.clone()
+                },
+            ]
+            .join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
+}
+
+fn build_journal_map_prompt(
+    entries: &[JournalSynthesisEntry],
+    chunk_index: usize,
+    chunk_total: usize,
+) -> String {
+    [
+        format!(
+            "You are synthesizing journal entry chunk {} of {}.",
+            chunk_index, chunk_total
+        ),
+        "Use only the provided entry transcripts.".to_string(),
+        "Goal: capture practical details so the final output can replace re-reading every entry."
+            .to_string(),
+        "Output markdown with exactly these sections:".to_string(),
+        "### Entry Highlights".to_string(),
+        "### Practical Details".to_string(),
+        "### Decisions & Constraints".to_string(),
+        "### Open Questions & Risks".to_string(),
+        "### Evidence Notes".to_string(),
+        "Rules:".to_string(),
+        "- Write concise but information-dense bullets (not generic summaries).".to_string(),
+        "- Include concrete values when present (counts, ranges, timing, limits, caveats)."
+            .to_string(),
+        "- Prefix each bullet with [Entry: <title>].".to_string(),
+        "- In Evidence Notes, map each important claim to one or more supporting entry titles."
+            .to_string(),
+        "- If a section has no data, write one bullet: - None identified.".to_string(),
+        "".to_string(),
+        "Entries:".to_string(),
+        format_entries_for_synthesis_prompt(entries),
+    ]
+    .join("\n")
+}
+
+fn build_journal_reduce_prompt(chunk_outputs: &[String]) -> String {
+    let chunks = chunk_outputs
+        .iter()
+        .enumerate()
+        .map(|(index, output)| format!("CHUNK SYNTHESIS {}\n{}", index + 1, output))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+
+    [
+        "Merge the chunk syntheses into one final journal brief.".to_string(),
+        "Use only the chunk syntheses below.".to_string(),
+        "Audience: someone who wants to understand and act quickly without reading every entry."
+            .to_string(),
+        "Output markdown with exactly these sections (in this order):".to_string(),
+        "## Executive Summary".to_string(),
+        "## Detailed Synthesis".to_string(),
+        "## Action Plan".to_string(),
+        "## Decisions and Assumptions".to_string(),
+        "## Open Questions and Risks".to_string(),
+        "## Evidence Map".to_string(),
+        "Formatting rules:".to_string(),
+        "- Executive Summary: 1 short paragraph (4-6 sentences), plain language.".to_string(),
+        "- Detailed Synthesis: 3-6 subsections with '### <Theme>' headers. Under each theme, write one short paragraph plus bullets for critical specifics.".to_string(),
+        "- Action Plan: numbered list (3-7 steps) with enough detail to execute.".to_string(),
+        "- Decisions and Assumptions: bullets with explicit rationale when available."
+            .to_string(),
+        "- Open Questions and Risks: bullets with impact noted briefly.".to_string(),
+        "- Evidence Map: markdown table with columns `Claim`, `Supporting entries`, `Confidence`."
+            .to_string(),
+        "- Keep the brief concise but comprehensive; avoid fluff and repetition.".to_string(),
+        "- If data is missing in a section, write `None identified.`".to_string(),
+        "".to_string(),
+        chunks,
+    ]
+    .join("\n")
+}
+
+fn extract_latest_assistant_message(chat: &ChatResponse) -> Option<String> {
+    chat.messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant" && !message.content.trim().is_empty())
+        .map(|message| message.content.trim().to_string())
 }
 
 pub async fn create_conversation_impl(
@@ -437,16 +736,180 @@ pub async fn chat_with_conversation_impl(
     .await
 }
 
+pub async fn synthesize_journal_entries_impl(
+    request: SynthesizeJournalEntriesRequestDto,
+    container: &Container,
+    window: tauri::Window,
+) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
+    let scope = request
+        .scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("deck")
+        .to_lowercase();
+
+    let normalized_scope = match scope.as_str() {
+        "current" | "deck" | "pinned" => scope,
+        _ => "deck".to_string(),
+    };
+
+    let mut seen = HashSet::new();
+    let mut conversation_ids = Vec::new();
+    for id in request.conversation_ids {
+        let normalized = id.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if seen.insert(normalized.to_string()) {
+            conversation_ids.push(normalized.to_string());
+        }
+    }
+
+    if conversation_ids.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "At least one conversation ID is required for journal synthesis".to_string(),
+        )));
+    }
+
+    let max_entries = request
+        .max_entries
+        .unwrap_or(JOURNAL_SYNTHESIS_ENTRY_LIMIT_DEFAULT)
+        .clamp(1, JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX);
+
+    if conversation_ids.len() > max_entries {
+        conversation_ids.truncate(max_entries);
+    }
+
+    let mut entries = Vec::new();
+    for conversation_id in &conversation_ids {
+        let conversation = conversation::get_conversation_impl(container, conversation_id.clone())
+            .await
+            .map_err(ApiError::from)?;
+        let Some(conversation) = conversation else {
+            continue;
+        };
+
+        let messages =
+            conversation::get_conversation_messages_impl(container, conversation_id.clone())
+                .await
+                .map_err(ApiError::from)?;
+        let transcript = build_synthesis_transcript(&messages);
+        if transcript.is_empty() {
+            continue;
+        }
+
+        entries.push(JournalSynthesisEntry {
+            conversation_id: conversation.id.to_string(),
+            title: conversation.title,
+            updated_at: conversation.updated_at.to_rfc3339(),
+            message_count: messages.len(),
+            transcript,
+        });
+    }
+
+    if entries.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "No synthesizable message content found in selected conversations".to_string(),
+        )));
+    }
+
+    let chunks = chunk_journal_synthesis_entries(&entries);
+    let tool_preferences = ToolPreferences {
+        knowledge_base: false,
+        web_search: false,
+        deep_research_mode: false,
+        followup_mode: true,
+        turn_mode: Some("followup".to_string()),
+        enabled_tools: None,
+    };
+
+    let mut synthesis_conversation_id: Option<String> = None;
+    let synthesis_result = async {
+        let mut map_outputs = Vec::new();
+
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            let map_prompt = build_journal_map_prompt(chunk, chunk_index + 1, chunks.len());
+            let map_response = run_chat_with_conversation_impl(
+                container,
+                synthesis_conversation_id.clone(),
+                map_prompt,
+                Some(tool_preferences.clone()),
+                None,
+                window.clone(),
+            )
+            .await
+            .map_err(ApiError::from)?;
+
+            synthesis_conversation_id = Some(map_response.conversation_id.clone());
+            let map_output = extract_latest_assistant_message(&map_response).ok_or_else(|| {
+                ApiError::from(AppError::Other(
+                    "Synthesis map stage returned no assistant output".to_string(),
+                ))
+            })?;
+            map_outputs.push(map_output);
+        }
+
+        let reduce_prompt = build_journal_reduce_prompt(&map_outputs);
+        let reduce_response = run_chat_with_conversation_impl(
+            container,
+            synthesis_conversation_id.clone(),
+            reduce_prompt,
+            Some(tool_preferences.clone()),
+            None,
+            window.clone(),
+        )
+        .await
+        .map_err(ApiError::from)?;
+
+        synthesis_conversation_id = Some(reduce_response.conversation_id.clone());
+        let synthesis = extract_latest_assistant_message(&reduce_response).ok_or_else(|| {
+            ApiError::from(AppError::Other(
+                "Synthesis reduce stage returned no assistant output".to_string(),
+            ))
+        })?;
+
+        Ok::<SynthesizeJournalEntriesResponseDto, ApiError>(SynthesizeJournalEntriesResponseDto {
+            synthesis,
+            scope: normalized_scope.clone(),
+            entry_count: entries.len(),
+            chunk_count: chunks.len(),
+            conversation_ids: entries
+                .iter()
+                .map(|entry| entry.conversation_id.clone())
+                .collect(),
+        })
+    }
+    .await;
+
+    if let Some(temp_conversation_id) = synthesis_conversation_id {
+        let _ = conversation::delete_conversation_impl(container, temp_conversation_id).await;
+    }
+
+    synthesis_result
+}
+
 pub async fn create_conversation_space_impl(
     request: CreateConversationSpaceRequestDto,
     container: &Container,
 ) -> Result<ConversationSpaceDto, ApiError> {
-    let name = request.name.trim();
+    let CreateConversationSpaceRequestDto {
+        name,
+        description,
+        icon,
+        accent_color,
+        space_prompt,
+        default_model_name,
+        tool_preferences_json,
+    } = request;
+
+    let name = name.trim();
     if name.is_empty() {
         return Err(ApiError::from(AppError::InvalidInput(
             "Space name cannot be empty".to_string(),
         )));
     }
+    validate_space_preferences_not_journal(tool_preferences_json.as_deref(), "Conversation space")?;
 
     let id = format!("space_{}", uuid::Uuid::new_v4().simple());
     let now = Utc::now().to_rfc3339();
@@ -461,12 +924,12 @@ pub async fn create_conversation_space_impl(
     )
     .bind(&id)
     .bind(name)
-    .bind(request.description)
-    .bind(request.icon)
-    .bind(request.accent_color)
-    .bind(request.space_prompt)
-    .bind(request.default_model_name)
-    .bind(request.tool_preferences_json)
+    .bind(description)
+    .bind(icon)
+    .bind(accent_color)
+    .bind(space_prompt)
+    .bind(default_model_name)
+    .bind(tool_preferences_json)
     .bind(&now)
     .bind(&now)
     .execute(container.db_pool())
@@ -551,6 +1014,248 @@ pub async fn list_conversation_spaces_impl(
     .map_err(|e| ApiError::from(AppError::Database(format!("Failed to list spaces: {}", e))))?;
 
     Ok(spaces)
+}
+
+pub async fn create_journal_impl(
+    request: CreateConversationJournalRequestDto,
+    container: &Container,
+) -> Result<ConversationJournalDto, ApiError> {
+    let CreateConversationJournalRequestDto {
+        name,
+        description,
+        icon,
+        accent_color,
+        space_prompt,
+        default_model_name,
+        tool_preferences_json,
+    } = request;
+
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "Journal name cannot be empty".to_string(),
+        )));
+    }
+
+    let id = format!("journal_{}", uuid::Uuid::new_v4().simple());
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r#"
+        INSERT INTO journals (
+            id, name, description, icon, accent_color, space_prompt,
+            default_model_name, tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(description)
+    .bind(icon)
+    .bind(accent_color)
+    .bind(space_prompt)
+    .bind(default_model_name)
+    .bind(tool_preferences_json)
+    .bind(&now)
+    .bind(&now)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| ApiError::from(AppError::Database(format!("Failed to create journal: {}", e))))?;
+
+    let created = sqlx::query_as::<_, ConversationJournalDto>(
+        r#"
+        SELECT
+            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        FROM journals
+        WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to fetch created journal: {}",
+            e
+        )))
+    })?;
+
+    Ok(created)
+}
+
+pub async fn list_journals_impl(
+    container: &Container,
+) -> Result<Vec<ConversationJournalDto>, ApiError> {
+    let journals = sqlx::query_as::<_, ConversationJournalDto>(
+        r#"
+        SELECT
+            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        FROM journals
+        ORDER BY is_archived ASC, sort_order ASC, updated_at DESC
+        "#,
+    )
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to list journals: {}",
+            e
+        )))
+    })?;
+
+    Ok(journals)
+}
+
+pub async fn update_journal_impl(
+    request: UpdateConversationJournalRequestDto,
+    container: &Container,
+) -> Result<ConversationJournalDto, ApiError> {
+    let now = Utc::now().to_rfc3339();
+    let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
+
+    let result = sqlx::query(
+        r#"
+        UPDATE journals
+        SET
+            name = COALESCE(?, name),
+            description = COALESCE(?, description),
+            icon = COALESCE(?, icon),
+            accent_color = COALESCE(?, accent_color),
+            space_prompt = COALESCE(?, space_prompt),
+            default_model_name = COALESCE(?, default_model_name),
+            tool_preferences_json = COALESCE(?, tool_preferences_json),
+            is_archived = COALESCE(?, is_archived),
+            sort_order = COALESCE(?, sort_order),
+            updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(request.name)
+    .bind(request.description)
+    .bind(request.icon)
+    .bind(request.accent_color)
+    .bind(request.space_prompt)
+    .bind(request.default_model_name)
+    .bind(request.tool_preferences_json)
+    .bind(is_archived)
+    .bind(request.sort_order)
+    .bind(&now)
+    .bind(&request.journal_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to update journal: {}",
+            e
+        )))
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Journal not found: {}",
+            request.journal_id
+        ))));
+    }
+
+    let updated = sqlx::query_as::<_, ConversationJournalDto>(
+        r#"
+        SELECT
+            id, name, description, icon, accent_color, space_prompt, default_model_name,
+            tool_preferences_json, is_archived, sort_order, created_at, updated_at
+        FROM journals
+        WHERE id = ?
+        "#,
+    )
+    .bind(&request.journal_id)
+    .fetch_one(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to fetch updated journal: {}",
+            e
+        )))
+    })?;
+
+    Ok(updated)
+}
+
+pub async fn archive_journal_impl(
+    request: ArchiveConversationJournalRequestDto,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let now = Utc::now().to_rfc3339();
+    let archived = if request.archived { 1 } else { 0 };
+
+    let result = sqlx::query(
+        r#"
+        UPDATE journals
+        SET is_archived = ?, updated_at = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(archived)
+    .bind(&now)
+    .bind(&request.journal_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to archive journal: {}",
+            e
+        )))
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Journal not found: {}",
+            request.journal_id
+        ))));
+    }
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn delete_journal_impl(
+    request: DeleteConversationJournalRequestDto,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let journal_id = request.journal_id.trim();
+    if journal_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "journalId is required".to_string(),
+        )));
+    }
+
+    let result = sqlx::query(
+        r#"
+        DELETE FROM journals
+        WHERE id = ?
+        "#,
+    )
+    .bind(journal_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to delete journal: {}",
+            e
+        )))
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Journal not found: {}",
+            journal_id
+        ))));
+    }
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
 }
 
 pub async fn list_conversation_space_members_impl(
@@ -795,6 +1500,11 @@ pub async fn update_conversation_space_impl(
     request: UpdateConversationSpaceRequestDto,
     container: &Container,
 ) -> Result<ConversationSpaceDto, ApiError> {
+    validate_space_preferences_not_journal(
+        request.tool_preferences_json.as_deref(),
+        "Conversation space",
+    )?;
+
     let now = Utc::now().to_rfc3339();
     let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
@@ -907,20 +1617,7 @@ pub async fn move_conversation_to_space_impl(
     request: MoveConversationToSpaceRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
-        .bind(&request.space_id)
-        .fetch_one(container.db_pool())
-        .await
-        .map_err(|e| {
-            ApiError::from(AppError::Database(format!("Failed to verify space: {}", e)))
-        })?;
-
-    if exists == 0 {
-        return Err(ApiError::from(AppError::NotFound(format!(
-            "Space not found: {}",
-            request.space_id
-        ))));
-    }
+    ensure_standard_space(container.db_pool(), &request.space_id).await?;
 
     let mut tx = container.db_pool().begin().await.map_err(|e| {
         ApiError::from(AppError::Database(format!(
@@ -996,6 +1693,255 @@ pub async fn move_conversation_to_space_impl(
 
     Ok(RenameConversationResponseDto {
         status: "success".to_string(),
+    })
+}
+
+pub async fn add_conversation_to_journal_impl(
+    request: AddConversationToJournalRequestDto,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let journal_space_id = request.journal_space_id.trim();
+    let conversation_id = request.conversation_id.trim();
+
+    if journal_space_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "journalSpaceId is required".to_string(),
+        )));
+    }
+    if conversation_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "conversationId is required".to_string(),
+        )));
+    }
+
+    ensure_journal_space(container.db_pool(), journal_space_id).await?;
+
+    let conversation_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
+            .bind(conversation_id)
+            .fetch_one(container.db_pool())
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to verify conversation: {}",
+                    e
+                )))
+            })?;
+
+    if conversation_exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Conversation not found: {}",
+            conversation_id
+        ))));
+    }
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO journal_conversation_entries (journal_space_id, conversation_id, created_at)
+        VALUES (?, ?, ?)
+        "#,
+    )
+    .bind(journal_space_id)
+    .bind(conversation_id)
+    .bind(Utc::now().to_rfc3339())
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to add conversation to journal: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn remove_conversation_from_journal_impl(
+    request: RemoveConversationFromJournalRequestDto,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let journal_space_id = request.journal_space_id.trim();
+    let conversation_id = request.conversation_id.trim();
+
+    if journal_space_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "journalSpaceId is required".to_string(),
+        )));
+    }
+    if conversation_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "conversationId is required".to_string(),
+        )));
+    }
+
+    ensure_journal_space(container.db_pool(), journal_space_id).await?;
+
+    sqlx::query(
+        r#"
+        DELETE FROM journal_conversation_entries
+        WHERE journal_space_id = ? AND conversation_id = ?
+        "#,
+    )
+    .bind(journal_space_id)
+    .bind(conversation_id)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to remove conversation from journal: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn list_journal_conversations_impl(
+    query: ListJournalConversationsQueryDto,
+    container: &Container,
+) -> Result<ListConversationsResponseDto, ApiError> {
+    let journal_space_id = query.journal_space_id.trim();
+    if journal_space_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "journalSpaceId is required".to_string(),
+        )));
+    }
+
+    ensure_journal_space(container.db_pool(), journal_space_id).await?;
+
+    let limit = query.limit.unwrap_or(120).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let include_archived = query.include_archived.unwrap_or(false);
+    let search_query = query
+        .query
+        .as_ref()
+        .map(|q| q.trim())
+        .filter(|q| !q.is_empty());
+    let fts_query = search_query.and_then(build_fts_query);
+
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            c.id,
+            c.title,
+            c.model_name,
+            c.system_prompt,
+            c.created_at,
+            c.updated_at,
+            c.message_count,
+            c.total_tokens,
+            c.space_id,
+            c.is_saved,
+            c.is_bookmarked,
+            c.is_pinned,
+            c.is_archived,
+            c.saved_at,
+            c.bookmarked_at,
+            c.pinned_at,
+            c.archived_at,
+            (
+                SELECT m.content
+                FROM conversation_messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) AS last_message_preview
+        FROM conversations c
+        WHERE EXISTS (
+                SELECT 1
+                FROM journal_conversation_entries jce
+                WHERE jce.journal_space_id =
+        "#,
+    );
+    qb.push_bind(journal_space_id)
+        .push(" AND jce.conversation_id = c.id")
+        .push(")");
+
+    if !include_archived {
+        qb.push(" AND c.is_archived = 0");
+    }
+
+    if let Some(fts) = &fts_query {
+        qb.push(
+            " AND EXISTS (
+                SELECT 1
+                FROM conversation_search_fts fts
+                WHERE fts.conversation_id = c.id
+                  AND fts.content MATCH ",
+        )
+        .push_bind(fts.clone())
+        .push(")");
+    }
+
+    if let Some(fts) = &fts_query {
+        qb.push(
+            " ORDER BY
+                c.is_pinned DESC,
+                COALESCE((
+                    SELECT MIN(bm25(conversation_search_fts))
+                    FROM conversation_search_fts
+                    WHERE conversation_id = c.id
+                      AND content MATCH ",
+        )
+        .push_bind(fts.clone())
+        .push(
+            "
+                ), 999999.0),
+                c.updated_at DESC",
+        );
+    } else {
+        qb.push(" ORDER BY c.is_pinned DESC, c.updated_at DESC");
+    }
+
+    qb.push(" LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
+
+    let rows = qb
+        .build_query_as::<ConversationExplorerRow>()
+        .fetch_all(container.db_pool())
+        .await
+        .map_err(|e| {
+            ApiError::from(AppError::Database(format!(
+                "Failed to list journal conversations: {}",
+                e
+            )))
+        })?;
+
+    let conversations = rows
+        .into_iter()
+        .map(
+            |row| crate::application::dtos::conversation_dto::ConversationDto {
+                id: row.id,
+                title: row.title,
+                model_name: row.model_name,
+                system_prompt: row.system_prompt,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                message_count: row.message_count,
+                total_tokens: row.total_tokens,
+                space_id: Some(row.space_id),
+                is_saved: Some(row.is_saved != 0),
+                is_bookmarked: Some(row.is_bookmarked != 0),
+                is_pinned: Some(row.is_pinned != 0),
+                is_archived: Some(row.is_archived != 0),
+                saved_at: row.saved_at,
+                bookmarked_at: row.bookmarked_at,
+                pinned_at: row.pinned_at,
+                archived_at: row.archived_at,
+                last_message_preview: row.last_message_preview,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    Ok(ListConversationsResponseDto {
+        total: conversations.len(),
+        conversations,
     })
 }
 
@@ -1098,6 +2044,198 @@ pub async fn remove_conversation_linked_document_impl(
         return Err(ApiError::from(AppError::NotFound(format!(
             "Document {} is not linked to conversation {}",
             document_id, conversation_id
+        ))));
+    }
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit transaction: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn add_conversation_web_source_impl(
+    conversation_id: String,
+    url: String,
+    title: Option<String>,
+    excerpt: Option<String>,
+    relevance_score: Option<f32>,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let conversation_id = conversation_id.trim().to_string();
+    if conversation_id.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "conversationId is required".to_string(),
+        )));
+    }
+
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "url is required".to_string(),
+        )));
+    }
+
+    let normalized_url = normalize_web_source_url(&url);
+    let now = Utc::now().to_rfc3339();
+    let source_id = format!("cws_{}", uuid::Uuid::new_v4().simple());
+
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to begin transaction: {}",
+            e
+        )))
+    })?;
+
+    let conversation_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
+            .bind(&conversation_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                ApiError::from(AppError::Database(format!(
+                    "Failed to verify conversation: {}",
+                    e
+                )))
+            })?;
+
+    if conversation_exists == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Conversation not found: {}",
+            conversation_id
+        ))));
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_web_sources (
+            id,
+            conversation_id,
+            url,
+            normalized_url,
+            title,
+            excerpt,
+            relevance_score,
+            added_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id, normalized_url) DO UPDATE SET
+            url = excluded.url,
+            title = COALESCE(excluded.title, conversation_web_sources.title),
+            excerpt = COALESCE(excluded.excerpt, conversation_web_sources.excerpt),
+            relevance_score = COALESCE(excluded.relevance_score, conversation_web_sources.relevance_score),
+            added_at = excluded.added_at
+        "#,
+    )
+    .bind(&source_id)
+    .bind(&conversation_id)
+    .bind(&url)
+    .bind(&normalized_url)
+    .bind(title.as_ref().map(|value| value.trim().to_string()))
+    .bind(excerpt.as_ref().map(|value| value.trim().to_string()))
+    .bind(relevance_score)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to upsert conversation web source: {}",
+            e
+        )))
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to commit transaction: {}",
+            e
+        )))
+    })?;
+
+    Ok(RenameConversationResponseDto {
+        status: "success".to_string(),
+    })
+}
+
+pub async fn list_conversation_web_sources_impl(
+    conversation_id: String,
+    container: &Container,
+) -> Result<Vec<ConversationWebSourceDto>, ApiError> {
+    let rows = sqlx::query_as::<_, ConversationWebSourceRow>(
+        r#"
+        SELECT
+            id,
+            url,
+            normalized_url,
+            title,
+            excerpt,
+            relevance_score,
+            added_at
+        FROM conversation_web_sources
+        WHERE conversation_id = ?
+        ORDER BY added_at DESC
+        "#,
+    )
+    .bind(&conversation_id)
+    .fetch_all(container.db_pool())
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to list conversation web sources: {}",
+            e
+        )))
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| ConversationWebSourceDto {
+            id: row.id,
+            url: row.url,
+            normalized_url: row.normalized_url,
+            title: row.title,
+            excerpt: row.excerpt,
+            relevance_score: row.relevance_score,
+            added_at: row.added_at,
+        })
+        .collect())
+}
+
+pub async fn remove_conversation_web_source_impl(
+    conversation_id: String,
+    source_id: String,
+    container: &Container,
+) -> Result<RenameConversationResponseDto, ApiError> {
+    let mut tx = container.db_pool().begin().await.map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to begin transaction: {}",
+            e
+        )))
+    })?;
+
+    let deleted = sqlx::query(
+        r#"
+        DELETE FROM conversation_web_sources
+        WHERE conversation_id = ? AND id = ?
+        "#,
+    )
+    .bind(&conversation_id)
+    .bind(&source_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::from(AppError::Database(format!(
+            "Failed to remove conversation web source: {}",
+            e
+        )))
+    })?;
+
+    if deleted.rows_affected() == 0 {
+        return Err(ApiError::from(AppError::NotFound(format!(
+            "Web source {} not found in conversation {}",
+            source_id, conversation_id
         ))));
     }
 
@@ -1608,7 +2746,10 @@ pub async fn delete_conversation_message_impl(
     .execute(&mut *tx)
     .await
     .map_err(|e| {
-        ApiError::from(AppError::Database(format!("Failed to delete message: {}", e)))
+        ApiError::from(AppError::Database(format!(
+            "Failed to delete message: {}",
+            e
+        )))
     })?;
 
     #[derive(sqlx::FromRow)]
@@ -1833,6 +2974,7 @@ pub async fn list_conversations_explorer_impl(
     );
 
     if let Some(space_id) = &query.space_id {
+        ensure_standard_space(container.db_pool(), space_id).await?;
         qb.push(" AND c.space_id = ").push_bind(space_id);
     }
 

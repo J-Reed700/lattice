@@ -10,10 +10,12 @@ import {
   SourceWithMetadataSchema,
   SourcesArraySchema,
 } from '../types/conversation';
+import { createDefaultConversationTitle } from '../utils/conversationTitles';
 
 import type {
   ConversationSpaceDto,
   ConversationLinkedDocumentDto,
+  ConversationWebSourceDto,
   DocumentSpaceMembershipDto,
 } from '../types';
 import type {
@@ -184,6 +186,8 @@ interface ConversationsState {
   messageVerification: Map<string, MessageVerificationSummary>;
   /** Linked documents per conversation */
   linkedDocumentsByConversationId: Map<string, ConversationLinkedDocumentDto[]>;
+  /** Linked non-ingested web sources per conversation. */
+  webSourcesByConversationId: Map<string, ConversationWebSourceDto[]>;
   /** Space assignments per document */
   documentSpaceMembershipsByDocumentId: Map<string, DocumentSpaceMembershipDto[]>;
 
@@ -198,6 +202,7 @@ interface ConversationsState {
   setConversationBookmarked: (id: string, value: boolean) => Promise<void>;
   setConversationPinned: (id: string, value: boolean) => Promise<void>;
   setConversationArchived: (id: string, value: boolean) => Promise<void>;
+  renameConversation: (id: string, title: string) => Promise<boolean>;
   bookmarkMessage: (
     conversationId: string,
     messageId: string,
@@ -207,6 +212,17 @@ interface ConversationsState {
   unbookmarkMessage: (conversationId: string, messageId: string) => Promise<void>;
   moveConversationToSpace: (id: string, spaceId: string) => Promise<void>;
   loadConversationLinkedDocuments: (conversationId: string) => Promise<void>;
+  loadConversationWebSources: (conversationId: string) => Promise<void>;
+  addConversationWebSource: (
+    conversationId: string,
+    url: string,
+    options?: {
+      title?: string;
+      excerpt?: string;
+      relevanceScore?: number;
+    }
+  ) => Promise<boolean>;
+  removeConversationWebSource: (conversationId: string, sourceId: string) => Promise<boolean>;
   removeConversationLinkedDocument: (conversationId: string, documentId: string) => Promise<void>;
   loadDocumentSpaceMemberships: (documentId: string) => Promise<void>;
   setDocumentSpaceMembership: (
@@ -243,6 +259,7 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
   lastMessageSources: new Map(),
   messageVerification: new Map(),
   linkedDocumentsByConversationId: new Map(),
+  webSourcesByConversationId: new Map(),
   documentSpaceMembershipsByDocumentId: new Map(),
 
   loadSpaces: async () => {
@@ -429,7 +446,7 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
     }
 
     const id = result.data.conversation.id;
-    if (selectedSpaceId && selectedSpaceId !== 'space_general') {
+    if (selectedSpaceId && selectedSpaceId !== 'space_general' && selectedSpace) {
       const moveResult = await VaultAPI.moveConversationToSpace({
         conversationId: id,
         spaceId: selectedSpaceId,
@@ -480,6 +497,33 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
     if (value && get().activeConversationId === id) {
       set({ activeConversationId: null });
     }
+  },
+
+  renameConversation: async (id: string, title: string) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      set({ error: 'Conversation title cannot be empty.' });
+      return false;
+    }
+
+    const result = await VaultAPI.renameConversation(id, nextTitle);
+    if (!result.ok) {
+      set({ error: result.error });
+      return false;
+    }
+
+    set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id === id
+          ? {
+            ...conversation,
+            title: nextTitle,
+            updatedAt: new Date().toISOString(),
+          }
+          : conversation
+      ),
+    }));
+    return true;
   },
 
   bookmarkMessage: async (
@@ -541,6 +585,50 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
       next.set(conversationId, result.data);
       return { linkedDocumentsByConversationId: next };
     });
+  },
+
+  loadConversationWebSources: async (conversationId: string) => {
+    const result = await VaultAPI.listConversationWebSources(conversationId);
+    if (!result.ok) {
+      set({ error: result.error });
+      return;
+    }
+
+    set((state) => {
+      const next = new Map(state.webSourcesByConversationId);
+      next.set(conversationId, result.data);
+      return { webSourcesByConversationId: next };
+    });
+  },
+
+  addConversationWebSource: async (conversationId, url, options) => {
+    const result = await VaultAPI.addConversationWebSource(conversationId, url, options);
+    if (!result.ok) {
+      set({ error: result.error });
+      return false;
+    }
+
+    await get().loadConversationWebSources(conversationId);
+    return true;
+  },
+
+  removeConversationWebSource: async (conversationId, sourceId) => {
+    const result = await VaultAPI.removeConversationWebSource(conversationId, sourceId);
+    if (!result.ok) {
+      set({ error: result.error });
+      return false;
+    }
+
+    set((state) => {
+      const next = new Map(state.webSourcesByConversationId);
+      const existing = next.get(conversationId) ?? [];
+      next.set(
+        conversationId,
+        existing.filter((item) => item.id !== sourceId)
+      );
+      return { webSourcesByConversationId: next };
+    });
+    return true;
   },
 
   removeConversationLinkedDocument: async (conversationId: string, documentId: string) => {
@@ -659,6 +747,7 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
       await Promise.all([
         get().loadMessageBookmarks({ conversationId: id }),
         get().loadConversationLinkedDocuments(id),
+        get().loadConversationWebSources(id),
       ]);
     } else {
       set({ error: result.error, isLoading: false });
@@ -912,7 +1001,7 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
       conversations = [
         {
           id: responseConversationId,
-          title: 'New Chat',
+          title: createDefaultConversationTitle(),
           messages: responseMessages,
           updatedAt: new Date().toISOString(),
         },
@@ -1109,6 +1198,9 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
       const newState: Partial<ConversationsState> = {
         conversations: state.conversations.filter(c => c.id !== id)
       };
+      const webSources = new Map(state.webSourcesByConversationId);
+      webSources.delete(id);
+      newState.webSourcesByConversationId = webSources;
 
       // Clear active conversation if it's the one being deleted
       if (state.activeConversationId === id) {

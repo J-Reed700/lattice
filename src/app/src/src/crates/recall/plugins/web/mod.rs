@@ -15,9 +15,11 @@ use tauri::{
 #[specta::specta]
 pub async fn ingest_web_url(
     url: String,
+    space_id: Option<String>,
+    conversation_id: Option<String>,
     container: State<'_, Container>,
 ) -> Result<web_ingest::WebIngestResponse, ApiError> {
-    web_ingest::ingest_web_url(url, container)
+    web_ingest::ingest_web_url(url, space_id, conversation_id, container)
         .await
         .map_err(ApiError::from)
 }

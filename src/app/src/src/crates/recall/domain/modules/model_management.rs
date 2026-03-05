@@ -291,6 +291,7 @@ impl SystemCapabilities {
 ///     default_filename: Some("Phi-3-mini-4k-instruct-q4.gguf".into()),
 ///     files: vec![],
 ///     total_size_bytes: 0,
+///     embedding_dimensions: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +342,11 @@ pub struct ModelMetadata {
     /// Used for disk space calculations and progress tracking
     #[serde(default)]
     pub total_size_bytes: u64,
+    /// Output dimension for embedding models (e.g., 384, 768, 1024).
+    /// None for non-embedding models (LLM, OCR).
+    /// Used to filter catalog models to those compatible with the app's vector index.
+    #[serde(default)]
+    pub embedding_dimensions: Option<usize>,
 }
 
 impl ModelMetadata {
@@ -383,6 +389,7 @@ impl ModelMetadata {
     ///     default_filename: Some("Phi-3-mini-4k-instruct-q4.gguf".into()),
     ///     files: vec![],
     ///     total_size_bytes: 0,
+    ///     embedding_dimensions: None,
     /// };
     ///
     /// assert_eq!(
@@ -620,6 +627,7 @@ impl ModelRecommendation {
 ///     default_filename: None,
 ///     files: vec![],
 ///     total_size_bytes: 0,
+///     embedding_dimensions: None,
 /// };
 ///
 /// let score = scorer.score_compatibility(&model, &capabilities)?;
@@ -844,6 +852,7 @@ mod tests {
             default_filename: Some("Phi-3-mini-4k-instruct-q4.gguf".into()),
             files: vec![],
             total_size_bytes: 0,
+            embedding_dimensions: None,
         }
     }
 

@@ -35,6 +35,7 @@ use crate::application::dtos::web_dto::{GetUrlPreviewRequestDto, IngestWebUrlReq
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
+use chrono::Utc;
 // TODO: Fix web_ingestion module test errors before enabling
 // use crate::infrastructure::web::ingestion::types::{is_safe_url, normalize_url};
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,86 @@ pub struct WebIngestResponse {
     pub author: Option<String>,
     /// Estimated reading time in minutes
     pub reading_time_minutes: Option<i64>,
+}
+
+fn normalize_optional_id(value: Option<String>) -> Option<String> {
+    value
+        .map(|raw| raw.trim().to_string())
+        .filter(|trimmed| !trimmed.is_empty())
+}
+
+async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<(), AppError> {
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
+        .bind(space_id)
+        .fetch_one(container.db_pool())
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to verify target space '{}' for web import: {}",
+                space_id, e
+            ))
+        })?;
+
+    if exists == 0 {
+        return Err(AppError::InvalidInput(format!(
+            "Space not found for web import: {}",
+            space_id
+        )));
+    }
+
+    Ok(())
+}
+
+async fn ensure_conversation_exists(
+    container: &Container,
+    conversation_id: &str,
+) -> Result<(), AppError> {
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
+        .bind(conversation_id)
+        .fetch_one(container.db_pool())
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to verify target conversation '{}' for web import: {}",
+                conversation_id, e
+            ))
+        })?;
+
+    if exists == 0 {
+        return Err(AppError::InvalidInput(format!(
+            "Conversation not found for web import: {}",
+            conversation_id
+        )));
+    }
+
+    Ok(())
+}
+
+async fn assign_document_to_space(
+    container: &Container,
+    document_id: &str,
+    space_id: &str,
+) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
+        VALUES (?, ?, ?)
+        "#,
+    )
+    .bind(document_id)
+    .bind(space_id)
+    .bind(&now)
+    .execute(container.db_pool())
+    .await
+    .map_err(|e| {
+        AppError::Database(format!(
+            "Failed to assign imported web document '{}' to space '{}': {}",
+            document_id, space_id, e
+        ))
+    })?;
+
+    Ok(())
 }
 
 /// Ingest web content with full extraction and indexing pipeline
@@ -163,8 +244,21 @@ pub struct WebIngestResponse {
 #[tracing::instrument(skip(container), fields(url = %url))]
 pub async fn ingest_web_url(
     url: String,
+    space_id: Option<String>,
+    conversation_id: Option<String>,
     container: State<'_, Container>,
 ) -> Result<WebIngestResponse, AppError> {
+    let requested_space_id = normalize_optional_id(space_id);
+    let requested_conversation_id = normalize_optional_id(conversation_id);
+
+    if let Some(space_id) = requested_space_id.as_deref() {
+        ensure_space_exists(&container, space_id).await?;
+    }
+
+    if let Some(conversation_id) = requested_conversation_id.as_deref() {
+        ensure_conversation_exists(&container, conversation_id).await?;
+    }
+
     // Ensure embedding model is available before starting ingestion.
     // This pre-loads the active embedding model into cache if configured.
     match container.get_or_load_embedding().await {
@@ -238,10 +332,29 @@ pub async fn ingest_web_url(
         }
     };
 
-    // 4. Record metrics after success
+    // 4. Scope imported document into an explicit space when provided.
+    if let Some(space_id) = requested_space_id.as_deref() {
+        assign_document_to_space(&container, &result.document_id, space_id).await?;
+    }
+
+    // 5. Link imported document to conversation context when provided.
+    if let Some(conversation_id) = requested_conversation_id.as_deref() {
+        container
+            .conversation_service()
+            .add_document_reference(conversation_id, result.document_id.clone(), None, None)
+            .await
+            .map_err(|e| {
+                AppError::Database(format!(
+                    "Imported web document '{}' but failed to link conversation '{}': {}",
+                    result.document_id, conversation_id, e
+                ))
+            })?;
+    }
+
+    // 6. Record metrics after success
     container.metrics().record_indexing_operation();
 
-    // 5. Audit success
+    // 7. Audit success
     let audit_logger = get_audit_logger();
     let event = AuditEvent::new(AuditAction::WebContentIngested, AuditResult::success())
         .with_resource_id(&url)
@@ -254,7 +367,7 @@ pub async fn ingest_web_url(
         tracing::warn!("Failed to write audit log: {}", e);
     }
 
-    // 6. Return response
+    // 8. Return response
     Ok(WebIngestResponse {
         document_id: result.document_id,
         url: result.url,

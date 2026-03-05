@@ -12,14 +12,18 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
-import remarkGfm from 'remark-gfm';
+
+import { TiptapViewer } from '../TiptapEditor';
 
 import { useDebounce } from '@/hooks/useDebounce';
 import { VaultAPI } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
+import type {
+  ConversationJournalDto,
+  ConversationSpaceDto,
+} from '@/types/api/conversation';
 import { resolveBookmarkPayload, type BookmarkPayload } from '@/utils/chatBookmarks';
 import { captureChatReferenceToWorkspaceNote } from '@/utils/chatReferenceCapture';
 import {
@@ -50,6 +54,8 @@ export function ReferenceInbox() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [bookmarks, setBookmarks] = useState<ConversationMessageBookmarkDto[]>([]);
+  const [spacesById, setSpacesById] = useState<Map<string, ConversationSpaceDto>>(new Map());
+  const [journalsById, setJournalsById] = useState<Map<string, ConversationJournalDto>>(new Map());
   const [capturedIndex, setCapturedIndex] = useState<Map<string, CapturedChatReference>>(new Map());
   const [payloadCache, setPayloadCache] = useState<Map<string, BookmarkPayload>>(new Map());
   const [selectedBookmarkId, setSelectedBookmarkId] = useState<string | null>(null);
@@ -74,13 +80,15 @@ export function ReferenceInbox() {
         setIsLoading(true);
       }
 
-      const [bookmarksResult, notesResult] = await Promise.all([
+      const [bookmarksResult, notesResult, spacesResult, journalsResult] = await Promise.all([
         VaultAPI.listMessageBookmarks({
           query: debouncedQuery.trim() ? debouncedQuery.trim() : undefined,
           limit: 200,
           offset: 0,
         }),
         VaultAPI.listWorkspaceNotes(),
+        VaultAPI.listConversationSpaces(),
+        VaultAPI.listJournals(),
       ]);
 
       if (!bookmarksResult.ok) {
@@ -93,6 +101,18 @@ export function ReferenceInbox() {
         setCapturedIndex(buildCapturedChatReferenceIndex(notesResult.data.notes));
       } else {
         setCapturedIndex(new Map());
+      }
+
+      if (spacesResult.ok) {
+        setSpacesById(new Map(spacesResult.data.map((space) => [space.id, space])));
+      } else {
+        setSpacesById(new Map());
+      }
+
+      if (journalsResult.ok) {
+        setJournalsById(new Map(journalsResult.data.map((journal) => [journal.id, journal])));
+      } else {
+        setJournalsById(new Map());
       }
 
       setIsLoading(false);
@@ -157,6 +177,41 @@ export function ReferenceInbox() {
   const selectedCapture = selectedBookmark
     ? capturedIndex.get(chatReferenceKey(selectedBookmark.conversationId, selectedBookmark.messageId)) ?? null
     : null;
+  const selectedBookmarkSpace = selectedBookmark
+    ? spacesById.get(selectedBookmark.spaceId) ?? null
+    : null;
+
+  const getJournalNoteIdForSpace = useCallback((spaceId: string): string | null => {
+    try {
+      const value = localStorage.getItem(`journal.noteBySpace.${spaceId}`);
+      const resolved = value?.trim() ?? '';
+      return resolved || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const resolveCaptureDestinationForBookmark = useCallback((bookmark: ConversationMessageBookmarkDto) => {
+    const journal = journalsById.get(bookmark.spaceId) ?? null;
+    if (journal) {
+      const journalNoteId = getJournalNoteIdForSpace(journal.id);
+      return {
+        type: 'journal' as const,
+        space: journal,
+        preferredNoteId: journalNoteId,
+      };
+    }
+
+    return {
+      type: 'daily' as const,
+      space: null,
+      preferredNoteId: null,
+    };
+  }, [getJournalNoteIdForSpace, journalsById]);
+
+  const selectedCaptureDestination = selectedBookmark
+    ? resolveCaptureDestinationForBookmark(selectedBookmark)
+    : null;
 
   const hasAnnotationChanges = Boolean(
     selectedBookmark &&
@@ -184,14 +239,26 @@ export function ReferenceInbox() {
 
   const openCapturedReference = (reference: CapturedChatReference | null) => {
     if (!reference) {
-      navigate('/daily');
+      navigate('/journals');
       return;
     }
+
+    let resolvedJournalSpaceId: string | null = null;
+    for (const journal of journalsById.values()) {
+      if (getJournalNoteIdForSpace(journal.id) === reference.noteId) {
+        resolvedJournalSpaceId = journal.id;
+        break;
+      }
+    }
+
     const params = new URLSearchParams({
       noteId: reference.noteId,
       snapshotId: reference.snapshotId,
     });
-    navigate(`/daily?${params.toString()}`);
+    if (resolvedJournalSpaceId) {
+      params.set('journalSpaceId', resolvedJournalSpaceId);
+    }
+    navigate(`/journals?${params.toString()}`);
   };
 
   const openBookmarkInChat = (bookmark: ConversationMessageBookmarkDto) => {
@@ -237,6 +304,7 @@ export function ReferenceInbox() {
       bookmark: ConversationMessageBookmarkDto,
       options?: { referenceTitle?: string | null; referenceNote?: string | null }
     ): Promise<CapturedChatReference | null> => {
+      const destination = resolveCaptureDestinationForBookmark(bookmark);
       const payload = await getBookmarkPayload(bookmark);
       const result = await captureChatReferenceToWorkspaceNote({
         conversationId: bookmark.conversationId,
@@ -247,6 +315,7 @@ export function ReferenceInbox() {
         referenceTitle: options?.referenceTitle ?? bookmark.title,
         referenceNote: options?.referenceNote ?? bookmark.note,
         sourceReferences: payload.sourceReferences,
+        preferredNoteId: destination.preferredNoteId,
       });
 
       if (!result.snapshotId) {
@@ -271,7 +340,7 @@ export function ReferenceInbox() {
 
       return capturedReference;
     },
-    [getBookmarkPayload]
+    [getBookmarkPayload, resolveCaptureDestinationForBookmark]
   );
 
   const captureSelected = async () => {
@@ -286,7 +355,7 @@ export function ReferenceInbox() {
       toast.success('Reference captured', {
         message: capturedReference
           ? `Saved to "${capturedReference.noteTitle}".`
-          : 'Saved to Daily Notes.',
+          : 'Saved to Journals Inbox.',
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -583,6 +652,12 @@ export function ReferenceInbox() {
                         <MessageSquare className="h-3 w-3" />
                         {selectedBookmark.conversationTitle}
                       </span>
+                      {selectedBookmarkSpace && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/5 px-2 py-1 text-[11px] text-white/70">
+                          <NotebookPen className="h-3 w-3" />
+                          {selectedBookmarkSpace.name}
+                        </span>
+                      )}
                       {selectedCapture ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/40 bg-emerald-500/14 px-2 py-1 text-[11px] text-emerald-100">
                           <Check className="h-3 w-3" />
@@ -594,6 +669,33 @@ export function ReferenceInbox() {
                         </span>
                       )}
                     </div>
+
+                    {selectedCaptureDestination && (
+                      <div className="rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2">
+                        <p className="text-[11px] uppercase tracking-wide text-white/55">Capture Destination</p>
+                        <p className="mt-1 text-xs text-white/80">
+                          {selectedCaptureDestination.type === 'journal' && selectedCaptureDestination.space
+                            ? `Journal notebook: ${selectedCaptureDestination.space.name}`
+                            : 'Daily Research Inbox'}
+                        </p>
+                        {selectedCaptureDestination.type === 'journal' && selectedCaptureDestination.space && (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <button
+                              onClick={() => navigate(`/journals?journalSpaceId=${encodeURIComponent(selectedCaptureDestination.space.id)}`)}
+                              className="inline-flex items-center gap-1 rounded-md border border-emerald-300/40 bg-emerald-500/12 px-2 py-1 text-[11px] text-emerald-100 transition-colors hover:border-emerald-200/70"
+                            >
+                              <ArrowUpRight className="h-3 w-3" />
+                              Open Journal Notebook
+                            </button>
+                            {!selectedCaptureDestination.preferredNoteId && (
+                              <span className="text-[11px] text-amber-100/80">
+                                Open once to initialize notebook mapping.
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="space-y-2">
                       <input
@@ -626,7 +728,9 @@ export function ReferenceInbox() {
                         className="inline-flex items-center justify-center gap-1 rounded-md border border-emerald-300/40 bg-emerald-500/15 px-2 py-1.5 text-[11px] text-emerald-100 transition-colors hover:border-emerald-200/70 disabled:opacity-50"
                       >
                         {isCapturingOne ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                        {selectedCapture ? 'Re-capture' : 'Capture'}
+                        {selectedCaptureDestination?.type === 'journal'
+                          ? (selectedCapture ? 'Re-capture to Journal' : 'Capture to Journal')
+                          : (selectedCapture ? 'Re-capture' : 'Capture')}
                       </button>
                       <button
                         onClick={() => openBookmarkInChat(selectedBookmark)}
@@ -670,80 +774,8 @@ export function ReferenceInbox() {
                         {isResolvingPreview && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/45" />}
                       </div>
                       <div className="max-h-[28rem] overflow-y-auto rounded-md border border-white/10 bg-black/20 p-2.5">
-                        <div className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              p({ children }) {
-                                return (
-                                  <p className="text-white/80 leading-relaxed mb-3 last:mb-0 break-words whitespace-pre-wrap">
-                                    {children}
-                                  </p>
-                                );
-                              },
-                              ul({ children }) {
-                                return (
-                                  <ul className="list-disc list-inside space-y-1 text-white/80 break-words">
-                                    {children}
-                                  </ul>
-                                );
-                              },
-                              ol({ children }) {
-                                return (
-                                  <ol className="list-decimal list-inside space-y-1 text-white/80 break-words">
-                                    {children}
-                                  </ol>
-                                );
-                              },
-                              li({ children }) {
-                                return <li className="text-white/80 break-words">{children}</li>;
-                              },
-                              blockquote({ children }) {
-                                return (
-                                  <blockquote className="border-l-4 border-cyan-500/45 pl-4 italic text-white/65 my-3 break-words">
-                                    {children}
-                                  </blockquote>
-                                );
-                              },
-                              a({ children, href }) {
-                                return (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-cyan-300 hover:text-cyan-200 underline transition-colors"
-                                  >
-                                    {children}
-                                  </a>
-                                );
-                              },
-                              table({ children }) {
-                                return (
-                                  <div className="overflow-x-auto my-3">
-                                    <table className="min-w-full border border-white/10 rounded-lg">
-                                      {children}
-                                    </table>
-                                  </div>
-                                );
-                              },
-                              th({ children }) {
-                                return (
-                                  <th className="px-3 py-2 bg-white/5 border-b border-white/10 text-left text-white/90 font-semibold">
-                                    {children}
-                                  </th>
-                                );
-                              },
-                              td({ children }) {
-                                return (
-                                  <td className="px-3 py-2 border-b border-white/5 text-white/80 align-top">
-                                    {children}
-                                  </td>
-                                );
-                              },
-                            }}
-                          >
-                            {selectedPreview}
-                          </ReactMarkdown>
+                        <div className="max-w-none break-words [overflow-wrap:anywhere]">
+                          <TiptapViewer content={selectedPreview} />
                         </div>
                       </div>
                     </div>

@@ -14,7 +14,7 @@
 import { useState, type ReactNode } from 'react'
 
 import { AnimatePresence } from 'framer-motion'
-import { Home, Search, FolderOpen, PlusCircle, MessageCircle, CalendarDays, Settings, Menu, X, Bookmark } from 'lucide-react'
+import { Home, Search, FolderOpen, PlusCircle, MessageCircle, NotebookPen, Settings, Menu, X, Bookmark } from 'lucide-react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 
 import { DownloadsDrawer } from '../Downloads/DownloadsDrawer'
@@ -22,7 +22,7 @@ import { DrawerTrigger } from '../Downloads/DrawerTrigger'
 import { HeaderDownloadsIndicator } from '../Downloads/HeaderDownloadsIndicator'
 
 interface NavButtonProps {
-  view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'daily' | 'references'
+  view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'journals' | 'references'
   activeView: string
   onClick: () => void
   icon: ReactNode
@@ -76,9 +76,10 @@ export function Layout() {
   console.log('[LAYOUT] Current path:', location.pathname);
 
   // Extract active view from current path
-  const activeView = location.pathname.slice(1) || 'home'
+  const pathView = location.pathname.slice(1) || 'home'
+  const activeView = pathView === 'daily' ? 'journals' : pathView
 
-  const handleNavClick = (view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'daily' | 'references') => {
+  const handleNavClick = (view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'journals' | 'references') => {
     navigate(`/${view}`)
     setMobileMenuOpen(false)
   }
@@ -115,10 +116,10 @@ export function Layout() {
       icon: <MessageCircle className="w-5 h-5" />,
     },
     {
-      view: 'daily' as const,
-      label: 'Daily Notes',
+      view: 'journals' as const,
+      label: 'Journals',
       shortcut: '⌘3',
-      icon: <CalendarDays className="w-5 h-5" />,
+      icon: <NotebookPen className="w-5 h-5" />,
     },
     {
       view: 'references' as const,

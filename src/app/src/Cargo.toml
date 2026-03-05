@@ -118,14 +118,14 @@ readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extract
 
 # Platform-specific Metal GPU support for macOS (M-series chips)
 [target.'cfg(target_os = "macos")'.dependencies]
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["metal"] }
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "fd60163", features = ["metal"] }
 
 # Uncomment to enable CUDA on Windows/Linux
 # [target.'cfg(target_os = "windows")'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["cuda"] }
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "fd60163", features = ["cuda"] }
 #
 # [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", features = ["cuda"] }
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "fd60163", features = ["cuda"] }
 
 
 [target.'cfg(windows)'.dependencies]

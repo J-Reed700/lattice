@@ -120,6 +120,40 @@ fn execution_provider_candidates() -> Vec<Vec<ExecutionProviderDispatch>> {
     candidates
 }
 
+/// Resolve the directory containing tokenizer/config metadata files.
+///
+/// HuggingFace repos often place ONNX weights in a subdirectory (e.g. `onnx/model.onnx`)
+/// while keeping tokenizer.json, config.json, etc. at the repo root. When the model
+/// is downloaded, this layout is preserved on disk:
+///
+/// ```text
+/// {base}/
+///   tokenizer.json       ← metadata lives here
+///   config.json
+///   onnx/
+///     model.onnx          ← ONNX weights live here
+/// ```
+///
+/// This function checks the ONNX file's parent directory first, then walks up
+/// one level to find the metadata files.
+fn resolve_metadata_dir(model_dir: &Path) -> &Path {
+    if model_dir.join("tokenizer.json").exists() {
+        return model_dir;
+    }
+    if let Some(parent) = model_dir.parent() {
+        if parent.join("tokenizer.json").exists() {
+            tracing::info!(
+                "Found tokenizer.json in parent directory {} (ONNX file is in subdirectory {})",
+                parent.display(),
+                model_dir.display()
+            );
+            return parent;
+        }
+    }
+    // Fall back to model_dir; read_required_file will produce a clear error
+    model_dir
+}
+
 fn load_fastembed_model(model_path: &Path) -> Result<TextEmbedding> {
     if !model_path.exists() {
         return Err(AppError::NotFound(format!(
@@ -134,23 +168,27 @@ fn load_fastembed_model(model_path: &Path) -> Result<TextEmbedding> {
             reason: "Failed to resolve model directory".to_string(),
         })?;
 
+    // Metadata files (tokenizer.json, config.json, etc.) may be in the parent
+    // directory when ONNX weights live in a subdirectory like onnx/.
+    let metadata_dir = resolve_metadata_dir(model_dir);
+
     let onnx_file = read_required_file(model_path, "model.onnx")?;
-    let tokenizer_file = read_required_file(&model_dir.join("tokenizer.json"), "tokenizer.json")?;
+    let tokenizer_file = read_required_file(&metadata_dir.join("tokenizer.json"), "tokenizer.json")?;
     let (pad_id, pad_token, inferred_max_length) = infer_tokenizer_defaults(&tokenizer_file);
     let tokenizer_files = TokenizerFiles {
         tokenizer_file,
         config_file: read_optional_json_with_default(
-            &model_dir.join("config.json"),
+            &metadata_dir.join("config.json"),
             "config.json",
             json!({ "pad_token_id": pad_id }),
         )?,
         special_tokens_map_file: read_optional_json_with_default(
-            &model_dir.join("special_tokens_map.json"),
+            &metadata_dir.join("special_tokens_map.json"),
             "special_tokens_map.json",
             json!({}),
         )?,
         tokenizer_config_file: read_optional_json_with_default(
-            &model_dir.join("tokenizer_config.json"),
+            &metadata_dir.join("tokenizer_config.json"),
             "tokenizer_config.json",
             json!({
                 "model_max_length": inferred_max_length,
@@ -224,13 +262,42 @@ pub struct OnnxEmbeddingService {
 
 impl OnnxEmbeddingService {
     /// Create a new embedding service from a local ONNX model path.
+    ///
+    /// The output dimension is detected automatically by running a probe
+    /// embedding. This replaces the old hardcoded `DEFAULT_EMBEDDING_DIM`
+    /// so that models with different dimensions (384, 768, 1024, etc.)
+    /// work correctly.
     pub fn new(model_path: impl AsRef<Path>) -> Result<Self> {
         let model = get_or_create_fastembed_model(model_path)?;
 
-        Ok(Self {
-            model,
-            dimension: EMBEDDING_DIMENSION,
-        })
+        // Detect actual output dimension by running a probe embedding
+        let dimension = {
+            let mut guard = model.lock();
+            let probe = guard
+                .embed(vec!["dimension probe".to_string()], None)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("Failed to probe embedding dimension: {}", e),
+                })?;
+            match probe.first().map(|v| v.len()) {
+                Some(dim) => dim,
+                None => {
+                    tracing::warn!(
+                        "Dimension probe returned empty result; falling back to default {}",
+                        EMBEDDING_DIMENSION
+                    );
+                    EMBEDDING_DIMENSION
+                }
+            }
+        };
+
+        tracing::info!("Detected embedding dimension: {}", dimension);
+
+        Ok(Self { model, dimension })
+    }
+
+    /// The detected output dimension of the loaded model.
+    pub fn dimension(&self) -> usize {
+        self.dimension
     }
 
     /// Generate embeddings for contextualized chunks.

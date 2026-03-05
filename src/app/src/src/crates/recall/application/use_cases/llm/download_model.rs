@@ -156,6 +156,47 @@ impl DownloadModelUseCase {
         }
     }
 
+    /// Build a file list for ONNX embedding models with required companion files.
+    ///
+    /// ONNX embedding models require at minimum:
+    /// - The ONNX model file itself (e.g., `model.onnx` or `onnx/model.onnx`)
+    /// - `tokenizer.json` — required by OnnxEmbeddingService for tokenization
+    /// - `config.json` — model configuration
+    ///
+    /// Companion files are resolved at repo root since most HF repos store
+    /// tokenizer/config at root even when the ONNX file is in a subdirectory.
+    /// The `fallback_url_for_onnx_metadata` method handles the onnx/ → root
+    /// fallback for repos that use the onnx/ subdirectory convention.
+    fn build_onnx_embedding_file_list(
+        repo_id: &str,
+        onnx_filename: &str,
+    ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
+        use crate::domain::model_metadata::ModelFileMetadata;
+
+        let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
+
+        vec![
+            // The ONNX model file itself
+            ModelFileMetadata::new(
+                onnx_filename.to_string(),
+                format!("{}/{}", base_url, onnx_filename),
+                0, // Size unknown, determined by download manager
+            ),
+            // tokenizer.json — required by OnnxEmbeddingService
+            ModelFileMetadata::new(
+                "tokenizer.json".to_string(),
+                format!("{}/tokenizer.json", base_url),
+                0,
+            ),
+            // config.json — model configuration
+            ModelFileMetadata::new(
+                "config.json".to_string(),
+                format!("{}/config.json", base_url),
+                0,
+            ),
+        ]
+    }
+
     fn infer_model_name_from_repo(repo_id: &str) -> String {
         repo_id
             .split('/')
@@ -199,6 +240,7 @@ impl DownloadModelUseCase {
                     default_filename: Some(filename.clone()),
                     files: vec![],
                     total_size_bytes: 0,
+                    embedding_dimensions: None,
                 },
             };
 
@@ -210,6 +252,16 @@ impl DownloadModelUseCase {
             resolved.files.clear();
             if resolved.total_size_bytes == 0 && resolved.size_gb > 0.0 {
                 resolved.total_size_bytes = (resolved.size_gb * 1_000_000_000.0) as u64;
+            }
+
+            // For ONNX embedding models, populate the files list with required
+            // companion files (tokenizer.json, config.json, etc.) so the multi-file
+            // download path downloads everything needed by OnnxEmbeddingService.
+            if resolved.category == crate::domain::model_management::ModelCategory::Embedding
+                && filename.ends_with(".onnx")
+            {
+                resolved.files = Self::build_onnx_embedding_file_list(&repo_id, &filename);
+                resolved.default_filename = None; // Use files list instead
             }
 
             return Ok(resolved);
@@ -569,10 +621,21 @@ impl DownloadModelUseCase {
             "Single-file download initiated, waiting for completion"
         );
 
+        // Prefer the verified session size discovered by DownloadManager (HEAD/Range),
+        // falling back to catalog metadata when unavailable.
+        let total_size_bytes = self
+            .download_manager
+            .get_download_status(&download_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|session| session.progress().total_bytes())
+            .unwrap_or(curated.total_size_bytes);
+
         // Return immediate success with DownloadStarted state
         Ok(DownloadModelResponseDto {
             state: DownloadOperationState::DownloadStarted {
-                total_size_bytes: curated.total_size_bytes,
+                total_size_bytes,
                 files_to_download: 1,
             },
             path: Some(model_path.to_string_lossy().to_string()),
@@ -917,10 +980,28 @@ impl DownloadModelUseCase {
             "All downloads initiated, returning immediately"
         );
 
+        // Sum concrete session sizes from DownloadManager to avoid surfacing stale/estimated
+        // catalog sizes in UI while download starts.
+        let mut detected_total_size_bytes = 0u64;
+        for (download_id, _) in &download_ids {
+            if let Ok(Some(session)) = self.download_manager.get_download_status(download_id).await
+            {
+                if let Some(total_bytes) = session.progress().total_bytes() {
+                    detected_total_size_bytes =
+                        detected_total_size_bytes.saturating_add(total_bytes);
+                }
+            }
+        }
+        let total_size_bytes = if detected_total_size_bytes > 0 {
+            detected_total_size_bytes
+        } else {
+            curated.total_size_bytes
+        };
+
         // Return immediate success with DownloadStarted state
         Ok(DownloadModelResponseDto {
             state: DownloadOperationState::DownloadStarted {
-                total_size_bytes: curated.total_size_bytes,
+                total_size_bytes,
                 files_to_download: curated.files.len(),
             },
             path: Some(model_path.to_string_lossy().to_string()),
