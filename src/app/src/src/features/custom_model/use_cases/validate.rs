@@ -1,8 +1,8 @@
-use crate::domain::custom_model::{CustomModel, ModelSource, ValidationStatus};
-use crate::infrastructure::persistence::repositories::{
+use crate::features::custom_model::domain::{CustomModel, ModelSource, ValidationStatus};
+use crate::features::custom_model::repository::{
     CustomModelRepository, CustomModelRepositoryTrait,
 };
-use crate::infrastructure::services::custom_model::{FileValidationService, UrlValidationService};
+use crate::features::custom_model::services::{FileValidationService, UrlValidationService};
 use crate::shared::error::AppError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

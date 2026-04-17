@@ -1,5 +1,5 @@
-use crate::domain::custom_model::{CustomModel, TaskType, ValidationStatus};
-use crate::infrastructure::persistence::repositories::{
+use crate::features::custom_model::domain::{CustomModel, TaskType, ValidationStatus};
+use crate::features::custom_model::repository::{
     CustomModelRepository, CustomModelRepositoryTrait,
 };
 use crate::shared::error::AppError;

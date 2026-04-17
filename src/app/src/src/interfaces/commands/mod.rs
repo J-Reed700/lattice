@@ -19,9 +19,6 @@ pub mod conversation;
 pub mod conversation_chat;
 #[path = "../../features/conversation/plugin_impl.rs"]
 pub mod conversation_plugin_impl;
-// Vertical-slice migration (custom_model): commands live in features/custom_model/commands.rs.
-#[path = "../../features/custom_model/commands.rs"]
-pub mod custom_model_commands;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
 // Vertical-slice migration (download): commands live in features/download/commands.rs.

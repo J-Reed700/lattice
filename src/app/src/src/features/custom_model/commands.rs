@@ -1,12 +1,12 @@
-use crate::application::use_cases::custom_model::{
+use crate::features::custom_model::use_cases::{
     AddFromFileUseCase, AddFromUrlUseCase, DeleteUseCase, ListUseCase, ValidateUseCase,
 };
-use crate::domain::custom_model::{CustomModel, ModelArchitecture, TaskType, ValidationStatus};
+use crate::features::custom_model::domain::{CustomModel, ModelArchitecture, TaskType, ValidationStatus};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
-use crate::infrastructure::persistence::repositories::{
+use crate::features::custom_model::repository::{
     CustomModelRepository, CustomModelRepositoryTrait,
 };
-use crate::infrastructure::services::custom_model::{
+use crate::features::custom_model::services::{
     ArchitectureInferenceService, FileValidationService, UrlValidationService,
 };
 use crate::interfaces::di::Container;
@@ -55,8 +55,8 @@ impl From<CustomModel> for CustomModelResponse {
     fn from(model: CustomModel) -> Self {
         // Extract URL and file path from source
         let (url, file_path) = match model.source() {
-            crate::domain::custom_model::ModelSource::Url(u) => (Some(u.clone()), None),
-            crate::domain::custom_model::ModelSource::LocalFile(p) => {
+            crate::features::custom_model::domain::ModelSource::Url(u) => (Some(u.clone()), None),
+            crate::features::custom_model::domain::ModelSource::LocalFile(p) => {
                 (None, Some(p.to_string_lossy().to_string()))
             }
         };

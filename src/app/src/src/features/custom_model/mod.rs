@@ -1,18 +1,25 @@
 //! # Custom model feature
 //!
 //! User-added LLM models (from local file or URL) with validation and
-//! architecture inference.
+//! architecture inference. Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File                      | Canonical module path                                          |
-//! |---------------------------|----------------------------------------------------------------|
-//! | `domain.rs`               | `crate::domain::custom_model`                                  |
-//! | `use_cases/`              | `crate::application::use_cases::custom_model`                  |
-//! | `repository.rs`           | `crate::infrastructure::persistence::repositories::custom_model_repository` |
-//! | `services/`               | `crate::infrastructure::services::custom_model`                |
-//! |   architecture_inference  |   (+ file_validation, url_validation)                          |
-//! | `commands.rs`             | `crate::interfaces::commands::custom_model_commands`           |
+//! - `crate::features::custom_model::domain` — CustomModel, ModelArchitecture,
+//!   TaskType, ValidationStatus, ModelSource
+//! - `crate::features::custom_model::use_cases` — add_from_file,
+//!   add_from_url, validate, delete, list
+//! - `crate::features::custom_model::repository` — CustomModelRepository,
+//!   CustomModelRepositoryTrait, MockCustomModelRepository
+//! - `crate::features::custom_model::services` —
+//!   architecture_inference, file_validation, url_validation
+//! - `crate::features::custom_model::commands` — Tauri command handlers
 //!
-//! No DTO, plugin, or port today. Commands and domain types cover the
+//! No DTO, plugin, or port. Commands and domain types cover the
 //! surface directly.
+
+pub mod commands;
+pub mod domain;
+pub mod repository;
+pub mod services;
+pub mod use_cases;

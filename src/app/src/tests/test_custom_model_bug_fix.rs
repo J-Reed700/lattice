@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// 1. FileInfo accepts file_size_bytes = 1 (placeholder value)
 /// 2. CustomModel::new() accepts file_size_bytes = 1
 /// 3. Database constraint CHECK(file_size_bytes > 0) is satisfied
-use vault::domain::custom_model::{CustomModel, ModelId, ModelName, ModelSource, TaskType};
+use vault::features::custom_model::domain::{CustomModel, ModelId, ModelName, ModelSource, TaskType};
 
 #[test]
 fn test_placeholder_size_satisfies_constraint() {

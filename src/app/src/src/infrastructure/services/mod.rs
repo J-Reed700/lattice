@@ -63,9 +63,6 @@ pub mod web_ingestion;
 pub mod web_service;
 
 // Directory-backed service modules
-// Vertical-slice migration (custom_model): services live in features/custom_model/services/.
-#[path = "../../features/custom_model/services/mod.rs"]
-pub mod custom_model;
 // Vertical-slice migration (embedding): service directory lives in features/embedding/service/.
 #[path = "../../features/embedding/service/mod.rs"]
 pub mod embedding;

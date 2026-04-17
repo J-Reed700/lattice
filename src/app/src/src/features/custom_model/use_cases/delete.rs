@@ -1,7 +1,7 @@
-use crate::infrastructure::persistence::repositories::{
+use crate::features::custom_model::repository::{
     CustomModelRepository, CustomModelRepositoryTrait,
 };
-use crate::infrastructure::services::custom_model::FileValidationService;
+use crate::features::custom_model::services::FileValidationService;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 use uuid::Uuid;

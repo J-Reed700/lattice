@@ -2,7 +2,7 @@
 //!
 //! Manages persistence of custom model records in SQLite.
 
-use crate::domain::custom_model::{
+use crate::features::custom_model::domain::{
     CustomModel, FileInfo, ModelArchitecture, ModelId, ModelMetadata, ModelName, ModelSource,
     SourceType, TaskType, ValidationStatus,
 };

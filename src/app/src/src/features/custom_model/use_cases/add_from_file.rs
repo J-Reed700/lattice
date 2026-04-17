@@ -1,10 +1,10 @@
-use crate::domain::custom_model::{
+use crate::features::custom_model::domain::{
     CustomModel, ModelArchitecture, ModelId, ModelName, ModelSource, TaskType,
 };
-use crate::infrastructure::persistence::repositories::{
+use crate::features::custom_model::repository::{
     CustomModelRepository, CustomModelRepositoryTrait,
 };
-use crate::infrastructure::services::custom_model::{
+use crate::features::custom_model::services::{
     ArchitectureInferenceService, FileValidationService,
 };
 use crate::shared::error::AppError;

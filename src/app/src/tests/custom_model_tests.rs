@@ -13,11 +13,11 @@
 //! Tests the CustomModel aggregate and value objects.
 use std::path::PathBuf;
 use uuid::Uuid;
-use vault::domain::custom_model::{
+use vault::features::custom_model::domain::{
     CustomModel, FileInfo, ModelArchitecture, ModelId, ModelMetadata, ModelName, ModelSource,
     SourceType, TaskType, ValidationStatus, MAX_MODEL_FILE_SIZE_BYTES,
 };
-use vault::infrastructure::persistence::repositories::{
+use vault::features::custom_model::repository::{
     CustomModelRepositoryTrait, MockCustomModelRepository,
 };
 

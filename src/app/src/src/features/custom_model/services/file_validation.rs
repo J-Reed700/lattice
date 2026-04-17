@@ -1,4 +1,4 @@
-use crate::domain::custom_model::{CustomModel, ModelArchitecture};
+use crate::features::custom_model::domain::{CustomModel, ModelArchitecture};
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
 use std::path::{Path, PathBuf};

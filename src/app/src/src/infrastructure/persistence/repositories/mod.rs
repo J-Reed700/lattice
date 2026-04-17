@@ -8,9 +8,6 @@ pub mod chunk_repository;
 // Vertical-slice migration (conversation): repository lives in features/conversation/repository.rs.
 #[path = "../../../features/conversation/repository.rs"]
 pub mod conversation_repository;
-// Vertical-slice migration (custom_model): repository lives in features/custom_model/repository.rs.
-#[path = "../../../features/custom_model/repository.rs"]
-pub mod custom_model_repository;
 pub mod document_repository;
 // Vertical-slice migration (download): downloaded_model repository lives in features/download/.
 #[path = "../../../features/download/downloaded_model_repository.rs"]
@@ -58,9 +55,6 @@ pub use batch_job_repository::BatchJobRepository;
 // Chunk removed - use crate::domain::entities::chunk::Chunk (DDD)
 pub use chunk_repository::ChunkRepository; // Repository only, not the old Chunk type
 pub use conversation_repository::ConversationRepository;
-pub use custom_model_repository::{
-    CustomModelRepository, CustomModelRepositoryTrait, MockCustomModelRepository,
-};
 // Document removed - use crate::domain::entities::Document (DDD)
 pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 pub use downloaded_model_repository::DownloadedModelRepository;

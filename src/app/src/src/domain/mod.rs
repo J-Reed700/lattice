@@ -73,9 +73,6 @@ pub mod conversation;
 pub mod conversation_summary;
 #[path = "modules/curated_models.rs"]
 pub mod curated_models;
-// Vertical-slice migration (custom_model): domain module lives in features/custom_model/domain.rs.
-#[path = "../features/custom_model/domain.rs"]
-pub mod custom_model;
 // Vertical-slice migration (download): domain modules live in features/download/domain/.
 #[path = "../features/download/domain/download.rs"]
 pub mod download;
@@ -203,13 +200,6 @@ pub use download_snapshot::{
 
 // Re-export downloaded model
 pub use downloaded_model::DownloadedModel;
-
-// Re-export custom model types
-pub use custom_model::{
-    CustomModel, FileInfo, ModelArchitecture, ModelId, ModelMetadata as CustomModelMetadata,
-    ModelName, ModelSource as CustomModelSource, SourceType, TaskType, ValidationStatus,
-    MAX_MODEL_FILE_SIZE_BYTES,
-};
 
 // Re-export model metadata types
 pub use model_metadata::{ModelFileMetadata, ModelMetadata, ModelType};

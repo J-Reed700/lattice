@@ -194,9 +194,6 @@ pub mod batch;
 // Vertical-slice migration (conversation): use cases live in features/conversation/use_cases/.
 #[path = "../../features/conversation/use_cases/mod.rs"]
 pub mod conversation;
-// Vertical-slice migration (custom_model): use cases live in features/custom_model/use_cases/.
-#[path = "../../features/custom_model/use_cases/mod.rs"]
-pub mod custom_model;
 // Vertical-slice migration (embedding): use cases live in features/embedding/use_cases/.
 #[path = "../../features/embedding/use_cases/mod.rs"]
 pub mod embedding;
@@ -245,10 +242,6 @@ pub use batch::{GetBatchFileStatusUseCase, StartBatchFileImportUseCase};
 pub use conversation::{
     CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
     GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
-};
-pub use custom_model::{
-    AddFromFileUseCase, AddFromUrlUseCase, DeleteUseCase as DeleteCustomModelUseCase,
-    ListUseCase as ListCustomModelsUseCase, ValidateUseCase as ValidateCustomModelUseCase,
 };
 pub use embedding::{
     GenerateBatchEmbeddingsUseCase, GenerateSingleEmbeddingUseCase, GetEmbeddingModelInfoUseCase,

@@ -1,4 +1,4 @@
-use crate::domain::custom_model::ModelArchitecture;
+use crate::features::custom_model::domain::ModelArchitecture;
 use std::path::Path;
 use url::Url;
 
