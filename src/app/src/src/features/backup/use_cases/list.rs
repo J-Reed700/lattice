@@ -18,7 +18,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::backup_dto::{BackupInfoDto, ListBackupsResultDto};
+use crate::features::backup::dto::{BackupInfoDto, ListBackupsResultDto};
 use crate::application::ports::BackupPort;
 use crate::shared::error::AppError;
 use std::path::PathBuf;

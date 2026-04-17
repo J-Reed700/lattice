@@ -16,7 +16,7 @@
 //! use_case.execute(PathBuf::from("/backups/vault_20240115.db")).await?;
 //! ```
 
-use crate::application::dtos::backup_dto::RestoreBackupResultDto;
+use crate::features::backup::dto::RestoreBackupResultDto;
 use crate::application::ports::BackupPort;
 use crate::shared::error::AppError;
 use std::path::PathBuf;

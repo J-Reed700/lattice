@@ -1,26 +1,24 @@
 //! # Backup feature
 //!
-//! Database + vault backup and restore, with optional auto-backup scheduler.
+//! Database + vault backup and restore, with optional auto-backup
+//! scheduler. Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! All files are loaded via `#[path]` redirects from their legacy module
-//! locations so existing imports keep working (Strangler Fig). Each file
-//! has exactly ONE canonical module path during migration:
+//! - `crate::features::backup::dto` — backup DTOs (BackupInfo, etc.)
+//! - `crate::features::backup::use_cases` — backup/restore use cases
+//! - `crate::features::backup::adapter::BackupAdapter` — SQLite impl
+//!   of `BackupPort`
+//! - `crate::features::backup::scheduler::BackupScheduler` — impl of
+//!   `BackupSchedulerPort`
+//! - `crate::features::backup::commands` — Tauri command handlers
+//! - `crate::features::backup::plugin::init()` — Tauri plugin
 //!
-//! | File               | Canonical module path                                       |
-//! |--------------------|-------------------------------------------------------------|
-//! | `dto.rs`           | `crate::application::dtos::backup_dto`                      |
-//! | `use_cases/`       | `crate::application::use_cases::backup`                     |
-//! | `adapter.rs`       | `crate::infrastructure::persistence::backup_adapter`        |
-//! | `scheduler.rs`     | `crate::infrastructure::services::backup_scheduler`         |
-//! | `commands.rs`      | `crate::interfaces::commands::backup` (aka `backup_commands`)|
-//! | `plugin.rs`        | `crate::plugins::backup_plugin`                             |
-//!
-//! The ports (`BackupPort`, `BackupSchedulerPort`) stay in
-//! `application/ports/` — features consume ports, they don't own them.
-//! (These ports are only used by backup code today, so they could
-//! graduate into the feature in a later pass if desired.)
-//!
-//! This module intentionally declares no submodules to avoid loading
-//! files under two module paths.
+//! `BackupPort` and `BackupSchedulerPort` stay in `application/ports/`.
+
+pub mod adapter;
+pub mod commands;
+pub mod dto;
+pub mod plugin;
+pub mod scheduler;
+pub mod use_cases;

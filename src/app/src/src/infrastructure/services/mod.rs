@@ -1,9 +1,6 @@
 // Domain service modules moved under domains/ for filesystem organization.
 #[path = "domains/article_extractor.rs"]
 pub mod article_extractor;
-// Vertical-slice migration (backup): scheduler lives in features/backup/scheduler.rs.
-#[path = "../../features/backup/scheduler.rs"]
-pub mod backup_scheduler;
 // Vertical-slice migration (batch): services live in features/batch/services/.
 #[path = "../../features/batch/services/file_import.rs"]
 pub mod batch_file_import;
@@ -96,7 +93,6 @@ pub use metadata_extraction::MetadataExtractor;
 pub use router::RouterService;
 
 // Re-export conversation service
-pub use backup_scheduler::BackupScheduler;
 pub use conversation_service::ConversationService;
 
 // Re-export tag service implementation

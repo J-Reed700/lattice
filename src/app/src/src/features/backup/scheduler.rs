@@ -3,7 +3,7 @@
 //! Runs scheduled backups using a simple interval-based scheduler.
 
 use crate::application::ports::{BackupSchedulerPort, SettingsRepositoryPort};
-use crate::application::use_cases::backup::CreateBackupUseCase;
+use crate::features::backup::use_cases::CreateBackupUseCase;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::path::PathBuf;

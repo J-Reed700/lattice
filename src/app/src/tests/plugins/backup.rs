@@ -1,6 +1,6 @@
 //! Smoke tests for Backup plugin DTOs
 
-use vault::interfaces::commands::backup::BackupInfo;
+use vault::features::backup::commands::BackupInfo;
 
 #[test]
 fn test_backup_info_creation() {

@@ -3,17 +3,15 @@
 //! Migrated from ipc/domains/backup.rs as part of Operation Scorched Earth Batch 4
 //! NOTE: delete_backup and get_backup_info NOT implemented per zen-architect spec
 
-use crate::interfaces::commands::backup;
+use crate::features::backup::commands as backup;
+use crate::features::backup::dto::{
+    BackupInfoDto, CreateBackupResultDto, ListBackupsResultDto, RestoreBackupResultDto,
+};
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime, State,
-};
-
-// Local DTOs for backup operations (using existing DTO structs)
-use crate::application::dtos::backup_dto::{
-    BackupInfoDto, CreateBackupResultDto, ListBackupsResultDto, RestoreBackupResultDto,
 };
 
 // Request DTOs defined locally

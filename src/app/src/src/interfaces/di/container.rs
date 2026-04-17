@@ -96,7 +96,7 @@ use crate::application::use_cases::cache::{
 };
 
 // Application Use Cases - Backup
-use crate::application::use_cases::backup::{
+use crate::features::backup::use_cases::{
     CreateBackupUseCase, ListBackupsUseCase, RestoreBackupUseCase, StartAutoBackupUseCase,
     StartupAutoBackupUseCase, StopAutoBackupUseCase,
 };
@@ -175,7 +175,7 @@ use crate::infrastructure::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
 use crate::infrastructure::model_cache_adapter::ModelCacheAdapter;
 use crate::features::metrics::adapter::MetricsAdapter;
-use crate::infrastructure::persistence::backup_adapter::BackupAdapter;
+use crate::features::backup::adapter::BackupAdapter;
 use crate::infrastructure::security::credentials_adapter::CredentialsAdapter;
 use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 use crate::features::updates::adapter::UpdateCheckerAdapter;

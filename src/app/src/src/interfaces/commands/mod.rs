@@ -1,9 +1,6 @@
 // Single-file command modules grouped under domains/ for filesystem organization.
 #[path = "domains/api_boundary.rs"]
 pub mod api_boundary;
-// Vertical-slice migration (backup): commands live in features/backup/commands.rs.
-#[path = "../../features/backup/commands.rs"]
-pub mod backup;
 // Vertical-slice migration (batch): commands live in features/batch/commands/.
 #[path = "../../features/batch/commands/file_import.rs"]
 pub mod batch_file_import;
@@ -86,7 +83,6 @@ pub mod web_ingest;
 mod command_tests;
 
 // Module aliases retained for migration/backward compatibility.
-pub use backup as backup_commands;
 pub use cache as cache_commands;
 pub use conversation as conversation_commands;
 pub use credentials as credentials_commands;

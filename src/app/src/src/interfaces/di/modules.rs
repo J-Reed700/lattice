@@ -119,7 +119,7 @@ use crate::application::use_cases::cache::{
 };
 
 // Application Use Cases - Backup
-use crate::application::use_cases::backup::{
+use crate::features::backup::use_cases::{
     CreateBackupUseCase, ListBackupsUseCase, RestoreBackupUseCase, StartAutoBackupUseCase,
     StartupAutoBackupUseCase, StopAutoBackupUseCase,
 };
@@ -2056,7 +2056,7 @@ pub struct SystemModule {
     startup_auto_backup_use_case: Arc<StartupAutoBackupUseCase>,
 
     // Backup scheduler
-    backup_scheduler: Arc<crate::infrastructure::services::BackupScheduler>,
+    backup_scheduler: Arc<crate::features::backup::scheduler::BackupScheduler>,
 
     // Use Cases - Updates
     check_for_updates_use_case: Arc<CheckForUpdatesUseCase>,
@@ -2108,7 +2108,7 @@ impl SystemModule {
         let cache = Arc::new(CacheAdapter::new(llm_cache)) as Arc<dyn CachePort>;
 
         // Backup Adapter (database backups)
-        use crate::infrastructure::persistence::backup_adapter::BackupAdapter;
+        use crate::features::backup::adapter::BackupAdapter;
         let db_path = core.data_dir().join("vault.db");
         let backup = Arc::new(BackupAdapter::new(db_pool.clone(), db_path)) as Arc<dyn BackupPort>;
 
@@ -2193,7 +2193,7 @@ impl SystemModule {
         let create_backup_use_case = Arc::new(CreateBackupUseCase::new(backup.clone()));
         let restore_backup_use_case = Arc::new(RestoreBackupUseCase::new(backup.clone()));
         let list_backups_use_case = Arc::new(ListBackupsUseCase::new(backup.clone()));
-        let backup_scheduler = Arc::new(crate::infrastructure::services::BackupScheduler::new(
+        let backup_scheduler = Arc::new(crate::features::backup::scheduler::BackupScheduler::new(
             create_backup_use_case.clone(),
             settings_repo.clone(),
         ));
@@ -2330,7 +2330,7 @@ impl SystemModule {
         &self.startup_auto_backup_use_case
     }
 
-    pub fn backup_scheduler(&self) -> &Arc<crate::infrastructure::services::BackupScheduler> {
+    pub fn backup_scheduler(&self) -> &Arc<crate::features::backup::scheduler::BackupScheduler> {
         &self.backup_scheduler
     }
 

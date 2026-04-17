@@ -16,7 +16,7 @@
 //! println!("Backup created at: {}", result.path);
 //! ```
 
-use crate::application::dtos::backup_dto::CreateBackupResultDto;
+use crate::features::backup::dto::CreateBackupResultDto;
 use crate::application::ports::BackupPort;
 use crate::shared::error::AppError;
 use std::path::PathBuf;
