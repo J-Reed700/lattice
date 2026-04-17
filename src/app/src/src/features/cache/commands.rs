@@ -34,7 +34,7 @@
 //!
 //! Manual clearing available via `clear_search_cache` command.
 
-use crate::infrastructure::cache::query_cache::QUERY_CACHE;
+use crate::features::cache::query_cache::QUERY_CACHE;
 use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 

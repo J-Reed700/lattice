@@ -113,11 +113,11 @@ fn main() {
             vault::features::favorites::plugin::get_favorites,
             vault::features::favorites::plugin::is_favorite,
             // Cache Plugin (5 commands)
-            vault::interfaces::commands::cache::clear_cache,
-            vault::interfaces::commands::cache::get_cache_stats,
-            vault::interfaces::commands::cache::get_cache_metrics,
-            vault::interfaces::commands::cache::clear_search_cache,
-            vault::interfaces::commands::cache::cache_operation,
+            vault::features::cache::commands::clear_cache,
+            vault::features::cache::commands::get_cache_stats,
+            vault::features::cache::commands::get_cache_metrics,
+            vault::features::cache::commands::clear_search_cache,
+            vault::features::cache::commands::cache_operation,
             // Embeddings Plugin (4 commands)
             vault::plugins::embeddings::embedding_operation,
             vault::plugins::embeddings::generate_embedding,

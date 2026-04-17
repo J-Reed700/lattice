@@ -8,7 +8,7 @@
 //! - Get cache size
 
 use crate::application::ports::cache_port::{CachePort, CacheStatsData};
-use crate::infrastructure::services::llm_cache::LlmCache;
+use crate::features::cache::llm_cache::LlmCache;
 use async_trait::async_trait;
 
 /// Cache adapter wrapping LlmCache

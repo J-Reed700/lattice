@@ -32,9 +32,6 @@ pub mod file_watch;
 pub mod function_executor;
 #[path = "../../features/function_calling/registry.rs"]
 pub mod function_registry;
-// Vertical-slice migration (cache): LlmCache lives in features/cache/llm_cache.rs.
-#[path = "../../features/cache/llm_cache.rs"]
-pub mod llm_cache;
 #[path = "domains/metadata_extraction.rs"]
 pub mod metadata_extraction;
 #[path = "domains/model_manager.rs"]

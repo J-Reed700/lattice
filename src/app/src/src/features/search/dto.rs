@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use super::cache_dto::CacheStatsDto;
+pub use crate::features::cache::dto::CacheStatsDto;
 
 /// Search result from infrastructure ports.
 ///

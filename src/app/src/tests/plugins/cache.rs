@@ -1,6 +1,6 @@
 //! Smoke tests for Cache plugin DTOs
 
-use vault::interfaces::commands::cache::{
+use vault::features::cache::commands::{
     CacheMetrics, CacheOperation, CacheResponse, SearchCacheStats,
 };
 

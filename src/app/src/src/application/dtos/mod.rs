@@ -31,9 +31,6 @@
 // Vertical-slice migration (batch): DTO lives in features/batch/dto.rs.
 #[path = "../../features/batch/dto.rs"]
 pub mod batch_dto;
-// Vertical-slice migration (cache): DTO physically lives in features/cache/dto.rs.
-#[path = "../../features/cache/dto.rs"]
-pub mod cache_dto;
 // Vertical-slice migration (conversation): DTOs live in features/conversation/.
 #[path = "../../features/conversation/dto.rs"]
 pub mod conversation_dto;
@@ -88,7 +85,6 @@ pub mod web_dto;
 
 // Re-export commonly used DTOs
 pub use batch_dto::*;
-pub use cache_dto::*;
 pub use conversation_dto::*;
 pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;

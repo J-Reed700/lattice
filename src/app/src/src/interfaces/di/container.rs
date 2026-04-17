@@ -91,7 +91,7 @@ use crate::application::use_cases::credentials::{
 };
 
 // Application Use Cases - Cache
-use crate::application::use_cases::cache::{
+use crate::features::cache::use_cases::{
     ClearCacheUseCase, GetCacheSizeUseCase, GetCacheStatsUseCase,
 };
 
@@ -169,7 +169,7 @@ use crate::infrastructure::persistence::repositories::{
 use crate::infrastructure::adapters::{
     ContentExtractionAdapter, SystemFileSystemAdapter, TokioChecksumAdapter,
 };
-use crate::infrastructure::cache::cache_adapter::CacheAdapter;
+use crate::features::cache::adapter::CacheAdapter;
 use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
 use crate::infrastructure::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
@@ -192,7 +192,7 @@ use crate::infrastructure::search::hybrid::HybridSearchService;
 use crate::infrastructure::services::context_manager::ContextManager;
 use crate::infrastructure::services::conversational_qa_service::ConversationalQAService;
 use crate::infrastructure::services::embedding::DynamicEmbeddingService;
-use crate::infrastructure::services::llm_cache::LlmCache;
+use crate::features::cache::llm_cache::LlmCache;
 use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
 use crate::infrastructure::services::tag_service_impl::TagServiceImpl;
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;

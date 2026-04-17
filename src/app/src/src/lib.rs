@@ -459,7 +459,7 @@ pub use application::{
 pub mod infrastructure;
 
 pub use infrastructure::{
-    audit, cache, extraction, file_system, llm, ml, observability, persistence, search, security,
+    audit, extraction, file_system, llm, ml, observability, persistence, search, security,
     services, web,
 };
 

@@ -8,9 +8,6 @@ pub mod batch_file_import;
 pub mod batch_history;
 #[path = "../../features/batch/commands/url_import.rs"]
 pub mod batch_url_import;
-// Vertical-slice migration (cache): commands live in features/cache/commands.rs.
-#[path = "../../features/cache/commands.rs"]
-pub mod cache;
 #[path = "domains/config.rs"]
 pub mod config;
 #[path = "domains/consolidated.rs"]
@@ -83,7 +80,6 @@ pub mod web_ingest;
 mod command_tests;
 
 // Module aliases retained for migration/backward compatibility.
-pub use cache as cache_commands;
 pub use conversation as conversation_commands;
 pub use credentials as credentials_commands;
 pub use file as file_commands;

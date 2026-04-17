@@ -15,7 +15,7 @@
 //! println!("Cache hit rate: {:.2}%", stats.hit_rate * 100.0);
 //! ```
 
-use crate::application::dtos::cache_dto::CacheStatsDto;
+use crate::features::cache::dto::CacheStatsDto;
 use crate::application::ports::CachePort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

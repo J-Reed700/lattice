@@ -1,27 +1,27 @@
 //! # Cache feature
 //!
 //! In-memory LLM response cache (tag results, query results) plus an
-//! adapter implementing `CachePort` so use cases can clear or inspect
-//! cache stats without knowing the backend.
+//! adapter implementing `CachePort`. Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File              | Canonical module path                                      |
-//! |-------------------|------------------------------------------------------------|
-//! | `dto.rs`          | `crate::application::dtos::cache_dto`                      |
-//! | `use_cases/`      | `crate::application::use_cases::cache`                     |
-//! | `adapter.rs`      | `crate::infrastructure::cache::cache_adapter`              |
-//! | `query_cache.rs`  | `crate::infrastructure::cache::query_cache`                |
-//! | `llm_cache.rs`    | `crate::infrastructure::services::llm_cache`               |
-//! | `commands.rs`     | `crate::interfaces::commands::cache` (aka `cache_commands`) |
-//! | `plugin.rs`       | `crate::plugins::cache_plugin`                             |
+//! - `crate::features::cache::dto` — cache DTOs (CacheStatsDto, etc.)
+//! - `crate::features::cache::use_cases` — cache management use cases
+//! - `crate::features::cache::adapter::CacheAdapter` — impl of `CachePort`
+//! - `crate::features::cache::query_cache` — query result cache
+//! - `crate::features::cache::llm_cache::LlmCache` — LLM response cache
+//! - `crate::features::cache::commands` — Tauri command handlers
+//! - `crate::features::cache::plugin::init()` — Tauri plugin
 //!
 //! `CachePort` stays in `application/ports/`.
 //!
-//! Model-related caches (`infrastructure/model_cache_adapter.rs`,
-//! `infrastructure/model_catalog_cache.rs`) are model-management
-//! concerns, not cache-feature concerns. They'll graduate with the
-//! model-management feature migration.
-//!
-//! The placeholder stub at `infrastructure/cache/llm_cache.rs` is an
-//! unused orphan (not registered in the cache mod.rs) and is left alone.
+//! Model-related caches (`model_cache_adapter`, `model_catalog_cache`)
+//! are part of the model_management feature, not this one.
+
+pub mod adapter;
+pub mod commands;
+pub mod dto;
+pub mod llm_cache;
+pub mod plugin;
+pub mod query_cache;
+pub mod use_cases;

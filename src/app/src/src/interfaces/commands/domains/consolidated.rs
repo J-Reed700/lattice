@@ -7,7 +7,7 @@
 //! operation, maintaining type safety while reducing the command surface area.
 
 // Re-export consolidated operations from individual modules
-pub use super::cache::{cache_operation, CacheOperation, CacheResponse};
+pub use crate::features::cache::commands::{cache_operation, CacheOperation, CacheResponse};
 pub use super::embeddings::{embedding_operation, EmbeddingOperation, EmbeddingResponse};
 pub use crate::features::favorites::commands::{favorite_operation, FavoriteOperation, FavoriteResponse};
 pub use crate::features::recent::commands::{

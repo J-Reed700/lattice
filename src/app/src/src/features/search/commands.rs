@@ -26,7 +26,7 @@ use crate::application::dtos::search_dto::{
 use crate::application::ports::RepositoryPort;
 use crate::domain::entities::Document;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::infrastructure::cache::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
+use crate::features::cache::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
 use crate::infrastructure::search::SearchMode;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::container::Container;

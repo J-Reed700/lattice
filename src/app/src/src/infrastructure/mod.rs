@@ -27,7 +27,6 @@
 
 pub mod adapters;
 pub mod audit;
-pub mod cache;
 pub mod crash;
 pub mod event_bus;
 pub mod events;

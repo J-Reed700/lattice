@@ -114,7 +114,7 @@ use crate::application::use_cases::settings::{
 };
 
 // Application Use Cases - Cache
-use crate::application::use_cases::cache::{
+use crate::features::cache::use_cases::{
     ClearCacheUseCase, GetCacheSizeUseCase, GetCacheStatsUseCase,
 };
 
@@ -2102,8 +2102,8 @@ impl SystemModule {
             as Arc<dyn SettingsRepositoryPort>;
 
         // Cache Adapter (LLM response caching)
-        use crate::infrastructure::cache::cache_adapter::CacheAdapter;
-        use crate::infrastructure::services::llm_cache::LlmCache;
+        use crate::features::cache::adapter::CacheAdapter;
+        use crate::features::cache::llm_cache::LlmCache;
         let llm_cache = LlmCache::new();
         let cache = Arc::new(CacheAdapter::new(llm_cache)) as Arc<dyn CachePort>;
 

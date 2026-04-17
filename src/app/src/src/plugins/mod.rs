@@ -53,9 +53,7 @@ pub mod web;
 // Vertical-slice migration (batch): plugin lives in features/batch/plugin.rs.
 #[path = "../features/batch/plugin.rs"]
 pub mod batch_plugin;
-// Vertical-slice migration (cache): plugin lives in features/cache/plugin.rs.
-#[path = "../features/cache/plugin.rs"]
-pub mod cache_plugin;
+// cache plugin lives in features/cache/plugin.rs. Use `crate::features::cache::plugin`.
 // Vertical-slice migration (conversation): plugin lives in features/conversation/plugin.rs.
 #[path = "../features/conversation/plugin.rs"]
 pub mod conversation_plugin;
@@ -104,7 +102,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         // Batch 2: Metadata & caching (tags, favorites, cache, mentions)
         tags_plugin::init(),
         crate::features::favorites::plugin::init(),
-        cache_plugin::init(),
+        crate::features::cache::plugin::init(),
         mention_plugin::init(),
         functions_plugin::init(),
         crate::features::daily_notes::plugin::init(),

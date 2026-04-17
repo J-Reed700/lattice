@@ -15,7 +15,7 @@
 //! println!("Cache using {} MB", size.size_bytes / 1_000_000);
 //! ```
 
-use crate::application::dtos::cache_dto::CacheSizeDto;
+use crate::features::cache::dto::CacheSizeDto;
 use crate::application::ports::CachePort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

@@ -9,7 +9,7 @@ pub use crate::interfaces::commands::search_commands::{
 };
 
 // Re-export cache command used alongside search operations.
-pub use crate::interfaces::commands::cache::clear_search_cache;
+pub use crate::features::cache::commands::clear_search_cache;
 
 // Compatibility aliases for older frontend call sites.
 pub use find_similar as search_by_tags;
