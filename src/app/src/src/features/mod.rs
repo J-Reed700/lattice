@@ -15,6 +15,7 @@ pub mod credentials;
 pub mod custom_model;
 pub mod daily_notes;
 pub mod download;
+pub mod extraction;
 pub mod favorites;
 pub mod file;
 pub mod function_calling;

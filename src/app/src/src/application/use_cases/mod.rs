@@ -205,6 +205,8 @@ pub mod credentials;
 #[path = "../../features/custom_model/use_cases/mod.rs"]
 pub mod custom_model;
 pub mod embedding;
+// Vertical-slice migration (extraction): use cases live in features/extraction/use_cases/.
+#[path = "../../features/extraction/use_cases/mod.rs"]
 pub mod extraction;
 // Vertical-slice migration (favorites): use cases live in features/favorites/use_cases/.
 #[path = "../../features/favorites/use_cases/mod.rs"]

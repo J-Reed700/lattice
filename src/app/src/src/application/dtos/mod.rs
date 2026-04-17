@@ -50,7 +50,8 @@ pub mod credential_dto;
 pub mod document_dto;
 #[path = "modules/embedding_dto.rs"]
 pub mod embedding_dto;
-#[path = "modules/extraction_dto.rs"]
+// Vertical-slice migration (extraction): DTO lives in features/extraction/dto.rs.
+#[path = "../../features/extraction/dto.rs"]
 pub mod extraction_dto;
 // Vertical-slice migration (favorites): DTO physically lives in features/favorites/dto.rs.
 #[path = "../../features/favorites/dto.rs"]

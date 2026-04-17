@@ -39,7 +39,8 @@ pub mod document_list;
 pub mod downloads;
 #[path = "domains/embeddings.rs"]
 pub mod embeddings;
-#[path = "domains/extraction.rs"]
+// Vertical-slice migration (extraction): commands live in features/extraction/commands.rs.
+#[path = "../../features/extraction/commands.rs"]
 pub mod extraction;
 // Vertical-slice migration (favorites): commands live in features/favorites/commands.rs.
 #[path = "../../features/favorites/commands.rs"]
