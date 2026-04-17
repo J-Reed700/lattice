@@ -209,6 +209,8 @@ pub mod extraction;
 // Vertical-slice migration (favorites): use cases live in features/favorites/use_cases/.
 #[path = "../../features/favorites/use_cases/mod.rs"]
 pub mod favorites;
+// Vertical-slice migration (file): use cases live in features/file/use_cases/.
+#[path = "../../features/file/use_cases/mod.rs"]
 pub mod file;
 // Vertical-slice migration (function_calling): use cases live in features/function_calling/use_cases/.
 #[path = "../../features/function_calling/use_cases/mod.rs"]

@@ -32,6 +32,8 @@ pub mod config;
 // Vertical-slice migration (credentials): plugin lives in features/credentials/plugin/.
 #[path = "../features/credentials/plugin/mod.rs"]
 pub mod credentials;
+// Vertical-slice migration (file): plugin lives in features/file/plugin/.
+#[path = "../features/file/plugin/mod.rs"]
 pub mod file;
 // Vertical-slice migration (health): plugin lives in features/health/plugin/.
 #[path = "../features/health/plugin/mod.rs"]
