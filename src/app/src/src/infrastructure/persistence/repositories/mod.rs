@@ -22,9 +22,6 @@ pub mod mention_repository;
 #[path = "../../../features/settings/repository.rs"]
 pub mod settings_repository;
 pub mod summary_repository;
-// Vertical-slice migration (tags): repository lives in features/tags/repository.rs.
-#[path = "../../../features/tags/repository.rs"]
-pub mod tag_repository;
 
 // Transaction-aware repository implementations (Tx modules)
 pub mod batch_job;
@@ -62,7 +59,7 @@ pub use embedding_repository::{Embedding, EmbeddingRepository};
 pub use mention_repository::MentionRepository;
 pub use settings_repository::SettingsRepository;
 pub use summary_repository::SummaryRepository;
-pub use tag_repository::TagRepository;
+pub use crate::features::tags::repository::TagRepository;
 
 // Type aliases for DI container compatibility
 pub type DocumentRepositoryImpl = DocumentRepository;

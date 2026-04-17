@@ -102,11 +102,11 @@ fn main() {
             vault::features::health::plugin::commands::get_version,
             vault::features::health::plugin::commands::initialize_database,
             // Tags Plugin (5 commands)
-            vault::plugins::tags_plugin::get_all_tags_with_counts,
-            vault::plugins::tags_plugin::get_document_tags,
-            vault::plugins::tags_plugin::apply_tags,
-            vault::plugins::tags_plugin::remove_tag_from_document,
-            vault::plugins::tags_plugin::generate_tags_for_document,
+            vault::features::tags::plugin::get_all_tags_with_counts,
+            vault::features::tags::plugin::get_document_tags,
+            vault::features::tags::plugin::apply_tags,
+            vault::features::tags::plugin::remove_tag_from_document,
+            vault::features::tags::plugin::generate_tags_for_document,
             // Favorites Plugin (4 commands)
             vault::features::favorites::plugin::add_favorite,
             vault::features::favorites::plugin::remove_favorite,

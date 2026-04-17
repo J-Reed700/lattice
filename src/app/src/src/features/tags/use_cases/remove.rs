@@ -1,6 +1,6 @@
 //! Remove Tag from Document Use Case
 
-use crate::application::dtos::tag_dto::RemoveTagRequestDto;
+use crate::features::tags::dto::RemoveTagRequestDto;
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

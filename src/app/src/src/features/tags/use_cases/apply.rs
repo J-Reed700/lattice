@@ -1,6 +1,6 @@
 //! Apply Tags Use Case
 
-use crate::application::dtos::tag_dto::{ApplyTagsRequestDto, ApplyTagsResponseDto, TagDto};
+use crate::features::tags::dto::{ApplyTagsRequestDto, ApplyTagsResponseDto, TagDto};
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

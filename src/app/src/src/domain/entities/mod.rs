@@ -18,9 +18,6 @@ pub mod model_file;
 // Vertical-slice migration (search): entity lives in features/search/entity.rs.
 #[path = "../../features/search/entity.rs"]
 pub mod search_result;
-// Vertical-slice migration (tags): entity lives in features/tags/entity.rs.
-#[path = "../../features/tags/entity.rs"]
-pub mod tag;
 
 // Re-export public types
 pub use chunk::Chunk;
@@ -30,4 +27,3 @@ pub use mention::{Mention, MentionType};
 pub use model::Model;
 pub use model_file::ModelFile;
 pub use search_result::SearchResult;
-pub use tag::Tag;

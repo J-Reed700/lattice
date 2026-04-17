@@ -45,11 +45,6 @@ pub mod search_enrichment_service;
 pub mod startup_reconciliation;
 #[path = "domains/sync.rs"]
 pub mod sync;
-// Vertical-slice migration (tags): services live in features/tags/.
-#[path = "../../features/tags/service.rs"]
-pub mod tag_service;
-#[path = "../../features/tags/service_impl.rs"]
-pub mod tag_service_impl;
 #[path = "domains/validated_path.rs"]
 pub mod validated_path;
 // Vertical-slice migration (web): services live in features/web/services/.
@@ -90,7 +85,7 @@ pub use router::RouterService;
 pub use conversation_service::ConversationService;
 
 // Re-export tag service implementation
-pub use tag_service_impl::TagServiceImpl;
+pub use crate::features::tags::service_impl::TagServiceImpl;
 
 // Re-export function calling services
 pub use article_extractor::ArticleExtractorService;

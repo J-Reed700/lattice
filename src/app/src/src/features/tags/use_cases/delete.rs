@@ -1,6 +1,6 @@
 //! Delete Tag Use Case
 
-use crate::application::dtos::tag_dto::DeleteTagRequestDto;
+use crate::features::tags::dto::DeleteTagRequestDto;
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

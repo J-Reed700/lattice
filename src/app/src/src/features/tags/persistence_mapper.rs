@@ -5,7 +5,7 @@
 //! This mapper implements the transformation layer between the anemic
 //! database model (used by SQLx) and the rich domain entity.
 
-use crate::domain::entities::Tag as DomainTag;
+use crate::features::tags::entity::Tag as DomainTag;
 use crate::domain_types::{TagId, TagName};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};

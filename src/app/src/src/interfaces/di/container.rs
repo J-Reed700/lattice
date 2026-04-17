@@ -38,7 +38,7 @@ use crate::application::use_cases::search::{
     FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
 };
 use crate::features::stats::use_cases::GetSystemStatsUseCase;
-use crate::application::use_cases::tags::{
+use crate::features::tags::use_cases::{
     ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
     GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
     UpdateTagUseCase,
@@ -144,7 +144,8 @@ use crate::llm::LLMClient;
 // Domain Entities and Aggregates (for type annotations)
 use crate::domain::entities::chunk::Chunk;
 use crate::domain::entities::document::Document;
-use crate::domain::entities::{Document as DocumentEntity, Tag as TagEntity};
+use crate::domain::entities::Document as DocumentEntity;
+use crate::features::tags::entity::Tag as TagEntity;
 
 // Infrastructure Implementations - ML & Search
 use crate::infrastructure::file_system::file_storage::SecureFileStorage;
@@ -194,7 +195,7 @@ use crate::infrastructure::services::conversational_qa_service::ConversationalQA
 use crate::infrastructure::services::embedding::DynamicEmbeddingService;
 use crate::features::cache::llm_cache::LlmCache;
 use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
-use crate::infrastructure::services::tag_service_impl::TagServiceImpl;
+use crate::features::tags::service_impl::TagServiceImpl;
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::infrastructure::services::traits::BatchFileImportServiceTrait;
 use crate::infrastructure::services::traits::BatchUrlImportServiceTrait;

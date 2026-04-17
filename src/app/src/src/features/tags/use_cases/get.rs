@@ -1,6 +1,6 @@
 //! Get Tags Use Case
 
-use crate::application::dtos::tag_dto::{TagDto, TagWithCountDto};
+use crate::features::tags::dto::{TagDto, TagWithCountDto};
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

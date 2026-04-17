@@ -46,8 +46,8 @@
 //! All tests must pass for migration to be approved.
 
 use crate::migration::container_helpers::*;
-use vault::interfaces::commands::health::*;
-use vault::interfaces::commands::tags::*;
+use vault::features::health::commands::*;
+use vault::features::tags::commands::*;
 use vault::interfaces::di::Container as ServiceContainer;
 use vault::shared::error::Result;
 use vault::infrastructure::persistence::repositories::TagRepository;

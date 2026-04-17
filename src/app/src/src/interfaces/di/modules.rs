@@ -63,7 +63,7 @@ use crate::application::use_cases::llm::{
 };
 
 // Application Use Cases - Tags
-use crate::application::use_cases::tags::{
+use crate::features::tags::use_cases::{
     ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
     GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
     UpdateTagUseCase,
@@ -1364,9 +1364,9 @@ impl AIModule {
             Arc::new(ListDownloadedModelsUseCase::new(model_storage.clone()));
 
         // AI-powered tags use cases - need TagService
-        use crate::application::use_cases::tags::AutoTagAllDocumentsUseCase;
-        use crate::application::use_cases::tags::GenerateTagsUseCase;
-        use crate::infrastructure::services::tag_service_impl::TagServiceImpl;
+        use crate::features::tags::use_cases::AutoTagAllDocumentsUseCase;
+        use crate::features::tags::use_cases::GenerateTagsUseCase;
+        use crate::features::tags::service_impl::TagServiceImpl;
         let tag_service = Arc::new(TagServiceImpl::new(db_pool.clone(), llm_cache.clone()))
             as Arc<dyn TagServiceTrait>;
 
@@ -1606,13 +1606,13 @@ impl LibraryModule {
         // === Build Services ===
 
         // Tag Service
-        use crate::infrastructure::services::tag_service::TagService;
+        use crate::features::tags::service::TagService;
         let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
 
         // === Build Use Cases ===
 
         // Tag use cases
-        use crate::application::use_cases::tags::*;
+        use crate::features::tags::use_cases::*;
         let create_tag_use_case = Arc::new(CreateTagUseCase::new(tag_service.clone()));
         let update_tag_use_case = Arc::new(UpdateTagUseCase::new(tag_service.clone()));
         let delete_tag_use_case = Arc::new(DeleteTagUseCase::new(tag_service.clone()));
@@ -1887,7 +1887,7 @@ impl FileOpsModule {
         let document_repo =
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
 
-        use crate::infrastructure::services::tag_service::TagService;
+        use crate::features::tags::service::TagService;
         let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
 
         // === Build Use Cases ===
@@ -2129,7 +2129,8 @@ impl SystemModule {
 
         // === Build Repos for Stats (read-only counts) ===
         use crate::application::ports::RepositoryPort;
-        use crate::domain::entities::{Chunk, Document as DocumentEntity, Tag as TagEntity};
+        use crate::domain::entities::{Chunk, Document as DocumentEntity};
+        use crate::features::tags::entity::Tag as TagEntity;
         use crate::infrastructure::persistence::repositories::{
             ChunkRepositoryImpl, DocumentRepositoryImpl, TagRepositoryImpl,
         };

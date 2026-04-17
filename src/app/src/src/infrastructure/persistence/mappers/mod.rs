@@ -44,9 +44,6 @@ pub mod document_mapper;
 // Vertical-slice migration (embedding): persistence mapper lives in features/embedding/.
 #[path = "../../../features/embedding/persistence_mapper.rs"]
 pub mod embedding_mapper;
-// Vertical-slice migration (tags): persistence mapper lives in features/tags/persistence_mapper.rs.
-#[path = "../../../features/tags/persistence_mapper.rs"]
-pub mod tag_mapper;
 // TODO: Add mention_mapper when mention entity structure is finalized
 
 // Re-export mappers (public API)
@@ -56,7 +53,7 @@ pub use conversation_mapper::{
 };
 pub use document_mapper::DocumentMapper;
 pub use embedding_mapper::EmbeddingMapper;
-pub use tag_mapper::TagMapper;
+pub use crate::features::tags::persistence_mapper::TagMapper;
 
 // DB models are private to infrastructure crate (prevent leakage)
 pub(crate) use chunk_mapper::ChunkModel;
@@ -64,4 +61,4 @@ pub(crate) use conversation_mapper::{
     ConversationMessageModel, ConversationModel, DocumentReferenceModel,
 };
 pub(crate) use document_mapper::DocumentModel;
-pub(crate) use tag_mapper::TagModel;
+pub(crate) use crate::features::tags::persistence_mapper::TagModel;

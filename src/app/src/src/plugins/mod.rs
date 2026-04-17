@@ -77,9 +77,7 @@ pub mod qa_plugin;
 // Vertical-slice migration (settings): plugin lives in features/settings/plugin.rs.
 #[path = "../features/settings/plugin.rs"]
 pub mod settings_plugin;
-// Vertical-slice migration (tags): plugin lives in features/tags/plugin.rs.
-#[path = "../features/tags/plugin.rs"]
-pub mod tags_plugin;
+// tags plugin lives in features/tags/plugin.rs. Use `crate::features::tags::plugin`.
 // updates plugin lives in features/updates/plugin.rs. Use `crate::features::updates::plugin`.
 
 use tauri::plugin::TauriPlugin;
@@ -96,7 +94,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::health::plugin::init(),
         settings_plugin::init(),
         // Batch 2: Metadata & caching (tags, favorites, cache, mentions)
-        tags_plugin::init(),
+        crate::features::tags::plugin::init(),
         crate::features::favorites::plugin::init(),
         crate::features::cache::plugin::init(),
         mention_plugin::init(),

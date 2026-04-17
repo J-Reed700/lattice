@@ -2,11 +2,11 @@
 //!
 //! Migrated from ipc/domains/tags.rs as part of Operation Scorched Earth Batch 2
 
-use crate::application::dtos::tag_dto::{
+use crate::features::tags::dto::{
     ApplyTagsRequestDto, ApplyTagsResponseDto, GenerateTagsRequestDto, GenerateTagsResponseDto,
     RemoveTagRequestDto, TagDto, TagWithCountDto,
 };
-use crate::interfaces::commands::tag_commands_full;
+use crate::features::tags::commands as tag_commands_full;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{

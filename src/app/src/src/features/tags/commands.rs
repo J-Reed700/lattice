@@ -5,7 +5,7 @@
 //! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
 //! and delegate business logic to dedicated use cases.
 
-use crate::application::dtos::tag_dto::*;
+use crate::features::tags::dto::*;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;

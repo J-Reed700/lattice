@@ -24,10 +24,5 @@ pub mod link_parser;
 pub mod pdf_extractor;
 pub mod text_extractor;
 
-// Vertical-slice migration (tags): generator lives in features/tags/generator.rs.
-#[path = "../../features/tags/generator.rs"]
-pub mod tag_generator;
-
 // Re-export public types
 pub use link_parser::{DocumentInfo, LinkParser, WikiLink};
-pub use tag_generator::TagGenerator;

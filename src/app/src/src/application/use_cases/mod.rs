@@ -227,9 +227,6 @@ pub mod search;
 // Vertical-slice migration (settings): use cases live in features/settings/use_cases/.
 #[path = "../../features/settings/use_cases/mod.rs"]
 pub mod settings;
-// Vertical-slice migration (tags): use cases live in features/tags/use_cases/.
-#[path = "../../features/tags/use_cases/mod.rs"]
-pub mod tags;
 // Vertical-slice migration (web): use cases live in features/web/use_cases/.
 #[path = "../../features/web/use_cases/mod.rs"]
 pub mod web;
@@ -271,10 +268,5 @@ pub use search::{FileSearchUseCase, HybridSearchUseCase, SemanticSearchUseCase};
 pub use settings::{
     ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
     UpdateSettingsUseCase, ValidateSettingsUseCase,
-};
-pub use tags::{
-    ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
-    GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
-    UpdateTagUseCase,
 };
 pub use web::{CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase};

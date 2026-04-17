@@ -7,11 +7,11 @@
 //! See infrastructure/extraction/tag_generator.rs for prompt helpers.
 
 use crate::application::ports::{LLMPort, RepositoryPort};
-use crate::infrastructure::extraction::tag_generator::{
+use crate::features::tags::generator::{
     DocumentMetadata, TagGenerator, TAG_GENERATION_SYSTEM_PROMPT,
 };
 use crate::infrastructure::persistence::repositories::{DocumentRepositoryImpl, TagRepository};
-use crate::infrastructure::services::tag_service::DocumentLockGuard;
+use crate::features::tags::service::DocumentLockGuard;
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::models::tag::{Tag, TagWithCount};
 use crate::shared::error::{AppError, Result};

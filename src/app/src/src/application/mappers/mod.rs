@@ -40,9 +40,6 @@ pub mod search_mapper;
 // Vertical-slice migration (settings): mapper lives in features/settings/mapper.rs.
 #[path = "../../features/settings/mapper.rs"]
 pub mod settings_mapper;
-// Vertical-slice migration (tags): mapper lives in features/tags/mapper.rs.
-#[path = "../../features/tags/mapper.rs"]
-pub mod tag_mapper;
 
 // Re-export mappers
 pub use conversation_mapper::{ConversationMapper, MessageMapper};
@@ -51,4 +48,3 @@ pub use indexing_mapper::IndexingMapper;
 pub use mention_mapper::MentionMapper;
 pub use search_mapper::SearchMapper;
 pub use settings_mapper::SettingsMapper;
-pub use tag_mapper::TagMapper;

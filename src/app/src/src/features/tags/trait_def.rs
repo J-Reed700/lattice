@@ -2,7 +2,7 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-pub use crate::infrastructure::services::tag_service::DocumentLockGuard;
+pub use crate::features::tags::service::DocumentLockGuard;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 
@@ -256,7 +256,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     ///
     /// # Returns
     /// `Some(TagEntity)` if found, `None` if not found
-    async fn find_by_name(&self, name: &str) -> Result<Option<crate::domain::entities::tag::Tag>>;
+    async fn find_by_name(&self, name: &str) -> Result<Option<crate::features::tags::entity::Tag>>;
 
     /// Get or create a tag by name (case-insensitive).
     ///
@@ -273,7 +273,7 @@ pub trait TagRepositoryTrait: Send + Sync {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::domain::entities::tag::Tag>;
+    ) -> Result<crate::features::tags::entity::Tag>;
 
     /// Find tag by ID
     ///
@@ -282,7 +282,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     ///
     /// # Returns
     /// `Some(TagEntity)` if found, `None` if not found
-    async fn find_by_id(&self, id: &str) -> Result<Option<crate::domain::entities::tag::Tag>>;
+    async fn find_by_id(&self, id: &str) -> Result<Option<crate::features::tags::entity::Tag>>;
 
     /// Find tags by filter criteria
     ///
@@ -294,25 +294,25 @@ pub trait TagRepositoryTrait: Send + Sync {
     async fn find_by_filter(
         &self,
         filter: &dyn crate::application::ports::Filter,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>>;
+    ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Find all tags
     ///
     /// # Returns
     /// Vector of all tag entities ordered by name
-    async fn find_all(&self) -> Result<Vec<crate::domain::entities::tag::Tag>>;
+    async fn find_all(&self) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Save tag entity (insert or update)
     ///
     /// # Arguments
     /// * `entity` - Tag entity to save
-    async fn save(&self, entity: &crate::domain::entities::tag::Tag) -> Result<()>;
+    async fn save(&self, entity: &crate::features::tags::entity::Tag) -> Result<()>;
 
     /// Save multiple tag entities in a transaction
     ///
     /// # Arguments
     /// * `entities` - Slice of tag entities to save
-    async fn save_batch(&self, entities: &[crate::domain::entities::tag::Tag]) -> Result<()>;
+    async fn save_batch(&self, entities: &[crate::features::tags::entity::Tag]) -> Result<()>;
 
     /// Delete tag by ID
     ///
@@ -351,7 +351,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>>;
+    ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Add tag to document (idempotent)
     ///
@@ -389,7 +389,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     ///
     /// # Returns
     /// Vector of tuples (tag, document_count) ordered by name
-    async fn get_all_with_counts(&self) -> Result<Vec<(crate::domain::entities::tag::Tag, i64)>>;
+    async fn get_all_with_counts(&self) -> Result<Vec<(crate::features::tags::entity::Tag, i64)>>;
 
     /// Update tag (name and/or color)
     ///
@@ -405,7 +405,7 @@ pub trait TagRepositoryTrait: Send + Sync {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::domain::entities::tag::Tag>;
+    ) -> Result<crate::features::tags::entity::Tag>;
 
     /// Add multiple tags to a document by tag names
     ///
@@ -421,7 +421,7 @@ pub trait TagRepositoryTrait: Send + Sync {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>>;
+    ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Get tags for multiple documents (optimized batch query)
     ///
@@ -433,7 +433,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     async fn get_tags_for_documents(
         &self,
         document_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, Vec<crate::domain::entities::tag::Tag>>>;
+    ) -> Result<std::collections::HashMap<String, Vec<crate::features::tags::entity::Tag>>>;
 
     /// Remove all tags from a document
     ///
@@ -451,7 +451,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     async fn get_or_create_batch(
         &self,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>>;
+    ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Bulk add tags to multiple documents
     ///
@@ -469,7 +469,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     ///
     /// # Returns
     /// Vector of all tag entities ordered by name
-    async fn get_all(&self) -> Result<Vec<crate::domain::entities::tag::Tag>> {
+    async fn get_all(&self) -> Result<Vec<crate::features::tags::entity::Tag>> {
         self.find_all().await
     }
 }

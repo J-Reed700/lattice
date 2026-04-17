@@ -1,6 +1,6 @@
 //! Update Tag Use Case
 
-use crate::application::dtos::tag_dto::{TagDto, UpdateTagRequestDto};
+use crate::features::tags::dto::{TagDto, UpdateTagRequestDto};
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

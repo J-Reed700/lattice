@@ -1,6 +1,6 @@
 //! Smoke tests for Tags plugin DTOs
 
-use vault::application::dtos::tag_dto::*;
+use vault::features::tags::dto::*;
 
 #[test]
 fn test_create_tag_request_dto() {

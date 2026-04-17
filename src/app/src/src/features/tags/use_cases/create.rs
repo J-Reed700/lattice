@@ -1,6 +1,6 @@
 //! Create Tag Use Case
 
-use crate::application::dtos::tag_dto::{CreateTagRequestDto, CreateTagResponseDto, TagDto};
+use crate::features::tags::dto::{CreateTagRequestDto, CreateTagResponseDto, TagDto};
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

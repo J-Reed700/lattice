@@ -119,7 +119,7 @@ impl TagServiceTrait for TagService {
         name: &str,
         color: Option<&str>,
     ) -> Result<crate::models::tag::Tag, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
             return Err(crate::error::AppError::InvalidInput(
@@ -142,7 +142,7 @@ impl TagServiceTrait for TagService {
         name: Option<&str>,
         color: Option<&str>,
     ) -> Result<crate::models::tag::Tag, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
             if n.is_empty() || n.len() > 100 {
@@ -162,7 +162,7 @@ impl TagServiceTrait for TagService {
     }
 
     async fn delete_tag(&self, tag_id: &str) -> Result<(), crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo
@@ -172,7 +172,7 @@ impl TagServiceTrait for TagService {
     }
 
     async fn get_all_tags(&self) -> Result<Vec<crate::models::tag::Tag>, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo
@@ -184,7 +184,7 @@ impl TagServiceTrait for TagService {
     async fn get_all_tags_with_counts(
         &self,
     ) -> Result<Vec<crate::models::tag::TagWithCount>, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         let results = tag_repo.get_all_with_counts().await.map_err(|e| {
@@ -207,7 +207,7 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
     ) -> Result<Vec<crate::models::tag::Tag>, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo
@@ -223,7 +223,7 @@ impl TagServiceTrait for TagService {
         document_id: &str,
         tag_names: Vec<String>,
     ) -> Result<Vec<crate::models::tag::Tag>, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
@@ -267,7 +267,7 @@ impl TagServiceTrait for TagService {
         document_id: &str,
         tag_id: &str,
     ) -> Result<(), crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo
@@ -280,7 +280,7 @@ impl TagServiceTrait for TagService {
         &self,
         tag_name: &str,
     ) -> Result<Vec<String>, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo
@@ -338,7 +338,7 @@ impl TagServiceTrait for TagService {
         name: &str,
         color: &str,
     ) -> Result<crate::models::tag::Tag, crate::error::AppError> {
-        use crate::infrastructure::persistence::repositories::tag_repository::TagRepository;
+        use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
             return Err(crate::error::AppError::InvalidInput(

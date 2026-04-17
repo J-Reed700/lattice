@@ -6,7 +6,7 @@
 //! Note: Tag domain models will be implemented in Phase 3. For now, this mapper provides
 //! the structure for future implementation.
 
-use crate::application::dtos::tag_dto::{CreateTagRequestDto, TagDto};
+use crate::features::tags::dto::{CreateTagRequestDto, TagDto};
 use crate::shared::domain_types::TagId;
 use crate::AppError;
 

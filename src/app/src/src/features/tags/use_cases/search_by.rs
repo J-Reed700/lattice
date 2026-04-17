@@ -1,6 +1,6 @@
 //! Search by Tag Use Case
 
-use crate::application::dtos::tag_dto::{SearchByTagRequestDto, SearchByTagResponseDto};
+use crate::features::tags::dto::{SearchByTagRequestDto, SearchByTagResponseDto};
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

@@ -58,9 +58,6 @@ pub mod qa_commands;
 // Vertical-slice migration (search): commands live in features/search/commands.rs.
 #[path = "../../features/search/commands.rs"]
 pub mod search_commands;
-// Vertical-slice migration (tags): commands live in features/tags/commands.rs.
-#[path = "../../features/tags/commands.rs"]
-pub mod tag_commands_full;
 // Vertical-slice migration (web): commands live in features/web/commands.rs.
 #[path = "../../features/web/commands.rs"]
 pub mod web_ingest;
@@ -74,4 +71,3 @@ mod command_tests;
 pub use conversation as conversation_commands;
 pub use file as file_commands;
 pub use mentions as mentions_commands;
-pub use tag_commands_full as tags;

@@ -70,9 +70,6 @@ pub mod search_dto;
 // Vertical-slice migration (settings): DTO lives in features/settings/dto/.
 #[path = "../../features/settings/dto/mod.rs"]
 pub mod settings;
-// Vertical-slice migration (tags): DTO physically lives in features/tags/dto.rs.
-#[path = "../../features/tags/dto.rs"]
-pub mod tag_dto;
 // Vertical-slice migration (web): DTO lives in features/web/dto.rs.
 #[path = "../../features/web/dto.rs"]
 pub mod web_dto;
@@ -93,5 +90,4 @@ pub use mention_dto::*;
 pub use qa_dto::*;
 pub use search_dto::*;
 pub use settings::*;
-pub use tag_dto::*;
 pub use web_dto::*;

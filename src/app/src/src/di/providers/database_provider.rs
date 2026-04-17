@@ -44,7 +44,8 @@
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, RepositoryPort,
 };
-use crate::domain::entities::{chunk::Chunk, tag::Tag, Document};
+use crate::domain::entities::{chunk::Chunk, Document};
+use crate::features::tags::entity::Tag;
 use crate::infrastructure::persistence::database::{initialize_database, run_migrations};
 use crate::infrastructure::persistence::repositories::{
     ChunkRepository, DocumentRepository, TagRepository,

@@ -8,7 +8,7 @@ use crate::infrastructure::services::traits::*;
 use crate::shared::error::Result;
 // Removed: use crate::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
 #[cfg(test)]
-pub use crate::infrastructure::services::tag_service::DocumentLockGuard;
+pub use crate::features::tags::service::DocumentLockGuard;
 #[cfg(test)]
 use crate::shared::domain_types::TagName;
 #[cfg(test)]
@@ -272,7 +272,7 @@ impl TagServiceTrait for MockTagService {
 ///
 /// Stores tag entities in-memory for deterministic testing without database dependencies.
 pub struct MockTagRepository {
-    tags: Arc<RwLock<std::collections::HashMap<String, crate::domain::entities::tag::Tag>>>,
+    tags: Arc<RwLock<std::collections::HashMap<String, crate::features::tags::entity::Tag>>>,
     name_index: Arc<RwLock<std::collections::HashMap<String, String>>>, // lowercase_name -> id
     document_tags: Arc<RwLock<std::collections::HashMap<String, Vec<String>>>>, // document_id -> tag_ids
 }
@@ -301,7 +301,7 @@ impl MockTagRepository {
     /// let tag = Tag::new(name, "#ff5733".to_string());
     /// mock.add_tag(tag);
     /// ```
-    pub fn add_tag(&self, tag: crate::domain::entities::tag::Tag) {
+    pub fn add_tag(&self, tag: crate::features::tags::entity::Tag) {
         let id = tag.id().as_str().to_string();
         let name_key = tag.name().as_str().to_lowercase();
 
@@ -342,7 +342,7 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(entity)
     }
 
-    async fn find_by_name(&self, name: &str) -> Result<Option<crate::domain::entities::tag::Tag>> {
+    async fn find_by_name(&self, name: &str) -> Result<Option<crate::features::tags::entity::Tag>> {
         let name_key = name.to_lowercase();
         let name_index = self.name_index.read().unwrap();
 
@@ -358,7 +358,7 @@ impl TagRepositoryTrait for MockTagRepository {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::domain::entities::tag::Tag> {
+    ) -> Result<crate::features::tags::entity::Tag> {
         // Try to find existing tag
         if let Some(tag) = self.find_by_name(name).await? {
             return Ok(tag);
@@ -368,7 +368,7 @@ impl TagRepositoryTrait for MockTagRepository {
         let tag_name = crate::domain_types::TagName::new(name.to_string())
             .map_err(|e| crate::error::AppError::InvalidData(format!("Invalid tag name: {}", e)))?;
         let tag_color = color.unwrap_or("#6366f1");
-        let tag = crate::domain::entities::tag::Tag::new(tag_name, tag_color.to_string());
+        let tag = crate::features::tags::entity::Tag::new(tag_name, tag_color.to_string());
 
         // Save to mock storage
         let id = tag.id().as_str().to_string();
@@ -380,26 +380,26 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(tag)
     }
 
-    async fn find_by_id(&self, id: &str) -> Result<Option<crate::domain::entities::tag::Tag>> {
+    async fn find_by_id(&self, id: &str) -> Result<Option<crate::features::tags::entity::Tag>> {
         Ok(self.tags.read().unwrap().get(id).cloned())
     }
 
     async fn find_by_filter(
         &self,
         _filter: &dyn crate::application::ports::Filter,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         // For mock, just return all tags
         self.find_all().await
     }
 
-    async fn find_all(&self) -> Result<Vec<crate::domain::entities::tag::Tag>> {
+    async fn find_all(&self) -> Result<Vec<crate::features::tags::entity::Tag>> {
         let mut tags: Vec<_> = self.tags.read().unwrap().values().cloned().collect();
         // Sort by name
         tags.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
         Ok(tags)
     }
 
-    async fn save(&self, entity: &crate::domain::entities::tag::Tag) -> Result<()> {
+    async fn save(&self, entity: &crate::features::tags::entity::Tag) -> Result<()> {
         let id = entity.id().as_str().to_string();
         let name_key = entity.name().as_str().to_lowercase();
 
@@ -412,7 +412,7 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(())
     }
 
-    async fn save_batch(&self, entities: &[crate::domain::entities::tag::Tag]) -> Result<()> {
+    async fn save_batch(&self, entities: &[crate::features::tags::entity::Tag]) -> Result<()> {
         for entity in entities {
             self.save(entity).await?;
         }
@@ -445,7 +445,7 @@ impl TagRepositoryTrait for MockTagRepository {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         let document_tags = self.document_tags.read().unwrap();
         let tag_ids = document_tags.get(document_id).cloned().unwrap_or_default();
 
@@ -492,7 +492,7 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(Vec::new())
     }
 
-    async fn get_all_with_counts(&self) -> Result<Vec<(crate::domain::entities::tag::Tag, i64)>> {
+    async fn get_all_with_counts(&self) -> Result<Vec<(crate::features::tags::entity::Tag, i64)>> {
         let tags = self.tags.read().unwrap();
         let document_tags = self.document_tags.read().unwrap();
 
@@ -519,7 +519,7 @@ impl TagRepositoryTrait for MockTagRepository {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::domain::entities::tag::Tag> {
+    ) -> Result<crate::features::tags::entity::Tag> {
         let mut tags = self.tags.write().unwrap();
         let tag = tags
             .get_mut(tag_id)
@@ -533,7 +533,7 @@ impl TagRepositoryTrait for MockTagRepository {
             None => tag.name().clone(),
         };
         let updated_color = color.unwrap_or(tag.color()).to_string();
-        let updated_tag = crate::domain::entities::tag::Tag::new(updated_name, updated_color);
+        let updated_tag = crate::features::tags::entity::Tag::new(updated_name, updated_color);
 
         *tag = updated_tag.clone();
         Ok(updated_tag)
@@ -543,7 +543,7 @@ impl TagRepositoryTrait for MockTagRepository {
         &self,
         _document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         // Mock: get or create tags
         let mut tags = Vec::new();
         for name in tag_names {
@@ -556,7 +556,7 @@ impl TagRepositoryTrait for MockTagRepository {
     async fn get_tags_for_documents(
         &self,
         _document_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, Vec<crate::domain::entities::tag::Tag>>> {
+    ) -> Result<std::collections::HashMap<String, Vec<crate::features::tags::entity::Tag>>> {
         // Mock: return empty map
         Ok(std::collections::HashMap::new())
     }
@@ -569,7 +569,7 @@ impl TagRepositoryTrait for MockTagRepository {
     async fn get_or_create_batch(
         &self,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::domain::entities::tag::Tag>> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         let mut tags = Vec::new();
         for name in tag_names {
             let tag = self.get_or_create(&name, None).await?;

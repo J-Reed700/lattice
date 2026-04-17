@@ -410,7 +410,6 @@ pub use application::{
         indexing_dto::{IndexFileRequestDto, IndexFileResponseDto},
         qa_dto::{QARequestDto, QAResponseDto},
         search_dto::{SearchRequestDto, SearchResponseDto, SearchResultDto},
-        tag_dto::{CreateTagRequestDto, TagDto},
     },
     mappers,
     ports::{
