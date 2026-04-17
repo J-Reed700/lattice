@@ -83,11 +83,11 @@ fn main() {
             vault::plugins::file::commands::reindex_file,
             vault::plugins::file::commands::validate_file_path,
             // Config Plugin (5 commands)
-            vault::plugins::config::commands::get_config,
-            vault::plugins::config::commands::save_config,
-            vault::plugins::config::commands::get_watch_folders,
-            vault::plugins::config::commands::add_watch_folder,
-            vault::plugins::config::commands::remove_watch_folder,
+            vault::features::config::plugin::commands::get_config,
+            vault::features::config::plugin::commands::save_config,
+            vault::features::config::plugin::commands::get_watch_folders,
+            vault::features::config::plugin::commands::add_watch_folder,
+            vault::features::config::plugin::commands::remove_watch_folder,
             // Credentials Plugin (7 commands)
             vault::plugins::credentials::commands::credentials_store,
             vault::plugins::credentials::commands::credentials_get,

@@ -28,9 +28,7 @@
 //! Plugins delegate to `interfaces/commands/*_impl` functions without duplication." - Gemini 3 Pro
 
 // Directory-backed plugin modules
-// Vertical-slice migration (config): plugin lives in features/config/plugin/.
-#[path = "../features/config/plugin/mod.rs"]
-pub mod config;
+// config plugin lives in features/config/plugin/. Use `crate::features::config::plugin`.
 // Vertical-slice migration (credentials): plugin lives in features/credentials/plugin/.
 #[path = "../features/credentials/plugin/mod.rs"]
 pub mod credentials;
@@ -95,7 +93,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         model::init(),
         search::init(),
         file::init(),
-        config::init(),
+        crate::features::config::plugin::init(),
         credentials::init(),
         crate::features::health::plugin::init(),
         settings_plugin::init(),
