@@ -65,7 +65,8 @@ pub mod initialization_dto;
 pub mod llm_dto;
 #[path = "modules/mention_dto.rs"]
 pub mod mention_dto;
-#[path = "modules/metric_dto.rs"]
+// Vertical-slice migration (metrics): DTO physically lives in features/metrics/dto.rs.
+#[path = "../../features/metrics/dto.rs"]
 pub mod metric_dto;
 // Vertical-slice migration (qa): DTO physically lives in features/qa/dto.rs.
 #[path = "../../features/qa/dto.rs"]

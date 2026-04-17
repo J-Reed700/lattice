@@ -9,5 +9,6 @@
 //! abstractions.
 
 pub mod backup;
+pub mod metrics;
 pub mod qa;
 pub mod updates;

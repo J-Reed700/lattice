@@ -206,6 +206,8 @@ pub mod indexing;
 pub mod initialization;
 pub mod llm;
 pub mod mentions;
+// Vertical-slice migration (metrics): use cases live in features/metrics/use_cases/.
+#[path = "../../features/metrics/use_cases/mod.rs"]
 pub mod metrics;
 pub mod model_management;
 // Vertical-slice migration (qa): use cases live in features/qa/use_cases/.
