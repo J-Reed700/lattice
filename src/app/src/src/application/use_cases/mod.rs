@@ -198,6 +198,8 @@ pub mod credentials;
 pub mod custom_model;
 pub mod embedding;
 pub mod extraction;
+// Vertical-slice migration (favorites): use cases live in features/favorites/use_cases/.
+#[path = "../../features/favorites/use_cases/mod.rs"]
 pub mod favorites;
 pub mod file;
 pub mod function_calling;

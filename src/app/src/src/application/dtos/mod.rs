@@ -49,7 +49,8 @@ pub mod document_dto;
 pub mod embedding_dto;
 #[path = "modules/extraction_dto.rs"]
 pub mod extraction_dto;
-#[path = "modules/favorite_dto.rs"]
+// Vertical-slice migration (favorites): DTO physically lives in features/favorites/dto.rs.
+#[path = "../../features/favorites/dto.rs"]
 pub mod favorite_dto;
 #[path = "modules/file_dto.rs"]
 pub mod file_dto;

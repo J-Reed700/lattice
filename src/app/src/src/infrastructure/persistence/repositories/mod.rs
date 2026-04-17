@@ -10,6 +10,8 @@ pub mod custom_model_repository;
 pub mod document_repository;
 pub mod downloaded_model_repository;
 pub mod embedding_repository;
+// Vertical-slice migration (favorites): repository lives in features/favorites/repository.rs.
+#[path = "../../../features/favorites/repository.rs"]
 pub mod favorites_repository;
 pub mod mention_repository;
 pub mod recent_documents_repository;

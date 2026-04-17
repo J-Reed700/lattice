@@ -9,6 +9,7 @@
 //! abstractions.
 
 pub mod backup;
+pub mod favorites;
 pub mod metrics;
 pub mod qa;
 pub mod updates;

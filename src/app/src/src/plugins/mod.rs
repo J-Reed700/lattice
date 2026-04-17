@@ -54,7 +54,8 @@ pub mod download_plugin;
 pub mod embeddings;
 #[path = "domains/extraction.rs"]
 pub mod extraction;
-#[path = "domains/favorites_plugin.rs"]
+// Vertical-slice migration (favorites): plugin lives in features/favorites/plugin.rs.
+#[path = "../features/favorites/plugin.rs"]
 pub mod favorites_plugin;
 #[path = "domains/functions_plugin.rs"]
 pub mod functions_plugin;
