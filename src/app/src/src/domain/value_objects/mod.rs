@@ -11,6 +11,8 @@
 pub mod checksum;
 pub mod chunking_strategy;
 pub mod file_metadata;
+// Vertical-slice migration (indexing): outcome value object lives in features/indexing/outcome.rs.
+#[path = "../../features/indexing/outcome.rs"]
 pub mod indexing_outcome;
 pub mod model_status;
 // Vertical-slice migration (search): value objects live in features/search/value_objects/.

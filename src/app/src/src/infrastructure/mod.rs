@@ -33,6 +33,8 @@ pub mod event_bus;
 pub mod events;
 pub mod extraction;
 pub mod file_system;
+// Vertical-slice migration (indexing): pipeline lives in features/indexing/engine/.
+#[path = "../features/indexing/engine/mod.rs"]
 pub mod indexing;
 pub mod llm;
 pub mod ml;

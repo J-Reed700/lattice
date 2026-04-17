@@ -222,6 +222,8 @@ pub mod function_calling;
 // Vertical-slice migration (health): use cases live in features/health/use_cases/.
 #[path = "../../features/health/use_cases/mod.rs"]
 pub mod health;
+// Vertical-slice migration (indexing): use cases live in features/indexing/use_cases/.
+#[path = "../../features/indexing/use_cases/mod.rs"]
 pub mod indexing;
 // Vertical-slice migration (initialization): use cases live in features/initialization/use_cases/.
 #[path = "../../features/initialization/use_cases/mod.rs"]

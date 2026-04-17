@@ -184,34 +184,23 @@
 //! 3. **Monitor Queue**: Use progress tracking to avoid overwhelming system
 //! 4. **Tune Chunk Size**: Balance between context and precision
 
-// Single-file modules grouped under modules/ for filesystem organization.
-#[path = "modules/actor.rs"]
+// Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod actor;
-#[path = "modules/builder.rs"]
 pub mod builder;
-#[path = "modules/chunker.rs"]
 pub mod chunker;
-#[path = "modules/error.rs"]
 pub mod error;
-#[path = "modules/error_ext.rs"]
 pub mod error_ext;
-#[path = "modules/events.rs"]
 pub mod events;
 pub mod extraction;
-#[path = "modules/metadata_extractor.rs"]
 pub mod metadata_extractor;
-#[path = "modules/progress.rs"]
 pub mod progress;
-#[path = "modules/queue.rs"]
 pub mod queue;
-#[path = "modules/state.rs"]
 pub mod state;
 pub mod storage;
 // Kept at root due SQLx offline query metadata path sensitivity.
 pub mod transaction;
 
 #[cfg(test)]
-#[path = "modules/indexer_tests.rs"]
 mod indexer_tests;
 
 pub use actor::{IndexingActor, IndexingService};
@@ -230,5 +219,4 @@ pub use storage::IndexStorage;
 pub use transaction::FileIndexTransaction;
 
 #[cfg(test)]
-#[path = "modules/chunker_test.rs"]
 mod chunker_test;

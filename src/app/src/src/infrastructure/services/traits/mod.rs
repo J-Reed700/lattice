@@ -37,6 +37,8 @@ mod file_storage;
 // Vertical-slice migration (function_calling): trait lives in features/function_calling/trait_def.rs.
 #[path = "../../../features/function_calling/trait_def.rs"]
 mod function;
+// Vertical-slice migration (indexing): trait lives in features/indexing/trait_def.rs.
+#[path = "../../../features/indexing/trait_def.rs"]
 mod indexing;
 // Vertical-slice migration (mentions): trait lives in features/mentions/trait_def.rs.
 #[path = "../../../features/mentions/trait_def.rs"]

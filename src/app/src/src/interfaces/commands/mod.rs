@@ -58,7 +58,8 @@ pub mod health_commands;
 // Vertical-slice migration (huggingface): HF token commands live in features/huggingface/commands.rs.
 #[path = "../../features/huggingface/commands.rs"]
 pub mod hf_settings;
-#[path = "domains/indexing_commands.rs"]
+// Vertical-slice migration (indexing): commands live in features/indexing/commands.rs.
+#[path = "../../features/indexing/commands.rs"]
 pub mod indexing_commands;
 // Vertical-slice migration (initialization): commands live in features/initialization/commands.rs.
 #[path = "../../features/initialization/commands.rs"]

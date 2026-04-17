@@ -66,7 +66,8 @@ pub mod function_calling_dto;
 // Vertical-slice migration (health): DTO physically lives in features/health/dto.rs.
 #[path = "../../features/health/dto.rs"]
 pub mod health_dto;
-#[path = "modules/indexing_dto.rs"]
+// Vertical-slice migration (indexing): DTO lives in features/indexing/dto.rs.
+#[path = "../../features/indexing/dto.rs"]
 pub mod indexing_dto;
 // Vertical-slice migration (initialization): DTO lives in features/initialization/dto.rs.
 #[path = "../../features/initialization/dto.rs"]

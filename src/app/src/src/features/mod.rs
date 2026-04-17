@@ -23,6 +23,7 @@ pub mod file;
 pub mod function_calling;
 pub mod health;
 pub mod huggingface;
+pub mod indexing;
 pub mod initialization;
 pub mod mentions;
 pub mod metrics;

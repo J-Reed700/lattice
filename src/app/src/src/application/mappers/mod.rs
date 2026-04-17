@@ -29,6 +29,8 @@ pub mod document_mapper;
 // Vertical-slice migration (favorites): mapper lives in features/favorites/mapper.rs.
 #[path = "../../features/favorites/mapper.rs"]
 pub mod favorite_mapper;
+// Vertical-slice migration (indexing): mapper lives in features/indexing/mapper.rs.
+#[path = "../../features/indexing/mapper.rs"]
 pub mod indexing_mapper;
 // Vertical-slice migration (mentions): mapper lives in features/mentions/mapper.rs.
 #[path = "../../features/mentions/mapper.rs"]
