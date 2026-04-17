@@ -85,7 +85,8 @@ pub mod downloaded_model;
 pub mod embedding_constants;
 #[path = "modules/error.rs"]
 pub mod error;
-#[path = "modules/function_call.rs"]
+// Vertical-slice migration (function_calling): domain module lives in features/function_calling/domain.rs.
+#[path = "../features/function_calling/domain.rs"]
 pub mod function_call;
 #[path = "modules/metadata.rs"]
 pub mod metadata;

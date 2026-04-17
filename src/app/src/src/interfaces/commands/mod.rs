@@ -45,7 +45,8 @@ pub mod extraction;
 pub mod favorites;
 #[path = "domains/file.rs"]
 pub mod file;
-#[path = "domains/function_calling_commands.rs"]
+// Vertical-slice migration (function_calling): commands live in features/function_calling/commands.rs.
+#[path = "../../features/function_calling/commands.rs"]
 pub mod function_calling_commands;
 // Vertical-slice migration (health): commands live in features/health/commands.rs.
 #[path = "../../features/health/commands.rs"]

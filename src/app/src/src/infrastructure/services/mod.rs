@@ -28,9 +28,10 @@ pub mod file_cleanup;
 pub mod file_type_detector;
 #[path = "domains/file_watch.rs"]
 pub mod file_watch;
-#[path = "domains/function_executor.rs"]
+// Vertical-slice migration (function_calling): executor + registry live in features/function_calling/.
+#[path = "../../features/function_calling/executor.rs"]
 pub mod function_executor;
-#[path = "domains/function_registry.rs"]
+#[path = "../../features/function_calling/registry.rs"]
 pub mod function_registry;
 // Vertical-slice migration (cache): LlmCache lives in features/cache/llm_cache.rs.
 #[path = "../../features/cache/llm_cache.rs"]

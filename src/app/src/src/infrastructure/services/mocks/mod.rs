@@ -9,6 +9,8 @@ mod mock_conversation;
 mod mock_document;
 mod mock_embedding;
 mod mock_file_storage;
+// Vertical-slice migration (function_calling): mock lives in features/function_calling/mocks.rs.
+#[path = "../../../features/function_calling/mocks.rs"]
 mod mock_function;
 mod mock_indexing;
 // Vertical-slice migration (mentions): mock lives in features/mentions/mocks.rs.

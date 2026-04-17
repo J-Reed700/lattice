@@ -57,7 +57,8 @@ pub mod extraction_dto;
 pub mod favorite_dto;
 #[path = "modules/file_dto.rs"]
 pub mod file_dto;
-#[path = "modules/function_calling_dto.rs"]
+// Vertical-slice migration (function_calling): DTO lives in features/function_calling/dto.rs.
+#[path = "../../features/function_calling/dto.rs"]
 pub mod function_calling_dto;
 // Vertical-slice migration (health): DTO physically lives in features/health/dto.rs.
 #[path = "../../features/health/dto.rs"]

@@ -64,7 +64,8 @@ pub mod extraction;
 // Vertical-slice migration (favorites): plugin lives in features/favorites/plugin.rs.
 #[path = "../features/favorites/plugin.rs"]
 pub mod favorites_plugin;
-#[path = "domains/functions_plugin.rs"]
+// Vertical-slice migration (function_calling): plugin lives in features/function_calling/plugin.rs.
+#[path = "../features/function_calling/plugin.rs"]
 pub mod functions_plugin;
 #[path = "domains/huggingface.rs"]
 pub mod huggingface;
