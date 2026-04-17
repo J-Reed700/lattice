@@ -1,6 +1,6 @@
 //! Smoke tests for Health plugin DTOs
 
-use vault::interfaces::commands::health_commands::HealthStatus;
+use vault::features::health::commands::HealthStatus;
 
 #[test]
 fn test_health_status_creation() {

@@ -97,10 +97,10 @@ fn main() {
             vault::plugins::credentials::commands::credentials_set_endpoint,
             vault::plugins::credentials::commands::credentials_get_endpoint,
             // Health Plugin (4 commands)
-            vault::plugins::health::commands::health_check,
-            vault::plugins::health::commands::get_system_stats,
-            vault::plugins::health::commands::get_version,
-            vault::plugins::health::commands::initialize_database,
+            vault::features::health::plugin::commands::health_check,
+            vault::features::health::plugin::commands::get_system_stats,
+            vault::features::health::plugin::commands::get_version,
+            vault::features::health::plugin::commands::initialize_database,
             // Tags Plugin (5 commands)
             vault::plugins::tags_plugin::get_all_tags_with_counts,
             vault::plugins::tags_plugin::get_document_tags,

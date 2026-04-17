@@ -54,9 +54,6 @@ pub mod file;
 // Vertical-slice migration (function_calling): commands live in features/function_calling/commands.rs.
 #[path = "../../features/function_calling/commands.rs"]
 pub mod function_calling_commands;
-// Vertical-slice migration (health): commands live in features/health/commands.rs.
-#[path = "../../features/health/commands.rs"]
-pub mod health_commands;
 // Vertical-slice migration (huggingface): HF token commands live in features/huggingface/commands.rs.
 #[path = "../../features/huggingface/commands.rs"]
 pub mod hf_settings;
@@ -113,7 +110,6 @@ pub use conversation as conversation_commands;
 pub use credentials as credentials_commands;
 pub use favorites as favorites_commands;
 pub use file as file_commands;
-pub use health_commands as health;
 pub use mentions as mentions_commands;
 pub use recent_documents as recent_commands;
 pub use tag_commands_full as tags;

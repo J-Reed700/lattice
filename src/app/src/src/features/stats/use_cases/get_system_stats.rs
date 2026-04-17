@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::health_dto::SystemStatsDto;
+use crate::features::health::dto::SystemStatsDto;
 use crate::application::ports::{DatabaseStatsPort, RepositoryPort};
 use crate::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity, Tag as TagEntity};
 use crate::shared::error::Result;

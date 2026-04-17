@@ -25,7 +25,7 @@ use std::sync::RwLock;
 use std::time::Instant;
 
 // Application Use Cases - Core
-use crate::application::use_cases::health::HealthCheckUseCase;
+use crate::features::health::use_cases::HealthCheckUseCase;
 use crate::application::use_cases::indexing::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,

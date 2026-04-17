@@ -27,7 +27,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use crate::application::dtos::health_dto::HealthCheckResponseDto;
+use crate::features::health::dto::HealthCheckResponseDto;
 use crate::application::ports::{EmbeddingPort, LLMPort};
 use crate::shared::error::Result;
 

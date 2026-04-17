@@ -37,9 +37,7 @@ pub mod credentials;
 // Vertical-slice migration (file): plugin lives in features/file/plugin/.
 #[path = "../features/file/plugin/mod.rs"]
 pub mod file;
-// Vertical-slice migration (health): plugin lives in features/health/plugin/.
-#[path = "../features/health/plugin/mod.rs"]
-pub mod health;
+// health plugin lives in features/health/plugin/. Use `crate::features::health::plugin`.
 // Vertical-slice migration (model_management): plugin lives in features/model_management/plugin/.
 #[path = "../features/model_management/plugin/mod.rs"]
 pub mod model;
@@ -111,7 +109,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         file::init(),
         config::init(),
         credentials::init(),
-        health::init(),
+        crate::features::health::plugin::init(),
         settings_plugin::init(),
         // Batch 2: Metadata & caching (tags, favorites, cache, mentions)
         tags_plugin::init(),

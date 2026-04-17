@@ -102,7 +102,7 @@ use crate::application::use_cases::extraction::{
 };
 
 // Application Use Cases - Health
-use crate::application::use_cases::health::HealthCheckUseCase;
+use crate::features::health::use_cases::HealthCheckUseCase;
 use crate::application::use_cases::initialization::{
     InitializeDatabaseUseCase, InitializeModelsUseCase,
 };

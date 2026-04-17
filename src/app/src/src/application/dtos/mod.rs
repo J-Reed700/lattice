@@ -64,9 +64,6 @@ pub mod file_dto;
 // Vertical-slice migration (function_calling): DTO lives in features/function_calling/dto.rs.
 #[path = "../../features/function_calling/dto.rs"]
 pub mod function_calling_dto;
-// Vertical-slice migration (health): DTO physically lives in features/health/dto.rs.
-#[path = "../../features/health/dto.rs"]
-pub mod health_dto;
 // Vertical-slice migration (indexing): DTO lives in features/indexing/dto.rs.
 #[path = "../../features/indexing/dto.rs"]
 pub mod indexing_dto;
@@ -120,7 +117,6 @@ pub use extraction_dto::*;
 pub use favorite_dto::*;
 pub use file_dto::*;
 pub use function_calling_dto::*;
-pub use health_dto::*;
 pub use indexing_dto::*;
 pub use initialization_dto::*;
 pub use llm_dto::*;

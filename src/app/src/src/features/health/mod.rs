@@ -1,20 +1,19 @@
 //! # Health feature
 //!
 //! System health check + version info + database initialization.
+//! Self-contained vertical slice — exposes its modules directly.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File            | Canonical module path                                       |
-//! |-----------------|-------------------------------------------------------------|
-//! | `dto.rs`        | `crate::application::dtos::health_dto`                      |
-//! | `use_cases/`    | `crate::application::use_cases::health`                     |
-//! | `commands.rs`   | `crate::interfaces::commands::health_commands` (aka `health`)|
-//! | `plugin/`       | `crate::plugins::health` (directory plugin with commands + types) |
-//!
-//! First migration to include a *directory-shaped* plugin (as opposed
-//! to the single-file `<name>_plugin.rs` pattern). The plugin keeps
-//! its internal structure (`plugin/commands.rs`, `plugin/types.rs`)
-//! and is wired through a single `#[path]` redirect on `plugins::health`.
+//! - `crate::features::health::dto` — DTOs (HealthCheckResponseDto, SystemStatsDto)
+//! - `crate::features::health::use_cases::HealthCheckUseCase`
+//! - `crate::features::health::commands` — Tauri command handlers
+//! - `crate::features::health::plugin` — Tauri plugin (`init()`)
 //!
 //! No ports, repositories, or traits — health is a thin diagnostics
 //! feature.
+
+pub mod commands;
+pub mod dto;
+pub mod plugin;
+pub mod use_cases;

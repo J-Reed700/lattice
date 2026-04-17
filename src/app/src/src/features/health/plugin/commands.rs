@@ -1,6 +1,6 @@
 //! Health plugin commands - system health and diagnostics
 
-use crate::interfaces::commands::health_commands;
+use crate::features::health::commands as health_commands;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::{ApiError, ErrorCode};
 use tauri::State;
