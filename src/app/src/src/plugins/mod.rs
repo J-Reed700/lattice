@@ -61,9 +61,7 @@ pub mod cache_plugin;
 // Vertical-slice migration (conversation): plugin lives in features/conversation/plugin.rs.
 #[path = "../features/conversation/plugin.rs"]
 pub mod conversation_plugin;
-// Vertical-slice migration (daily_notes): plugin lives in features/daily_notes/plugin.rs.
-#[path = "../features/daily_notes/plugin.rs"]
-pub mod daily_notes_plugin;
+// daily_notes plugin lives in features/daily_notes/plugin.rs. Use `crate::features::daily_notes::plugin`.
 // Vertical-slice migration (download): plugin lives in features/download/plugin.rs.
 #[path = "../features/download/plugin.rs"]
 pub mod download_plugin;
@@ -115,7 +113,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         cache_plugin::init(),
         mention_plugin::init(),
         functions_plugin::init(),
-        daily_notes_plugin::init(),
+        crate::features::daily_notes::plugin::init(),
         // Batch 3: AI services (embeddings, huggingface, extraction, web)
         embeddings::init(),
         huggingface::init(),

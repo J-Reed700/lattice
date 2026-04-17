@@ -31,9 +31,6 @@ pub mod credentials;
 // Vertical-slice migration (custom_model): commands live in features/custom_model/commands.rs.
 #[path = "../../features/custom_model/commands.rs"]
 pub mod custom_model_commands;
-// Vertical-slice migration (daily_notes): commands live in features/daily_notes/commands.rs.
-#[path = "../../features/daily_notes/commands.rs"]
-pub mod daily_notes_workspace;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
 // Vertical-slice migration (download): commands live in features/download/commands.rs.

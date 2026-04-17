@@ -1,14 +1,15 @@
 //! # Daily notes feature
 //!
 //! Daily journal workspace management — creating per-day entries in
-//! a designated workspace folder.
+//! a designated workspace folder. Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File          | Canonical module path                                    |
-//! |---------------|----------------------------------------------------------|
-//! | `commands.rs` | `crate::interfaces::commands::daily_notes_workspace`     |
-//! | `plugin.rs`   | `crate::plugins::daily_notes_plugin`                     |
+//! - `crate::features::daily_notes::commands` — Tauri command handlers
+//! - `crate::features::daily_notes::plugin::init()` — Tauri plugin
 //!
 //! Thin feature — all logic lives in the command file. No DTO,
 //! use case, port, or repository.
+
+pub mod commands;
+pub mod plugin;
