@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::{debug, warn};
 
-use crate::application::dtos::function_calling_dto::WebSearchResult;
+use crate::features::function_calling::dto::WebSearchResult;
 use crate::application::dtos::qa_dto::{SourceChunkExcerptDto, SourceDto};
 use crate::application::dtos::search_dto::SearchResultDto;
 use crate::interfaces::di::Container;

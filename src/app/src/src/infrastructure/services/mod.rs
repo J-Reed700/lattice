@@ -17,11 +17,6 @@ pub mod file_cleanup;
 pub mod file_type_detector;
 #[path = "domains/file_watch.rs"]
 pub mod file_watch;
-// Vertical-slice migration (function_calling): executor + registry live in features/function_calling/.
-#[path = "../../features/function_calling/executor.rs"]
-pub mod function_executor;
-#[path = "../../features/function_calling/registry.rs"]
-pub mod function_registry;
 #[path = "domains/metadata_extraction.rs"]
 pub mod metadata_extraction;
 #[path = "domains/model_manager.rs"]
@@ -78,8 +73,8 @@ pub use crate::features::tags::service_impl::TagServiceImpl;
 pub use article_extractor::ArticleExtractorService;
 pub use crate::features::batch::services::file_import::BatchFileImportService;
 pub use crate::features::batch::services::url_import::BatchUrlImportService;
-pub use function_executor::FunctionExecutor;
-pub use function_registry::{
+pub use crate::features::function_calling::executor::FunctionExecutor;
+pub use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools, FunctionRegistry,
 };
 pub use web_archive_service::WebArchiveService;

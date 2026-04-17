@@ -27,7 +27,7 @@
 //! // - fetch_url_content
 //! ```
 
-use crate::domain::function_call::ToolDefinition;
+use crate::features::function_calling::domain::ToolDefinition;
 use crate::infrastructure::services::traits::FunctionRegistryTrait;
 use crate::shared::result::Result;
 use serde::{Deserialize, Serialize};
@@ -133,7 +133,7 @@ impl ListAvailableFunctionsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::function_registry::FunctionRegistry;
+    use crate::features::function_calling::registry::FunctionRegistry;
     use serde_json::json;
 
     #[tokio::test]

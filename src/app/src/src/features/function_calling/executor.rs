@@ -29,13 +29,13 @@
 //! # }
 //! ```
 
-use crate::application::dtos::function_calling_dto::*;
+use crate::features::function_calling::dto::*;
 use crate::application::dtos::settings::CustomToolSettingsDto;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
     RecentDocumentsRepositoryPort,
 };
-use crate::domain::function_call::{FunctionCall, FunctionResult};
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::infrastructure::search::hybrid::{HybridSearchResult, SearchMode as HybridSearchMode};
 use crate::infrastructure::search::service::SearchResult as InfraSearchResult;
 use crate::infrastructure::services::traits::{
@@ -1415,7 +1415,7 @@ mod tests {
     use crate::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
     use crate::domain::value_objects::Checksum;
     use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
-    use crate::infrastructure::services::function_registry::FunctionRegistry;
+    use crate::features::function_calling::registry::FunctionRegistry;
     use crate::infrastructure::services::mocks::{
         MockBM25Search, MockEmbeddingService, MockFunctionRegistry, MockHybridSearch,
         MockSearchService, MockTagService, MockWebService,
@@ -1705,7 +1705,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_arguments() {
-        use crate::domain::function_call::ToolDefinition;
+        use crate::features::function_calling::domain::ToolDefinition;
         use serde_json::json;
 
         let registry = Arc::new(MockFunctionRegistry::new());
@@ -1825,7 +1825,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_document_supports_internal_pagination() {
         use crate::application::ports::DocumentRepository;
-        use crate::domain::function_call::ToolDefinition;
+        use crate::features::function_calling::domain::ToolDefinition;
         use crate::shared::domain_types::ValidatedFilePath;
         use serde_json::json;
 

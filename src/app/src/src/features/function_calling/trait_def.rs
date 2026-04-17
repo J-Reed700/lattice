@@ -3,7 +3,7 @@
 //! This module defines trait interfaces for dependency injection.
 
 use crate::application::dtos::settings::CustomToolSettingsDto;
-use crate::domain::function_call::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;

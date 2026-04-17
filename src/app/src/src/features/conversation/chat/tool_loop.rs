@@ -1,9 +1,7 @@
 use crate::application::dtos::settings::{LLMPromptSettingsDto, ToolOutputSettingsDto};
-use crate::application::dtos::{
-    function_calling_dto::{
-        FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
-    },
-    qa_dto::SourceDto,
+use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::function_calling::dto::{
+    FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -247,7 +245,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 "Executing tool call from LLM"
                             );
 
-                            let call = crate::domain::function_call::FunctionCall::new(
+                            let call = crate::features::function_calling::domain::FunctionCall::new(
                                 uuid::Uuid::new_v4().to_string(),
                                 resolved_tool,
                                 tc.arguments.clone(),
@@ -404,7 +402,7 @@ fn elapsed_ms(start: Instant) -> u64 {
 
 fn collect_tool_sources(
     tool_name: &str,
-    result: &crate::domain::function_call::FunctionResult,
+    result: &crate::features::function_calling::domain::FunctionResult,
     highlight_terms: &[String],
     tool_output_settings: &ToolOutputSettingsDto,
 ) -> Vec<SourceDto> {
@@ -476,7 +474,7 @@ fn collect_tool_sources(
                     .results
                     .into_iter()
                     .map(
-                        |item| crate::application::dtos::function_calling_dto::WebSearchResult {
+                        |item| crate::features::function_calling::dto::WebSearchResult {
                             title: item.title,
                             url: item.url,
                             snippet: item.snippet,

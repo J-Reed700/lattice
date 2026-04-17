@@ -7,7 +7,7 @@
 //! 4. Generate embeddings
 //! 5. Store document + chunks + embeddings
 
-use crate::application::dtos::function_calling_dto::CleanArticle;
+use crate::features::function_calling::dto::CleanArticle;
 use crate::infrastructure::indexing::chunker::{
     ChunkerConfig, ContextualizedChunk, SemanticChunker,
 };
@@ -1341,7 +1341,7 @@ impl WebIngestionServiceTrait for WebIngestionService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::function_calling_dto::CleanArticle;
+    use crate::features::function_calling::dto::CleanArticle;
     use crate::infrastructure::services::traits::MockArticleExtractorService;
     use crate::shared::error::AppError;
     use std::path::{Path, PathBuf};

@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
-use crate::application::dtos::function_calling_dto::{GetDocumentOutput, SemanticSearchOutput};
+use crate::features::function_calling::dto::{GetDocumentOutput, SemanticSearchOutput};
 use crate::application::dtos::search_dto::{SearchResponseDto, SearchResultDto};
-use crate::domain::function_call::FunctionResult;
+use crate::features::function_calling::domain::FunctionResult;
 use crate::infrastructure::services::traits::ConversationServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;

@@ -67,7 +67,7 @@ use tokio::fs;
 use url::Url;
 use uuid::Uuid;
 
-use crate::application::dtos::function_calling_dto::CleanArticle;
+use crate::features::function_calling::dto::CleanArticle;
 use crate::infrastructure::services::traits::WebArchiveServiceTrait;
 use crate::shared::error::{AppError, Result};
 

@@ -84,9 +84,6 @@ pub mod downloaded_model;
 pub mod embedding_constants;
 #[path = "modules/error.rs"]
 pub mod error;
-// Vertical-slice migration (function_calling): domain module lives in features/function_calling/domain.rs.
-#[path = "../features/function_calling/domain.rs"]
-pub mod function_call;
 #[path = "modules/metadata.rs"]
 pub mod metadata;
 #[path = "modules/model_catalog.rs"]
@@ -150,7 +147,6 @@ pub use conversation::{
 pub use conversation_summary::ConversationSummary;
 
 // Re-export function calling types
-pub use function_call::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 
 // ============================================================================
 // Q&A and HyDE Types

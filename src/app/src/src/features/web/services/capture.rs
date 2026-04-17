@@ -29,7 +29,7 @@
 //! # }
 //! ```
 
-use crate::application::dtos::function_calling_dto::UrlPreview;
+use crate::features::function_calling::dto::UrlPreview;
 use crate::infrastructure::services::traits::WebCaptureServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};

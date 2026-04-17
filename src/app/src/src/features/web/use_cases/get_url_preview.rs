@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::function_calling_dto::UrlPreview;
+use crate::features::function_calling::dto::UrlPreview;
 use crate::application::dtos::web_dto::{GetUrlPreviewRequestDto, UrlPreviewDto};
 use crate::infrastructure::services::traits::WebCaptureServiceTrait;
 use crate::shared::error::{AppError, Result};

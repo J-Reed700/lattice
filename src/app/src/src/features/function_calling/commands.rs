@@ -36,8 +36,8 @@
 //! - **Tool Use**: Agentic workflows with function calling
 //! - **Research Assistant**: LLM-driven research with tool access
 
-use crate::application::dtos::function_calling_dto::*;
-use crate::domain::function_call::{FunctionCall, FunctionResult, ToolDefinition};
+use crate::features::function_calling::dto::*;
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use tauri::State;
@@ -432,7 +432,7 @@ pub async fn execute_function(
 /// Thin controller delegating to `FunctionRegistry::stats()`
 pub async fn get_function_stats(
     container: State<'_, Container>,
-) -> Result<crate::domain::function_call::RegistryStats> {
+) -> Result<crate::features::function_calling::domain::RegistryStats> {
     debug!("Getting function registry statistics");
 
     // Get registry

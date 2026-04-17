@@ -20,7 +20,7 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::application::dtos::function_calling_dto::{CleanArticle, UrlPreview};
+use crate::features::function_calling::dto::{CleanArticle, UrlPreview};
 use crate::shared::error::Result;
 
 /// Trait for web archive operations

@@ -32,7 +32,7 @@
 //! assert!(response.result.success);
 //! ```
 
-use crate::domain::function_call::{FunctionCall, FunctionResult};
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::infrastructure::services::traits::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::shared::result::Result;
 use serde::{Deserialize, Serialize};
@@ -217,8 +217,8 @@ impl ExecuteFunctionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::function_call::ToolDefinition;
-    use crate::infrastructure::services::function_registry::FunctionRegistry;
+    use crate::features::function_calling::domain::ToolDefinition;
+    use crate::features::function_calling::registry::FunctionRegistry;
     use crate::infrastructure::services::mocks::MockFunctionExecutor;
     use serde_json::json;
 

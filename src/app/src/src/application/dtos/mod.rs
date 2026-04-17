@@ -37,9 +37,6 @@ pub mod conversation_message_bookmark_dto;
 pub mod conversation_space_dto;
 #[path = "modules/document_dto.rs"]
 pub mod document_dto;
-// Vertical-slice migration (function_calling): DTO lives in features/function_calling/dto.rs.
-#[path = "../../features/function_calling/dto.rs"]
-pub mod function_calling_dto;
 // Vertical-slice migration (indexing): DTO lives in features/indexing/dto.rs.
 #[path = "../../features/indexing/dto.rs"]
 pub mod indexing_dto;
@@ -64,7 +61,6 @@ pub use conversation_dto::*;
 pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;
 pub use document_dto::*;
-pub use function_calling_dto::*;
 pub use indexing_dto::*;
 pub use llm_dto::*;
 pub use qa_dto::*;

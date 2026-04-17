@@ -5,7 +5,7 @@
 #[cfg(test)]
 use crate::application::dtos::settings::CustomToolSettingsDto;
 #[cfg(test)]
-use crate::domain::function_call::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 #[cfg(test)]
 use crate::infrastructure::services::traits::*;
 #[cfg(test)]

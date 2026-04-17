@@ -139,7 +139,7 @@ impl CleanArticleContentUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::function_calling_dto::CleanArticle;
+    use crate::features::function_calling::dto::CleanArticle;
     use crate::infrastructure::services::traits::MockArticleExtractorService;
 
     #[tokio::test]

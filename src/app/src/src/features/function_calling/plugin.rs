@@ -2,8 +2,8 @@
 //!
 //! Exposes function-calling commands through the plugin IPC surface.
 
-use crate::domain::function_call::{FunctionCall, FunctionResult, RegistryStats};
-use crate::interfaces::commands::function_calling_commands;
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats};
+use crate::features::function_calling::commands as function_calling_commands;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{

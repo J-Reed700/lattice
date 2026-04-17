@@ -54,9 +54,7 @@ pub mod conversation_plugin;
 // embeddings plugin lives in features/embedding/plugin.rs. Use `crate::features::embedding::plugin`.
 // extraction plugin lives in features/extraction/plugin.rs. Use `crate::features::extraction::plugin`.
 // favorites plugin lives in features/favorites/plugin.rs. Use `crate::features::favorites::plugin`.
-// Vertical-slice migration (function_calling): plugin lives in features/function_calling/plugin.rs.
-#[path = "../features/function_calling/plugin.rs"]
-pub mod functions_plugin;
+// function_calling plugin lives in features/function_calling/plugin.rs. Use `crate::features::function_calling::plugin`.
 // huggingface plugin lives in features/huggingface/plugin.rs. Use `crate::features::huggingface::plugin`.
 // mentions plugin lives in features/mentions/plugin.rs. Use `crate::features::mentions::plugin`.
 // Vertical-slice migration (qa): plugin lives in features/qa/plugin.rs.
@@ -86,7 +84,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::favorites::plugin::init(),
         crate::features::cache::plugin::init(),
         crate::features::mentions::plugin::init(),
-        functions_plugin::init(),
+        crate::features::function_calling::plugin::init(),
         crate::features::daily_notes::plugin::init(),
         // Batch 3: AI services (embeddings, huggingface, extraction, web)
         crate::features::embedding::plugin::init(),

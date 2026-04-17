@@ -2,7 +2,7 @@
 //!
 //! Provides URL preview and metadata extraction for web content ingestion.
 
-use crate::application::dtos::function_calling_dto::UrlPreview;
+use crate::features::function_calling::dto::UrlPreview;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 

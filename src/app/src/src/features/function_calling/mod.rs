@@ -2,19 +2,27 @@
 //!
 //! LLM tool/function calling: define available tools, route LLM function
 //! requests to Rust implementations, return results back to the LLM.
+//! Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File            | Canonical module path                                              |
-//! |-----------------|--------------------------------------------------------------------|
-//! | `domain.rs`     | `crate::domain::function_call` (FunctionCall, FunctionResult, etc.) |
-//! | `dto.rs`        | `crate::application::dtos::function_calling_dto`                   |
-//! | `use_cases/`    | `crate::application::use_cases::function_calling`                  |
-//! | `executor.rs`   | `crate::infrastructure::services::function_executor`               |
-//! | `registry.rs`   | `crate::infrastructure::services::function_registry`               |
-//! | `trait_def.rs`  | `crate::infrastructure::services::traits` (merged re-exports)      |
-//! | `mocks.rs`      | `crate::infrastructure::services::mocks` (merged re-exports)       |
-//! | `commands.rs`   | `crate::interfaces::commands::function_calling_commands`           |
-//! | `plugin.rs`     | `crate::plugins::functions_plugin`                                 |
+//! - `crate::features::function_calling::domain` — FunctionCall, FunctionResult, etc.
+//! - `crate::features::function_calling::dto` — function-calling DTOs
+//!   (CleanArticle, UrlPreview, WebSearchOutput, etc.)
+//! - `crate::features::function_calling::use_cases` — function-calling use cases
+//! - `crate::features::function_calling::executor` — FunctionExecutor
+//! - `crate::features::function_calling::registry` — FunctionRegistry
+//! - `crate::features::function_calling::commands` — Tauri command handlers
+//! - `crate::features::function_calling::plugin::init()` — Tauri plugin
 //!
-//! No port today — the function registry is a concrete singleton.
+//! `trait_def` (FunctionServiceTrait) and `mocks` (MockFunctionService)
+//! remain loaded via the shared `infrastructure::services::{traits,mocks}`
+//! aggregators.
+
+pub mod commands;
+pub mod domain;
+pub mod dto;
+pub mod executor;
+pub mod plugin;
+pub mod registry;
+pub mod use_cases;

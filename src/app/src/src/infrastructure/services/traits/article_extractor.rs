@@ -2,7 +2,7 @@
 //!
 //! Provides clean article content extraction (reader mode) from web pages.
 
-use crate::application::dtos::function_calling_dto::CleanArticle;
+use crate::features::function_calling::dto::CleanArticle;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use parking_lot::Mutex;

@@ -9,7 +9,7 @@ fn overlap_ratio(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
 }
 
 fn dominant_result_terms(
-    results: &[crate::application::dtos::function_calling_dto::WebSearchResult],
+    results: &[crate::features::function_calling::dto::WebSearchResult],
     limit: usize,
 ) -> (Vec<(String, usize)>, usize) {
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -227,7 +227,7 @@ pub(super) async fn run_retrieval_pipeline(
         );
 
         let executor = container.function_executor();
-        let call = crate::domain::function_call::FunctionCall::new(
+        let call = crate::features::function_calling::domain::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "wiki_search",
             serde_json::json!({
@@ -438,7 +438,7 @@ pub(super) async fn run_retrieval_pipeline(
         };
 
         let executor = container.function_executor();
-        let call = crate::domain::function_call::FunctionCall::new(
+        let call = crate::features::function_calling::domain::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "web_search",
             serde_json::json!({
@@ -457,7 +457,7 @@ pub(super) async fn run_retrieval_pipeline(
             Ok(result) if result.success => {
                 if let Some(data) = result.data {
                     match serde_json::from_value::<
-                        crate::application::dtos::function_calling_dto::WebSearchOutput,
+                        crate::features::function_calling::dto::WebSearchOutput,
                     >(data)
                     {
                         Ok(output) => {

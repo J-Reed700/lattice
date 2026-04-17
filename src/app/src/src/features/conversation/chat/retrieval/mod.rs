@@ -1,4 +1,4 @@
-use crate::application::dtos::function_calling_dto::{WebSearchResult, WikiSearchOutput};
+use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
 use crate::application::dtos::qa_dto::SourceDto;
 use crate::application::dtos::search_dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
@@ -492,7 +492,7 @@ pub(super) async fn record_tool_document_references(
     conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
     conversation_id: &str,
     tool_name: &str,
-    result: &crate::domain::function_call::FunctionResult,
+    result: &crate::features::function_calling::domain::FunctionResult,
 ) -> Result<()> {
     record_tool_document_references_impl(conv_service, conversation_id, tool_name, result).await
 }
@@ -713,7 +713,7 @@ fn infer_category(path: &str) -> String {
 
 pub(super) fn format_tool_result(
     tool_name: &str,
-    result: &crate::domain::function_call::FunctionResult,
+    result: &crate::features::function_calling::domain::FunctionResult,
     highlight_terms: &[String],
     settings: &ToolOutputSettingsDto,
 ) -> String {

@@ -36,7 +36,7 @@
 //! # }
 //! ```
 
-use crate::application::dtos::function_calling_dto::*;
+use crate::features::function_calling::dto::*;
 use crate::infrastructure::services::traits::WebServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};

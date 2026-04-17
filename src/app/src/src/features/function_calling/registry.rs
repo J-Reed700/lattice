@@ -34,7 +34,7 @@
 //! # Ok::<(), String>(())
 //! ```
 
-use crate::domain::function_call::{RegistryStats, ToolDefinition};
+use crate::features::function_calling::domain::{RegistryStats, ToolDefinition};
 use crate::infrastructure::services::traits::FunctionRegistryTrait;
 use crate::shared::error::{AppError, Result};
 use parking_lot::RwLock;

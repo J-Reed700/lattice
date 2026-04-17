@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::application::dtos::function_calling_dto::CleanArticle;
+use crate::features::function_calling::dto::CleanArticle;
 use crate::infrastructure::services::traits::WebArchiveServiceTrait;
 use crate::shared::error::{AppError, Result};
 
