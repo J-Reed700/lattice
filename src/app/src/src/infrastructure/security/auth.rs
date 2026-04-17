@@ -68,7 +68,7 @@ impl AuthManager {
 }
 
 /// Permission levels for operations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Permission {
     Read,
     Write,
