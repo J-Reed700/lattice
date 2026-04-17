@@ -34,9 +34,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::application::dtos::indexing_dto::{IndexFileRequestDto, IndexFileResponseDto};
+use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::application::factories::{ChecksumFactory, FileMetadataFactory};
-use crate::application::mappers::IndexingMapper;
+use crate::features::indexing::mapper::IndexingMapper;
 use crate::application::ports::{
     ContentAddressedStoragePort, ContentExtractionPort, DocumentRepositoryPort, EmbeddingPort,
     EmbeddingRepositoryPort, FileStoragePort, VectorSearchPort,
@@ -961,7 +961,7 @@ mod tests {
         let request = IndexFileRequestDto {
             path: file_path.to_str().unwrap().to_string(),
             chunking_strategy:
-                crate::application::dtos::indexing_dto::ChunkingStrategyDto::FixedSize { size: 512 },
+                crate::features::indexing::dto::ChunkingStrategyDto::FixedSize { size: 512 },
             tags: None,
             metadata: None,
             space_id: None,
@@ -1000,7 +1000,7 @@ mod tests {
         let request = IndexFileRequestDto {
             path: file_path.to_str().unwrap().to_string(),
             chunking_strategy:
-                crate::application::dtos::indexing_dto::ChunkingStrategyDto::FixedSize { size: 100 },
+                crate::features::indexing::dto::ChunkingStrategyDto::FixedSize { size: 100 },
             tags: None,
             metadata: None,
             space_id: None,

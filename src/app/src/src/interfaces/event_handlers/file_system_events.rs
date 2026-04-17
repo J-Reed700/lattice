@@ -2,9 +2,9 @@
 //!
 //! Handlers for file system watcher events (create, modify, delete).
 
-use crate::application::dtos::indexing_dto::{ChunkingStrategyDto, IndexFileRequestDto};
+use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::application::ports::DocumentRepositoryPort;
-use crate::application::use_cases::indexing::{
+use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexFileUseCase, ReindexDocumentUseCase,
 };
 use crate::shared::error::Result;

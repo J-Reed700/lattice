@@ -407,7 +407,6 @@ pub mod application;
 pub use application::{
     dtos::{
         document_dto::DocumentDto,
-        indexing_dto::{IndexFileRequestDto, IndexFileResponseDto},
         search_dto::{SearchRequestDto, SearchResponseDto, SearchResultDto},
     },
     mappers,
@@ -415,10 +414,7 @@ pub use application::{
         EmbeddingPort, FileStoragePort, LLMPort, NotificationPort, RepositoryPort, TextSearchPort,
         VectorSearchPort,
     },
-    use_cases::{
-        indexing::{IndexDirectoryUseCase, IndexFileUseCase},
-        search::{HybridSearchUseCase, SemanticSearchUseCase},
-    },
+    use_cases::search::{HybridSearchUseCase, SemanticSearchUseCase},
 };
 
 // =============================================================================

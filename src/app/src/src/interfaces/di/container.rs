@@ -26,7 +26,7 @@ use std::time::Instant;
 
 // Application Use Cases - Core
 use crate::features::health::use_cases::HealthCheckUseCase;
-use crate::application::use_cases::indexing::{
+use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
 };

@@ -32,7 +32,7 @@ use crate::application::use_cases::search::{
 };
 
 // Application Use Cases - Indexing
-use crate::application::use_cases::indexing::{
+use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
 };
@@ -934,7 +934,7 @@ impl IndexingModule {
 
         // Indexing use cases
         use crate::application::ports::DocumentRepositoryPort;
-        use crate::application::use_cases::indexing::*;
+        use crate::features::indexing::use_cases::*;
         let index_file_use_case = Arc::new(
             IndexFileUseCase::new(
                 content_storage.clone(),

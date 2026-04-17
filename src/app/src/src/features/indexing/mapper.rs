@@ -5,7 +5,7 @@
 //! This mapper handles conversion between:
 //! - `ChunkingStrategy` (domain) ↔ `ChunkingStrategyDto` (DTO)
 
-use crate::application::dtos::indexing_dto::ChunkingStrategyDto;
+use crate::features::indexing::dto::ChunkingStrategyDto;
 use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
 
 /// Mapper for indexing-related conversions.

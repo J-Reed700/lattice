@@ -39,10 +39,10 @@ use uuid::Uuid;
 use crate::features::batch::dto::{
     StartBatchFileImportRequestDto, StartBatchFileImportResponseDto,
 };
-use crate::application::dtos::indexing_dto::{ChunkingStrategyDto, IndexFileRequestDto};
+use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::application::ports::BatchJobRepositoryPort;
-use crate::application::use_cases::indexing::index_file::PrepareForIndexingOutcome;
-use crate::application::use_cases::indexing::IndexFileUseCase;
+use crate::features::indexing::use_cases::index_file::PrepareForIndexingOutcome;
+use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
@@ -890,7 +890,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    use crate::application::dtos::indexing_dto::IndexFileResponseDto;
+    use crate::features::indexing::dto::IndexFileResponseDto;
     use crate::application::ports::batch_job_repository_port::{
         BatchJobItem, BatchJobStatus as PortBatchJobStatus, BatchJobSummary,
     };

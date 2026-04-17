@@ -14,9 +14,6 @@ pub mod conversation_chat;
 pub mod conversation_plugin_impl;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
-// Vertical-slice migration (indexing): commands live in features/indexing/commands.rs.
-#[path = "../../features/indexing/commands.rs"]
-pub mod indexing_commands;
 // Vertical-slice migration (llm): commands live in features/llm/commands.rs.
 #[path = "../../features/llm/commands.rs"]
 pub mod llm;

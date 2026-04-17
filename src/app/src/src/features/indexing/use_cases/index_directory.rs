@@ -32,10 +32,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::dtos::indexing_dto::{
+use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto,
 };
-use crate::application::use_cases::indexing::index_file::IndexFileUseCase;
+use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
 use crate::infrastructure::indexing::IndexingState;
 use crate::shared::error::Result;
 

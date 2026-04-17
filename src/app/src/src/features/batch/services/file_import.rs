@@ -9,9 +9,9 @@ use std::sync::Arc;
 use tokio::task;
 use uuid::Uuid;
 
-use crate::application::dtos::indexing_dto::{ChunkingStrategyDto, IndexFileRequestDto};
+use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort;
-use crate::application::use_cases::indexing::index_file::IndexFileUseCase;
+use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::infrastructure::indexing::extraction::ContentExtractor;
 use crate::infrastructure::services::traits::{BatchFileImportServiceTrait, ProcessedFileInfo};

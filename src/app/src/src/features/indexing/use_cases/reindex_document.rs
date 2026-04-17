@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::indexing_dto::IndexFileResponseDto;
+use crate::features::indexing::dto::IndexFileResponseDto;
 use crate::application::factories::FileMetadataFactory;
 use crate::application::ports::{EmbeddingPort, FileStoragePort, RepositoryPort};
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;

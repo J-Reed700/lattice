@@ -1,5 +1,5 @@
 use crate::application::ports::{DocumentRepository, MentionRepositoryPort, RepositoryPort};
-use crate::application::use_cases::indexing::IndexFileUseCase;
+use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::domain::entities::Document;
 use crate::domain::events::model_download_events::ModelDownloadEvent;
 use crate::infrastructure::event_bus::EventBus;

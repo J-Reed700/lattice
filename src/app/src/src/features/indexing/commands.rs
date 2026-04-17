@@ -4,12 +4,12 @@
 //! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
-use crate::application::dtos::indexing_dto::{
+use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
 };
 use crate::application::ports::EmbeddingPort;
-use crate::application::use_cases::indexing::{
+use crate::features::indexing::use_cases::{
     IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase, RenameDocumentUseCase,
 };
 use crate::interfaces::di::Container;
@@ -456,7 +456,7 @@ pub async fn rename_document_impl(
     container: &Container,
     document_id: String,
     new_name: String,
-) -> ApiResult<crate::application::use_cases::indexing::rename_document::RenameDocumentResponseDto>
+) -> ApiResult<crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto>
 {
     // 1. Execute use case (validation happens inside use case)
     let use_case = container.rename_document_use_case();
@@ -498,7 +498,7 @@ pub async fn index_file_ddd(
     // Create request DTO with defaults
     let request = IndexFileRequestDto {
         path,
-        chunking_strategy: crate::application::dtos::indexing_dto::ChunkingStrategyDto::Semantic {
+        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
             max_tokens: chunk_tokens,
         },
         tags: None,
@@ -529,7 +529,7 @@ pub async fn index_directory_ddd(
     let request = IndexDirectoryRequestDto {
         path,
         recursive,
-        chunking_strategy: crate::application::dtos::indexing_dto::ChunkingStrategyDto::Semantic {
+        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
             max_tokens: chunk_tokens,
         },
         include_extensions,
