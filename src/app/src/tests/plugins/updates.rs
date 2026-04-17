@@ -1,6 +1,6 @@
 //! Smoke tests for Updates plugin DTOs
 
-use vault::application::dtos::update_dto::{UpdateInfoDto, VersionInfoDto};
+use vault::features::updates::dto::{UpdateInfoDto, VersionInfoDto};
 
 #[test]
 fn test_update_info_dto_available() {

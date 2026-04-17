@@ -91,11 +91,6 @@ pub mod settings;
 // Vertical-slice migration (tags): DTO physically lives in features/tags/dto.rs.
 #[path = "../../features/tags/dto.rs"]
 pub mod tag_dto;
-// Vertical-slice migration (updates): DTO physically lives in features/updates/dto.rs.
-// This `#[path]` redirect keeps the legacy `crate::application::dtos::update_dto::*`
-// import surface intact (Strangler Fig).
-#[path = "../../features/updates/dto.rs"]
-pub mod update_dto;
 // Vertical-slice migration (web): DTO lives in features/web/dto.rs.
 #[path = "../../features/web/dto.rs"]
 pub mod web_dto;
@@ -123,5 +118,4 @@ pub use recent_dto::*;
 pub use search_dto::*;
 pub use settings::*;
 pub use tag_dto::*;
-pub use update_dto::*;
 pub use web_dto::*;

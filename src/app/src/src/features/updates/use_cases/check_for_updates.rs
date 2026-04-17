@@ -20,7 +20,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::update_dto::UpdateInfoDto;
+use crate::features::updates::dto::UpdateInfoDto;
 use crate::application::ports::UpdateCheckerPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

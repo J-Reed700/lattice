@@ -155,8 +155,8 @@ fn main() {
             vault::plugins::backup_plugin::plugin_export_csv,
             vault::plugins::backup_plugin::plugin_export_html,
             // Updates Plugin (2 commands)
-            vault::plugins::updates_plugin::check_for_updates,
-            vault::plugins::updates_plugin::get_version_info,
+            vault::features::updates::plugin::check_for_updates,
+            vault::features::updates::plugin::get_version_info,
         ]);
 
     // Export bindings to file

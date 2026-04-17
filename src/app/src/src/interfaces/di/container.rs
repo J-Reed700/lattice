@@ -102,7 +102,7 @@ use crate::application::use_cases::backup::{
 };
 
 // Application Use Cases - Updates
-use crate::application::use_cases::updates::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
+use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
 
 // Application Use Cases - Metrics
 use crate::features::metrics::use_cases::GetMetricsUseCase;
@@ -176,7 +176,7 @@ use crate::features::metrics::adapter::MetricsAdapter;
 use crate::infrastructure::persistence::backup_adapter::BackupAdapter;
 use crate::infrastructure::security::credentials_adapter::CredentialsAdapter;
 use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
-use crate::infrastructure::updates::update_checker_adapter::UpdateCheckerAdapter;
+use crate::features::updates::adapter::UpdateCheckerAdapter;
 
 // Service Implementations
 use crate::infrastructure::event_bus::EventBus;

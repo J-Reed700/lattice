@@ -125,7 +125,7 @@ use crate::application::use_cases::backup::{
 };
 
 // Application Use Cases - Updates
-use crate::application::use_cases::updates::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
+use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
 
 // Application Use Cases - Metrics
 use crate::features::metrics::use_cases::GetMetricsUseCase;
@@ -2113,7 +2113,7 @@ impl SystemModule {
         let backup = Arc::new(BackupAdapter::new(db_pool.clone(), db_path)) as Arc<dyn BackupPort>;
 
         // Update Checker Adapter
-        use crate::infrastructure::updates::update_checker_adapter::UpdateCheckerAdapter;
+        use crate::features::updates::adapter::UpdateCheckerAdapter;
         let update_checker = Arc::new(UpdateCheckerAdapter::new()) as Arc<dyn UpdateCheckerPort>;
 
         // Metrics Adapter

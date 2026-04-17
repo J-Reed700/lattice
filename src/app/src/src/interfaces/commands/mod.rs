@@ -88,9 +88,6 @@ pub mod search_commands;
 // Vertical-slice migration (tags): commands live in features/tags/commands.rs.
 #[path = "../../features/tags/commands.rs"]
 pub mod tag_commands_full;
-// Vertical-slice migration (updates): command impls live in features/updates/commands.rs.
-#[path = "../../features/updates/commands.rs"]
-pub mod updates_commands;
 // Vertical-slice migration (web): commands live in features/web/commands.rs.
 #[path = "../../features/web/commands.rs"]
 pub mod web_ingest;

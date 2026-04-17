@@ -28,7 +28,7 @@
 //! - Compare versions (semantic versioning)
 //! - Provide update URLs and release notes
 
-use crate::application::dtos::update_dto::{UpdateInfoDto, VersionInfoDto};
+use crate::features::updates::dto::{UpdateInfoDto, VersionInfoDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;

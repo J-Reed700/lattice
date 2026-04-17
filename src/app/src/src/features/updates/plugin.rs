@@ -2,8 +2,8 @@
 //!
 //! Migrated from ipc/domains/updates.rs as part of Operation Scorched Earth Batch 4
 
-use crate::application::dtos::update_dto::{UpdateInfoDto, VersionInfoDto};
-use crate::interfaces::commands::updates_commands;
+use crate::features::updates::commands as updates_commands;
+use crate::features::updates::dto::{UpdateInfoDto, VersionInfoDto};
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
