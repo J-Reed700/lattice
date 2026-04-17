@@ -1,4 +1,6 @@
 pub mod auth;
+// Vertical-slice migration (credentials): adapter lives in features/credentials/adapter.rs.
+#[path = "../../features/credentials/adapter.rs"]
 pub mod credentials_adapter;
 pub mod file_access_config;
 pub mod input_validator;

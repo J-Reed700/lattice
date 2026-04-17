@@ -42,7 +42,8 @@ pub mod conversation_dto;
 pub mod conversation_message_bookmark_dto;
 #[path = "modules/conversation_space_dto.rs"]
 pub mod conversation_space_dto;
-#[path = "modules/credential_dto.rs"]
+// Vertical-slice migration (credentials): DTO physically lives in features/credentials/dto.rs.
+#[path = "../../features/credentials/dto.rs"]
 pub mod credential_dto;
 #[path = "modules/document_dto.rs"]
 pub mod document_dto;

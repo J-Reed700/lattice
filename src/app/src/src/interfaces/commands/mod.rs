@@ -22,7 +22,8 @@ pub mod conversation;
 pub mod conversation_chat;
 #[path = "domains/conversation_plugin_impl.rs"]
 pub mod conversation_plugin_impl;
-#[path = "domains/credentials.rs"]
+// Vertical-slice migration (credentials): commands live in features/credentials/commands.rs.
+#[path = "../../features/credentials/commands.rs"]
 pub mod credentials;
 #[path = "domains/custom_model_commands.rs"]
 pub mod custom_model_commands;

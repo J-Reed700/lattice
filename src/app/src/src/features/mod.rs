@@ -10,6 +10,7 @@
 
 pub mod backup;
 pub mod cache;
+pub mod credentials;
 pub mod favorites;
 pub mod health;
 pub mod mentions;
