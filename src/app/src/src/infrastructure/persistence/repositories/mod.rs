@@ -13,6 +13,8 @@ pub mod document_repository;
 // Vertical-slice migration (download): downloaded_model repository lives in features/download/.
 #[path = "../../../features/download/downloaded_model_repository.rs"]
 pub mod downloaded_model_repository;
+// Vertical-slice migration (embedding): port-impl repository lives in features/embedding/.
+#[path = "../../../features/embedding/repository.rs"]
 pub mod embedding_repository;
 // Vertical-slice migration (favorites): repository lives in features/favorites/repository.rs.
 #[path = "../../../features/favorites/repository.rs"]
@@ -35,6 +37,8 @@ pub mod tag_repository;
 pub mod batch_job;
 pub mod chunk;
 pub mod document;
+// Vertical-slice migration (embedding): tx-wrapper repository lives in features/embedding/repository_tx/.
+#[path = "../../../features/embedding/repository_tx/mod.rs"]
 pub mod embedding;
 pub mod model;
 pub mod model_file;

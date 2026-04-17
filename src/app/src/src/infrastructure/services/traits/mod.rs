@@ -30,6 +30,8 @@ mod chunk; // Migration comment only - trait removed
 mod context;
 mod conversation;
 mod document;
+// Vertical-slice migration (embedding): trait lives in features/embedding/trait_def.rs.
+#[path = "../../../features/embedding/trait_def.rs"]
 mod embedding;
 mod file_storage;
 // Vertical-slice migration (function_calling): trait lives in features/function_calling/trait_def.rs.

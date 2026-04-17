@@ -14,11 +14,17 @@
 //! - Uses: ONNX Runtime, Tokenizers library
 //! - Provides: Embedding generation port implementation
 
+// Vertical-slice migration (embedding): generator / onnx / remote / validator
+// live in features/embedding/. model_manager and tokenizer stay here (orphans).
+#[path = "../../features/embedding/generator.rs"]
 pub mod generator;
 pub mod model_manager;
+#[path = "../../features/embedding/onnx_service.rs"]
 pub mod onnx_embedding_service;
+#[path = "../../features/embedding/remote_service.rs"]
 pub mod remote_embedding_service;
 pub mod tokenizer;
+#[path = "../../features/embedding/validator.rs"]
 pub mod validator;
 
 // Temporarily disabled during refactoring

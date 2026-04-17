@@ -1,8 +1,10 @@
 //! Embedding service module
 //!
-//! Re-exports embedding services from the ML infrastructure layer
+//! Re-exports embedding services. This mod.rs is loaded as
+//! `crate::infrastructure::services::embedding` during migration.
 
 pub mod builder;
+#[path = "dynamic.rs"]
 pub mod dynamic_embedding_service;
 
 // Re-export the ONNX embedding service as the primary embedding service

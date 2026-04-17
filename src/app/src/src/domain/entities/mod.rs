@@ -7,6 +7,8 @@
 
 pub mod chunk;
 pub mod document;
+// Vertical-slice migration (embedding): entity lives in features/embedding/entity.rs.
+#[path = "../../features/embedding/entity.rs"]
 pub mod embedding;
 // Vertical-slice migration (mentions): entity lives in features/mentions/entity.rs.
 #[path = "../../features/mentions/entity.rs"]
