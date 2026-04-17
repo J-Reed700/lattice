@@ -43,7 +43,8 @@ pub mod favorites;
 pub mod file;
 #[path = "domains/function_calling_commands.rs"]
 pub mod function_calling_commands;
-#[path = "domains/health_commands.rs"]
+// Vertical-slice migration (health): commands live in features/health/commands.rs.
+#[path = "../../features/health/commands.rs"]
 pub mod health_commands;
 #[path = "domains/hf_settings.rs"]
 pub mod hf_settings;

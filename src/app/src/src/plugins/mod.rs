@@ -31,6 +31,8 @@
 pub mod config;
 pub mod credentials;
 pub mod file;
+// Vertical-slice migration (health): plugin lives in features/health/plugin/.
+#[path = "../features/health/plugin/mod.rs"]
 pub mod health;
 pub mod model;
 pub mod search;

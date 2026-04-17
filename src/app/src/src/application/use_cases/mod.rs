@@ -205,6 +205,8 @@ pub mod extraction;
 pub mod favorites;
 pub mod file;
 pub mod function_calling;
+// Vertical-slice migration (health): use cases live in features/health/use_cases/.
+#[path = "../../features/health/use_cases/mod.rs"]
 pub mod health;
 pub mod indexing;
 pub mod initialization;

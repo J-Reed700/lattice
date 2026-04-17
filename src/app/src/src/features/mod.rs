@@ -11,6 +11,7 @@
 pub mod backup;
 pub mod cache;
 pub mod favorites;
+pub mod health;
 pub mod mentions;
 pub mod metrics;
 pub mod qa;
