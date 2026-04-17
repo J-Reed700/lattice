@@ -2,7 +2,7 @@
 //!
 //! Opens a file with the system's default application.
 
-use crate::application::dtos::file_dto::{OpenFileRequestDto, OpenFileResponseDto};
+use crate::features::file::dto::{OpenFileRequestDto, OpenFileResponseDto};
 use crate::application::ports::{FileStoragePort, FileSystemPort};
 use crate::application::services::FileType;
 use crate::infrastructure::security::FileAccessConfig;

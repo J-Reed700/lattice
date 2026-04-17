@@ -1,4 +1,4 @@
-use crate::application::dtos::file_dto::{
+use crate::features::file::dto::{
     FileMetadataDto, GetFileMetadataRequestDto, GetFilePathByIdRequestDto, OpenFileByIdRequestDto,
     OpenFileRequestDto, OpenFileResponseDto, ReadFileBytesRequestDto, ReadFileContentRequestDto,
     ShowInFolderRequestDto,

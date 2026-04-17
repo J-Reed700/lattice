@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::application::dtos::file_dto::UpdateFileMetadataRequestDto;
+use crate::features::file::dto::UpdateFileMetadataRequestDto;
 use crate::application::ports::DocumentRepositoryPort;
 use crate::infrastructure::services::traits::TagServiceTrait;
 use crate::shared::error::{AppError, Result};

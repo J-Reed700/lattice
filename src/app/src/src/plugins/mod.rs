@@ -30,9 +30,7 @@
 // Directory-backed plugin modules
 // config plugin lives in features/config/plugin/. Use `crate::features::config::plugin`.
 // credentials plugin lives in features/credentials/plugin/. Use `crate::features::credentials::plugin`.
-// Vertical-slice migration (file): plugin lives in features/file/plugin/.
-#[path = "../features/file/plugin/mod.rs"]
-pub mod file;
+// file plugin lives in features/file/plugin/. Use `crate::features::file::plugin`.
 // health plugin lives in features/health/plugin/. Use `crate::features::health::plugin`.
 // Vertical-slice migration (model_management): plugin lives in features/model_management/plugin/.
 #[path = "../features/model_management/plugin/mod.rs"]
@@ -78,7 +76,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         // Batch 1: Core infrastructure (model, search, file, config, credentials, health)
         model::init(),
         search::init(),
-        file::init(),
+        crate::features::file::plugin::init(),
         crate::features::config::plugin::init(),
         crate::features::credentials::plugin::init(),
         crate::features::health::plugin::init(),

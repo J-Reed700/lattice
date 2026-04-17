@@ -87,7 +87,7 @@ use crate::features::mentions::use_cases::{
 };
 
 // Application Use Cases - File Operations
-use crate::application::use_cases::file::{
+use crate::features::file::use_cases::{
     GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
     ReadFileBytesUseCase, ReadFileContentUseCase, ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };
@@ -1893,7 +1893,7 @@ impl FileOpsModule {
         // === Build Use Cases ===
 
         // File operations use cases
-        use crate::application::use_cases::file::*;
+        use crate::features::file::use_cases::*;
         let open_file_use_case = Arc::new(OpenFileUseCase::new(
             file_system.clone(),
             file_storage.clone(),

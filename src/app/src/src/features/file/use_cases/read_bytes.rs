@@ -2,7 +2,7 @@
 //!
 //! Reads the content of a file as raw bytes with security limits.
 
-use crate::application::dtos::file_dto::ReadFileBytesRequestDto;
+use crate::features::file::dto::ReadFileBytesRequestDto;
 use crate::application::ports::FileStoragePort;
 use crate::infrastructure::security::FileAccessConfig;
 use crate::shared::error::{AppError, Result};

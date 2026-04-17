@@ -2,7 +2,7 @@
 //!
 //! Retrieves metadata for a file.
 
-use crate::application::dtos::file_dto::{FileMetadataDto, GetFileMetadataRequestDto};
+use crate::features::file::dto::{FileMetadataDto, GetFileMetadataRequestDto};
 use crate::application::ports::FileStoragePort;
 use crate::infrastructure::security::FileAccessConfig;
 use crate::shared::error::{AppError, Result};

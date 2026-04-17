@@ -4,7 +4,8 @@
 
 pub mod commands;
 
-use crate::interfaces::commands::{document_list, file as file_commands};
+use crate::features::file::commands as file_commands;
+use crate::interfaces::commands::document_list;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Emitter, Manager, Runtime,

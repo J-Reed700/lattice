@@ -57,7 +57,7 @@ use crate::application::use_cases::settings::{
 };
 
 // Application Use Cases - File Operations
-use crate::application::use_cases::file::{
+use crate::features::file::use_cases::{
     GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
     ReadFileBytesUseCase, ReadFileContentUseCase, ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };

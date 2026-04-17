@@ -2,14 +2,15 @@
 //!
 //! Connects plugin stubs to actual implementations in `interfaces::commands`.
 
-use crate::application::dtos::file_dto::UpdateFileMetadataRequestDto;
+use crate::features::file::dto::UpdateFileMetadataRequestDto;
 use crate::application::dtos::indexing_dto::{
     ChunkingStrategyDto, IndexDirectoryRequestDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
 };
 use crate::application::ports::DocumentRepositoryPort;
 use crate::application::use_cases::indexing::rename_document::RenameDocumentResponseDto;
-use crate::interfaces::commands::{document_list, file as file_commands, indexing_commands};
+use crate::features::file::commands as file_commands;
+use crate::interfaces::commands::{document_list, indexing_commands};
 use crate::interfaces::di::Container;
 use crate::shared::api_result::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};

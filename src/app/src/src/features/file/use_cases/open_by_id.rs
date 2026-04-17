@@ -2,7 +2,7 @@
 //!
 //! Opens a file by document ID, looking up the file path first.
 
-use crate::application::dtos::file_dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
+use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
 use crate::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
 use crate::application::services::FileType;
 use crate::infrastructure::security::FileAccessConfig;

@@ -2,7 +2,7 @@
 //!
 //! Reads the content of a text file with security limits.
 
-use crate::application::dtos::file_dto::{FileContentDto, ReadFileContentRequestDto};
+use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
 use crate::application::ports::FileStoragePort;
 use crate::infrastructure::indexing::extraction::ContentExtractor;
 use crate::infrastructure::security::FileAccessConfig;

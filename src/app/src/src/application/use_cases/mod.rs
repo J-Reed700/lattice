@@ -191,9 +191,6 @@
 // Vertical-slice migration (conversation): use cases live in features/conversation/use_cases/.
 #[path = "../../features/conversation/use_cases/mod.rs"]
 pub mod conversation;
-// Vertical-slice migration (file): use cases live in features/file/use_cases/.
-#[path = "../../features/file/use_cases/mod.rs"]
-pub mod file;
 // Vertical-slice migration (function_calling): use cases live in features/function_calling/use_cases/.
 #[path = "../../features/function_calling/use_cases/mod.rs"]
 pub mod function_calling;
@@ -223,10 +220,6 @@ pub mod web;
 pub use conversation::{
     CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
     GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
-};
-pub use file::{
-    GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
-    ReadFileContentUseCase, ShowInFolderUseCase,
 };
 pub use function_calling::{ExecuteFunctionUseCase, ListAvailableFunctionsUseCase};
 pub use indexing::{IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase};

@@ -2,7 +2,7 @@
 //!
 //! Reveals a file in the system's file explorer.
 
-use crate::application::dtos::file_dto::{FileOperationSuccessDto, ShowInFolderRequestDto};
+use crate::features::file::dto::{FileOperationSuccessDto, ShowInFolderRequestDto};
 use crate::application::ports::{FileStoragePort, FileSystemPort};
 use crate::infrastructure::security::FileAccessConfig;
 use crate::shared::error::{AppError, Result};

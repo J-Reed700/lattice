@@ -27,8 +27,8 @@
 //! When file commands are fully implemented with _impl functions (not requiring
 //! tauri::State), these tests can be updated to test the actual command logic.
 
-use crate::application::dtos::file_dto::FileMetadataDto;
-use crate::plugins::file::commands::{IndexingStatus, MetadataUpdate};
+use crate::features::file::dto::FileMetadataDto;
+use crate::features::file::plugin::commands::{IndexingStatus, MetadataUpdate};
 use std::collections::HashMap;
 
 /// Test that FileMetadata DTO can be created

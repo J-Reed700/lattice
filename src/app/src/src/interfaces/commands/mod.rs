@@ -14,9 +14,6 @@ pub mod conversation_chat;
 pub mod conversation_plugin_impl;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
-// Vertical-slice migration (file): commands live in features/file/commands.rs.
-#[path = "../../features/file/commands.rs"]
-pub mod file;
 // Vertical-slice migration (function_calling): commands live in features/function_calling/commands.rs.
 #[path = "../../features/function_calling/commands.rs"]
 pub mod function_calling_commands;
@@ -50,4 +47,3 @@ mod command_tests;
 
 // Module aliases retained for migration/backward compatibility.
 pub use conversation as conversation_commands;
-pub use file as file_commands;
