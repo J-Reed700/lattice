@@ -309,6 +309,14 @@
 /// - [`utils`](shared::utils) - Shared utilities
 pub mod shared;
 
+/// Core primitives sitting below all features. Currently empty scaffolding
+/// for the vertical-slice migration.
+pub mod core;
+
+/// Vertical feature slices. New code should live here rather than in the
+/// legacy horizontal layers (application, infrastructure, interfaces, plugins).
+pub mod features;
+
 // Re-export commonly used shared types for convenience
 pub use shared::{
     constants::*,

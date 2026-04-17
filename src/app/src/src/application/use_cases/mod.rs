@@ -212,6 +212,8 @@ pub mod search;
 pub mod settings;
 pub mod stats;
 pub mod tags;
+// Vertical-slice migration (updates): use cases live in features/updates/use_cases/.
+#[path = "../../features/updates/use_cases/mod.rs"]
 pub mod updates;
 pub mod web;
 

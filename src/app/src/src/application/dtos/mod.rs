@@ -75,7 +75,10 @@ pub mod search_dto;
 pub mod settings;
 #[path = "modules/tag_dto.rs"]
 pub mod tag_dto;
-#[path = "modules/update_dto.rs"]
+// Vertical-slice migration (updates): DTO physically lives in features/updates/dto.rs.
+// This `#[path]` redirect keeps the legacy `crate::application::dtos::update_dto::*`
+// import surface intact (Strangler Fig).
+#[path = "../../features/updates/dto.rs"]
 pub mod update_dto;
 #[path = "modules/web_dto.rs"]
 pub mod web_dto;

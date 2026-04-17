@@ -67,7 +67,8 @@ pub mod qa_plugin;
 pub mod settings_plugin;
 #[path = "domains/tags_plugin.rs"]
 pub mod tags_plugin;
-#[path = "domains/updates_plugin.rs"]
+// Vertical-slice migration (updates): plugin lives in features/updates/plugin.rs.
+#[path = "../features/updates/plugin.rs"]
 pub mod updates_plugin;
 
 use tauri::plugin::TauriPlugin;
