@@ -61,6 +61,10 @@ pub mod updates;
 pub mod web;
 
 // Model catalog infrastructure
+// Vertical-slice migration (model_management): adapters live in features/model_management/.
+#[path = "../features/model_management/huggingface_adapter.rs"]
 pub mod huggingface_adapter;
+#[path = "../features/model_management/cache_adapter.rs"]
 pub mod model_cache_adapter;
+#[path = "../features/model_management/catalog_cache.rs"]
 pub mod model_catalog_cache;

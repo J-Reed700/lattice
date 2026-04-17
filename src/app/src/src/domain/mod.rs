@@ -96,7 +96,8 @@ pub mod metadata;
 pub mod model_catalog;
 #[path = "modules/model_file_validator.rs"]
 pub mod model_file_validator;
-#[path = "modules/model_management.rs"]
+// Vertical-slice migration (model_management): domain module lives in features/model_management/domain.rs.
+#[path = "../features/model_management/domain.rs"]
 pub mod model_management;
 #[path = "modules/model_metadata.rs"]
 pub mod model_metadata;

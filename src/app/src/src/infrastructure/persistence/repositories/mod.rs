@@ -42,6 +42,8 @@ pub mod document;
 // Vertical-slice migration (embedding): tx-wrapper repository lives in features/embedding/repository_tx/.
 #[path = "../../../features/embedding/repository_tx/mod.rs"]
 pub mod embedding;
+// Vertical-slice migration (model_management): tx-wrapper repository lives in features/model_management/repository_tx/.
+#[path = "../../../features/model_management/repository_tx/mod.rs"]
 pub mod model;
 pub mod model_file;
 // Vertical-slice migration (search): tx-wrapper repository lives in features/search/repository_tx/.

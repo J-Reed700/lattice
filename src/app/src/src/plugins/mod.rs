@@ -40,6 +40,8 @@ pub mod file;
 // Vertical-slice migration (health): plugin lives in features/health/plugin/.
 #[path = "../features/health/plugin/mod.rs"]
 pub mod health;
+// Vertical-slice migration (model_management): plugin lives in features/model_management/plugin/.
+#[path = "../features/model_management/plugin/mod.rs"]
 pub mod model;
 // Vertical-slice migration (search): plugin lives in features/search/plugin/.
 #[path = "../features/search/plugin/mod.rs"]
