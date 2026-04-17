@@ -28,11 +28,9 @@ missing_errors_doc = "allow"    # Phase 2: Suppress (Phase 4 will add docs)
 
 [lib]
 name = "vault"
-path = "src/crates/recall/lib.rs"
 
 [[bin]]
 name = "recall-desktop"
-path = "src/crates/recall/main.rs"
 
 [[bin]]
 name = "export_bindings"
