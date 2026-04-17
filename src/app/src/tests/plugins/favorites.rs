@@ -1,6 +1,6 @@
 //! Smoke tests for Favorites plugin DTOs
 
-use vault::interfaces::commands::favorites::{
+use vault::features::favorites::commands::{
     FavoriteDocument, FavoriteOperation, FavoriteResponse,
 };
 

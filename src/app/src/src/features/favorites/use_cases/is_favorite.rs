@@ -1,6 +1,6 @@
 //! Is Favorite Use Case
 
-use crate::application::dtos::{IsFavoriteRequestDto, IsFavoriteResponseDto};
+use crate::features::favorites::dto::{IsFavoriteRequestDto, IsFavoriteResponseDto};
 use crate::application::ports::FavoritesRepositoryPort;
 use crate::shared::result::Result;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ impl IsFavoriteUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::FavoriteDto;
+    use crate::features::favorites::dto::FavoriteDto;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

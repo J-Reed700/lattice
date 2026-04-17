@@ -71,9 +71,7 @@ pub mod embeddings;
 // Vertical-slice migration (extraction): plugin lives in features/extraction/plugin.rs.
 #[path = "../features/extraction/plugin.rs"]
 pub mod extraction;
-// Vertical-slice migration (favorites): plugin lives in features/favorites/plugin.rs.
-#[path = "../features/favorites/plugin.rs"]
-pub mod favorites_plugin;
+// favorites plugin lives in features/favorites/plugin.rs. Use `crate::features::favorites::plugin`.
 // Vertical-slice migration (function_calling): plugin lives in features/function_calling/plugin.rs.
 #[path = "../features/function_calling/plugin.rs"]
 pub mod functions_plugin;
@@ -107,7 +105,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         settings_plugin::init(),
         // Batch 2: Metadata & caching (tags, favorites, cache, mentions)
         tags_plugin::init(),
-        favorites_plugin::init(),
+        crate::features::favorites::plugin::init(),
         cache_plugin::init(),
         mention_plugin::init(),
         functions_plugin::init(),

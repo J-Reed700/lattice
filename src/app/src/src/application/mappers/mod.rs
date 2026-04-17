@@ -28,9 +28,6 @@
 #[path = "../../features/conversation/mapper.rs"]
 pub mod conversation_mapper;
 pub mod document_mapper;
-// Vertical-slice migration (favorites): mapper lives in features/favorites/mapper.rs.
-#[path = "../../features/favorites/mapper.rs"]
-pub mod favorite_mapper;
 // Vertical-slice migration (indexing): mapper lives in features/indexing/mapper.rs.
 #[path = "../../features/indexing/mapper.rs"]
 pub mod indexing_mapper;
@@ -50,7 +47,6 @@ pub mod tag_mapper;
 // Re-export mappers
 pub use conversation_mapper::{ConversationMapper, MessageMapper};
 pub use document_mapper::DocumentMapper;
-pub use favorite_mapper::FavoriteMapper;
 pub use indexing_mapper::IndexingMapper;
 pub use mention_mapper::MentionMapper;
 pub use search_mapper::SearchMapper;

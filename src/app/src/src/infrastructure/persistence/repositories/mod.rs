@@ -18,9 +18,6 @@ pub mod downloaded_model_repository;
 // Vertical-slice migration (embedding): port-impl repository lives in features/embedding/.
 #[path = "../../../features/embedding/repository.rs"]
 pub mod embedding_repository;
-// Vertical-slice migration (favorites): repository lives in features/favorites/repository.rs.
-#[path = "../../../features/favorites/repository.rs"]
-pub mod favorites_repository;
 // Vertical-slice migration (mentions): repository lives in features/mentions/repository.rs.
 #[path = "../../../features/mentions/repository.rs"]
 pub mod mention_repository;
@@ -68,7 +65,6 @@ pub use custom_model_repository::{
 pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 pub use downloaded_model_repository::DownloadedModelRepository;
 pub use embedding_repository::{Embedding, EmbeddingRepository};
-pub use favorites_repository::FavoritesRepository;
 pub use mention_repository::MentionRepository;
 pub use settings_repository::SettingsRepository;
 pub use summary_repository::SummaryRepository;

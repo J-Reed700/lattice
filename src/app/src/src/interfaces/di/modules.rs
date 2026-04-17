@@ -70,7 +70,7 @@ use crate::application::use_cases::tags::{
 };
 
 // Application Use Cases - Favorites
-use crate::application::use_cases::favorites::{
+use crate::features::favorites::use_cases::{
     AddFavoriteUseCase, IsFavoriteUseCase, ListFavoritesUseCase, RemoveFavoriteUseCase,
 };
 
@@ -1589,7 +1589,7 @@ impl LibraryModule {
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
 
         // Favorites Repository
-        use crate::infrastructure::persistence::repositories::FavoritesRepository;
+        use crate::features::favorites::repository::FavoritesRepository;
         let favorites_repo =
             Arc::new(FavoritesRepository::new(db_pool.clone())) as Arc<dyn FavoritesRepositoryPort>;
 
@@ -1623,7 +1623,7 @@ impl LibraryModule {
         let search_by_tag_use_case = Arc::new(SearchByTagUseCase::new(tag_service.clone()));
 
         // Favorites use cases
-        use crate::application::use_cases::favorites::*;
+        use crate::features::favorites::use_cases::*;
         let add_favorite_use_case = Arc::new(AddFavoriteUseCase::new(favorites_repo.clone()));
         let remove_favorite_use_case = Arc::new(RemoveFavoriteUseCase::new(favorites_repo.clone()));
         let list_favorites_use_case = Arc::new(ListFavoritesUseCase::new(favorites_repo.clone()));

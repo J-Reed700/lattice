@@ -1404,7 +1404,7 @@ impl FunctionExecutorTrait for FunctionExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::favorite_dto::FavoriteDto;
+    use crate::features::favorites::dto::FavoriteDto;
     use crate::features::recent::dto::RecentDocumentDto;
     use crate::application::ports::DocumentRepositoryPort;
     use crate::application::ports::{

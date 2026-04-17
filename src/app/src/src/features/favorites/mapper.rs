@@ -2,7 +2,7 @@
 //!
 //! Converts between favorite domain models and DTOs.
 
-use crate::application::dtos::FavoriteDto;
+use crate::features::favorites::dto::FavoriteDto;
 
 pub struct FavoriteMapper;
 

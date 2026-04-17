@@ -108,10 +108,10 @@ fn main() {
             vault::plugins::tags_plugin::remove_tag_from_document,
             vault::plugins::tags_plugin::generate_tags_for_document,
             // Favorites Plugin (4 commands)
-            vault::plugins::favorites_plugin::add_favorite,
-            vault::plugins::favorites_plugin::remove_favorite,
-            vault::plugins::favorites_plugin::get_favorites,
-            vault::plugins::favorites_plugin::is_favorite,
+            vault::features::favorites::plugin::add_favorite,
+            vault::features::favorites::plugin::remove_favorite,
+            vault::features::favorites::plugin::get_favorites,
+            vault::features::favorites::plugin::is_favorite,
             // Cache Plugin (5 commands)
             vault::interfaces::commands::cache::clear_cache,
             vault::interfaces::commands::cache::get_cache_stats,

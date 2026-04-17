@@ -1,16 +1,22 @@
 //! # Favorites feature
 //!
 //! User-starred documents. Add / remove / list / check.
+//! Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File             | Canonical module path                                             |
-//! |------------------|-------------------------------------------------------------------|
-//! | `dto.rs`         | `crate::application::dtos::favorite_dto`                          |
-//! | `mapper.rs`      | `crate::application::mappers::favorite_mapper`                    |
-//! | `use_cases/`     | `crate::application::use_cases::favorites`                        |
-//! | `repository.rs`  | `crate::infrastructure::persistence::repositories::favorites_repository` |
-//! | `commands.rs`    | `crate::interfaces::commands::favorites` (aka `favorites_commands`) |
-//! | `plugin.rs`      | `crate::plugins::favorites_plugin`                                |
+//! - `crate::features::favorites::dto` — `FavoriteDto`, request/response DTOs
+//! - `crate::features::favorites::mapper::FavoriteMapper`
+//! - `crate::features::favorites::use_cases` — Add/Remove/List/IsFavorite
+//! - `crate::features::favorites::repository::FavoritesRepository`
+//! - `crate::features::favorites::commands` — Tauri command handlers
+//! - `crate::features::favorites::plugin::init()` — Tauri plugin
 //!
 //! `FavoritesRepositoryPort` stays in `application/ports/`.
+
+pub mod commands;
+pub mod dto;
+pub mod mapper;
+pub mod plugin;
+pub mod repository;
+pub mod use_cases;

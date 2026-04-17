@@ -63,7 +63,7 @@ use crate::application::use_cases::file::{
 };
 
 // Application Use Cases - Favorites
-use crate::application::use_cases::favorites::{
+use crate::features::favorites::use_cases::{
     AddFavoriteUseCase, IsFavoriteUseCase, ListFavoritesUseCase, RemoveFavoriteUseCase,
 };
 
@@ -157,10 +157,11 @@ use crate::infrastructure::search::text_search::SqliteTextSearch;
 use crate::infrastructure::storage::ContentAddressedStorage;
 
 // Infrastructure Implementations - Repositories
+use crate::features::favorites::repository::FavoritesRepository;
 use crate::features::recent::repository::RecentDocumentsRepository;
 use crate::infrastructure::persistence::repositories::{
     unit_of_work::SqliteUnitOfWorkFactory, BatchJobRepository, ChunkRepositoryImpl,
-    DocumentRepositoryImpl, EmbeddingRepository, FavoritesRepository, MentionRepository,
+    DocumentRepositoryImpl, EmbeddingRepository, MentionRepository,
     SettingsRepository, TagRepositoryImpl,
 };
 

@@ -9,7 +9,7 @@
 // Re-export consolidated operations from individual modules
 pub use super::cache::{cache_operation, CacheOperation, CacheResponse};
 pub use super::embeddings::{embedding_operation, EmbeddingOperation, EmbeddingResponse};
-pub use super::favorites::{favorite_operation, FavoriteOperation, FavoriteResponse};
+pub use crate::features::favorites::commands::{favorite_operation, FavoriteOperation, FavoriteResponse};
 pub use crate::features::recent::commands::{
     recent_document_operation, RecentDocumentOperation, RecentDocumentResponse,
 };

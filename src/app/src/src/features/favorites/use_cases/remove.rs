@@ -1,6 +1,6 @@
 //! Remove Favorite Use Case
 
-use crate::application::dtos::{RemoveFavoriteRequestDto, RemoveFavoriteResponseDto};
+use crate::features::favorites::dto::{RemoveFavoriteRequestDto, RemoveFavoriteResponseDto};
 use crate::application::ports::FavoritesRepositoryPort;
 use crate::shared::result::Result;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ impl RemoveFavoriteUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::FavoriteDto;
+    use crate::features::favorites::dto::FavoriteDto;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

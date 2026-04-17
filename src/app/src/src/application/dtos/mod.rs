@@ -55,9 +55,6 @@ pub mod embedding_dto;
 // Vertical-slice migration (extraction): DTO lives in features/extraction/dto.rs.
 #[path = "../../features/extraction/dto.rs"]
 pub mod extraction_dto;
-// Vertical-slice migration (favorites): DTO physically lives in features/favorites/dto.rs.
-#[path = "../../features/favorites/dto.rs"]
-pub mod favorite_dto;
 // Vertical-slice migration (file): DTO lives in features/file/dto.rs.
 #[path = "../../features/file/dto.rs"]
 pub mod file_dto;
@@ -103,7 +100,6 @@ pub use credential_dto::*;
 pub use document_dto::*;
 pub use embedding_dto::*;
 pub use extraction_dto::*;
-pub use favorite_dto::*;
 pub use file_dto::*;
 pub use function_calling_dto::*;
 pub use indexing_dto::*;

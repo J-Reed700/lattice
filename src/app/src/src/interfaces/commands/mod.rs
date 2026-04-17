@@ -42,9 +42,6 @@ pub mod embeddings;
 // Vertical-slice migration (extraction): commands live in features/extraction/commands.rs.
 #[path = "../../features/extraction/commands.rs"]
 pub mod extraction;
-// Vertical-slice migration (favorites): commands live in features/favorites/commands.rs.
-#[path = "../../features/favorites/commands.rs"]
-pub mod favorites;
 // Vertical-slice migration (file): commands live in features/file/commands.rs.
 #[path = "../../features/file/commands.rs"]
 pub mod file;
@@ -93,7 +90,6 @@ pub use backup as backup_commands;
 pub use cache as cache_commands;
 pub use conversation as conversation_commands;
 pub use credentials as credentials_commands;
-pub use favorites as favorites_commands;
 pub use file as file_commands;
 pub use mentions as mentions_commands;
 pub use tag_commands_full as tags;

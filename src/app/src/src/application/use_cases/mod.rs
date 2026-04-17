@@ -212,9 +212,6 @@ pub mod embedding;
 // Vertical-slice migration (extraction): use cases live in features/extraction/use_cases/.
 #[path = "../../features/extraction/use_cases/mod.rs"]
 pub mod extraction;
-// Vertical-slice migration (favorites): use cases live in features/favorites/use_cases/.
-#[path = "../../features/favorites/use_cases/mod.rs"]
-pub mod favorites;
 // Vertical-slice migration (file): use cases live in features/file/use_cases/.
 #[path = "../../features/file/use_cases/mod.rs"]
 pub mod file;
@@ -268,9 +265,6 @@ pub use embedding::{
 pub use extraction::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
     ResolveWikilinkUseCase,
-};
-pub use favorites::{
-    AddFavoriteUseCase, IsFavoriteUseCase, ListFavoritesUseCase, RemoveFavoriteUseCase,
 };
 pub use file::{
     GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,

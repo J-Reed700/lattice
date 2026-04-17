@@ -2,7 +2,7 @@
 //!
 //! Migrated from ipc/domains/favorites.rs as part of Operation Scorched Earth Batch 2
 
-use crate::interfaces::commands::favorites;
+use crate::features::favorites::commands as favorites;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
@@ -10,7 +10,7 @@ use tauri::{
     Runtime, State,
 };
 
-pub use crate::interfaces::commands::favorites::FavoriteDocument;
+pub use crate::features::favorites::commands::FavoriteDocument;
 
 #[tauri::command]
 #[specta::specta]

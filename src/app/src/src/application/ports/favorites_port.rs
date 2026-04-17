@@ -1,6 +1,6 @@
 //! Favorites Repository Port
 
-use crate::application::dtos::FavoriteDto;
+use crate::features::favorites::dto::FavoriteDto;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 
