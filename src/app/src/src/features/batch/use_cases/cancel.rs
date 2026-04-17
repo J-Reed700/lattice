@@ -26,7 +26,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::batch_dto::{CancelBatchJobRequestDto, CancelBatchJobResponseDto};
+use crate::features::batch::dto::{CancelBatchJobRequestDto, CancelBatchJobResponseDto};
 use crate::application::ports::BatchJobRepositoryPort;
 use crate::shared::error::{AppError, Result};
 

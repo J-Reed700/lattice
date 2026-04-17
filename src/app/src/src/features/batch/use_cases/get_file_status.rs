@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     BatchJobStatus, BatchProgressDto, GetBatchStatusRequestDto, GetBatchStatusResponseDto,
 };
 use crate::application::ports::BatchJobRepositoryPort;

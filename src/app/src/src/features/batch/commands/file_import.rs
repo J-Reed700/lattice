@@ -3,7 +3,7 @@
 //! Thin command layer for batch file import operations.
 //! Follows CLAUDE.md command pattern: validation → delegation → audit logging.
 
-use crate::application::dtos::batch_dto::StartBatchFileImportRequestDto;
+use crate::features::batch::dto::StartBatchFileImportRequestDto;
 use crate::application::ports::EmbeddingPort;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;

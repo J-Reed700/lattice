@@ -188,9 +188,6 @@
 //! ```
 
 // Export use case modules
-// Vertical-slice migration (batch): use cases live in features/batch/use_cases/.
-#[path = "../../features/batch/use_cases/mod.rs"]
-pub mod batch;
 // Vertical-slice migration (conversation): use cases live in features/conversation/use_cases/.
 #[path = "../../features/conversation/use_cases/mod.rs"]
 pub mod conversation;
@@ -229,7 +226,6 @@ pub mod settings;
 pub mod web;
 
 // Re-export all use cases for convenience
-pub use batch::{GetBatchFileStatusUseCase, StartBatchFileImportUseCase};
 pub use conversation::{
     CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
     GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,

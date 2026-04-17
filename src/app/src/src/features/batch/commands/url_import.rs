@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     BatchJobStatusDto, CancelBatchJobRequestDto, GetBatchJobStatusRequestDto,
     StartBatchUrlImportRequestDto,
 };
@@ -203,7 +203,7 @@ pub async fn start_batch_url_import(
     let use_case_request = StartBatchUrlImportRequestDto {
         urls: request.urls.clone(),
         options: request.options.map(|opts| {
-            crate::application::dtos::batch_dto::BatchImportOptionsDto {
+            crate::features::batch::dto::BatchImportOptionsDto {
                 extract_article: opts.extract_article,
             }
         }),

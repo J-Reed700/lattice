@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     StartBatchUrlImportRequestDto, StartBatchUrlImportResponseDto,
 };
 use crate::application::dtos::web_dto::IngestWebUrlRequestDto;

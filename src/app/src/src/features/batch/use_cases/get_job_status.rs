@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     BatchJobItemDto, BatchJobStatusDto, GetBatchJobStatusRequestDto,
 };
 use crate::application::ports::BatchJobRepositoryPort;

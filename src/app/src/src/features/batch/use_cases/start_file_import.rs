@@ -36,7 +36,7 @@ use std::time::Instant;
 use tracing::{info, instrument};
 use uuid::Uuid;
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     StartBatchFileImportRequestDto, StartBatchFileImportResponseDto,
 };
 use crate::application::dtos::indexing_dto::{ChunkingStrategyDto, IndexFileRequestDto};

@@ -23,7 +23,7 @@
 //! 2. Input validation logic works
 //! 3. No panics on boundary conditions
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     CancelBatchJobRequestDto, GetBatchJobStatusRequestDto, ListBatchJobsRequestDto,
     StartBatchFileImportRequestDto, StartBatchUrlImportRequestDto,
 };

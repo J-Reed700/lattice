@@ -27,11 +27,11 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     RetryFailedItemsRequestDto, RetryFailedItemsResponseDto, StartBatchUrlImportRequestDto,
 };
 use crate::application::ports::BatchJobRepositoryPort;
-use crate::application::use_cases::batch::StartBatchUrlImportUseCase;
+use crate::features::batch::use_cases::StartBatchUrlImportUseCase;
 use crate::shared::error::{AppError, Result};
 
 /// Retry failed items use case.
@@ -150,7 +150,7 @@ impl RetryFailedItemsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::batch_dto::StartBatchUrlImportResponseDto;
+    use crate::features::batch::dto::StartBatchUrlImportResponseDto;
     use crate::application::ports::batch_job_repository_port::{
         BatchJobItem, BatchJobItemStatus, BatchJobStatus, BatchJobSummary,
     };

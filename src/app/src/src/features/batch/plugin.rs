@@ -2,13 +2,15 @@
 //!
 //! Migrated from ipc/domains/batch.rs as part of Operation Scorched Earth Batch 4
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     BatchJobStatusDto, CancelBatchJobRequestDto, CancelBatchJobResponseDto,
     GetBatchJobStatusRequestDto, ListBatchJobsRequestDto, ListBatchJobsResponseDto,
     StartBatchFileImportRequestDto, StartBatchFileImportResponseDto, StartBatchUrlImportRequestDto,
     StartBatchUrlImportResponseDto,
 };
-use crate::interfaces::commands::{batch_file_import, batch_history, batch_url_import};
+use crate::features::batch::commands::{
+    file_import as batch_file_import, history as batch_history, url_import as batch_url_import,
+};
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
@@ -35,10 +37,10 @@ pub async fn batch_import_urls(
     request: StartBatchUrlImportRequestDto,
     container: State<'_, Container>,
 ) -> Result<StartBatchUrlImportResponseDto, ApiError> {
-    let batch_request = crate::interfaces::commands::batch_url_import::StartBatchImportRequest {
+    let batch_request = crate::features::batch::commands::url_import::StartBatchImportRequest {
         urls: request.urls,
         options: request.options.map(|opts| {
-            crate::interfaces::commands::batch_url_import::BatchImportOptions {
+            crate::features::batch::commands::url_import::BatchImportOptions {
                 extract_article: opts.extract_article,
             }
         }),
@@ -109,10 +111,10 @@ pub async fn start_batch_url_import(
     extract_article: Option<bool>,
     container: State<'_, Container>,
 ) -> Result<String, ApiError> {
-    let request = crate::interfaces::commands::batch_url_import::StartBatchImportRequest {
+    let request = crate::features::batch::commands::url_import::StartBatchImportRequest {
         urls,
         options: Some(
-            crate::interfaces::commands::batch_url_import::BatchImportOptions { extract_article },
+            crate::features::batch::commands::url_import::BatchImportOptions { extract_article },
         ),
     };
     batch_url_import::start_batch_url_import(request, container)
@@ -159,7 +161,7 @@ pub async fn list_batch_jobs(
 pub async fn delete_batch_job(
     job_id: String,
     container: State<'_, Container>,
-) -> Result<crate::application::dtos::batch_dto::DeleteBatchJobResponseDto, ApiError> {
+) -> Result<crate::features::batch::dto::DeleteBatchJobResponseDto, ApiError> {
     batch_history::delete_batch_job(job_id, container)
         .await
         .map_err(ApiError::from)
@@ -170,7 +172,7 @@ pub async fn delete_batch_job(
 pub async fn retry_failed_items(
     job_id: String,
     container: State<'_, Container>,
-) -> Result<crate::application::dtos::batch_dto::RetryFailedItemsResponseDto, ApiError> {
+) -> Result<crate::features::batch::dto::RetryFailedItemsResponseDto, ApiError> {
     batch_history::retry_failed_items(job_id, container)
         .await
         .map_err(ApiError::from)

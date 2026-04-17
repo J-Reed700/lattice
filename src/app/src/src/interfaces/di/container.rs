@@ -121,7 +121,7 @@ use crate::application::use_cases::web::{
 };
 
 // Application Use Cases - Batch
-use crate::application::use_cases::batch::{
+use crate::features::batch::use_cases::{
     CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchFileStatusUseCase,
     GetBatchJobStatusUseCase, ListBatchJobsUseCase, RetryFailedItemsUseCase,
     StartBatchFileImportUseCase, StartBatchUrlImportUseCase,

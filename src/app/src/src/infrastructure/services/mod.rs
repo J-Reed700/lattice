@@ -1,11 +1,6 @@
 // Domain service modules moved under domains/ for filesystem organization.
 #[path = "domains/article_extractor.rs"]
 pub mod article_extractor;
-// Vertical-slice migration (batch): services live in features/batch/services/.
-#[path = "../../features/batch/services/file_import.rs"]
-pub mod batch_file_import;
-#[path = "../../features/batch/services/url_import.rs"]
-pub mod batch_url_import;
 #[path = "domains/context_manager.rs"]
 pub mod context_manager;
 // Vertical-slice migration (conversation): service lives in features/conversation/service.rs.
@@ -89,8 +84,8 @@ pub use crate::features::tags::service_impl::TagServiceImpl;
 
 // Re-export function calling services
 pub use article_extractor::ArticleExtractorService;
-pub use batch_file_import::BatchFileImportService;
-pub use batch_url_import::BatchUrlImportService;
+pub use crate::features::batch::services::file_import::BatchFileImportService;
+pub use crate::features::batch::services::url_import::BatchUrlImportService;
 pub use function_executor::FunctionExecutor;
 pub use function_registry::{
     init_function_registry, register_custom_query_tools, FunctionRegistry,

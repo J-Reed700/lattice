@@ -141,11 +141,11 @@ fn main() {
             vault::plugins::conversation_plugin::get_conversation_messages,
             vault::plugins::conversation_plugin::rename_conversation,
             // Batch Plugin (5 commands)
-            vault::plugins::batch_plugin::batch_import_files,
-            vault::plugins::batch_plugin::batch_import_urls,
-            vault::plugins::batch_plugin::get_batch_status,
-            vault::plugins::batch_plugin::cancel_batch,
-            vault::plugins::batch_plugin::get_batch_history,
+            vault::features::batch::plugin::batch_import_files,
+            vault::features::batch::plugin::batch_import_urls,
+            vault::features::batch::plugin::get_batch_status,
+            vault::features::batch::plugin::cancel_batch,
+            vault::features::batch::plugin::get_batch_history,
             // Backup Plugin (7 commands)
             vault::features::backup::plugin::plugin_create_backup,
             vault::features::backup::plugin::plugin_restore_backup,

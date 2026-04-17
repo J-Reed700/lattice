@@ -32,7 +32,7 @@
 //! - **Error Recovery**: Retry failed imports without re-processing successes
 //! - **Cleanup**: Remove old job history
 
-use crate::application::dtos::batch_dto::{
+use crate::features::batch::dto::{
     DeleteBatchJobRequestDto, DeleteBatchJobResponseDto, ListBatchJobsRequestDto,
     ListBatchJobsResponseDto, RetryFailedItemsRequestDto, RetryFailedItemsResponseDto,
 };

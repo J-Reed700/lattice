@@ -46,9 +46,7 @@ pub mod web;
 
 // Single-file plugin modules moved to domains/ for filesystem organization
 // backup plugin lives in features/backup/plugin.rs. Use `crate::features::backup::plugin`.
-// Vertical-slice migration (batch): plugin lives in features/batch/plugin.rs.
-#[path = "../features/batch/plugin.rs"]
-pub mod batch_plugin;
+// batch plugin lives in features/batch/plugin.rs. Use `crate::features::batch::plugin`.
 // cache plugin lives in features/cache/plugin.rs. Use `crate::features::cache::plugin`.
 // Vertical-slice migration (conversation): plugin lives in features/conversation/plugin.rs.
 #[path = "../features/conversation/plugin.rs"]
@@ -106,7 +104,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         // Batch 4: Final domains (conversations, batch, backup, updates, QA)
         conversation_plugin::init(),
         download_plugin::init(),
-        batch_plugin::init(),
+        crate::features::batch::plugin::init(),
         crate::features::backup::plugin::init(),
         crate::features::updates::plugin::init(),
         qa_plugin::init(),

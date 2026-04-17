@@ -43,7 +43,7 @@ use crate::application::use_cases::web::{
 };
 
 // Application Use Cases - Batch
-use crate::application::use_cases::batch::{
+use crate::features::batch::use_cases::{
     CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchFileStatusUseCase,
     GetBatchJobStatusUseCase, ListBatchJobsUseCase, RetryFailedItemsUseCase,
     StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
@@ -979,7 +979,7 @@ impl IndexingModule {
         ));
 
         // Batch use cases
-        use crate::application::use_cases::batch::*;
+        use crate::features::batch::use_cases::*;
         let start_batch_file_import_use_case = Arc::new(StartBatchFileImportUseCase::new(
             batch_job_repo.clone(),
             index_file_use_case.clone(),

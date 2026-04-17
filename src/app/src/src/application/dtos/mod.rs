@@ -28,9 +28,6 @@
 //! - `update_dto` - Update checking
 //! - `metric_dto` - Application metrics
 
-// Vertical-slice migration (batch): DTO lives in features/batch/dto.rs.
-#[path = "../../features/batch/dto.rs"]
-pub mod batch_dto;
 // Vertical-slice migration (conversation): DTOs live in features/conversation/.
 #[path = "../../features/conversation/dto.rs"]
 pub mod conversation_dto;
@@ -72,7 +69,6 @@ pub mod settings;
 pub mod web_dto;
 
 // Re-export commonly used DTOs
-pub use batch_dto::*;
 pub use conversation_dto::*;
 pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;

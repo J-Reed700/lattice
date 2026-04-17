@@ -1,13 +1,6 @@
 // Single-file command modules grouped under domains/ for filesystem organization.
 #[path = "domains/api_boundary.rs"]
 pub mod api_boundary;
-// Vertical-slice migration (batch): commands live in features/batch/commands/.
-#[path = "../../features/batch/commands/file_import.rs"]
-pub mod batch_file_import;
-#[path = "../../features/batch/commands/history.rs"]
-pub mod batch_history;
-#[path = "../../features/batch/commands/url_import.rs"]
-pub mod batch_url_import;
 #[path = "domains/config.rs"]
 pub mod config;
 #[path = "domains/consolidated.rs"]
