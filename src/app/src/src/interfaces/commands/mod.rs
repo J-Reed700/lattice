@@ -51,9 +51,6 @@ pub mod file;
 // Vertical-slice migration (function_calling): commands live in features/function_calling/commands.rs.
 #[path = "../../features/function_calling/commands.rs"]
 pub mod function_calling_commands;
-// Vertical-slice migration (huggingface): HF token commands live in features/huggingface/commands.rs.
-#[path = "../../features/huggingface/commands.rs"]
-pub mod hf_settings;
 // Vertical-slice migration (indexing): commands live in features/indexing/commands.rs.
 #[path = "../../features/indexing/commands.rs"]
 pub mod indexing_commands;

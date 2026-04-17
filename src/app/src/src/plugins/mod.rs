@@ -77,9 +77,7 @@ pub mod favorites_plugin;
 // Vertical-slice migration (function_calling): plugin lives in features/function_calling/plugin.rs.
 #[path = "../features/function_calling/plugin.rs"]
 pub mod functions_plugin;
-// Vertical-slice migration (huggingface): plugin lives in features/huggingface/plugin.rs.
-#[path = "../features/huggingface/plugin.rs"]
-pub mod huggingface;
+// huggingface plugin lives in features/huggingface/plugin.rs. Use `crate::features::huggingface::plugin`.
 // Vertical-slice migration (mentions): plugin lives in features/mentions/plugin.rs.
 #[path = "../features/mentions/plugin.rs"]
 pub mod mention_plugin;
@@ -116,7 +114,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::daily_notes::plugin::init(),
         // Batch 3: AI services (embeddings, huggingface, extraction, web)
         embeddings::init(),
-        huggingface::init(),
+        crate::features::huggingface::plugin::init(),
         extraction::init(),
         web::init(),
         // Batch 4: Final domains (conversations, batch, backup, updates, QA)

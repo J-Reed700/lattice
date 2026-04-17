@@ -4,7 +4,7 @@
 //! Routes to interfaces/commands/domains/hf_settings.rs implementations.
 
 use crate::{
-    interfaces::commands::hf_settings::{self, HfTokenStatus},
+    features::huggingface::commands::{self as hf_settings, HfTokenStatus},
     shared::api_result::ApiError,
 };
 use tauri::{

@@ -1,6 +1,6 @@
 //! Smoke tests for HuggingFace plugin DTOs
 
-use vault::interfaces::commands::hf_settings::HfTokenStatus;
+use vault::features::huggingface::commands::HfTokenStatus;
 
 #[test]
 fn test_hf_token_status_set() {

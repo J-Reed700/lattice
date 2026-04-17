@@ -124,10 +124,10 @@ fn main() {
             vault::plugins::embeddings::generate_embeddings_batch,
             vault::plugins::embeddings::get_embedding_model_info,
             // HuggingFace Plugin (4 commands)
-            vault::plugins::huggingface::set_huggingface_token,
-            vault::plugins::huggingface::get_huggingface_token_status,
-            vault::plugins::huggingface::get_huggingface_token,
-            vault::plugins::huggingface::delete_huggingface_token,
+            vault::features::huggingface::plugin::set_huggingface_token,
+            vault::features::huggingface::plugin::get_huggingface_token_status,
+            vault::features::huggingface::plugin::get_huggingface_token,
+            vault::features::huggingface::plugin::delete_huggingface_token,
             // Extraction Plugin (4 commands)
             vault::plugins::extraction::parse_wikilinks,
             vault::plugins::extraction::extract_document_title,
