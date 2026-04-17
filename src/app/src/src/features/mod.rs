@@ -9,6 +9,7 @@
 //! abstractions.
 
 pub mod backup;
+pub mod batch;
 pub mod cache;
 pub mod credentials;
 pub mod favorites;

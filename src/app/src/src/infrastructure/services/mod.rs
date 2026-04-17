@@ -4,9 +4,10 @@ pub mod article_extractor;
 // Vertical-slice migration (backup): scheduler lives in features/backup/scheduler.rs.
 #[path = "../../features/backup/scheduler.rs"]
 pub mod backup_scheduler;
-#[path = "domains/batch_file_import.rs"]
+// Vertical-slice migration (batch): services live in features/batch/services/.
+#[path = "../../features/batch/services/file_import.rs"]
 pub mod batch_file_import;
-#[path = "domains/batch_url_import.rs"]
+#[path = "../../features/batch/services/url_import.rs"]
 pub mod batch_url_import;
 #[path = "domains/context_manager.rs"]
 pub mod context_manager;

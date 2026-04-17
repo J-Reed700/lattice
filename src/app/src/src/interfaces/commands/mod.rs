@@ -4,11 +4,12 @@ pub mod api_boundary;
 // Vertical-slice migration (backup): commands live in features/backup/commands.rs.
 #[path = "../../features/backup/commands.rs"]
 pub mod backup;
-#[path = "domains/batch_file_import.rs"]
+// Vertical-slice migration (batch): commands live in features/batch/commands/.
+#[path = "../../features/batch/commands/file_import.rs"]
 pub mod batch_file_import;
-#[path = "domains/batch_history.rs"]
+#[path = "../../features/batch/commands/history.rs"]
 pub mod batch_history;
-#[path = "domains/batch_url_import.rs"]
+#[path = "../../features/batch/commands/url_import.rs"]
 pub mod batch_url_import;
 // Vertical-slice migration (cache): commands live in features/cache/commands.rs.
 #[path = "../../features/cache/commands.rs"]

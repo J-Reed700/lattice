@@ -44,7 +44,8 @@ pub mod web;
 // Vertical-slice migration (backup): plugin lives in features/backup/plugin.rs.
 #[path = "../features/backup/plugin.rs"]
 pub mod backup_plugin;
-#[path = "domains/batch_plugin.rs"]
+// Vertical-slice migration (batch): plugin lives in features/batch/plugin.rs.
+#[path = "../features/batch/plugin.rs"]
 pub mod batch_plugin;
 // Vertical-slice migration (cache): plugin lives in features/cache/plugin.rs.
 #[path = "../features/cache/plugin.rs"]

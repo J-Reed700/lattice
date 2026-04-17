@@ -21,7 +21,10 @@
 //! ```
 
 mod article_extractor;
+// Vertical-slice migration (batch): traits live in features/batch/services/.
+#[path = "../../../features/batch/services/file_import_trait.rs"]
 mod batch_file_import;
+#[path = "../../../features/batch/services/url_import_trait.rs"]
 mod batch_url_import;
 mod chunk; // Migration comment only - trait removed
 mod context;

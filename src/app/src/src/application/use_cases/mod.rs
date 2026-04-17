@@ -191,6 +191,8 @@
 // Vertical-slice migration (backup): use cases live in features/backup/use_cases/.
 #[path = "../../features/backup/use_cases/mod.rs"]
 pub mod backup;
+// Vertical-slice migration (batch): use cases live in features/batch/use_cases/.
+#[path = "../../features/batch/use_cases/mod.rs"]
 pub mod batch;
 // Vertical-slice migration (cache): use cases live in features/cache/use_cases/.
 #[path = "../../features/cache/use_cases/mod.rs"]

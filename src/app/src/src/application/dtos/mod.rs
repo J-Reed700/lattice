@@ -31,7 +31,8 @@
 // Vertical-slice migration (backup): DTO physically lives in features/backup/dto.rs.
 #[path = "../../features/backup/dto.rs"]
 pub mod backup_dto;
-#[path = "modules/batch_dto.rs"]
+// Vertical-slice migration (batch): DTO lives in features/batch/dto.rs.
+#[path = "../../features/batch/dto.rs"]
 pub mod batch_dto;
 // Vertical-slice migration (cache): DTO physically lives in features/cache/dto.rs.
 #[path = "../../features/cache/dto.rs"]
