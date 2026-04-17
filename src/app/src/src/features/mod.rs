@@ -26,6 +26,7 @@ pub mod health;
 pub mod huggingface;
 pub mod indexing;
 pub mod initialization;
+pub mod llm;
 pub mod mentions;
 pub mod metrics;
 pub mod qa;

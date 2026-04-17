@@ -230,6 +230,8 @@ pub mod indexing;
 // Vertical-slice migration (initialization): use cases live in features/initialization/use_cases/.
 #[path = "../../features/initialization/use_cases/mod.rs"]
 pub mod initialization;
+// Vertical-slice migration (llm): use cases live in features/llm/use_cases/.
+#[path = "../../features/llm/use_cases/mod.rs"]
 pub mod llm;
 // Vertical-slice migration (mentions): use cases live in features/mentions/use_cases/.
 #[path = "../../features/mentions/use_cases/mod.rs"]

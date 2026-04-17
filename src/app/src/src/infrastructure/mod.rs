@@ -36,6 +36,8 @@ pub mod file_system;
 // Vertical-slice migration (indexing): pipeline lives in features/indexing/engine/.
 #[path = "../features/indexing/engine/mod.rs"]
 pub mod indexing;
+// Vertical-slice migration (llm): engine lives in features/llm/engine/.
+#[path = "../features/llm/engine/mod.rs"]
 pub mod llm;
 pub mod ml;
 pub mod observability;

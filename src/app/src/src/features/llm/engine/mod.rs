@@ -3,29 +3,19 @@
 //! Provides clients for local LLM inference including llama.cpp and Ollama.
 //! This module supports both HTTP-based clients and local GPU-accelerated inference.
 
-// Single-file modules grouped under modules/ for filesystem organization.
-#[path = "modules/circuit_breaker.rs"]
+// Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod circuit_breaker;
-#[path = "modules/factory.rs"]
 pub mod factory;
-#[path = "modules/local_client.rs"]
 pub mod local_client;
-#[path = "modules/model_catalog_adapter.rs"]
 pub mod model_catalog_adapter;
-#[path = "modules/model_storage_adapter.rs"]
 pub mod model_storage_adapter;
-#[path = "modules/models.rs"]
 pub mod models;
-#[path = "modules/noop_client.rs"]
 pub mod noop_client;
-#[path = "modules/ollama_client.rs"]
 pub mod ollama_client;
-#[path = "modules/traits.rs"]
 pub mod traits;
-#[path = "modules/types.rs"]
 pub mod types;
 
-// Directory-backed modules.
+// Directory-backed sub-modules.
 pub mod inference;
 pub mod system;
 
