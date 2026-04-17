@@ -233,6 +233,8 @@ pub mod qa;
 #[path = "../../features/recent/use_cases/mod.rs"]
 pub mod recent;
 pub mod search;
+// Vertical-slice migration (settings): use cases live in features/settings/use_cases/.
+#[path = "../../features/settings/use_cases/mod.rs"]
 pub mod settings;
 // Vertical-slice migration (stats): use cases live in features/stats/use_cases/.
 #[path = "../../features/stats/use_cases/mod.rs"]

@@ -21,6 +21,8 @@ pub mod mention_repository;
 // Vertical-slice migration (recent): repository lives in features/recent/repository.rs.
 #[path = "../../../features/recent/repository.rs"]
 pub mod recent_documents_repository;
+// Vertical-slice migration (settings): repository lives in features/settings/repository.rs.
+#[path = "../../../features/settings/repository.rs"]
 pub mod settings_repository;
 pub mod summary_repository;
 // Vertical-slice migration (tags): repository lives in features/tags/repository.rs.

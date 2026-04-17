@@ -74,7 +74,8 @@ pub mod mention_plugin;
 // Vertical-slice migration (qa): plugin lives in features/qa/plugin.rs.
 #[path = "../features/qa/plugin.rs"]
 pub mod qa_plugin;
-#[path = "domains/settings_plugin.rs"]
+// Vertical-slice migration (settings): plugin lives in features/settings/plugin.rs.
+#[path = "../features/settings/plugin.rs"]
 pub mod settings_plugin;
 // Vertical-slice migration (tags): plugin lives in features/tags/plugin.rs.
 #[path = "../features/tags/plugin.rs"]

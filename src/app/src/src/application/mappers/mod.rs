@@ -37,6 +37,8 @@ pub mod mention_mapper;
 #[path = "../../features/recent/mapper.rs"]
 pub mod recent_document_mapper;
 pub mod search_mapper;
+// Vertical-slice migration (settings): mapper lives in features/settings/mapper.rs.
+#[path = "../../features/settings/mapper.rs"]
 pub mod settings_mapper;
 // Vertical-slice migration (tags): mapper lives in features/tags/mapper.rs.
 #[path = "../../features/tags/mapper.rs"]
