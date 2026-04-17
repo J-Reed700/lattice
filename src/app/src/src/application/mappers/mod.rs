@@ -28,11 +28,7 @@
 #[path = "../../features/conversation/mapper.rs"]
 pub mod conversation_mapper;
 pub mod document_mapper;
-// Vertical-slice migration (search): mapper lives in features/search/mapper.rs.
-#[path = "../../features/search/mapper.rs"]
-pub mod search_mapper;
 
 // Re-export mappers
 pub use conversation_mapper::{ConversationMapper, MessageMapper};
 pub use document_mapper::DocumentMapper;
-pub use search_mapper::SearchMapper;

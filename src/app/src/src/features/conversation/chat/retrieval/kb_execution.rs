@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::application::dtos::search_dto::{
+use crate::features::search::dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
 use crate::features::settings::dto::{RetrievalTuningSettingsDto, ToolOutputSettingsDto};

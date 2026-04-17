@@ -197,9 +197,6 @@ pub mod llm;
 // Vertical-slice migration (model_management): use cases live in features/model_management/use_cases/.
 #[path = "../../features/model_management/use_cases/mod.rs"]
 pub mod model_management;
-// Vertical-slice migration (search): use cases live in features/search/use_cases/.
-#[path = "../../features/search/use_cases/mod.rs"]
-pub mod search;
 
 // Re-export all use cases for convenience
 pub use conversation::{
@@ -216,4 +213,3 @@ pub use model_management::{
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
     SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase, TrackDownloadUseCase,
 };
-pub use search::{FileSearchUseCase, HybridSearchUseCase, SemanticSearchUseCase};

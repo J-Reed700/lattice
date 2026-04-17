@@ -40,8 +40,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::dtos::search_dto::{SearchModeDto, SearchRequestDto, SearchResponseDto};
-use crate::application::mappers::SearchMapper;
+use crate::features::search::dto::{SearchModeDto, SearchRequestDto, SearchResponseDto};
+use crate::features::search::mapper::SearchMapper;
 use crate::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use crate::domain::entities::search_result::SearchResult;
 use crate::domain::services::SearchRankingService;

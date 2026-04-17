@@ -15,8 +15,8 @@
 //! - No embedding model loaded (smoke tests shouldn't require GPU/API)
 //! - Assert commands return Result, not specific values
 
-use crate::application::dtos::search_dto::{SearchModeDto, SearchRequestDto};
-use crate::interfaces::commands::search_commands::{hybrid_search_impl, semantic_search_impl};
+use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
+use crate::features::search::commands::{hybrid_search_impl, semantic_search_impl};
 use crate::shared::api_result::ApiResult;
 use crate::tests::common::setup_test_container;
 

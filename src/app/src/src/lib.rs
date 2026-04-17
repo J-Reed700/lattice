@@ -405,17 +405,15 @@ pub mod application;
 
 #[cfg(feature = "indexing")]
 pub use application::{
-    dtos::{
-        document_dto::DocumentDto,
-        search_dto::{SearchRequestDto, SearchResponseDto, SearchResultDto},
-    },
+    dtos::document_dto::DocumentDto,
     mappers,
     ports::{
         EmbeddingPort, FileStoragePort, LLMPort, NotificationPort, RepositoryPort, TextSearchPort,
         VectorSearchPort,
     },
-    use_cases::search::{HybridSearchUseCase, SemanticSearchUseCase},
 };
+#[cfg(feature = "indexing")]
+pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 
 // =============================================================================
 // INFRASTRUCTURE LAYER - Technical implementations (concrete adapters)

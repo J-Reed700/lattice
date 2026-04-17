@@ -17,7 +17,7 @@
 //! is protected by a single `RwLock<KeyState>` to prevent desynchronization
 //! and TOCTOU races.
 
-use crate::application::dtos::SearchResultPortDto;
+use crate::features::search::dto::SearchResultPortDto;
 use crate::application::ports::VectorSearchPort;
 use crate::infrastructure::search::service::SearchResult;
 use crate::infrastructure::services::traits::SearchServiceTrait;

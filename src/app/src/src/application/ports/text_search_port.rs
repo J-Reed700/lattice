@@ -21,7 +21,7 @@
 //!
 //! ```rust
 //! use crate::application::ports::TextSearchPort;
-//! use crate::application::dtos::SearchResultPortDto;
+//! use crate::features::search::dto::SearchResultPortDto;
 //!
 //! async fn search_documents(
 //!     searcher: &impl TextSearchPort,
@@ -31,7 +31,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::SearchResultPortDto;
+use crate::features::search::dto::SearchResultPortDto;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;

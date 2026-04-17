@@ -4,7 +4,7 @@ use tracing::{debug, warn};
 
 use crate::features::function_calling::dto::WebSearchResult;
 use crate::features::qa::dto::{SourceChunkExcerptDto, SourceDto};
-use crate::application::dtos::search_dto::SearchResultDto;
+use crate::features::search::dto::SearchResultDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::build_excerpt;
 

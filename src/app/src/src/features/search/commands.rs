@@ -19,7 +19,7 @@
 //! - Handle caching (performance)
 //! - Log audit events (CWE-778 mitigation)
 
-use crate::application::dtos::search_dto::{
+use crate::features::search::dto::{
     CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };

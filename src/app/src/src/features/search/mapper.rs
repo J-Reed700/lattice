@@ -8,7 +8,7 @@
 //!
 //! Also provides utility functions for metadata enrichment.
 
-use crate::application::dtos::search_dto::{
+use crate::features::search::dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
 };
 use crate::domain::entities::search_result::SearchResult;

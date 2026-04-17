@@ -1,4 +1,4 @@
-use crate::application::dtos::search_dto::SearchResultDto;
+use crate::features::search::dto::SearchResultDto;
 use crate::features::settings::dto::LLMPromptSettingsDto;
 
 use super::SearchFlags;

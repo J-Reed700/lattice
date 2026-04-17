@@ -15,8 +15,8 @@ use futures::stream::{Stream, StreamExt};
 use std::sync::Arc;
 
 use crate::features::qa::dto::{QARequestDto, QAResponseDto, SourceDto, StreamChunkDto};
-use crate::application::mappers::search_mapper::infer_category;
-use crate::application::mappers::SearchMapper;
+use crate::features::search::mapper::infer_category;
+use crate::features::search::mapper::SearchMapper;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingPort, LLMPort, VectorSearchPort,
 };

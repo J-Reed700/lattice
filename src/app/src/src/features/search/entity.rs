@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::dtos::search_dto::SearchResultPortDto;
+use crate::features::search::dto::SearchResultPortDto;
 use crate::shared::error::AppError;
 
 type Result<T> = std::result::Result<T, AppError>;

@@ -34,7 +34,7 @@
 
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 // search_documents removed - using search_documents_impl directly for internal calls
-use crate::application::dtos::search_dto::{SearchOptions, SearchResultDto as SearchResult};
+use crate::features::search::dto::{SearchOptions, SearchResultDto as SearchResult};
 use crate::domain::{Conversation, ConversationMessage};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::{AppError, Result};
@@ -1113,7 +1113,7 @@ pub async fn ask_with_conversation(
     };
 
     // Use the implementation function directly since this is internal
-    let search_response = crate::interfaces::commands::search_commands::search_documents_impl(
+    let search_response = crate::features::search::commands::search_documents_impl(
         &container,
         search_options,
     )
@@ -1376,7 +1376,7 @@ pub async fn stream_with_conversation(
     };
 
     // Use the implementation function directly since this is internal
-    let search_response = crate::interfaces::commands::search_commands::search_documents_impl(
+    let search_response = crate::features::search::commands::search_documents_impl(
         &container,
         search_options,
     )

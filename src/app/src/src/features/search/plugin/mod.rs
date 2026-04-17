@@ -5,7 +5,7 @@
 
 pub mod commands;
 
-use crate::interfaces::commands::search_commands;
+use crate::features::search::commands as search_commands;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Runtime,

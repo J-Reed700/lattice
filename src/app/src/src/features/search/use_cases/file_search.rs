@@ -114,7 +114,7 @@ impl FileSearchUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::search_dto::SearchResultPortDto;
+    use crate::features::search::dto::SearchResultPortDto;
     use async_trait::async_trait;
 
     struct MockTextSearch;

@@ -3,7 +3,7 @@
 //! The actual command implementations live in `interfaces/commands/domains/search_commands.rs`.
 //! This module re-exports them for plugin registration and compatibility aliases.
 
-pub use crate::interfaces::commands::search_commands::{
+pub use crate::features::search::commands::{
     batch_search, find_similar, hybrid_search, search_documents, search_fast, search_with_recency,
     semantic_search,
 };

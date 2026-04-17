@@ -151,7 +151,7 @@ pub trait ConversationalQAServiceTrait: Send + Sync {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+        search_results: Vec<crate::features::search::dto::SearchResultDto>,
     ) -> Result<crate::features::qa::conversational_service::ConversationalAnswer>;
 
     /// Ask a question with streaming response
@@ -176,7 +176,7 @@ pub trait ConversationalQAServiceTrait: Send + Sync {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+        search_results: Vec<crate::features::search::dto::SearchResultDto>,
         window: tauri::Window,
     ) -> Result<()>;
 }

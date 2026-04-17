@@ -1127,10 +1127,10 @@ async fn resolve_router_decision(
 }
 
 fn budget_search_results_for_prompt<'a>(
-    search_results: &'a [crate::application::dtos::search_dto::SearchResultDto],
+    search_results: &'a [crate::features::search::dto::SearchResultDto],
     available_for_rag: usize,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
-) -> Vec<&'a crate::application::dtos::search_dto::SearchResultDto> {
+) -> Vec<&'a crate::features::search::dto::SearchResultDto> {
     let mut rag_tokens_used = 0usize;
     search_results
         .iter()
@@ -1265,7 +1265,7 @@ fn generate_title(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::search_dto::SearchResultDto;
+    use crate::features::search::dto::SearchResultDto;
     use std::collections::HashMap;
 
     #[test]

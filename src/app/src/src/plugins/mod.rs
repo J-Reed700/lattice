@@ -35,9 +35,7 @@
 // Vertical-slice migration (model_management): plugin lives in features/model_management/plugin/.
 #[path = "../features/model_management/plugin/mod.rs"]
 pub mod model;
-// Vertical-slice migration (search): plugin lives in features/search/plugin/.
-#[path = "../features/search/plugin/mod.rs"]
-pub mod search;
+// search plugin lives in features/search/plugin/. Use `crate::features::search::plugin`.
 // web plugin lives in features/web/plugin.rs. Use `crate::features::web::plugin`.
 
 // Single-file plugin modules moved to domains/ for filesystem organization
@@ -67,7 +65,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
     vec![
         // Batch 1: Core infrastructure (model, search, file, config, credentials, health)
         model::init(),
-        search::init(),
+        crate::features::search::plugin::init(),
         crate::features::file::plugin::init(),
         crate::features::config::plugin::init(),
         crate::features::credentials::plugin::init(),

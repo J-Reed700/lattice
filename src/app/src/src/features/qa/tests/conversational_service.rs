@@ -25,7 +25,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::application::dtos::search_dto::SearchResultDto;
+    use crate::features::search::dto::SearchResultDto;
     use crate::domain::conversation::MessageRole;
     use crate::infrastructure::observability::Metrics;
     use crate::features::qa::conversational_service::ConversationalQAService;

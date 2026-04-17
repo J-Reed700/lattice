@@ -68,7 +68,7 @@ pub(super) async fn run_retrieval_pipeline(
             validated_message.to_string(),
             QueryType::Question,
         ),
-        search_response: crate::application::dtos::search_dto::SearchResponseDto {
+        search_response: crate::features::search::dto::SearchResponseDto {
             results: vec![],
             total: 0,
             query_time_ms: 0,

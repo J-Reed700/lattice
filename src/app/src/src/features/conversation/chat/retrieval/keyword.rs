@@ -1,4 +1,4 @@
-use crate::application::dtos::search_dto::SearchResultDto;
+use crate::features::search::dto::SearchResultDto;
 use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
 use once_cell::sync::Lazy;
 use rust_stemmers::{Algorithm, Stemmer};

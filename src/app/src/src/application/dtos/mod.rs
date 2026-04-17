@@ -40,9 +40,6 @@ pub mod document_dto;
 // Vertical-slice migration (llm): DTO lives in features/llm/dto.rs.
 #[path = "../../features/llm/dto.rs"]
 pub mod llm_dto;
-// Vertical-slice migration (search): DTO lives in features/search/dto.rs.
-#[path = "../../features/search/dto.rs"]
-pub mod search_dto;
 
 // Re-export commonly used DTOs
 pub use conversation_dto::*;
@@ -50,4 +47,3 @@ pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;
 pub use document_dto::*;
 pub use llm_dto::*;
-pub use search_dto::*;

@@ -1,4 +1,4 @@
-use crate::application::dtos::search_dto::SearchResponseDto;
+use crate::features::search::dto::SearchResponseDto;
 use crate::domain::qa::hyde::QueryType;
 
 use super::SearchFlags;

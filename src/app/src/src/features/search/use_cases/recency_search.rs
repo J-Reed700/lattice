@@ -40,7 +40,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::search_dto::{RecencySearchOptions, SearchResultDto};
+use crate::features::search::dto::{RecencySearchOptions, SearchResultDto};
 use crate::application::ports::EmbeddingPort;
 use crate::infrastructure::services::traits::HybridSearchTrait;
 use crate::shared::error::{AppError, Result};

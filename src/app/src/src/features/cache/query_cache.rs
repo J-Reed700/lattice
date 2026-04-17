@@ -33,7 +33,7 @@ impl QueryCacheKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedSearchResult {
-    pub results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+    pub results: Vec<crate::features::search::dto::SearchResultDto>,
     pub cached_at: i64,
     pub execution_time_ms: u64,
 }

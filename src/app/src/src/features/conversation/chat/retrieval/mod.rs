@@ -1,6 +1,6 @@
 use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
 use crate::features::qa::dto::SourceDto;
-use crate::application::dtos::search_dto::{
+use crate::features::search::dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
 use crate::features::settings::dto::{
@@ -103,7 +103,7 @@ pub(super) struct RouterDecisionOutcome {
 pub(super) struct RetrievalPipelineOutcome {
     pub(super) short_circuit_response: Option<String>,
     pub(super) interpretation: crate::domain::qa::hyde::HyDEInterpretation,
-    pub(super) search_response: crate::application::dtos::search_dto::SearchResponseDto,
+    pub(super) search_response: crate::features::search::dto::SearchResponseDto,
     pub(super) followup_context: Option<(String, Vec<SourceDto>)>,
     pub(super) web_context: Option<String>,
     pub(super) web_search_error: Option<String>,
@@ -483,7 +483,7 @@ fn apply_rag_post_filters(
 async fn persist_document_references(
     conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
     conversation_id: &str,
-    results: &[crate::application::dtos::search_dto::SearchResultDto],
+    results: &[crate::features::search::dto::SearchResultDto],
 ) -> Result<()> {
     persist_document_references_impl(conv_service, conversation_id, results).await
 }
@@ -690,7 +690,7 @@ pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
 /// Fetches document metadata in parallel to avoid N+1 queries, then constructs
 /// `SourceDto` entries with full citation metadata for frontend display.
 async fn build_source_citations(
-    results: &[crate::application::dtos::search_dto::SearchResultDto],
+    results: &[crate::features::search::dto::SearchResultDto],
     container: &Container,
     highlight_terms: &[String],
 ) -> Vec<SourceDto> {

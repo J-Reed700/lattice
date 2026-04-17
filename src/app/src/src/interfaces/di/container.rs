@@ -34,7 +34,7 @@ use crate::features::initialization::use_cases::{
     InitializeDatabaseUseCase, InitializeModelsUseCase,
 };
 use crate::features::qa::use_cases::AskQuestionUseCase;
-use crate::application::use_cases::search::{
+use crate::features::search::use_cases::{
     FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
 };
 use crate::features::stats::use_cases::GetSystemStatsUseCase;

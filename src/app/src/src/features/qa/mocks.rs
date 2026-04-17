@@ -271,7 +271,7 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+        search_results: Vec<crate::features::search::dto::SearchResultDto>,
     ) -> Result<crate::features::qa::conversational_service::ConversationalAnswer> {
         // Load conversation to verify it exists
         let _aggregate = self
@@ -333,7 +333,7 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+        search_results: Vec<crate::features::search::dto::SearchResultDto>,
         window: tauri::Window,
     ) -> Result<()> {
         use crate::infrastructure::qa::types::StreamChunk;

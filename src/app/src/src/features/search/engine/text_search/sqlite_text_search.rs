@@ -2,7 +2,7 @@
 //!
 //! Stub implementation of text search using SQLite FTS5.
 
-use crate::application::dtos::SearchResultPortDto;
+use crate::features::search::dto::SearchResultPortDto;
 use crate::application::ports::TextSearchPort;
 use crate::shared::result::Result;
 use async_trait::async_trait;

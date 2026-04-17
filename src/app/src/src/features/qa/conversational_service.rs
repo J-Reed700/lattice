@@ -42,7 +42,7 @@ use tauri::Emitter;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::application::dtos::search_dto::SearchResultDto;
+use crate::features::search::dto::SearchResultDto;
 use crate::domain::ValidatedMetadata;
 use crate::infrastructure::observability::Metrics;
 use crate::infrastructure::qa::types::StreamChunk;
@@ -551,7 +551,7 @@ impl ConversationalQAServiceTrait for ConversationalQAService {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+        search_results: Vec<crate::features::search::dto::SearchResultDto>,
     ) -> Result<ConversationalAnswer> {
         ConversationalQAService::ask_question(self, conversation_id, question, search_results).await
     }
@@ -560,7 +560,7 @@ impl ConversationalQAServiceTrait for ConversationalQAService {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
+        search_results: Vec<crate::features::search::dto::SearchResultDto>,
         window: tauri::Window,
     ) -> Result<()> {
         ConversationalQAService::ask_question_stream(

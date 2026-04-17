@@ -66,9 +66,9 @@ fn main() {
             vault::interfaces::commands::model_management::get_model_catalog_stats,
             // Search Plugin (3 commands - JSON-returning commands excluded)
             // Note: semantic_search, hybrid_search, search_fast return JSON and can't be used with specta
-            vault::interfaces::commands::search_commands::find_similar,
-            vault::interfaces::commands::search_commands::search_with_recency,
-            vault::interfaces::commands::search_commands::batch_search,
+            vault::features::search::commands::find_similar,
+            vault::features::search::commands::search_with_recency,
+            vault::features::search::commands::batch_search,
             // File Plugin (12 commands)
             vault::features::file::plugin::commands::index_file,
             vault::features::file::plugin::commands::index_directory,

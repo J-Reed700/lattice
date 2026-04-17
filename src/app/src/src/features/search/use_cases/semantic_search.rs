@@ -33,8 +33,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::dtos::search_dto::{SearchRequestDto, SearchResponseDto};
-use crate::application::mappers::SearchMapper;
+use crate::features::search::dto::{SearchRequestDto, SearchResponseDto};
+use crate::features::search::mapper::SearchMapper;
 use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::shared::error::Result;
 
@@ -162,7 +162,7 @@ impl SemanticSearchUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::SearchModeDto;
+    use crate::features::search::dto::SearchModeDto;
     use async_trait::async_trait;
 
     // Mock embedding service for testing
@@ -196,10 +196,10 @@ mod tests {
             _embedding: &[f32],
             limit: usize,
             _threshold: f32,
-        ) -> Result<Vec<crate::application::dtos::SearchResultPortDto>> {
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
             // Return mock port DTOs
             Ok((0..limit.min(3))
-                .map(|i| crate::application::dtos::SearchResultPortDto {
+                .map(|i| crate::features::search::dto::SearchResultPortDto {
                     doc_id: format!("doc-{}", i),
                     chunk_id: format!("chunk-{}", i),
                     score: 0.9 - (i as f32 * 0.1),

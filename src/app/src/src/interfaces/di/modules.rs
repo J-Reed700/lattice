@@ -27,7 +27,7 @@ use std::sync::RwLock;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 
 // Application Use Cases - Search
-use crate::application::use_cases::search::{
+use crate::features::search::use_cases::{
     FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
 };
 

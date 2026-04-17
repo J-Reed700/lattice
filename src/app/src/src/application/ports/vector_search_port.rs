@@ -18,7 +18,7 @@
 //!
 //! ```rust
 //! use crate::application::ports::VectorSearchPort;
-//! use crate::application::dtos::SearchResultPortDto;
+//! use crate::features::search::dto::SearchResultPortDto;
 //!
 //! fn find_similar(
 //!     searcher: &impl VectorSearchPort,
@@ -28,7 +28,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::SearchResultPortDto;
+use crate::features::search::dto::SearchResultPortDto;
 use crate::shared::result::Result;
 use std::collections::HashSet;
 
