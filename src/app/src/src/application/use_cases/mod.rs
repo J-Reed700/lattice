@@ -212,9 +212,6 @@ pub mod indexing;
 // Vertical-slice migration (llm): use cases live in features/llm/use_cases/.
 #[path = "../../features/llm/use_cases/mod.rs"]
 pub mod llm;
-// Vertical-slice migration (mentions): use cases live in features/mentions/use_cases/.
-#[path = "../../features/mentions/use_cases/mod.rs"]
-pub mod mentions;
 // Vertical-slice migration (model_management): use cases live in features/model_management/use_cases/.
 #[path = "../../features/model_management/use_cases/mod.rs"]
 pub mod model_management;
@@ -254,9 +251,6 @@ pub use llm::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
     GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
-};
-pub use mentions::{
-    ExtractMentionsUseCase, GetBacklinksUseCase, GetMentionsByTypeUseCase, SearchMentionsUseCase,
 };
 pub use model_management::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,

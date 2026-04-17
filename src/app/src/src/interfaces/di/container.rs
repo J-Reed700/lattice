@@ -73,7 +73,7 @@ use crate::features::recent::use_cases::{
 };
 
 // Application Use Cases - Mentions
-use crate::application::use_cases::mentions::{
+use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
     UpdateMentionUseCase,

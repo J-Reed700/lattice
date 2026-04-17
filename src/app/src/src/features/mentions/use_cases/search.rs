@@ -16,8 +16,8 @@
 //! let mentions = use_case.execute("important".into()).await?;
 //! ```
 
-use crate::application::dtos::mention_dto::SearchMentionsResultDto;
-use crate::application::mappers::mention_mapper::MentionMapper;
+use crate::features::mentions::dto::SearchMentionsResultDto;
+use crate::features::mentions::mapper::MentionMapper;
 use crate::application::ports::MentionRepositoryPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

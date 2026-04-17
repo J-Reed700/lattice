@@ -42,9 +42,6 @@ pub mod indexing_commands;
 // Vertical-slice migration (llm): commands live in features/llm/commands.rs.
 #[path = "../../features/llm/commands.rs"]
 pub mod llm;
-// Vertical-slice migration (mentions): commands live in features/mentions/commands.rs.
-#[path = "../../features/mentions/commands.rs"]
-pub mod mentions;
 // Vertical-slice migration (model_management): commands live in features/model_management/.
 #[path = "../../features/model_management/commands.rs"]
 pub mod model_management;
@@ -70,4 +67,3 @@ mod command_tests;
 // Module aliases retained for migration/backward compatibility.
 pub use conversation as conversation_commands;
 pub use file as file_commands;
-pub use mentions as mentions_commands;

@@ -80,7 +80,7 @@ use crate::features::recent::use_cases::{
 };
 
 // Application Use Cases - Mentions
-use crate::application::use_cases::mentions::{
+use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
     UpdateMentionUseCase,
@@ -1638,8 +1638,8 @@ impl LibraryModule {
             Arc::new(ClearRecentHistoryUseCase::new(recent_docs_repo.clone()));
 
         // Mentions use cases - need MentionMapper
-        use crate::application::mappers::MentionMapper;
-        use crate::application::use_cases::mentions::{
+        use crate::features::mentions::mapper::MentionMapper;
+        use crate::features::mentions::use_cases::{
             CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase,
             GetBacklinksUseCase, GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase,
             SearchMentionsUseCase, UpdateMentionUseCase,

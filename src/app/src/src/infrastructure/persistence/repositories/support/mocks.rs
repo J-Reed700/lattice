@@ -36,7 +36,8 @@ use crate::application::ports::{
 };
 use crate::domain::entities::chunk::Chunk as ChunkEntity;
 use crate::domain::entities::embedding::Embedding as DomainEmbedding;
-use crate::domain::entities::{Chunk, Document, Mention};
+use crate::domain::entities::{Chunk, Document};
+use crate::features::mentions::entity::Mention;
 use crate::infrastructure::persistence::mappers::embedding_mapper::{
     EmbeddingDTO, EmbeddingMapper,
 };

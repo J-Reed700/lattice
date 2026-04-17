@@ -2,21 +2,28 @@
 //!
 //! Inline [[wiki-link]]-style references between documents. Extract /
 //! create / update / delete / search / list-by-type / list-for-doc /
-//! backlinks.
+//! backlinks. Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File             | Canonical module path                                                     |
-//! |------------------|---------------------------------------------------------------------------|
-//! | `dto.rs`         | `crate::application::dtos::mention_dto`                                   |
-//! | `mapper.rs`      | `crate::application::mappers::mention_mapper`                             |
-//! | `entity.rs`      | `crate::domain::entities::mention` (Mention, MentionType)                 |
-//! | `use_cases/`     | `crate::application::use_cases::mentions`                                 |
-//! | `repository.rs`  | `crate::infrastructure::persistence::repositories::mention_repository`    |
-//! | `trait_def.rs`   | `crate::infrastructure::services::traits` (merged into trait re-exports)  |
-//! | `mocks.rs`       | `crate::infrastructure::services::mocks` (merged into mock re-exports)    |
-//! | `commands.rs`    | `crate::interfaces::commands::mentions` (aka `mentions_commands`)         |
-//! | `plugin.rs`      | `crate::plugins::mention_plugin`                                          |
+//! - `crate::features::mentions::dto` — mention DTOs
+//! - `crate::features::mentions::entity` — Mention, MentionType
+//! - `crate::features::mentions::mapper::MentionMapper`
+//! - `crate::features::mentions::use_cases` — CRUD, search, list, backlinks
+//! - `crate::features::mentions::repository::MentionRepository`
+//! - `crate::features::mentions::commands` — Tauri command handlers
+//! - `crate::features::mentions::plugin::init()` — Tauri plugin
 //!
-//! First migration to pull a *domain entity* into a feature slice.
+//! `trait_def` (MentionServiceTrait) and `mocks` (MockMentionRepository)
+//! remain loaded via the shared `infrastructure::services::{traits,mocks}`
+//! aggregators — consumers import through those aggregators.
+//!
 //! `MentionRepositoryPort` stays in `application/ports/`.
+
+pub mod commands;
+pub mod dto;
+pub mod entity;
+pub mod mapper;
+pub mod plugin;
+pub mod repository;
+pub mod use_cases;

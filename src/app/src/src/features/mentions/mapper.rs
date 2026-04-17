@@ -1,4 +1,4 @@
-use crate::application::dtos::mention_dto::{MentionDto, MentionWithContextDto};
+use crate::features::mentions::dto::{MentionDto, MentionWithContextDto};
 use crate::application::ports::{MentionData, MentionWithContextData};
 
 pub struct MentionMapper;

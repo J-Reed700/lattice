@@ -18,8 +18,8 @@
 //! println!("Created mention: {}", mention.id);
 //! ```
 
-use crate::application::dtos::mention_dto::MentionDto;
-use crate::application::mappers::mention_mapper::MentionMapper;
+use crate::features::mentions::dto::MentionDto;
+use crate::features::mentions::mapper::MentionMapper;
 use crate::application::ports::MentionRepositoryPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

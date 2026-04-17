@@ -3,7 +3,7 @@
 use super::checksum::calculate_checksum;
 use crate::infrastructure::indexing::chunker::TextChunk;
 use crate::infrastructure::indexing::error::{IndexingError, Result};
-use crate::infrastructure::persistence::repositories::mention_repository::MentionRepository;
+use crate::features::mentions::repository::MentionRepository;
 use crate::infrastructure::services::embedding::MODEL_NAME;
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;

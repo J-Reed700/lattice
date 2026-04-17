@@ -55,7 +55,7 @@
 //! - **Search Enhancement**: Find documents by mentioned entities
 //! - **Knowledge Graph**: Build entity relationship graph from mentions
 
-use crate::application::dtos::mention_dto::{
+use crate::features::mentions::dto::{
     BacklinksResultDto, ExtractMentionsResultDto, GetMentionsForDocumentResultDto, MentionDto,
     SearchMentionsResultDto,
 };

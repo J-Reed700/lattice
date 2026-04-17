@@ -31,9 +31,6 @@ pub mod document_mapper;
 // Vertical-slice migration (indexing): mapper lives in features/indexing/mapper.rs.
 #[path = "../../features/indexing/mapper.rs"]
 pub mod indexing_mapper;
-// Vertical-slice migration (mentions): mapper lives in features/mentions/mapper.rs.
-#[path = "../../features/mentions/mapper.rs"]
-pub mod mention_mapper;
 // Vertical-slice migration (search): mapper lives in features/search/mapper.rs.
 #[path = "../../features/search/mapper.rs"]
 pub mod search_mapper;
@@ -45,6 +42,5 @@ pub mod settings_mapper;
 pub use conversation_mapper::{ConversationMapper, MessageMapper};
 pub use document_mapper::DocumentMapper;
 pub use indexing_mapper::IndexingMapper;
-pub use mention_mapper::MentionMapper;
 pub use search_mapper::SearchMapper;
 pub use settings_mapper::SettingsMapper;

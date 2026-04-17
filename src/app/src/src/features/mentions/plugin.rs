@@ -2,7 +2,7 @@
 //!
 //! Provides commands for extracting, searching, and managing mentions (entity references) in documents.
 
-use crate::application::dtos::mention_dto::{
+use crate::features::mentions::dto::{
     BacklinksResultDto, ExtractMentionsResultDto, GetMentionsForDocumentResultDto, MentionDto,
     SearchMentionsResultDto,
 };

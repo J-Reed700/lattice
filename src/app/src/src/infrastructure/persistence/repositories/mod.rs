@@ -15,9 +15,6 @@ pub mod downloaded_model_repository;
 // Vertical-slice migration (embedding): port-impl repository lives in features/embedding/.
 #[path = "../../../features/embedding/repository.rs"]
 pub mod embedding_repository;
-// Vertical-slice migration (mentions): repository lives in features/mentions/repository.rs.
-#[path = "../../../features/mentions/repository.rs"]
-pub mod mention_repository;
 // Vertical-slice migration (settings): repository lives in features/settings/repository.rs.
 #[path = "../../../features/settings/repository.rs"]
 pub mod settings_repository;
@@ -56,7 +53,7 @@ pub use conversation_repository::ConversationRepository;
 pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 pub use downloaded_model_repository::DownloadedModelRepository;
 pub use embedding_repository::{Embedding, EmbeddingRepository};
-pub use mention_repository::MentionRepository;
+pub use crate::features::mentions::repository::MentionRepository;
 pub use settings_repository::SettingsRepository;
 pub use summary_repository::SummaryRepository;
 pub use crate::features::tags::repository::TagRepository;
