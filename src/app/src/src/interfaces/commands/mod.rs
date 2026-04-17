@@ -39,9 +39,6 @@ pub mod function_calling_commands;
 // Vertical-slice migration (indexing): commands live in features/indexing/commands.rs.
 #[path = "../../features/indexing/commands.rs"]
 pub mod indexing_commands;
-// Vertical-slice migration (initialization): commands live in features/initialization/commands.rs.
-#[path = "../../features/initialization/commands.rs"]
-pub mod initialization;
 // Vertical-slice migration (llm): commands live in features/llm/commands.rs.
 #[path = "../../features/llm/commands.rs"]
 pub mod llm;

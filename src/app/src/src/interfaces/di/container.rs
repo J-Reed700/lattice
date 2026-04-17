@@ -30,7 +30,7 @@ use crate::application::use_cases::indexing::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
 };
-use crate::application::use_cases::initialization::{
+use crate::features::initialization::use_cases::{
     InitializeDatabaseUseCase, InitializeModelsUseCase,
 };
 use crate::application::use_cases::qa::AskQuestionUseCase;

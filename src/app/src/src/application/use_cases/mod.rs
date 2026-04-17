@@ -209,9 +209,6 @@ pub mod function_calling;
 // Vertical-slice migration (indexing): use cases live in features/indexing/use_cases/.
 #[path = "../../features/indexing/use_cases/mod.rs"]
 pub mod indexing;
-// Vertical-slice migration (initialization): use cases live in features/initialization/use_cases/.
-#[path = "../../features/initialization/use_cases/mod.rs"]
-pub mod initialization;
 // Vertical-slice migration (llm): use cases live in features/llm/use_cases/.
 #[path = "../../features/llm/use_cases/mod.rs"]
 pub mod llm;
@@ -256,7 +253,6 @@ pub use file::{
 };
 pub use function_calling::{ExecuteFunctionUseCase, ListAvailableFunctionsUseCase};
 pub use indexing::{IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase};
-pub use initialization::{InitializeDatabaseUseCase, InitializeModelsUseCase};
 pub use llm::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,

@@ -28,7 +28,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::initialization_dto::InitializeModelsResponseDto;
+use crate::features::initialization::dto::InitializeModelsResponseDto;
 use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use crate::shared::result::Result;

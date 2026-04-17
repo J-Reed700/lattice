@@ -28,7 +28,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::initialization_dto::InitializeDatabaseResponseDto;
+use crate::features::initialization::dto::InitializeDatabaseResponseDto;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 use sqlx::SqlitePool;

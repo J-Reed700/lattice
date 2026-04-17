@@ -13,7 +13,7 @@
 //! Async functions store state on the heap (in Future objects), not the stack.
 
 use crate::application::dtos::llm_dto::DownloadModelRequestDto;
-use crate::application::use_cases::initialization::first_run_setup::CheckFirstRunStatusUseCase;
+use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::audit_success;
 use crate::domain::download::DownloadOperationState;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME;
