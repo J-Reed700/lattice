@@ -13,6 +13,7 @@ pub mod cache;
 pub mod credentials;
 pub mod favorites;
 pub mod health;
+pub mod initialization;
 pub mod mentions;
 pub mod metrics;
 pub mod qa;

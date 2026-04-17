@@ -63,7 +63,8 @@ pub mod function_calling_dto;
 pub mod health_dto;
 #[path = "modules/indexing_dto.rs"]
 pub mod indexing_dto;
-#[path = "modules/initialization_dto.rs"]
+// Vertical-slice migration (initialization): DTO lives in features/initialization/dto.rs.
+#[path = "../../features/initialization/dto.rs"]
 pub mod initialization_dto;
 #[path = "modules/llm_dto.rs"]
 pub mod llm_dto;

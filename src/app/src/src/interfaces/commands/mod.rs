@@ -51,7 +51,8 @@ pub mod health_commands;
 pub mod hf_settings;
 #[path = "domains/indexing_commands.rs"]
 pub mod indexing_commands;
-#[path = "domains/initialization.rs"]
+// Vertical-slice migration (initialization): commands live in features/initialization/commands.rs.
+#[path = "../../features/initialization/commands.rs"]
 pub mod initialization;
 #[path = "domains/llm.rs"]
 pub mod llm;
