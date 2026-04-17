@@ -20,7 +20,7 @@ pub trait TagServiceTrait: Send + Sync {
     /// # Errors
     /// - `AppError::InvalidInput` if name is invalid
     /// - `AppError::Database` if database operation fails
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::models::tag::Tag>;
+    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag>;
 
     /// Update an existing tag
     ///
@@ -40,7 +40,7 @@ pub trait TagServiceTrait: Send + Sync {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::models::tag::Tag>;
+    ) -> Result<crate::features::tags::entity::Tag>;
 
     /// Delete a tag
     ///
@@ -58,7 +58,7 @@ pub trait TagServiceTrait: Send + Sync {
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails
-    async fn get_all_tags(&self) -> Result<Vec<crate::models::tag::Tag>>;
+    async fn get_all_tags(&self) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Get all tags with document counts
     ///
@@ -67,7 +67,7 @@ pub trait TagServiceTrait: Send + Sync {
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails
-    async fn get_all_tags_with_counts(&self) -> Result<Vec<crate::models::tag::TagWithCount>>;
+    async fn get_all_tags_with_counts(&self) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>>;
 
     /// Get tags for a document
     ///
@@ -82,7 +82,7 @@ pub trait TagServiceTrait: Send + Sync {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::models::tag::Tag>>;
+    ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Apply tags to a document
     ///
@@ -99,7 +99,7 @@ pub trait TagServiceTrait: Send + Sync {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::models::tag::Tag>>;
+    ) -> Result<Vec<crate::features::tags::entity::Tag>>;
 
     /// Remove a tag from a document
     ///
@@ -194,7 +194,7 @@ pub trait TagServiceTrait: Send + Sync {
     ///
     /// # Errors
     /// - `AppError::Database` if database operation fails
-    async fn get_or_create(&self, name: &str, color: &str) -> Result<crate::models::tag::Tag>;
+    async fn get_or_create(&self, name: &str, color: &str) -> Result<crate::features::tags::entity::Tag>;
 
     /// Get all tags with document counts (alternative to get_all_tags_with_counts)
     ///
@@ -203,7 +203,7 @@ pub trait TagServiceTrait: Send + Sync {
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails
-    async fn get_all_with_counts(&self) -> Result<Vec<crate::models::tag::TagWithCount>>;
+    async fn get_all_with_counts(&self) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>>;
 
     /// Merge existing and generated tags, removing duplicates (case-insensitive)
     ///
@@ -247,7 +247,7 @@ pub trait TagRepositoryTrait: Send + Sync {
     ///
     /// # Returns
     /// The created tag as old models::Tag struct
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::models::tag::Tag>;
+    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag>;
 
     /// Find tag by name (case-insensitive).
     ///

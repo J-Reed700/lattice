@@ -54,7 +54,6 @@
 //! ```
 
 // Directory-based domain modules
-pub mod aggregates;
 pub mod entities;
 pub mod events;
 pub mod ports;

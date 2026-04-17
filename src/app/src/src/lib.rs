@@ -309,9 +309,6 @@
 /// - [`utils`](shared::utils) - Shared utilities
 pub mod shared;
 
-/// Core primitives sitting below all features. Currently empty scaffolding
-/// for the vertical-slice migration.
-pub mod core;
 
 /// Vertical feature slices. New code should live here rather than in the
 /// legacy horizontal layers (application, infrastructure, interfaces, plugins).
@@ -529,25 +526,6 @@ pub use interfaces::{di::Container, event_handlers};
 /// # Oracle Mandate
 /// "Plugins are thin wrappers. ALL business logic stays in domain adapters."
 pub mod plugins;
-
-// =============================================================================
-// COMPATIBILITY MODULES - Temporary shims for DDD migration
-// =============================================================================
-
-/// Compatibility module for Tag DDD migration.
-///
-/// This module provides backward-compatible exports during the Tag DDD migration.
-/// It re-exports domain entities and application DTOs with legacy names.
-///
-/// # Migration Status
-/// - Phase 1: ACTIVE - Compatibility shim (accept +32 regression)
-/// - Phase 2-4: PENDING - Type fixes, DTOs, integration
-/// - Phase 5: PENDING - Remove this module
-///
-/// # Note
-/// This module will be removed in Phase 5 of the Tag DDD migration.
-/// All code should eventually use domain/application types directly.
-pub mod models;
 
 // =============================================================================
 // LEGACY MODULES - Deprecated but functional for backward compatibility

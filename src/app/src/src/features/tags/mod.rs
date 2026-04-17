@@ -26,9 +26,6 @@
 //! because those aggregators are architectural re-export machinery,
 //! not feature-private paths. Consumers import via
 //! `crate::infrastructure::services::traits::TagServiceTrait` etc.
-//!
-//! `crate::models::tag::Tag` (gitignored DDD migration shim) is unrelated
-//! to this vertical-slice migration and left alone.
 
 pub mod commands;
 pub mod dto;

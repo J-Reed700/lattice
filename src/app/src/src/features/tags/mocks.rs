@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, RwLock};
 /// Mock tag service for testing
 pub struct MockTagService {
     tags: std::sync::Arc<
-        parking_lot::RwLock<std::collections::HashMap<String, crate::models::tag::Tag>>,
+        parking_lot::RwLock<std::collections::HashMap<String, crate::features::tags::entity::Tag>>,
     >,
     // Track which tags are applied to which documents
     document_tags: std::sync::Arc<
@@ -54,10 +54,10 @@ impl Default for MockTagService {
 #[async_trait]
 #[cfg(test)]
 impl TagServiceTrait for MockTagService {
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::models::tag::Tag> {
+    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag> {
         let tag_name = TagName::new(name.to_lowercase())
             .map_err(|e| crate::error::AppError::InvalidData(format!("Invalid tag name: {}", e)))?;
-        let tag = crate::models::tag::Tag::new(tag_name, color.unwrap_or("#6366f1").to_string());
+        let tag = crate::features::tags::entity::Tag::new(tag_name, color.unwrap_or("#6366f1").to_string());
         self.tags.write().insert(name.to_lowercase(), tag.clone());
         Ok(tag)
     }
@@ -67,14 +67,14 @@ impl TagServiceTrait for MockTagService {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::models::tag::Tag> {
+    ) -> Result<crate::features::tags::entity::Tag> {
         let mut tags = self.tags.write();
         if let Some((_, tag)) = tags.iter_mut().find(|(_, t)| t.id().to_string() == tag_id) {
             if let Some(n) = name {
                 let tag_name = TagName::new(n.to_lowercase()).map_err(|e| {
                     crate::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
                 })?;
-                *tag = crate::models::tag::Tag::new(
+                *tag = crate::features::tags::entity::Tag::new(
                     tag_name,
                     color.unwrap_or(tag.color()).to_string(),
                 );
@@ -92,18 +92,18 @@ impl TagServiceTrait for MockTagService {
         Ok(())
     }
 
-    async fn get_all_tags(&self) -> Result<Vec<crate::models::tag::Tag>> {
+    async fn get_all_tags(&self) -> Result<Vec<crate::features::tags::entity::Tag>> {
         Ok(self.tags.read().values().cloned().collect())
     }
 
-    async fn get_all_tags_with_counts(&self) -> Result<Vec<crate::models::tag::TagWithCount>> {
+    async fn get_all_tags_with_counts(&self) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
         self.get_all_with_counts().await
     }
 
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::models::tag::Tag>> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         // Step 1: Get tag names (read lock, no await)
         let tag_names: Vec<String> = {
             let document_tags = self.document_tags.read();
@@ -126,7 +126,7 @@ impl TagServiceTrait for MockTagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::models::tag::Tag>> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>> {
         // Step 1: Add normalized tag names to document's set (no awaits, lock held briefly)
         {
             let mut document_tags = self.document_tags.write();
@@ -235,7 +235,7 @@ impl TagServiceTrait for MockTagService {
         existing
     }
 
-    async fn get_or_create(&self, name: &str, color: &str) -> Result<crate::models::tag::Tag> {
+    async fn get_or_create(&self, name: &str, color: &str) -> Result<crate::features::tags::entity::Tag> {
         let normalized = name.to_lowercase();
         let mut tags = self.tags.write();
 
@@ -246,17 +246,17 @@ impl TagServiceTrait for MockTagService {
             let tag_name = TagName::new(normalized.clone()).map_err(|e| {
                 crate::error::AppError::InvalidData(format!("Invalid tag name: {}", e))
             })?;
-            let tag = crate::models::tag::Tag::new(tag_name, color.to_string());
+            let tag = crate::features::tags::entity::Tag::new(tag_name, color.to_string());
             tags.insert(normalized, tag.clone());
             Ok(tag)
         }
     }
 
-    async fn get_all_with_counts(&self) -> Result<Vec<crate::models::tag::TagWithCount>> {
+    async fn get_all_with_counts(&self) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
         let tags = self.tags.read();
         Ok(tags
             .values()
-            .map(|tag| crate::models::tag::TagWithCount {
+            .map(|tag| crate::features::tags::dto::TagWithCountDto {
                 id: tag.id().to_string(),
                 name: tag.name().to_string(),
                 color: Some(tag.color().to_string()),
@@ -337,7 +337,7 @@ impl Default for MockTagRepository {
 #[async_trait]
 #[cfg(test)]
 impl TagRepositoryTrait for MockTagRepository {
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::models::tag::Tag> {
+    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag> {
         let entity = self.get_or_create(name, color).await?;
         Ok(entity)
     }

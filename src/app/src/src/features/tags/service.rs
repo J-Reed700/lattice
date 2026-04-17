@@ -118,7 +118,7 @@ impl TagServiceTrait for TagService {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::models::tag::Tag, crate::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
@@ -141,7 +141,7 @@ impl TagServiceTrait for TagService {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::models::tag::Tag, crate::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
@@ -171,7 +171,7 @@ impl TagServiceTrait for TagService {
             .map_err(|e| crate::error::AppError::Database(format!("Failed to delete tag: {}", e)))
     }
 
-    async fn get_all_tags(&self) -> Result<Vec<crate::models::tag::Tag>, crate::error::AppError> {
+    async fn get_all_tags(&self) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -183,7 +183,7 @@ impl TagServiceTrait for TagService {
 
     async fn get_all_tags_with_counts(
         &self,
-    ) -> Result<Vec<crate::models::tag::TagWithCount>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -193,7 +193,7 @@ impl TagServiceTrait for TagService {
 
         Ok(results
             .into_iter()
-            .map(|(tag, count)| crate::models::tag::TagWithCount {
+            .map(|(tag, count)| crate::features::tags::dto::TagWithCountDto {
                 id: tag.id().to_string(),
                 name: tag.name().to_string(),
                 color: Some(tag.color().to_string()),
@@ -206,7 +206,7 @@ impl TagServiceTrait for TagService {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::models::tag::Tag>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -222,7 +222,7 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::models::tag::Tag>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -337,7 +337,7 @@ impl TagServiceTrait for TagService {
         &self,
         name: &str,
         color: &str,
-    ) -> Result<crate::models::tag::Tag, crate::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
@@ -356,7 +356,7 @@ impl TagServiceTrait for TagService {
 
     async fn get_all_with_counts(
         &self,
-    ) -> Result<Vec<crate::models::tag::TagWithCount>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::error::AppError> {
         self.get_all_tags_with_counts().await
     }
 

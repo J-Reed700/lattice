@@ -149,7 +149,7 @@ mod tests {
     use super::*;
     use crate::application::ports::{Filter, NoFilter, RepositoryPort};
     use crate::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
-    use crate::models::tag::Tag;
+    use crate::features::tags::entity::Tag;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

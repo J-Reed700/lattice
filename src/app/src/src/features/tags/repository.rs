@@ -847,10 +847,10 @@ impl RepositoryPort<TagEntity> for TagRepository {
 
 #[async_trait]
 impl crate::infrastructure::services::traits::TagRepositoryTrait for TagRepository {
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::models::tag::Tag> {
+    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag> {
         use crate::shared::domain_types::{TagId, TagName};
         let entity = self.get_or_create(name, color).await?;
-        Ok(crate::models::tag::Tag::with_id(
+        Ok(crate::features::tags::entity::Tag::with_id(
             entity.id().clone(),
             entity.name().clone(),
             entity.color().to_string(),
