@@ -72,7 +72,8 @@ pub mod qa_commands;
 pub mod recent_documents;
 #[path = "domains/search_commands.rs"]
 pub mod search_commands;
-#[path = "domains/tag_commands_full.rs"]
+// Vertical-slice migration (tags): commands live in features/tags/commands.rs.
+#[path = "../../features/tags/commands.rs"]
 pub mod tag_commands_full;
 // Vertical-slice migration (updates): command impls live in features/updates/commands.rs.
 #[path = "../../features/updates/commands.rs"]

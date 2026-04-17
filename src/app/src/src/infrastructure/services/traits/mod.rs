@@ -39,6 +39,8 @@ mod model;
 #[path = "../../../features/qa/traits.rs"]
 mod qa;
 mod search;
+// Vertical-slice migration (tags): trait lives in features/tags/trait_def.rs.
+#[path = "../../../features/tags/trait_def.rs"]
 mod tag;
 mod web;
 mod web_archive;

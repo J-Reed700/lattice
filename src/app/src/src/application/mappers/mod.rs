@@ -38,6 +38,8 @@ pub mod mention_mapper;
 pub mod recent_document_mapper;
 pub mod search_mapper;
 pub mod settings_mapper;
+// Vertical-slice migration (tags): mapper lives in features/tags/mapper.rs.
+#[path = "../../features/tags/mapper.rs"]
 pub mod tag_mapper;
 
 // Re-export mappers

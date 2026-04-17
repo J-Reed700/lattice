@@ -45,9 +45,10 @@ pub mod search_enrichment_service;
 pub mod startup_reconciliation;
 #[path = "domains/sync.rs"]
 pub mod sync;
-#[path = "domains/tag_service.rs"]
+// Vertical-slice migration (tags): services live in features/tags/.
+#[path = "../../features/tags/service.rs"]
 pub mod tag_service;
-#[path = "domains/tag_service_impl.rs"]
+#[path = "../../features/tags/service_impl.rs"]
 pub mod tag_service_impl;
 #[path = "domains/validated_path.rs"]
 pub mod validated_path;

@@ -14,4 +14,5 @@ pub mod mentions;
 pub mod metrics;
 pub mod qa;
 pub mod recent;
+pub mod tags;
 pub mod updates;

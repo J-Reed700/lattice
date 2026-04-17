@@ -21,6 +21,8 @@ pub mod mention_repository;
 pub mod recent_documents_repository;
 pub mod settings_repository;
 pub mod summary_repository;
+// Vertical-slice migration (tags): repository lives in features/tags/repository.rs.
+#[path = "../../../features/tags/repository.rs"]
 pub mod tag_repository;
 
 // Transaction-aware repository implementations (Tx modules)

@@ -14,6 +14,8 @@ pub mod mention;
 pub mod model;
 pub mod model_file;
 pub mod search_result;
+// Vertical-slice migration (tags): entity lives in features/tags/entity.rs.
+#[path = "../../features/tags/entity.rs"]
 pub mod tag;
 
 // Re-export public types

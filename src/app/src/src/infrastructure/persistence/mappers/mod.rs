@@ -40,6 +40,8 @@ pub mod chunk_mapper;
 pub mod conversation_mapper;
 pub mod document_mapper;
 pub mod embedding_mapper;
+// Vertical-slice migration (tags): persistence mapper lives in features/tags/persistence_mapper.rs.
+#[path = "../../../features/tags/persistence_mapper.rs"]
 pub mod tag_mapper;
 // TODO: Add mention_mapper when mention entity structure is finalized
 
