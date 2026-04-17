@@ -3,6 +3,8 @@ pub mod init;
 pub mod migrate;
 pub mod performance_indexes;
 pub mod schema;
+// Vertical-slice migration (stats): database stats adapter lives in features/stats/.
+#[path = "../../../features/stats/database_stats.rs"]
 pub mod stats;
 pub mod utils;
 
