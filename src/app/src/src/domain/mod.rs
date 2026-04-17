@@ -72,7 +72,8 @@ pub mod conversation;
 pub mod conversation_summary;
 #[path = "modules/curated_models.rs"]
 pub mod curated_models;
-#[path = "modules/custom_model.rs"]
+// Vertical-slice migration (custom_model): domain module lives in features/custom_model/domain.rs.
+#[path = "../features/custom_model/domain.rs"]
 pub mod custom_model;
 #[path = "modules/download.rs"]
 pub mod download;

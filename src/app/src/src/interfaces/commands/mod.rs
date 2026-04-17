@@ -26,7 +26,8 @@ pub mod conversation_plugin_impl;
 // Vertical-slice migration (credentials): commands live in features/credentials/commands.rs.
 #[path = "../../features/credentials/commands.rs"]
 pub mod credentials;
-#[path = "domains/custom_model_commands.rs"]
+// Vertical-slice migration (custom_model): commands live in features/custom_model/commands.rs.
+#[path = "../../features/custom_model/commands.rs"]
 pub mod custom_model_commands;
 // Vertical-slice migration (daily_notes): commands live in features/daily_notes/commands.rs.
 #[path = "../../features/daily_notes/commands.rs"]

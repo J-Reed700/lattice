@@ -6,6 +6,8 @@
 pub mod batch_job_repository;
 pub mod chunk_repository;
 pub mod conversation_repository;
+// Vertical-slice migration (custom_model): repository lives in features/custom_model/repository.rs.
+#[path = "../../../features/custom_model/repository.rs"]
 pub mod custom_model_repository;
 pub mod document_repository;
 pub mod downloaded_model_repository;
