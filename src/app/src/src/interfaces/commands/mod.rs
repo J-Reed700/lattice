@@ -34,7 +34,8 @@ pub mod custom_model_commands;
 pub mod daily_notes_workspace;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
-#[path = "domains/downloads.rs"]
+// Vertical-slice migration (download): commands live in features/download/commands.rs.
+#[path = "../../features/download/commands.rs"]
 pub mod downloads;
 #[path = "domains/embeddings.rs"]
 pub mod embeddings;

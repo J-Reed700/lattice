@@ -1,4 +1,6 @@
 pub mod conversation_events;
+// Vertical-slice migration (download): infrastructure event bridge lives in features/download/events/.
+#[path = "../../features/download/events/infra_events.rs"]
 pub mod download_events;
 
 pub use conversation_events::{ConversationEvent, SummaryRefreshRequestedEvent};

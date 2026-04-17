@@ -75,11 +75,12 @@ pub mod curated_models;
 // Vertical-slice migration (custom_model): domain module lives in features/custom_model/domain.rs.
 #[path = "../features/custom_model/domain.rs"]
 pub mod custom_model;
-#[path = "modules/download.rs"]
+// Vertical-slice migration (download): domain modules live in features/download/domain/.
+#[path = "../features/download/domain/download.rs"]
 pub mod download;
-#[path = "modules/download_snapshot.rs"]
+#[path = "../features/download/domain/snapshot.rs"]
 pub mod download_snapshot;
-#[path = "modules/downloaded_model.rs"]
+#[path = "../features/download/domain/downloaded_model.rs"]
 pub mod downloaded_model;
 #[path = "modules/embedding_constants.rs"]
 pub mod embedding_constants;

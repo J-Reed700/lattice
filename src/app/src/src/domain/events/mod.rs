@@ -11,6 +11,8 @@
 //! - Zero runtime cost (no vtables/downcasting)
 //! - Allows pattern matching in event handlers
 
+// Vertical-slice migration (download): event types live in features/download/events/.
+#[path = "../../features/download/events/model_download_events.rs"]
 pub mod model_download_events;
 
 use serde::{Deserialize, Serialize};

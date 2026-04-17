@@ -31,6 +31,8 @@
 #[path = "../../features/backup/adapter.rs"]
 pub mod backup_adapter;
 pub mod database;
+// Vertical-slice migration (download): repository lives in features/download/download_repository.rs.
+#[path = "../../features/download/download_repository.rs"]
 pub mod download_repository;
 pub mod helpers;
 pub mod mappers;

@@ -10,6 +10,8 @@ pub mod conversation_repository;
 #[path = "../../../features/custom_model/repository.rs"]
 pub mod custom_model_repository;
 pub mod document_repository;
+// Vertical-slice migration (download): downloaded_model repository lives in features/download/.
+#[path = "../../../features/download/downloaded_model_repository.rs"]
 pub mod downloaded_model_repository;
 pub mod embedding_repository;
 // Vertical-slice migration (favorites): repository lives in features/favorites/repository.rs.

@@ -59,7 +59,8 @@ pub mod conversation_plugin;
 // Vertical-slice migration (daily_notes): plugin lives in features/daily_notes/plugin.rs.
 #[path = "../features/daily_notes/plugin.rs"]
 pub mod daily_notes_plugin;
-#[path = "domains/download_plugin.rs"]
+// Vertical-slice migration (download): plugin lives in features/download/plugin.rs.
+#[path = "../features/download/plugin.rs"]
 pub mod download_plugin;
 #[path = "domains/embeddings.rs"]
 pub mod embeddings;

@@ -18,9 +18,10 @@ pub mod conversation_service;
 pub mod conversational_qa_service;
 #[path = "domains/database.rs"]
 pub mod database;
-#[path = "domains/download_engine.rs"]
+// Vertical-slice migration (download): engine + manager live in features/download/.
+#[path = "../../features/download/engine.rs"]
 pub mod download_engine;
-#[path = "domains/download_manager.rs"]
+#[path = "../../features/download/manager.rs"]
 pub mod download_manager;
 #[path = "domains/file_cleanup.rs"]
 pub mod file_cleanup;
