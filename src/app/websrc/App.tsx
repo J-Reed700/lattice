@@ -15,7 +15,6 @@ import { useProgressCleanup } from './hooks/useProgressCleanup';
 import VaultAPI from './lib/api';
 import { router } from './routes';
 import { startDownloadCleanup } from './stores/downloadStore';
-import './styles/themes.css';
 
 interface FirstRunStatusResponse {
   needs_setup: boolean;
