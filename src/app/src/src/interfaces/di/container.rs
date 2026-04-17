@@ -37,7 +37,7 @@ use crate::application::use_cases::qa::AskQuestionUseCase;
 use crate::application::use_cases::search::{
     FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
 };
-use crate::application::use_cases::stats::GetSystemStatsUseCase;
+use crate::features::stats::use_cases::GetSystemStatsUseCase;
 use crate::application::use_cases::tags::{
     ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
     GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,

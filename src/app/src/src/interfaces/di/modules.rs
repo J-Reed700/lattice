@@ -131,7 +131,7 @@ use crate::application::use_cases::updates::{CheckForUpdatesUseCase, GetCurrentV
 use crate::application::use_cases::metrics::GetMetricsUseCase;
 
 // Application Use Cases - Stats
-use crate::application::use_cases::stats::GetSystemStatsUseCase;
+use crate::features::stats::use_cases::GetSystemStatsUseCase;
 use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
 use crate::infrastructure::observability::metrics::Metrics;
 
@@ -2164,7 +2164,7 @@ impl SystemModule {
 
         // Stats
         let database_stats = Arc::new(
-            crate::infrastructure::persistence::database::DatabaseStatsAdapter::new(
+            crate::features::stats::database_stats::DatabaseStatsAdapter::new(
                 db_pool.clone(),
             ),
         ) as Arc<dyn crate::application::ports::DatabaseStatsPort>;
