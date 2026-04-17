@@ -26,8 +26,6 @@
 //! No application-level `WebPort` — web operations flow through
 //! the service traits (`WebServiceTrait`, `WebArchiveServiceTrait`,
 //! `WebCaptureServiceTrait`) which live in `services/traits/`.
-//!
-//! The `ingestion/` subdirectory is unused legacy — kept for reference.
 
 pub mod commands;
 pub mod domain;

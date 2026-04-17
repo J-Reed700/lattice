@@ -68,22 +68,24 @@ Four peer registers because the app genuinely has four (see §11.2 for how I wid
 
 ### 1.4 Accent — one hue
 
-**Chosen:** **Burnt amber** — HSL `38 77% 45%`, hex **`#cb8919`**.
+**Chosen:** **Modern violet** — HSL `252 100% 72%`, hex **`#8B72FF`**.
 
-Darker than the original proposal (`38 92% 58%` / `#f5a524`). Josh's call: "a little darker." The brighter amber read as candy / highlighter; this one reads as aged gold / tobacco / well-used brass — warm without being cheerful, editorial without being soft. Reasoning defended below (§11 tensions).
+Violet places Recall in the AI-tooling tribe it actually belongs to (claude.ai, Perplexity, Linear all run a near-identical hue). Amber was the prior candidate and was rejected during the shootout for not being industry-standard for AI tools — it was editorial and warm, but it didn't signal "LLM-adjacent knowledge tool" at a glance. Violet does. The brief's `252° 100% 64%` was lifted to L=72% to clear AA body on dark bg (L=64% gave 3.27:1 — failed). Reasoning defended below (§11 tensions).
 
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--accent` | `38 77% 45%` | `#cb8919` | Primary accent. Focus rings, selection, primary button bg. |
-| `--accent-hover` | `38 77% 51%` | `#e09a1c` | Hover/pressed on primary button. +6% L — conventional brighten on dark UI. |
-| `--accent-muted` | `38 45% 18%` | `#433319` | Subtle accent tint (selected-row bg, current-line highlight). Same hue, much lower saturation + lightness. |
-| `--accent-fg` | `30 20% 8%` | `#181411` | Text *on* `--accent` solid fill. Near-black — the darker amber forced this flip (see below). |
+| `--accent` | `252 100% 72%` | `#8B72FF` | Primary accent. Focus rings, selection, primary button bg. |
+| `--accent-hover` | `252 100% 78%` | `#A38FFF` | Hover/pressed on primary button. +6% L — conventional brighten on dark UI. |
+| `--accent-muted` | `252 35% 18%` | `#251F3D` | Subtle accent tint (selected-row bg, current-line highlight). Same hue, much lower saturation + lightness. |
+| `--accent-fg` | `252 25% 8%` | `#13101F` | Text *on* `--accent` solid fill. Near-black — white on L=72% violet fails AA body (see below). |
 
 **Contrast notes — read these, they matter:**
 
-- `--accent-fg` on `--accent` (`#181411` on `#cb8919`): **9.6:1** — AA+ for body and large.
-- `--accent` on `--bg` (`#cb8919` on `#0f1115`), for accent-as-text / thin rings: **5.9:1** — passes AA body.
-- **Why `--accent-fg` went near-black, not white:** at L=45%, white text on amber gives ~3.1:1 (fails AA body) while near-black gives ~9.6:1. The earlier brighter amber (L=58%) could support either. Darker amber can't — foreground **must** be dark. This is the single biggest cascade effect from darkening the accent.
+- `--accent-fg` on `--accent` (`#13101F` on `#8B72FF`): **5.35:1** — AA body.
+- `--accent` on `--bg` (`#8B72FF` on `#0f1115`), for accent-as-text / thin rings: **5.35:1** — passes AA body.
+- **Why `--accent-fg` went near-black, not white:** at L=72%, white text on violet gives ~3.57:1 (fails AA body) while near-black gives 5.35:1. Foreground **must** be dark in dark mode. Polarity flips in light mode where the accent darkens to L=55% and white wins.
+
+**Discipline cost (noted from shootout):** violet wants to expand. Restrict to focus rings, selected-state borders, link text, and ≤32px solid surfaces. No large fills, no gradients, never a panel bg. The token system can't prevent misuse — review and lint have to.
 
 One accent — no `accent-2`, no `accent-secondary`. If a second visual hue is ever needed, it's a semantic state (§1.5), not a mood.
 
@@ -103,7 +105,7 @@ Each has a foreground (text/icon *on* the muted bg) and a saturated variant used
 | `--danger-fg` | `0 75% 72%` | `#ea8383` | Text/icon on `--danger-muted`. 5.0:1 vs muted. |
 | `--danger` | `0 72% 55%` | `#e04545` | Reserved. Destructive confirm buttons, error toasts. |
 
-**Warning is orange (`28°`), not amber.** Now that accent has moved to `38 77% 45%` (darker, more saturated-warm), keeping warning at `38°` would have collapsed the two into the same visual family — and `warning-fg` in particular would have hovered just one lightness step from accent. Shifting warning to `28°` gives it genuine hue separation (perceptually red-orange rather than gold), which is what "warning" should read as anyway. Warning also stays saturation-forward (`85%`) against accent's more restrained `77%`, so even side-by-side the two read as *different categories*, not *different shades of the same thing*.
+**Warning is orange (`28°`).** With accent now at violet (`252°`), warning has maximum hue distance (224° apart) — zero confusion risk between the two. Warning at `28°` still reads as the correct "caution" hue (red-orange, not gold), and stays saturation-forward (`85%`) so warning chips read as state-category rather than brand-identity.
 
 **No `--info`.** The audit showed 0 places where info is semantically different from "secondary text." Dead token.
 
@@ -111,20 +113,20 @@ Each has a foreground (text/icon *on* the muted bg) and a saturated variant used
 
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--ring` | `38 77% 45%` | `#cb8919` | Focus ring. Identical to `--accent`. Single token for discoverability. |
+| `--ring` | `252 100% 72%` | `#8B72FF` | Focus ring. Identical to `--accent`. Single token for discoverability. |
 | `--overlay` | `222 40% 3% / 0.6` | `rgba(6,8,12,0.6)` | Modal scrim. Dark, slightly saturated, not pure black. |
 
 ---
 
 ## 2. Color — Light mode
 
-Same token names, re-anchored. Philosophy: "same app in a different lighting condition, not a different app." Same cool-neutral hue (`220`), same accent hue (`38`), flipped L.
+Same token names, re-anchored. Philosophy: "same app in a different lighting condition, not a different app." Same cool-neutral hue (`220`), same accent hue (`252`), flipped L.
 
 ### 2.1 Surfaces
 
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--bg` | `220 20% 98%` | `#f7f8fa` | Not pure white. Pure white + amber is harsh. |
+| `--bg` | `220 20% 98%` | `#f7f8fa` | Not pure white. Pure white + violet is harsh. |
 | `--surface` | `0 0% 100%` | `#ffffff` | Panels *raised* from bg. Note inversion vs. dark (surface is brighter than bg). |
 | `--surface-raised` | `0 0% 100%` | `#ffffff` | Same as surface; elevation in light comes from shadow, not tone. |
 
@@ -148,16 +150,16 @@ Same token names, re-anchored. Philosophy: "same app in a different lighting con
 
 ### 2.4 Accent
 
-Light-mode accent darkens further from the dark-mode value. A darker canvas-ready amber needs to go darker still against a bright canvas to maintain identity and legibility.
+Light-mode accent darkens from the dark-mode value. Violet on a bright canvas needs more depth to maintain identity and legibility.
 
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--accent` | `36 82% 36%` | `#a76708` | Deeper still than dark mode's `#cb8919` — bright canvas needs more depth. |
-| `--accent-hover` | `36 85% 30%` | `#8f5608` | Hover state. Darkens further (opposite of dark mode's brighten). |
-| `--accent-muted` | `38 70% 92%` | `#fbecd0` | Selected-row tint, subtle highlights. |
-| `--accent-fg` | `30 30% 98%` | `#fbf9f6` | Text on solid `--accent`. Off-white — at L=36% amber, white wins over black (6.4:1 vs 3.3:1). Inverse of the dark-mode situation. |
+| `--accent` | `252 75% 55%` | `#5538E0` | Darker than dark mode's `#8B72FF` — bright canvas needs more depth. |
+| `--accent-hover` | `252 78% 48%` | `#421FD1` | Hover state. Darkens further (opposite of dark mode's brighten). |
+| `--accent-muted` | `252 90% 95%` | `#EBE6FE` | Pale violet tint. Selected-row, subtle highlights. |
+| `--accent-fg` | `252 30% 98%` | `#FAF8FF` | Text on solid `--accent`. Off-white — polarity flips at L=55%: white wins (6.91:1) over dark. Inverse of the dark-mode situation. |
 
-Contrast `--accent-fg` on `--accent` (`#fbf9f6` on `#a76708`): **6.4:1** — AA+ body. Contrast `--accent` on `--bg` (`#a76708` on `#f7f8fa`), for accent-as-text: **5.7:1** — AA body.
+Contrast `--accent-fg` on `--accent` (`#FAF8FF` on `#5538E0`): **6.91:1** — AA+ body. Contrast `--accent` on `--bg` (`#5538E0` on `#f7f8fa`), for accent-as-text: **6.59:1** — AA body.
 
 ### 2.5 Semantic state
 
@@ -166,7 +168,7 @@ Contrast `--accent-fg` on `--accent` (`#fbf9f6` on `#a76708`): **6.4:1** — AA+
 | `--success-muted` | `#e6f5ec` | | `--danger-muted` | `#fbe7e7` |
 | `--success-fg` | `#1e7d4a` | | `--danger-fg` | `#a62828` |
 | `--success` | `#1f9d54` | | `--danger` | `#c32d2d` |
-| `--warning-muted` | `#fbe5cf` | | `--ring` | `#a76708` |
+| `--warning-muted` | `#fbe5cf` | | `--ring` | `#5538E0` |
 | `--warning-fg` | `#8a4208` | | `--overlay` | `rgba(20,22,28,0.45)` |
 | `--warning` | `#c15c08` | | | |
 
@@ -370,7 +372,7 @@ For inputs where outline-offset clips on adjacent elements, we fall back to `box
 | `--destructive`, `--destructive-foreground` | rename | `--danger`, `--danger-fg` |
 | `--border` (shadcn) | rename | `--border-subtle` (most existing uses) |
 | `--input` (shadcn) | rename | `--border-default` |
-| `--ring` | keep name, re-color | (now amber, not neutral) |
+| `--ring` | keep name, re-color | (now violet, not neutral) |
 | `--chart-1..5` | keep, restate | derive from accent + semantic; defer spec to charting work |
 | `--radius` | keep, renamed | `--radius-md` (shadcn components read `--radius`; keep as alias pointing at `--radius-md`) |
 | `--bg-primary/secondary/tertiary` (themes.css) | **DELETED** | map to `--bg` / `--surface` / `--surface-raised` |
@@ -437,19 +439,20 @@ For inputs where outline-offset clips on adjacent elements, we fall back to `box
 
 ## 11. Design tensions I resolved
 
-### 11.1 Amber over every other accent candidate
+### 11.1 Violet over amber (and every other accent candidate)
 
-I considered five: **neutral-zinc (shadcn default), Linear-purple, IA-orange, terminal-green, amber**.
+Candidates considered: **neutral-zinc (shadcn default), violet, amber, steel blue, terminal-green, IA-orange**.
 
-- **Neutral-zinc** is what stock shadcn ships. It's the safe answer. It's also the reason the current app has no identity — "monochrome with a gray accent" reads as *unstyled*, not *restrained*. Rejected.
-- **Linear-purple** (~`250° 90%`) is the most obvious reference-matching choice. Rejected because (a) we'd read as Linear-derivative rather than Recall, and (b) purple has accessibility cliffs on dark bg at the saturations that feel "premium" — we'd end up muddying it.
+- **Neutral-zinc** is what stock shadcn ships. Safe, but the reason the current app has no identity — "monochrome with a gray accent" reads as *unstyled*, not *restrained*. Rejected.
 - **Terminal-green** (~`140°`) fits the "code editor" half of the DNA but clashes with semantic success green. Two greens in one palette is a bug.
-- **IA-orange / red-orange** (~`15°`) is warm and editorial but sits too close to `--danger`; warnings and identity would collide.
-- **Amber (`38°`)** — warm, editorial, legibly distinct from the cool-neutral hue `220` surfaces, has enough contrast headroom at 58% L to meet AA on dark bg, and reads as considered rather than trendy. It nods to analog / paper / editor highlight (the `--accent-muted` tint is essentially the "current line" color from Solarized / One Dark). It also gives the app an *identity* without claiming a trend — amber hasn't been the hot-take accent of 2024/25, which fits the "unfinished-feeling" adjective.
+- **IA-orange / red-orange** (~`15°`) is warm and editorial but sits too close to `--danger`.
+- **Steel blue** (~`215°`) paired beautifully with the Source Serif 4 decision but sits only 5° from the `220°` neutrals — functionally invisible at the sizes accents actually appear (1px focus rings, 2px borders, 12px chips). Identity cost: high. Rejected.
+- **Amber (`38°`)** was the previous pick. It was warm, editorial, legibly distinct from cool-neutral surfaces, and nodded to analog / paper / editor highlight. **Rejected because it's not industry-standard for AI tools** — amber signals "editorial" or "writing tool," not "LLM-adjacent knowledge product." For a local-first tool that runs AI workflows, the category signal matters: users reach for violet UIs to mean "this is the kind of place where AI happens." Amber read as craft but not as *tribe*.
+- **Violet (`252°`)** — claude.ai, Perplexity, Linear all run a near-identical hue. Adopting it places Recall in the AI-tooling tribe it belongs to without copying any one app outright. At L=72% it holds 5.35:1 on dark bg (AA body), has unmistakable presence at 1px, and gives maximum hue distance (224°) from the orange warning.
 
-The risk I originally flagged — amber accent colliding with an amber warning — is now resolved. Warning has moved to `28°` (orange), giving genuine hue separation. Accent stays at `38°` but darkened to `77% 45%` per Josh's call (previously `92% 58%`), which pulls it away from anything that reads as a state color and toward aged-gold territory. Accent and warning can now safely co-occupy a region without confusion.
+**Defense in one sentence:** Violet because it's the category signal for AI-adjacent knowledge tools, clears AA at the lifted L=72% tuning, and leaves warning orange unambiguous at the opposite side of the wheel — so Recall reads as part of the right tribe without copying any single app.
 
-**Defense in one sentence:** Burnt amber because it's warm enough to feel human in a tool that's otherwise quiet, dark and restrained enough not to read as marketing or celebration, and now safely distinct from our orange warning hue — so Recall owns it.
+**Discipline cost noted.** Violet wants to expand: any gradient, panel fill, or large hero use will push the app toward generic-AI-startup chrome. Restrict to focus rings, selected-state borders, link text, and ≤32px solid surfaces. Enforced in review + lint.
 
 ### 11.2 Four peer text levels — widen the gaps to keep them distinct
 
@@ -467,8 +470,9 @@ The first draft of this spec ended with a list of open questions. This revision 
 
 | Question | Decision | Rationale |
 |---|---|---|
-| Should accent amber be brighter (`#f5a524`, `38 92% 58%`) or darker? | **Darker.** Final: `#cb8919` (`38 77% 45%`) in dark mode; `#a76708` (`36 82% 36%`) in light mode. | Original amber read as candy-bright / highlighter. Darker reads as aged gold / tobacco — warm without cheerful, editorial without soft. Cascade: `--accent-fg` had to flip from deep-warm-brown to near-black because at L=45% white fails AA on amber. |
-| Keep amber warning (`38°`) and rely on context, or shift to orange (`28°`)? | **Shift to orange (`28°`).** | Once accent darkened and moved into amber-amber territory, keeping warning at `38°` would have collapsed the two into the same visual family. `28°` gives genuine hue separation — warning reads as red-orange, accent as gold. Also slightly higher saturation on warning keeps them distinct even adjacent. |
+| Accent hue: amber, steel blue, or violet? | **Violet.** Final: `#8B72FF` (`252 100% 72%`) dark; `#5538E0` (`252 75% 55%`) light. | Amber was the prior pick (warm, editorial) but doesn't read as industry-standard for AI tools. Violet is the category signal (claude.ai, Perplexity, Linear). Steel blue paired best with the serif but sat only 5° from the `220°` neutrals — functionally invisible. Violet clears AA at L=72% and places Recall in the right tribe. |
+| Should accent amber be brighter (`#f5a524`) or darker? | **Superseded.** Accent moved to violet entirely. | Kept in log for history: during the amber phase, darker (`#cb8919`) was chosen over brighter for editorial read. Moot now. |
+| Warning hue at `38°` or shift to `28°`? | **`28°`.** | Decided during the amber phase to avoid accent/warning collision. Still correct under violet — with accent at `252°`, warning at `28°` gives 224° hue distance (maximum) and reads as unambiguous red-orange caution. |
 | `text-base` at 15px (density) or 16px (convention)? | **16px.** | Josh chose convention. Gives up ~6% vertical density per body line; gains zero-surprise behavior for rendered prose, OS zoom, and accessibility. Density is still recoverable via `text-sm` (14px) where chrome needs it. |
 | Three peer text levels + disabled, or four peer + disabled? | **Four peer + disabled.** Final: `primary / secondary / tertiary / muted / disabled`. | App has four genuine registers. To keep them distinct, I widened the lightness steps and codified per-level usage in §1.3 so the decision isn't left to eyeball. Muted dropped to 3.4:1 (supplemental only); tertiary holds 5.3:1 (AA body). |
 | Ship with no serif, or add `--font-serif` for prose? | **Add `--font-serif`.** Scope: rendered note body / markdown / long-form reading surfaces only. Never chrome. Primary: Source Serif 4. | An editorial serif in prose surfaces reinforces the "content is the interface" principle — user-authored text gets a reading-optimized face, chrome stays sans. Strict scoping keeps it from becoming decoration. Requires font loading (flagged in §9.2). |
