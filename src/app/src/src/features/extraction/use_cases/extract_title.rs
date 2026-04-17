@@ -18,7 +18,7 @@
 //! assert_eq!(result.strategy, TitleExtractionStrategy::H1Header);
 //! ```
 
-use crate::application::dtos::{
+use crate::features::extraction::dto::{
     ExtractTitleRequestDto, ExtractTitleResponseDto, TitleExtractionStrategy,
 };
 use crate::infrastructure::extraction::LinkParser;

@@ -80,7 +80,7 @@ use crate::features::mentions::use_cases::{
 };
 
 // Application Use Cases - Extraction
-use crate::application::use_cases::extraction::{
+use crate::features::extraction::use_cases::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
     ResolveWikilinkUseCase,
 };

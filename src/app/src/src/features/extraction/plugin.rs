@@ -4,11 +4,11 @@
 //! Routes to interfaces/commands/domains/extraction.rs implementations.
 
 use crate::{
-    application::dtos::extraction_dto::DocumentRefDto,
-    interfaces::{
-        commands::extraction::{self, ParsedLinksResponse, ResolveLinkResponse},
-        di::Container,
+    features::extraction::{
+        commands::{self as extraction, ParsedLinksResponse, ResolveLinkResponse},
+        dto::DocumentRefDto,
     },
+    interfaces::di::Container,
     shared::api_result::ApiError,
 };
 use tauri::{

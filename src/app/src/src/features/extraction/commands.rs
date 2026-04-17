@@ -3,7 +3,7 @@
 //! Thin command controllers that delegate to extraction use cases.
 //! Commands validate inputs and delegate business logic to the application layer.
 
-use crate::application::dtos::extraction_dto::{
+use crate::features::extraction::dto::{
     DocumentRefDto, ExtractAndResolveRequestDto, ExtractTitleRequestDto, ParseWikilinksRequestDto,
     ResolveWikilinkRequestDto, WikiLinkDto,
 };
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 // Re-export for plugin layer visibility
-pub use crate::application::dtos::extraction_dto::ExtractAndResolveResponseDto;
+pub use crate::features::extraction::dto::ExtractAndResolveResponseDto;
 
 /// Response for wikilink parsing (for frontend compatibility).
 #[derive(Debug, Serialize, Deserialize, specta::Type)]

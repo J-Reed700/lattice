@@ -29,13 +29,13 @@
 //! assert_eq!(result.links.len(), 2);
 //! ```
 
-use crate::application::dtos::{
+use crate::features::extraction::dto::{
     DocumentRefDto, ExtractAndResolveRequestDto, ExtractAndResolveResponseDto,
     ParseWikilinksRequestDto, ParseWikilinksResponseDto, ResolveWikilinkRequestDto,
     ResolveWikilinkResponseDto, ResolvedLinkDto,
 };
 use crate::application::ports::RepositoryPort;
-use crate::application::use_cases::extraction::{ParseWikilinksUseCase, ResolveWikilinkUseCase};
+use crate::features::extraction::use_cases::{ParseWikilinksUseCase, ResolveWikilinkUseCase};
 use crate::domain::entities::Document;
 use crate::shared::error::AppError;
 use async_trait::async_trait;
@@ -175,7 +175,7 @@ impl ExtractAndResolveLinksUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::{
+    use crate::features::extraction::dto::{
         ParseWikilinksResponseDto, ResolveWikilinkResponseDto, WikiLinkDto,
     };
     use async_trait::async_trait;

@@ -129,10 +129,10 @@ fn main() {
             vault::features::huggingface::plugin::get_huggingface_token,
             vault::features::huggingface::plugin::delete_huggingface_token,
             // Extraction Plugin (4 commands)
-            vault::plugins::extraction::parse_wikilinks,
-            vault::plugins::extraction::extract_document_title,
-            vault::plugins::extraction::resolve_wikilink,
-            vault::plugins::extraction::extract_and_resolve_links,
+            vault::features::extraction::plugin::parse_wikilinks,
+            vault::features::extraction::plugin::extract_document_title,
+            vault::features::extraction::plugin::resolve_wikilink,
+            vault::features::extraction::plugin::extract_and_resolve_links,
             // Conversation Plugin (6 commands)
             vault::plugins::conversation_plugin::create_conversation,
             vault::plugins::conversation_plugin::get_conversation,

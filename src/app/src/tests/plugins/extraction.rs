@@ -1,6 +1,6 @@
 //! Smoke tests for Extraction plugin DTOs
 
-use vault::application::dtos::extraction_dto::*;
+use vault::features::extraction::dto::*;
 
 #[test]
 fn test_parse_wikilinks_request_dto() {

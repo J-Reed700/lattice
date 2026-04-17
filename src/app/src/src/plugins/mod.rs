@@ -54,9 +54,7 @@ pub mod conversation_plugin;
 // daily_notes plugin lives in features/daily_notes/plugin.rs. Use `crate::features::daily_notes::plugin`.
 // download plugin lives in features/download/plugin.rs. Use `crate::features::download::plugin`.
 // embeddings plugin lives in features/embedding/plugin.rs. Use `crate::features::embedding::plugin`.
-// Vertical-slice migration (extraction): plugin lives in features/extraction/plugin.rs.
-#[path = "../features/extraction/plugin.rs"]
-pub mod extraction;
+// extraction plugin lives in features/extraction/plugin.rs. Use `crate::features::extraction::plugin`.
 // favorites plugin lives in features/favorites/plugin.rs. Use `crate::features::favorites::plugin`.
 // Vertical-slice migration (function_calling): plugin lives in features/function_calling/plugin.rs.
 #[path = "../features/function_calling/plugin.rs"]
@@ -95,7 +93,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         // Batch 3: AI services (embeddings, huggingface, extraction, web)
         crate::features::embedding::plugin::init(),
         crate::features::huggingface::plugin::init(),
-        extraction::init(),
+        crate::features::extraction::plugin::init(),
         web::init(),
         // Batch 4: Final domains (conversations, batch, backup, updates, QA)
         conversation_plugin::init(),

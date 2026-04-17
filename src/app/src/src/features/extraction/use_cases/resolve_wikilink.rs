@@ -27,7 +27,7 @@
 //! assert_eq!(result.confidence, 0.8);
 //! ```
 
-use crate::application::dtos::{
+use crate::features::extraction::dto::{
     DocumentRefDto, ResolveWikilinkRequestDto, ResolveWikilinkResponseDto,
 };
 use crate::infrastructure::extraction::{DocumentInfo, LinkParser};

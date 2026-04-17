@@ -37,9 +37,6 @@ pub mod conversation_message_bookmark_dto;
 pub mod conversation_space_dto;
 #[path = "modules/document_dto.rs"]
 pub mod document_dto;
-// Vertical-slice migration (extraction): DTO lives in features/extraction/dto.rs.
-#[path = "../../features/extraction/dto.rs"]
-pub mod extraction_dto;
 // Vertical-slice migration (file): DTO lives in features/file/dto.rs.
 #[path = "../../features/file/dto.rs"]
 pub mod file_dto;
@@ -70,7 +67,6 @@ pub use conversation_dto::*;
 pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;
 pub use document_dto::*;
-pub use extraction_dto::*;
 pub use file_dto::*;
 pub use function_calling_dto::*;
 pub use indexing_dto::*;

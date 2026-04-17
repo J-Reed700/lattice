@@ -16,7 +16,7 @@
 //! println!("Found {} links", result.links.len());
 //! ```
 
-use crate::application::dtos::{ParseWikilinksRequestDto, ParseWikilinksResponseDto, WikiLinkDto};
+use crate::features::extraction::dto::{ParseWikilinksRequestDto, ParseWikilinksResponseDto, WikiLinkDto};
 use crate::infrastructure::extraction::LinkParser;
 use crate::shared::error::AppError;
 

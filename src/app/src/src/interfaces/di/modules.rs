@@ -93,10 +93,10 @@ use crate::application::use_cases::file::{
 };
 
 // Application Use Cases - Extraction
-use crate::application::use_cases::extraction::extract_and_resolve_links::{
+use crate::features::extraction::use_cases::extract_and_resolve_links::{
     ParseWikilinksPort, ResolveWikilinkPort,
 };
-use crate::application::use_cases::extraction::{
+use crate::features::extraction::use_cases::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
     ResolveWikilinkUseCase,
 };
@@ -1935,7 +1935,7 @@ impl FileOpsModule {
         ));
 
         // Extraction use cases
-        use crate::application::use_cases::extraction::*;
+        use crate::features::extraction::use_cases::*;
         let parse_wikilinks_use_case = Arc::new(ParseWikilinksUseCase::new());
         let extract_document_title_use_case = Arc::new(ExtractDocumentTitleUseCase::new());
         let resolve_wikilink_use_case = Arc::new(ResolveWikilinkUseCase::new());
