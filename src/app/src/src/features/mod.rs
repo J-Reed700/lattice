@@ -12,6 +12,7 @@ pub mod backup;
 pub mod batch;
 pub mod cache;
 pub mod credentials;
+pub mod daily_notes;
 pub mod favorites;
 pub mod health;
 pub mod initialization;

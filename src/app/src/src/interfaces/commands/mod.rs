@@ -28,7 +28,8 @@ pub mod conversation_plugin_impl;
 pub mod credentials;
 #[path = "domains/custom_model_commands.rs"]
 pub mod custom_model_commands;
-#[path = "domains/daily_notes_workspace.rs"]
+// Vertical-slice migration (daily_notes): commands live in features/daily_notes/commands.rs.
+#[path = "../../features/daily_notes/commands.rs"]
 pub mod daily_notes_workspace;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
