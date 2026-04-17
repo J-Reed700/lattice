@@ -188,19 +188,11 @@
 //! ```
 
 // Export use case modules
-// Vertical-slice migration (llm): use cases live in features/llm/use_cases/.
-#[path = "../../features/llm/use_cases/mod.rs"]
-pub mod llm;
 // Vertical-slice migration (model_management): use cases live in features/model_management/use_cases/.
 #[path = "../../features/model_management/use_cases/mod.rs"]
 pub mod model_management;
 
 // Re-export all use cases for convenience
-pub use llm::{
-    CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
-    GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
-    GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
-};
 pub use model_management::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,

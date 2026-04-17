@@ -21,7 +21,7 @@
 //! println!("Downloaded to: {}", response.path);
 //! ```
 
-use crate::application::dtos::llm_dto::{DownloadModelRequestDto, DownloadModelResponseDto};
+use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::application::ports::credentials_port::CredentialsPort;
 use crate::application::ports::file_system_port::FileSystemPort;
 use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};

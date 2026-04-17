@@ -43,9 +43,9 @@ pub use types::*;
 // Model Download Utilities
 // ============================================================================
 
-use crate::application::dtos::llm_dto::{DownloadModelRequestDto, DownloadModelResponseDto};
+use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::application::ports::model_storage::ModelStoragePort;
-use crate::application::use_cases::llm::DownloadModelUseCase;
+use crate::features::llm::use_cases::DownloadModelUseCase;
 use crate::shared::error::Result;
 use std::path::PathBuf;
 use std::sync::Arc;

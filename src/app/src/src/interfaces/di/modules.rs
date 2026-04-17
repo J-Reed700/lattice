@@ -56,7 +56,7 @@ use crate::features::conversation::use_cases::{
 };
 
 // Application Use Cases - LLM
-use crate::application::use_cases::llm::{
+use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
     GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
@@ -1298,7 +1298,7 @@ impl AIModule {
             Arc::new(DeleteConversationUseCase::new(conversation_service.clone()));
 
         // LLM/Model use cases
-        use crate::application::use_cases::llm::*;
+        use crate::features::llm::use_cases::*;
 
         // Use system_info for GetSystemCapabilitiesUseCase
         let get_system_capabilities_use_case =

@@ -19,7 +19,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::llm_dto::{DownloadedModelDto, DownloadedModelsDto};
+use crate::features::llm::dto::{DownloadedModelDto, DownloadedModelsDto};
 use crate::application::ports::model_storage::ModelStoragePort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

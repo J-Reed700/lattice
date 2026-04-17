@@ -22,11 +22,11 @@
 //! println!("Model path: {}", response.path);
 //! ```
 
-use crate::application::dtos::llm_dto::{
+use crate::features::llm::dto::{
     CheckModelDownloadedRequestDto, GetModelPathRequestDto, GetModelPathResponseDto,
 };
 use crate::application::ports::model_storage::ModelStoragePort;
-use crate::application::use_cases::llm::CheckModelDownloadedUseCase;
+use crate::features::llm::use_cases::CheckModelDownloadedUseCase;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

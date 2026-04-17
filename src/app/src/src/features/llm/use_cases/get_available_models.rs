@@ -19,7 +19,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::llm_dto::{AvailableModelsDto, ModelInfoDto};
+use crate::features::llm::dto::{AvailableModelsDto, ModelInfoDto};
 use crate::application::ports::model_catalog::ModelCatalogPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

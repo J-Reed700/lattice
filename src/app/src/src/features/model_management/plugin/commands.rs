@@ -23,7 +23,7 @@ use crate::interfaces::commands::model_setup::{
 
 // Import LLM command for download delegation
 use crate::domain::download::DownloadOperationState;
-use crate::interfaces::commands::llm::download_model as download_model_impl;
+use crate::features::llm::commands::download_model as download_model_impl;
 
 // Re-export DownloadedModelResponse for TypeScript generation
 pub use crate::interfaces::commands::model_management_commands::DownloadedModelResponse;

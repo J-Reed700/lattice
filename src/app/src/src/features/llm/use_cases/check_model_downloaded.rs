@@ -22,7 +22,7 @@
 //! }
 //! ```
 
-use crate::application::dtos::llm_dto::{
+use crate::features::llm::dto::{
     CheckModelDownloadedRequestDto, CheckModelDownloadedResponseDto,
 };
 use crate::application::ports::model_storage::ModelStoragePort;

@@ -22,12 +22,12 @@
 //! let recommendations = use_case.execute(request).await?;
 //! ```
 
-use crate::application::dtos::llm_dto::{
+use crate::features::llm::dto::{
     GetRecommendationsRequestDto, ModelInfoDto, PerformanceTier, RecommendedModelDto,
     RecommendedModelsDto,
 };
 use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
-use crate::application::use_cases::llm::GetSystemCapabilitiesUseCase;
+use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
 use crate::domain::model_management::ModelMetadata;
 use crate::shared::error::AppError;
 use std::sync::Arc;

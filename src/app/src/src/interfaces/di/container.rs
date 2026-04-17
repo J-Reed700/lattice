@@ -109,7 +109,7 @@ use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - LLM
 use crate::features::settings::dto::LLMProvider;
-use crate::application::use_cases::llm::{
+use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
     GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,

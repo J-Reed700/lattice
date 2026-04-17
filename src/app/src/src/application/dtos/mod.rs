@@ -30,10 +30,6 @@
 
 #[path = "modules/document_dto.rs"]
 pub mod document_dto;
-// Vertical-slice migration (llm): DTO lives in features/llm/dto.rs.
-#[path = "../../features/llm/dto.rs"]
-pub mod llm_dto;
 
 // Re-export commonly used DTOs
 pub use document_dto::*;
-pub use llm_dto::*;

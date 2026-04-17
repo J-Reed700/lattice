@@ -18,8 +18,8 @@
 //! println!("Best model: {} - {}", best.model.name, best.reason);
 //! ```
 
-use crate::application::dtos::llm_dto::{BestModelDto, GetRecommendationsRequestDto};
-use crate::application::use_cases::llm::GetRecommendedModelsUseCase;
+use crate::features::llm::dto::{BestModelDto, GetRecommendationsRequestDto};
+use crate::features::llm::use_cases::GetRecommendedModelsUseCase;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ mod tests {
     use super::*;
     use crate::application::ports::model_catalog::MockModelCatalogPort;
     use crate::application::ports::system_info::MockSystemInfoPort;
-    use crate::application::use_cases::llm::GetSystemCapabilitiesUseCase;
+    use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
 
     fn create_use_case(
         system_info: MockSystemInfoPort,

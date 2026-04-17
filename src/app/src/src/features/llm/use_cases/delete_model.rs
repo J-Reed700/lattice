@@ -22,7 +22,7 @@
 //! println!("Freed {} GB", response.freed_space_gb);
 //! ```
 
-use crate::application::dtos::llm_dto::{DeleteModelRequestDto, DeleteModelResponseDto};
+use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use crate::application::ports::model_storage::ModelStoragePort;
 use crate::domain::curated_models::get_all_curated_models;
 use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
