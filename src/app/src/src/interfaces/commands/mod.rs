@@ -10,7 +10,8 @@ pub mod batch_file_import;
 pub mod batch_history;
 #[path = "domains/batch_url_import.rs"]
 pub mod batch_url_import;
-#[path = "domains/cache.rs"]
+// Vertical-slice migration (cache): commands live in features/cache/commands.rs.
+#[path = "../../features/cache/commands.rs"]
 pub mod cache;
 #[path = "domains/config.rs"]
 pub mod config;

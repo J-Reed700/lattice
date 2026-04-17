@@ -33,7 +33,8 @@
 pub mod backup_dto;
 #[path = "modules/batch_dto.rs"]
 pub mod batch_dto;
-#[path = "modules/cache_dto.rs"]
+// Vertical-slice migration (cache): DTO physically lives in features/cache/dto.rs.
+#[path = "../../features/cache/dto.rs"]
 pub mod cache_dto;
 #[path = "modules/conversation_dto.rs"]
 pub mod conversation_dto;
