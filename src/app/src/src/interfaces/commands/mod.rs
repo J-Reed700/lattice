@@ -7,11 +7,6 @@ pub mod config;
 pub mod consolidated;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
-// Vertical-slice migration (model_management): commands live in features/model_management/.
-#[path = "../../features/model_management/commands.rs"]
-pub mod model_management;
-#[path = "../../features/model_management/commands_extra.rs"]
-pub mod model_management_commands;
 #[path = "domains/model_setup.rs"]
 pub mod model_setup;
 

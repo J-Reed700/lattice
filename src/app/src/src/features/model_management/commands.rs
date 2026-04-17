@@ -34,12 +34,12 @@
 //! }
 //! ```
 
-use crate::domain::model_management::ModelMetadata;
+use crate::features::model_management::domain::ModelMetadata;
 use crate::domain::{
     CompatibilityScorer, ModelCatalogService, ModelCategory, ModelRecommendation, ModelSource,
     SearchFilters, SystemCapabilities,
 };
-use crate::infrastructure::model_cache_adapter::ModelCatalogStats;
+use crate::features::model_management::cache_adapter::ModelCatalogStats;
 use crate::interfaces::di::Container;
 use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto};
 use crate::shared::error::{AppError, Result};
@@ -736,7 +736,7 @@ pub async fn get_model_catalog_stats(container: State<'_, Container>) -> Result<
 // ============================================================================
 
 // Re-export impl functions from model_management_commands module (for gateway dispatch)
-pub use crate::interfaces::commands::model_management_commands::{
+pub use crate::features::model_management::commands_extra::{
     delete_downloaded_model_and_file_impl, get_active_chat_model_impl,
     get_models_with_metadata_impl, is_model_already_downloaded_impl, set_active_chat_model_impl,
     DownloadedModelResponse,

@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 // Import the real implementation functions
-use crate::interfaces::commands::model_management::get_all_recommended_models as get_all_recommended_models_impl;
-use crate::interfaces::commands::model_management_commands::{
+use crate::features::model_management::commands::get_all_recommended_models as get_all_recommended_models_impl;
+use crate::features::model_management::commands_extra::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
     delete_downloaded_model_and_file_impl, get_active_chat_model_impl,
     get_active_embedding_model_impl, get_models_with_metadata_impl,
@@ -26,7 +26,7 @@ use crate::domain::download::DownloadOperationState;
 use crate::features::llm::commands::download_model as download_model_impl;
 
 // Re-export DownloadedModelResponse for TypeScript generation
-pub use crate::interfaces::commands::model_management_commands::DownloadedModelResponse;
+pub use crate::features::model_management::commands_extra::DownloadedModelResponse;
 
 /// Download a model by ID
 ///

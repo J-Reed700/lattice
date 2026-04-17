@@ -175,7 +175,7 @@ impl ModelTypeClassifier {
     ///
     /// Uses a curated list of known models with explicit type mappings.
     fn classify_by_catalog(&self, identifier: &ModelIdentifier) -> Option<ModelTypeClassification> {
-        use crate::infrastructure::model_catalog_cache::ModelCatalogCache;
+        use crate::features::model_management::catalog_cache::ModelCatalogCache;
 
         let catalog = ModelCatalogCache::instance();
 

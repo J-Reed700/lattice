@@ -84,13 +84,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::import_model,
             commands::refresh_model_cache,
             // Catalog/discovery commands
-            crate::interfaces::commands::model_management::detect_system_capabilities,
-            crate::interfaces::commands::model_management::get_compatible_models,
-            crate::interfaces::commands::model_management::get_all_recommended_models,
-            crate::interfaces::commands::model_management::search_model_catalog,
-            crate::interfaces::commands::model_management::refresh_model_catalog,
-            crate::interfaces::commands::model_management::clear_model_catalog_cache,
-            crate::interfaces::commands::model_management::get_model_catalog_stats,
+            crate::features::model_management::commands::detect_system_capabilities,
+            crate::features::model_management::commands::get_compatible_models,
+            crate::features::model_management::commands::get_all_recommended_models,
+            crate::features::model_management::commands::search_model_catalog,
+            crate::features::model_management::commands::refresh_model_catalog,
+            crate::features::model_management::commands::clear_model_catalog_cache,
+            crate::features::model_management::commands::get_model_catalog_stats,
         ])
         .build()
 }

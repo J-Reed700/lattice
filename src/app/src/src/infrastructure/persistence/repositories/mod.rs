@@ -15,9 +15,6 @@ pub mod summary_repository;
 pub mod batch_job;
 pub mod chunk;
 pub mod document;
-// Vertical-slice migration (model_management): tx-wrapper repository lives in features/model_management/repository_tx/.
-#[path = "../../../features/model_management/repository_tx/mod.rs"]
-pub mod model;
 pub mod model_file;
 // Vertical-slice migration (search): tx-wrapper repository lives in features/search/repository_tx/.
 #[path = "../../../features/search/repository_tx/mod.rs"]

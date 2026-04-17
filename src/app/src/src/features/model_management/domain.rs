@@ -337,7 +337,7 @@ pub struct ModelMetadata {
     /// For single-file models, this will contain one ModelFile
     /// If empty, falls back to legacy download_url
     #[serde(default)]
-    pub files: Vec<super::model_metadata::ModelFileMetadata>,
+    pub files: Vec<crate::domain::model_metadata::ModelFileMetadata>,
     /// Total size across all files in bytes
     /// Used for disk space calculations and progress tracking
     #[serde(default)]

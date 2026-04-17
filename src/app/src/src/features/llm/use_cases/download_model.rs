@@ -84,7 +84,7 @@ impl DownloadModelUseCase {
     async fn verify_model_files(
         &self,
         model_id: &str,
-        curated: &crate::domain::model_management::ModelMetadata,
+        curated: &crate::features::model_management::domain::ModelMetadata,
         model_path: &Path,
     ) -> Result<bool, AppError> {
         use crate::domain::model_file_validator::FileExpectation;
@@ -123,7 +123,7 @@ impl DownloadModelUseCase {
     async fn reconcile_download_records(
         &self,
         model_id: &str,
-        _curated: &crate::domain::model_management::ModelMetadata,
+        _curated: &crate::features::model_management::domain::ModelMetadata,
         _model_path: &std::path::Path,
     ) -> Result<(), AppError> {
         // Cleanup stale pending downloads
@@ -208,7 +208,7 @@ impl DownloadModelUseCase {
     async fn resolve_model_metadata(
         &self,
         model_id: &str,
-    ) -> Result<crate::domain::model_management::ModelMetadata, AppError> {
+    ) -> Result<crate::features::model_management::domain::ModelMetadata, AppError> {
         // 1) Curated model IDs are still supported for backward compatibility.
         if let Some(curated) = get_all_curated_models()
             .into_iter()
@@ -221,16 +221,16 @@ impl DownloadModelUseCase {
         if let Some((repo_id, filename)) = ExternalModelMetadata::decode_hf_download_id(model_id) {
             let mut resolved = match self.catalog.get_model_by_id(&repo_id).await? {
                 Some(meta) => meta.to_domain_model().map_err(AppError::InvalidInput)?,
-                None => crate::domain::model_management::ModelMetadata {
+                None => crate::features::model_management::domain::ModelMetadata {
                     id: model_id.to_string(),
                     name: Self::infer_model_name_from_repo(&repo_id),
-                    category: crate::domain::model_management::ModelCategory::LLM,
+                    category: crate::features::model_management::domain::ModelCategory::LLM,
                     description: format!("Hugging Face model: {}", repo_id),
                     size_gb: 0.0,
                     minimum_ram_gb: 4.0,
                     recommended_ram_gb: 8.0,
                     context_length: 4096,
-                    performance_tier: crate::domain::model_management::PerformanceTier::Balanced,
+                    performance_tier: crate::features::model_management::domain::PerformanceTier::Balanced,
                     supported_quantizations: vec![],
                     capabilities: vec!["chat".into()],
                     download_url: Some(format!("https://huggingface.co/{}", repo_id)),
@@ -257,7 +257,7 @@ impl DownloadModelUseCase {
             // For ONNX embedding models, populate the files list with required
             // companion files (tokenizer.json, config.json, etc.) so the multi-file
             // download path downloads everything needed by OnnxEmbeddingService.
-            if resolved.category == crate::domain::model_management::ModelCategory::Embedding
+            if resolved.category == crate::features::model_management::domain::ModelCategory::Embedding
                 && filename.ends_with(".onnx")
             {
                 resolved.files = Self::build_onnx_embedding_file_list(&repo_id, &filename);
@@ -385,7 +385,7 @@ impl DownloadModelUseCase {
     async fn download_single_file_model(
         &self,
         model_id: &str,
-        curated: &crate::domain::model_management::ModelMetadata,
+        curated: &crate::features::model_management::domain::ModelMetadata,
         model_path: &std::path::Path,
         paths: &ModelPaths,
     ) -> Result<DownloadModelResponseDto, AppError> {
@@ -427,11 +427,11 @@ impl DownloadModelUseCase {
                 total_size_bytes: curated.total_size_bytes as i64,
                 architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
                 model_type: match curated.category {
-                    crate::domain::model_management::ModelCategory::LLM => "chat".to_string(),
-                    crate::domain::model_management::ModelCategory::Embedding => {
+                    crate::features::model_management::domain::ModelCategory::LLM => "chat".to_string(),
+                    crate::features::model_management::domain::ModelCategory::Embedding => {
                         "embedding".to_string()
                     }
-                    crate::domain::model_management::ModelCategory::OCR => "ocr".to_string(),
+                    crate::features::model_management::domain::ModelCategory::OCR => "ocr".to_string(),
                 },
                 status: ModelStatus::Pending,
                 files: vec![],
@@ -646,7 +646,7 @@ impl DownloadModelUseCase {
     async fn download_multi_file_model(
         &self,
         model_id: &str,
-        curated: &crate::domain::model_management::ModelMetadata,
+        curated: &crate::features::model_management::domain::ModelMetadata,
         model_path: &std::path::Path,
         paths: &ModelPaths,
     ) -> Result<DownloadModelResponseDto, AppError> {
@@ -677,11 +677,11 @@ impl DownloadModelUseCase {
                 total_size_bytes: curated.total_size_bytes as i64,
                 architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
                 model_type: match curated.category {
-                    crate::domain::model_management::ModelCategory::LLM => "chat".to_string(),
-                    crate::domain::model_management::ModelCategory::Embedding => {
+                    crate::features::model_management::domain::ModelCategory::LLM => "chat".to_string(),
+                    crate::features::model_management::domain::ModelCategory::Embedding => {
                         "embedding".to_string()
                     }
-                    crate::domain::model_management::ModelCategory::OCR => "ocr".to_string(),
+                    crate::features::model_management::domain::ModelCategory::OCR => "ocr".to_string(),
                 },
                 status: ModelStatus::Pending,
                 files: vec![],

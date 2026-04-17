@@ -28,7 +28,7 @@
 use super::embedding_constants::{
     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
-use super::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
+use crate::features::model_management::domain::{ModelCategory, ModelMetadata, PerformanceTier};
 
 // ============================================================================
 // LLM Models - GGUF Quantized for Local Inference

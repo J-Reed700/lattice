@@ -1201,7 +1201,7 @@ pub struct AIModule {
 
     // Adapters
     model_catalog: Arc<dyn ModelCatalogPort>,
-    model_catalog_cache: Arc<crate::infrastructure::model_cache_adapter::ModelCacheAdapter>,
+    model_catalog_cache: Arc<crate::features::model_management::cache_adapter::ModelCacheAdapter>,
     credentials: Arc<dyn CredentialsPort>,
 
     // Services
@@ -1234,8 +1234,8 @@ impl AIModule {
         // === Build Adapters ===
 
         // Model Catalog adapter (Hugging Face + SQLite cache)
-        use crate::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-        use crate::infrastructure::model_cache_adapter::ModelCacheAdapter;
+        use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
+        use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 
         let huggingface = Arc::new(HuggingFaceAdapter::new()) as Arc<dyn ModelCatalogPort>;
         let model_catalog_cache =
@@ -1506,7 +1506,7 @@ impl AIModule {
 
     pub fn model_catalog_cache(
         &self,
-    ) -> &Arc<crate::infrastructure::model_cache_adapter::ModelCacheAdapter> {
+    ) -> &Arc<crate::features::model_management::cache_adapter::ModelCacheAdapter> {
         &self.model_catalog_cache
     }
 

@@ -15,7 +15,7 @@
 //! - Minimal payloads (defaults where possible)
 //! - Assert commands return Result, not specific values
 
-use crate::interfaces::commands::model_management_commands::{
+use crate::features::model_management::commands_extra::{
     delete_downloaded_model_and_file_impl, get_active_chat_model_impl,
     get_active_embedding_model_impl, get_models_with_metadata_impl, set_active_chat_model_impl,
     set_active_embedding_model_impl,

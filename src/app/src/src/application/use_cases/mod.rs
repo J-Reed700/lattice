@@ -188,13 +188,5 @@
 //! ```
 
 // Export use case modules
-// Vertical-slice migration (model_management): use cases live in features/model_management/use_cases/.
-#[path = "../../features/model_management/use_cases/mod.rs"]
-pub mod model_management;
 
 // Re-export all use cases for convenience
-pub use model_management::{
-    CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
-    GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
-    SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase, TrackDownloadUseCase,
-};

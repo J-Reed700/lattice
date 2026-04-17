@@ -28,7 +28,7 @@ use crate::features::llm::dto::{
 };
 use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
 use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
-use crate::domain::model_management::ModelMetadata;
+use crate::features::model_management::domain::ModelMetadata;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

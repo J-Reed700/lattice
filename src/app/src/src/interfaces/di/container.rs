@@ -172,9 +172,9 @@ use crate::infrastructure::adapters::{
 };
 use crate::features::cache::adapter::CacheAdapter;
 use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
-use crate::infrastructure::huggingface_adapter::HuggingFaceAdapter;
+use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
-use crate::infrastructure::model_cache_adapter::ModelCacheAdapter;
+use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::features::metrics::adapter::MetricsAdapter;
 use crate::features::backup::adapter::BackupAdapter;
 use crate::features::credentials::adapter::CredentialsAdapter;
@@ -1812,7 +1812,7 @@ impl Container {
     /// Get model catalog cache adapter (Hugging Face cache)
     pub fn model_catalog_cache(
         &self,
-    ) -> Arc<crate::infrastructure::model_cache_adapter::ModelCacheAdapter> {
+    ) -> Arc<crate::features::model_management::cache_adapter::ModelCacheAdapter> {
         Arc::clone(self.ai.model_catalog_cache())
     }
 

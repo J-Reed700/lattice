@@ -20,12 +20,12 @@ pub enum ModelCategoryDto {
     OCR,
 }
 
-impl From<crate::domain::model_management::ModelCategory> for ModelCategoryDto {
-    fn from(domain: crate::domain::model_management::ModelCategory) -> Self {
+impl From<crate::features::model_management::domain::ModelCategory> for ModelCategoryDto {
+    fn from(domain: crate::features::model_management::domain::ModelCategory) -> Self {
         match domain {
-            crate::domain::model_management::ModelCategory::LLM => Self::LLM,
-            crate::domain::model_management::ModelCategory::Embedding => Self::Embedding,
-            crate::domain::model_management::ModelCategory::OCR => Self::OCR,
+            crate::features::model_management::domain::ModelCategory::LLM => Self::LLM,
+            crate::features::model_management::domain::ModelCategory::Embedding => Self::Embedding,
+            crate::features::model_management::domain::ModelCategory::OCR => Self::OCR,
         }
     }
 }
@@ -41,12 +41,12 @@ pub enum PerformanceTierDto {
     Accurate,
 }
 
-impl From<crate::domain::model_management::PerformanceTier> for PerformanceTierDto {
-    fn from(domain: crate::domain::model_management::PerformanceTier) -> Self {
+impl From<crate::features::model_management::domain::PerformanceTier> for PerformanceTierDto {
+    fn from(domain: crate::features::model_management::domain::PerformanceTier) -> Self {
         match domain {
-            crate::domain::model_management::PerformanceTier::Fast => Self::Fast,
-            crate::domain::model_management::PerformanceTier::Balanced => Self::Balanced,
-            crate::domain::model_management::PerformanceTier::Accurate => Self::Accurate,
+            crate::features::model_management::domain::PerformanceTier::Fast => Self::Fast,
+            crate::features::model_management::domain::PerformanceTier::Balanced => Self::Balanced,
+            crate::features::model_management::domain::PerformanceTier::Accurate => Self::Accurate,
         }
     }
 }
@@ -64,13 +64,13 @@ pub enum CompatibilityLevelDto {
     Excellent,
 }
 
-impl From<crate::domain::model_management::CompatibilityLevel> for CompatibilityLevelDto {
-    fn from(domain: crate::domain::model_management::CompatibilityLevel) -> Self {
+impl From<crate::features::model_management::domain::CompatibilityLevel> for CompatibilityLevelDto {
+    fn from(domain: crate::features::model_management::domain::CompatibilityLevel) -> Self {
         match domain {
-            crate::domain::model_management::CompatibilityLevel::Incompatible => Self::Incompatible,
-            crate::domain::model_management::CompatibilityLevel::Poor => Self::Poor,
-            crate::domain::model_management::CompatibilityLevel::Good => Self::Good,
-            crate::domain::model_management::CompatibilityLevel::Excellent => Self::Excellent,
+            crate::features::model_management::domain::CompatibilityLevel::Incompatible => Self::Incompatible,
+            crate::features::model_management::domain::CompatibilityLevel::Poor => Self::Poor,
+            crate::features::model_management::domain::CompatibilityLevel::Good => Self::Good,
+            crate::features::model_management::domain::CompatibilityLevel::Excellent => Self::Excellent,
         }
     }
 }
@@ -168,8 +168,8 @@ pub struct ModelMetadataDto {
     pub embedding_dimensions: Option<usize>,
 }
 
-impl From<crate::domain::model_management::ModelMetadata> for ModelMetadataDto {
-    fn from(domain: crate::domain::model_management::ModelMetadata) -> Self {
+impl From<crate::features::model_management::domain::ModelMetadata> for ModelMetadataDto {
+    fn from(domain: crate::features::model_management::domain::ModelMetadata) -> Self {
         Self {
             id: domain.id,
             name: domain.name,
@@ -217,8 +217,8 @@ pub struct CompatibilityScoreDto {
     pub blockers: Vec<String>,
 }
 
-impl From<crate::domain::model_management::CompatibilityScore> for CompatibilityScoreDto {
-    fn from(domain: crate::domain::model_management::CompatibilityScore) -> Self {
+impl From<crate::features::model_management::domain::CompatibilityScore> for CompatibilityScoreDto {
+    fn from(domain: crate::features::model_management::domain::CompatibilityScore) -> Self {
         Self {
             compatibility_level: domain.compatibility_level.into(),
             overall_score: domain.overall_score,
@@ -250,8 +250,8 @@ pub struct ModelRecommendationDto {
     pub popularity_likes: Option<u64>,
 }
 
-impl From<crate::domain::model_management::ModelRecommendation> for ModelRecommendationDto {
-    fn from(domain: crate::domain::model_management::ModelRecommendation) -> Self {
+impl From<crate::features::model_management::domain::ModelRecommendation> for ModelRecommendationDto {
+    fn from(domain: crate::features::model_management::domain::ModelRecommendation) -> Self {
         Self {
             model: domain.model.into(),
             compatibility: domain.compatibility.into(),

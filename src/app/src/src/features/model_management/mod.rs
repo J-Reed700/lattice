@@ -3,62 +3,32 @@
 //! Model lifecycle: tracking which models are downloaded, which are
 //! the active chat / embedding models, model metadata catalog, and
 //! adapters bridging the LLM/HuggingFace catalogs to the persistent
-//! model repository. The "model" plugin (Tauri) lives here too.
+//! model repository. Tauri "model" plugin lives here.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | Path                                       | Canonical module path                                                          |
-//! |--------------------------------------------|--------------------------------------------------------------------------------|
-//! | `domain.rs`                                | `crate::domain::model_management`                                              |
-//! | `use_cases/`                               | `crate::application::use_cases::model_management`                              |
-//! | `commands.rs`                              | `crate::interfaces::commands::model_management`                                |
-//! | `commands_extra.rs`                        | `crate::interfaces::commands::model_management_commands`                       |
-//! | `repository_tx/`                           | `crate::infrastructure::persistence::repositories::model` (tx wrapper)         |
-//! | `huggingface_adapter.rs`                   | `crate::infrastructure::huggingface_adapter`                                   |
-//! | `cache_adapter.rs`                         | `crate::infrastructure::model_cache_adapter`                                   |
-//! | `catalog_cache.rs`                         | `crate::infrastructure::model_catalog_cache`                                   |
-//! | `plugin/mod.rs`                            | `crate::plugins::model` (directory plugin)                                     |
+//! - `crate::features::model_management::domain`
+//! - `crate::features::model_management::use_cases`
+//! - `crate::features::model_management::commands` (basic)
+//! - `crate::features::model_management::commands_extra` (extended)
+//! - `crate::features::model_management::repository_tx` (tx-wrapper)
+//! - `crate::features::model_management::huggingface_adapter` —
+//!   ModelCatalogPort impl backed by HuggingFace
+//! - `crate::features::model_management::cache_adapter` —
+//!   ModelCacheAdapter (in-memory model cache)
+//! - `crate::features::model_management::catalog_cache` —
+//!   persistent model catalog cache
+//! - `crate::features::model_management::plugin::init()` — Tauri plugin
 //!
-//! ## Deliberately NOT moved (shared infra)
-//!
-//! - DI wiring in `interfaces/di/{modules,container}.rs` — per oracle
-//!   ruling. The DI container constructs the adapters and wires them
-//!   to ports.
-//! - Application ports for model storage / catalog stay in
-//!   `application/ports/`.
-//! - No DTO file — model_management commands speak in domain types
-//!   directly.
-//! - No services/{traits,mocks} — service abstractions are use case
-//!   level here, not service-trait level.
-//!
-//! ## Adapters that graduated from infrastructure/
-//!
-//! Three top-level files in `infrastructure/` were adopted into this
-//! feature because they are model-management specific:
-//! - `infrastructure/huggingface_adapter.rs` (the ModelCatalogPort
-//!   impl backed by HuggingFace's catalog)
-//! - `infrastructure/model_cache_adapter.rs` (the in-memory model
-//!   cache wrapper around HF + curated models)
-//! - `infrastructure/model_catalog_cache.rs` (the persistent
-//!   model catalog cache)
-//!
-//! These are renamed without the `model_` prefix inside the feature
-//! since the feature directory already provides that namespace.
-//!
-//! ## LLM ↔ download ↔ model_management entanglement
-//!
-//! See `features/llm/mod.rs` — the `engine/model_catalog_adapter.rs`
-//! and `engine/model_storage_adapter.rs` files there are LLM-side
-//! adapters into model_management. Per the oracle ruling those stay
-//! with the LLM engine for now (they are constructed from the LLM
-//! factory). Cross-feature use case calls (e.g. LLM use cases call
-//! into download) continue to resolve through Strangler Fig.
-//!
-//! ## Use case rename
-//!
-//! All `*_use_case.rs` files were renamed to drop the suffix during
-//! this migration (e.g. `check_is_downloaded_use_case.rs` →
-//! `check_is_downloaded.rs`), matching the convention used by
-//! conversation, embedding, and other features. The `use_cases/mod.rs`
-//! file was rewritten to point at the new filenames; type names
-//! (e.g. `CheckIsDownloadedUseCase`) are unchanged.
+//! No DTO, port, or service traits — commands speak in domain types
+//! directly.
+
+pub mod cache_adapter;
+pub mod catalog_cache;
+pub mod commands;
+pub mod commands_extra;
+pub mod domain;
+pub mod huggingface_adapter;
+pub mod plugin;
+pub mod repository_tx;
+pub mod use_cases;

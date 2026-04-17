@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
+use crate::features::model_management::domain::{ModelCategory, ModelMetadata, PerformanceTier};
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use parking_lot::Mutex;
