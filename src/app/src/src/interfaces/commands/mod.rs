@@ -69,9 +69,6 @@ pub mod llm;
 // Vertical-slice migration (mentions): commands live in features/mentions/commands.rs.
 #[path = "../../features/mentions/commands.rs"]
 pub mod mentions;
-// Vertical-slice migration (metrics): commands live in features/metrics/commands.rs.
-#[path = "../../features/metrics/commands.rs"]
-pub mod metrics_commands;
 // Vertical-slice migration (model_management): commands live in features/model_management/.
 #[path = "../../features/model_management/commands.rs"]
 pub mod model_management;

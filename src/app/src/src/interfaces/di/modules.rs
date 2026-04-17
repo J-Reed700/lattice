@@ -128,7 +128,7 @@ use crate::application::use_cases::backup::{
 use crate::application::use_cases::updates::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
 
 // Application Use Cases - Metrics
-use crate::application::use_cases::metrics::GetMetricsUseCase;
+use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - Stats
 use crate::features::stats::use_cases::GetSystemStatsUseCase;
@@ -2118,7 +2118,7 @@ impl SystemModule {
 
         // Metrics Adapter
         use crate::infrastructure::observability::metrics::Metrics;
-        use crate::infrastructure::observability::metrics_adapter::MetricsAdapter;
+        use crate::features::metrics::adapter::MetricsAdapter;
         let metrics_service = Arc::new(Metrics::new());
         let metrics =
             Arc::new(MetricsAdapter::new(metrics_service.as_ref().clone())) as Arc<dyn MetricsPort>;

@@ -28,7 +28,7 @@
 //! - Database queries (document/chunk counts)
 //! - System monitoring (memory, CPU)
 
-use crate::application::dtos::metric_dto::MetricsSnapshotDto;
+use crate::features::metrics::dto::MetricsSnapshotDto;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;

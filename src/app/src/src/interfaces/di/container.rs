@@ -105,7 +105,7 @@ use crate::application::use_cases::backup::{
 use crate::application::use_cases::updates::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
 
 // Application Use Cases - Metrics
-use crate::application::use_cases::metrics::GetMetricsUseCase;
+use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - LLM
 use crate::application::dtos::settings::LLMProvider;
@@ -172,7 +172,7 @@ use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
 use crate::infrastructure::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
 use crate::infrastructure::model_cache_adapter::ModelCacheAdapter;
-use crate::infrastructure::observability::metrics_adapter::MetricsAdapter;
+use crate::features::metrics::adapter::MetricsAdapter;
 use crate::infrastructure::persistence::backup_adapter::BackupAdapter;
 use crate::infrastructure::security::credentials_adapter::CredentialsAdapter;
 use crate::infrastructure::system_info_adapter::SystemInfoAdapter;

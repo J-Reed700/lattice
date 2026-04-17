@@ -17,7 +17,7 @@
 //! println!("Searches performed: {}", metrics.searches_performed);
 //! ```
 
-use crate::application::dtos::metric_dto::MetricsSnapshotDto;
+use crate::features::metrics::dto::MetricsSnapshotDto;
 use crate::application::ports::MetricsPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

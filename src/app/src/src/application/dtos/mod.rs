@@ -76,9 +76,6 @@ pub mod llm_dto;
 // Vertical-slice migration (mentions): DTO physically lives in features/mentions/dto.rs.
 #[path = "../../features/mentions/dto.rs"]
 pub mod mention_dto;
-// Vertical-slice migration (metrics): DTO physically lives in features/metrics/dto.rs.
-#[path = "../../features/metrics/dto.rs"]
-pub mod metric_dto;
 // Vertical-slice migration (qa): DTO physically lives in features/qa/dto.rs.
 #[path = "../../features/qa/dto.rs"]
 pub mod qa_dto;
@@ -121,7 +118,6 @@ pub use indexing_dto::*;
 pub use initialization_dto::*;
 pub use llm_dto::*;
 pub use mention_dto::*;
-pub use metric_dto::*;
 pub use qa_dto::*;
 pub use recent_dto::*;
 pub use search_dto::*;

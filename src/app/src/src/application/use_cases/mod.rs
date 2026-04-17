@@ -233,9 +233,6 @@ pub mod llm;
 // Vertical-slice migration (mentions): use cases live in features/mentions/use_cases/.
 #[path = "../../features/mentions/use_cases/mod.rs"]
 pub mod mentions;
-// Vertical-slice migration (metrics): use cases live in features/metrics/use_cases/.
-#[path = "../../features/metrics/use_cases/mod.rs"]
-pub mod metrics;
 // Vertical-slice migration (model_management): use cases live in features/model_management/use_cases/.
 #[path = "../../features/model_management/use_cases/mod.rs"]
 pub mod model_management;

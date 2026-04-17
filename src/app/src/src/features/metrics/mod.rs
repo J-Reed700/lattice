@@ -1,25 +1,28 @@
 //! # Metrics feature
 //!
-//! Application metrics snapshot command. Reads the shared `Metrics` service
-//! (in `infrastructure/observability/metrics`) through `MetricsPort` and
-//! exposes a snapshot to the frontend.
+//! Application metrics snapshot command. Reads the shared `Metrics`
+//! service (in `infrastructure/observability/metrics`) through
+//! `MetricsPort` and exposes a snapshot to the frontend.
 //!
-//! ## File layout
+//! Self-contained vertical slice.
 //!
-//! All files are loaded via `#[path]` redirects from their legacy module
-//! locations so existing imports keep working (Strangler Fig):
+//! ## Public surface
 //!
-//! | File           | Canonical module path                                            |
-//! |----------------|------------------------------------------------------------------|
-//! | `dto.rs`       | `crate::application::dtos::metric_dto`                           |
-//! | `use_cases/`   | `crate::application::use_cases::metrics`                         |
-//! | `adapter.rs`   | `crate::infrastructure::observability::metrics_adapter`          |
-//! | `commands.rs`  | `crate::interfaces::commands::metrics_commands`                  |
+//! - `crate::features::metrics::dto` — `MetricsSnapshotDto`
+//! - `crate::features::metrics::use_cases::GetMetricsUseCase`
+//! - `crate::features::metrics::adapter::MetricsAdapter` — wraps the
+//!   shared `Metrics` service to satisfy `MetricsPort`
+//! - `crate::features::metrics::commands` — Tauri command handlers
 //!
-//! The `MetricsPort` trait stays in `application/ports/` and the core
-//! `Metrics` service (+ `MetricsSnapshot`) stays in
-//! `infrastructure/observability/metrics` — both are shared infrastructure
-//! used across many features.
+//! `MetricsPort` stays in `application/ports/`. The core `Metrics`
+//! service (+ `MetricsSnapshot`) stays in
+//! `infrastructure/observability/metrics` — both are shared
+//! observability infrastructure.
 //!
-//! Metrics has no Tauri plugin of its own today; commands are registered
+//! Metrics has no Tauri plugin of its own; commands are registered
 //! through the shared plugin infrastructure.
+
+pub mod adapter;
+pub mod commands;
+pub mod dto;
+pub mod use_cases;
