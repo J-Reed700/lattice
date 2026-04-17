@@ -8,5 +8,6 @@
 //! shared primitives from `core/` / `shared/`. They do not own cross-cutting
 //! abstractions.
 
+pub mod backup;
 pub mod qa;
 pub mod updates;

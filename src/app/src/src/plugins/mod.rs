@@ -37,7 +37,8 @@ pub mod search;
 pub mod web;
 
 // Single-file plugin modules moved to domains/ for filesystem organization
-#[path = "domains/backup_plugin.rs"]
+// Vertical-slice migration (backup): plugin lives in features/backup/plugin.rs.
+#[path = "../features/backup/plugin.rs"]
 pub mod backup_plugin;
 #[path = "domains/batch_plugin.rs"]
 pub mod batch_plugin;

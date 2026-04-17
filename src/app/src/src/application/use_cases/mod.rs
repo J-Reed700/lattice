@@ -188,6 +188,8 @@
 //! ```
 
 // Export use case modules
+// Vertical-slice migration (backup): use cases live in features/backup/use_cases/.
+#[path = "../../features/backup/use_cases/mod.rs"]
 pub mod backup;
 pub mod batch;
 pub mod cache;

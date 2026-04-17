@@ -28,7 +28,8 @@
 //! - `update_dto` - Update checking
 //! - `metric_dto` - Application metrics
 
-#[path = "modules/backup_dto.rs"]
+// Vertical-slice migration (backup): DTO physically lives in features/backup/dto.rs.
+#[path = "../../features/backup/dto.rs"]
 pub mod backup_dto;
 #[path = "modules/batch_dto.rs"]
 pub mod batch_dto;

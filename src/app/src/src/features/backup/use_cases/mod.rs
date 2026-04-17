@@ -1,16 +1,18 @@
-pub mod create_backup_use_case;
-pub mod list_backups_use_case;
-pub mod restore_backup_use_case;
-pub mod start_auto_backup_use_case;
-pub mod startup_auto_backup_use_case;
-pub mod stop_auto_backup_use_case;
+//! Backup feature — use cases.
 
-pub use create_backup_use_case::CreateBackupUseCase;
-pub use list_backups_use_case::ListBackupsUseCase;
-pub use restore_backup_use_case::RestoreBackupUseCase;
-pub use start_auto_backup_use_case::StartAutoBackupUseCase;
-pub use startup_auto_backup_use_case::StartupAutoBackupUseCase;
-pub use stop_auto_backup_use_case::StopAutoBackupUseCase;
+pub mod create;
+pub mod list;
+pub mod restore;
+pub mod start_auto;
+pub mod startup_auto;
+pub mod stop_auto;
+
+pub use create::CreateBackupUseCase;
+pub use list::ListBackupsUseCase;
+pub use restore::RestoreBackupUseCase;
+pub use start_auto::StartAutoBackupUseCase;
+pub use startup_auto::StartupAutoBackupUseCase;
+pub use stop_auto::StopAutoBackupUseCase;
 
 use crate::shared::error::AppError;
 use std::time::Duration;

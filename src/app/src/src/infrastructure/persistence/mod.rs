@@ -27,6 +27,8 @@
 //! - Uses: Domain entities, Application repository ports
 //! - Provides: Concrete repository implementations
 
+// Vertical-slice migration (backup): adapter lives in features/backup/adapter.rs.
+#[path = "../../features/backup/adapter.rs"]
 pub mod backup_adapter;
 pub mod database;
 pub mod download_repository;

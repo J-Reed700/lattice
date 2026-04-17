@@ -1,7 +1,8 @@
 // Domain service modules moved under domains/ for filesystem organization.
 #[path = "domains/article_extractor.rs"]
 pub mod article_extractor;
-#[path = "domains/backup_scheduler.rs"]
+// Vertical-slice migration (backup): scheduler lives in features/backup/scheduler.rs.
+#[path = "../../features/backup/scheduler.rs"]
 pub mod backup_scheduler;
 #[path = "domains/batch_file_import.rs"]
 pub mod batch_file_import;
