@@ -85,7 +85,8 @@ pub mod qa_dto;
 // Vertical-slice migration (recent): DTO physically lives in features/recent/dto.rs.
 #[path = "../../features/recent/dto.rs"]
 pub mod recent_dto;
-#[path = "modules/search_dto.rs"]
+// Vertical-slice migration (search): DTO lives in features/search/dto.rs.
+#[path = "../../features/search/dto.rs"]
 pub mod search_dto;
 // Vertical-slice migration (settings): DTO lives in features/settings/dto/.
 #[path = "../../features/settings/dto/mod.rs"]

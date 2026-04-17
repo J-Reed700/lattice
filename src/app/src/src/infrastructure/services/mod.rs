@@ -43,7 +43,8 @@ pub mod metadata_extraction;
 pub mod model_manager;
 #[path = "domains/router.rs"]
 pub mod router;
-#[path = "domains/search_enrichment_service.rs"]
+// Vertical-slice migration (search): enrichment service lives in features/search/enrichment_service.rs.
+#[path = "../../features/search/enrichment_service.rs"]
 pub mod search_enrichment_service;
 #[path = "domains/startup_reconciliation.rs"]
 pub mod startup_reconciliation;

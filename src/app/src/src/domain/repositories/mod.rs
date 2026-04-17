@@ -2,6 +2,8 @@
 #[path = "../../features/download/domain/downloaded_model_repository.rs"]
 pub mod downloaded_model_repository;
 pub mod model_repository;
+// Vertical-slice migration (search): repository trait lives in features/search/repository.rs.
+#[path = "../../features/search/repository.rs"]
 pub mod search_repository;
 pub mod system_repository;
 pub mod unit_of_work;

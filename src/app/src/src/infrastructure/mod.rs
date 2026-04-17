@@ -42,6 +42,8 @@ pub mod persistence;
 #[path = "../features/qa/engine/mod.rs"]
 pub mod qa;
 pub mod sagas;
+// Vertical-slice migration (search): retrieval engine lives in features/search/engine/.
+#[path = "../features/search/engine/mod.rs"]
 pub mod search;
 pub mod security;
 pub mod services;

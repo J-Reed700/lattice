@@ -15,6 +15,8 @@ pub mod embedding;
 pub mod mention;
 pub mod model;
 pub mod model_file;
+// Vertical-slice migration (search): entity lives in features/search/entity.rs.
+#[path = "../../features/search/entity.rs"]
 pub mod search_result;
 // Vertical-slice migration (tags): entity lives in features/tags/entity.rs.
 #[path = "../../features/tags/entity.rs"]

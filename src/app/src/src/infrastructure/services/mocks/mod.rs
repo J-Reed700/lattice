@@ -22,6 +22,8 @@ mod mock_model;
 // Vertical-slice migration (qa): mock lives in features/qa/mocks.rs.
 #[path = "../../../features/qa/mocks.rs"]
 mod mock_qa;
+// Vertical-slice migration (search): mock lives in features/search/mocks.rs.
+#[path = "../../../features/search/mocks.rs"]
 mod mock_search;
 // Vertical-slice migration (tags): mock lives in features/tags/mocks.rs.
 #[path = "../../../features/tags/mocks.rs"]

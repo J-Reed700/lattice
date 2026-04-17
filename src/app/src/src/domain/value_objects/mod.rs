@@ -13,7 +13,10 @@ pub mod chunking_strategy;
 pub mod file_metadata;
 pub mod indexing_outcome;
 pub mod model_status;
+// Vertical-slice migration (search): value objects live in features/search/value_objects/.
+#[path = "../../features/search/value_objects/mode.rs"]
 pub mod search_mode;
+#[path = "../../features/search/value_objects/query.rs"]
 pub mod search_query;
 
 // Re-export public types

@@ -83,7 +83,8 @@ pub mod qa_commands;
 // Vertical-slice migration (recent): commands live in features/recent/commands.rs.
 #[path = "../../features/recent/commands.rs"]
 pub mod recent_documents;
-#[path = "domains/search_commands.rs"]
+// Vertical-slice migration (search): commands live in features/search/commands.rs.
+#[path = "../../features/search/commands.rs"]
 pub mod search_commands;
 // Vertical-slice migration (tags): commands live in features/tags/commands.rs.
 #[path = "../../features/tags/commands.rs"]

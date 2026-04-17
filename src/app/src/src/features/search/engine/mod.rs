@@ -146,31 +146,20 @@
 //! println!("Search took: {:?}", metrics.duration);
 //! ```
 
-// Single-file modules grouped under modules/ for filesystem organization.
-#[path = "modules/bm25.rs"]
+// Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod bm25;
-#[path = "modules/builder.rs"]
 pub mod builder;
-#[path = "modules/file_search.rs"]
 pub mod file_search;
-#[path = "modules/fusion.rs"]
 pub mod fusion;
-#[path = "modules/index.rs"]
 pub mod index;
-#[path = "modules/profiler.rs"]
 pub mod profiler;
-#[path = "modules/recency.rs"]
 pub mod recency;
-#[path = "modules/reranker.rs"]
 pub mod reranker;
-#[path = "modules/service.rs"]
 pub mod service;
-#[path = "modules/snippet.rs"]
 pub mod snippet;
-#[path = "modules/vector_ops.rs"]
 pub mod vector_ops;
 
-// Directory-backed modules.
+// Directory-backed sub-modules.
 pub mod hybrid;
 pub mod query_expansion;
 pub mod strategies;
@@ -194,9 +183,7 @@ pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_
 pub use vector_search::USearchVectorIndex;
 
 #[cfg(test)]
-#[path = "modules/vector_ops_test.rs"]
 mod vector_ops_test;
 
 #[cfg(test)]
-#[path = "modules/index_tests.rs"]
 mod index_tests;
