@@ -75,7 +75,7 @@ use crate::application::use_cases::favorites::{
 };
 
 // Application Use Cases - Recent
-use crate::application::use_cases::recent::{
+use crate::features::recent::use_cases::{
     ClearRecentHistoryUseCase, GetRecentDocumentsUseCase, TrackAccessUseCase,
 };
 
@@ -420,7 +420,7 @@ impl SearchModule {
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
 
         // Recent Documents Repository (for recency search)
-        use crate::infrastructure::persistence::repositories::RecentDocumentsRepository;
+        use crate::features::recent::repository::RecentDocumentsRepository;
         let recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool.clone()))
             as Arc<dyn RecentDocumentsRepositoryPort>;
 
@@ -1594,7 +1594,7 @@ impl LibraryModule {
             Arc::new(FavoritesRepository::new(db_pool.clone())) as Arc<dyn FavoritesRepositoryPort>;
 
         // Recent Documents Repository
-        use crate::infrastructure::persistence::repositories::RecentDocumentsRepository;
+        use crate::features::recent::repository::RecentDocumentsRepository;
         let recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool.clone()))
             as Arc<dyn RecentDocumentsRepositoryPort>;
 
@@ -1630,7 +1630,7 @@ impl LibraryModule {
         let is_favorite_use_case = Arc::new(IsFavoriteUseCase::new(favorites_repo.clone()));
 
         // Recent documents use cases
-        use crate::application::use_cases::recent::*;
+        use crate::features::recent::use_cases::*;
         let track_access_use_case = Arc::new(TrackAccessUseCase::new(recent_docs_repo.clone()));
         let get_recent_documents_use_case =
             Arc::new(GetRecentDocumentsUseCase::new(recent_docs_repo.clone()));

@@ -1405,7 +1405,7 @@ impl FunctionExecutorTrait for FunctionExecutor {
 mod tests {
     use super::*;
     use crate::application::dtos::favorite_dto::FavoriteDto;
-    use crate::application::dtos::recent_dto::RecentDocumentDto;
+    use crate::features::recent::dto::RecentDocumentDto;
     use crate::application::ports::DocumentRepositoryPort;
     use crate::application::ports::{
         ChunkRepositoryPort, FavoritesRepositoryPort, FileMetadata, FileStoragePort,

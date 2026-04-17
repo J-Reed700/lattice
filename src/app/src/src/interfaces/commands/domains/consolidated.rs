@@ -10,6 +10,6 @@
 pub use super::cache::{cache_operation, CacheOperation, CacheResponse};
 pub use super::embeddings::{embedding_operation, EmbeddingOperation, EmbeddingResponse};
 pub use super::favorites::{favorite_operation, FavoriteOperation, FavoriteResponse};
-pub use super::recent_documents::{
+pub use crate::features::recent::commands::{
     recent_document_operation, RecentDocumentOperation, RecentDocumentResponse,
 };

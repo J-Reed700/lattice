@@ -73,9 +73,6 @@ pub mod model_setup;
 // Vertical-slice migration (qa): commands live in features/qa/commands.rs.
 #[path = "../../features/qa/commands.rs"]
 pub mod qa_commands;
-// Vertical-slice migration (recent): commands live in features/recent/commands.rs.
-#[path = "../../features/recent/commands.rs"]
-pub mod recent_documents;
 // Vertical-slice migration (search): commands live in features/search/commands.rs.
 #[path = "../../features/search/commands.rs"]
 pub mod search_commands;
@@ -99,5 +96,4 @@ pub use credentials as credentials_commands;
 pub use favorites as favorites_commands;
 pub use file as file_commands;
 pub use mentions as mentions_commands;
-pub use recent_documents as recent_commands;
 pub use tag_commands_full as tags;

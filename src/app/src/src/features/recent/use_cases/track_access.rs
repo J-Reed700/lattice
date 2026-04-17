@@ -1,6 +1,6 @@
 //! Track Document Access Use Case
 
-use crate::application::dtos::{TrackAccessRequestDto, TrackAccessResponseDto};
+use crate::features::recent::dto::{TrackAccessRequestDto, TrackAccessResponseDto};
 use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::shared::result::Result;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ impl TrackAccessUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::RecentDocumentDto;
+    use crate::features::recent::dto::RecentDocumentDto;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

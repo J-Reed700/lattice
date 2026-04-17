@@ -1,6 +1,6 @@
 //! Get Recent Documents Use Case
 
-use crate::application::dtos::{GetRecentDocumentsRequestDto, GetRecentDocumentsResponseDto};
+use crate::features::recent::dto::{GetRecentDocumentsRequestDto, GetRecentDocumentsResponseDto};
 use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::shared::result::Result;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ impl GetRecentDocumentsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::RecentDocumentDto;
+    use crate::features::recent::dto::RecentDocumentDto;
     use async_trait::async_trait;
 
     struct MockRecentDocumentsRepository {

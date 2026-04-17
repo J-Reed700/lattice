@@ -1,6 +1,6 @@
 //! Recent Documents Repository Port
 
-use crate::application::dtos::RecentDocumentDto;
+use crate::features::recent::dto::RecentDocumentDto;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 

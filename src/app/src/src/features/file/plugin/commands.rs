@@ -409,8 +409,8 @@ pub async fn get_indexing_activities(
 pub async fn get_recent_documents(
     limit: usize,
     container: State<'_, Container>,
-) -> Result<Vec<crate::interfaces::commands::recent_documents::RecentDocument>, ApiError> {
-    crate::interfaces::commands::recent_documents::get_recent_documents(limit, container)
+) -> Result<Vec<crate::features::recent::commands::RecentDocument>, ApiError> {
+    crate::features::recent::commands::get_recent_documents(limit, container)
         .await
         .map_err(ApiError::from)
 }

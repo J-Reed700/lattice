@@ -2,7 +2,7 @@
 //!
 //! Converts between recent document domain models and DTOs.
 
-use crate::application::dtos::RecentDocumentDto;
+use crate::features::recent::dto::RecentDocumentDto;
 
 pub struct RecentDocumentMapper;
 

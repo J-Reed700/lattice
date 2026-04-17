@@ -68,7 +68,7 @@ use crate::application::use_cases::favorites::{
 };
 
 // Application Use Cases - Recent
-use crate::application::use_cases::recent::{
+use crate::features::recent::use_cases::{
     ClearRecentHistoryUseCase, GetRecentDocumentsUseCase, TrackAccessUseCase,
 };
 
@@ -157,10 +157,11 @@ use crate::infrastructure::search::text_search::SqliteTextSearch;
 use crate::infrastructure::storage::ContentAddressedStorage;
 
 // Infrastructure Implementations - Repositories
+use crate::features::recent::repository::RecentDocumentsRepository;
 use crate::infrastructure::persistence::repositories::{
     unit_of_work::SqliteUnitOfWorkFactory, BatchJobRepository, ChunkRepositoryImpl,
     DocumentRepositoryImpl, EmbeddingRepository, FavoritesRepository, MentionRepository,
-    RecentDocumentsRepository, SettingsRepository, TagRepositoryImpl,
+    SettingsRepository, TagRepositoryImpl,
 };
 
 // Infrastructure Implementations - Adapters

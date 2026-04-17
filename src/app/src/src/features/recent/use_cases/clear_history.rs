@@ -1,6 +1,6 @@
 //! Clear Recent History Use Case
 
-use crate::application::dtos::{ClearRecentHistoryRequestDto, ClearRecentHistoryResponseDto};
+use crate::features::recent::dto::{ClearRecentHistoryRequestDto, ClearRecentHistoryResponseDto};
 use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::shared::result::Result;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ impl ClearRecentHistoryUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::RecentDocumentDto;
+    use crate::features::recent::dto::RecentDocumentDto;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

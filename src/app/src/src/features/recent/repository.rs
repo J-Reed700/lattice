@@ -7,7 +7,7 @@
 //! This repository implements the RecentDocumentsRepositoryPort trait,
 //! providing operations for tracking and retrieving recently accessed documents.
 
-use crate::application::dtos::RecentDocumentDto;
+use crate::features::recent::dto::RecentDocumentDto;
 use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::infrastructure::persistence::database::query_with_timeout;
 use crate::shared::error::Result;

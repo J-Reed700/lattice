@@ -1,15 +1,23 @@
 //! # Recent documents feature
 //!
-//! Track and list recently-accessed documents. No dedicated Tauri plugin.
+//! Track and list recently-accessed documents. No dedicated Tauri
+//! plugin — commands are exposed through the file plugin.
+//! Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File             | Canonical module path                                                 |
-//! |------------------|-----------------------------------------------------------------------|
-//! | `dto.rs`         | `crate::application::dtos::recent_dto`                                |
-//! | `mapper.rs`      | `crate::application::mappers::recent_document_mapper`                 |
-//! | `use_cases/`     | `crate::application::use_cases::recent`                               |
-//! | `repository.rs`  | `crate::infrastructure::persistence::repositories::recent_documents_repository` |
-//! | `commands.rs`    | `crate::interfaces::commands::recent_documents` (aka `recent_commands`) |
+//! - `crate::features::recent::dto` — `RecentDocumentDto`,
+//!   `GetRecentDocumentsRequestDto`, `GetRecentDocumentsResponseDto`
+//! - `crate::features::recent::mapper::RecentDocumentMapper`
+//! - `crate::features::recent::use_cases` — `GetRecentDocumentsUseCase`,
+//!   `TrackAccessUseCase`, `ClearRecentHistoryUseCase`
+//! - `crate::features::recent::repository::RecentDocumentsRepository`
+//! - `crate::features::recent::commands` — Tauri command handlers
 //!
 //! `RecentDocumentsRepositoryPort` stays in `application/ports/`.
+
+pub mod commands;
+pub mod dto;
+pub mod mapper;
+pub mod repository;
+pub mod use_cases;

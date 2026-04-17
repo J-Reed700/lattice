@@ -24,9 +24,6 @@ pub mod favorites_repository;
 // Vertical-slice migration (mentions): repository lives in features/mentions/repository.rs.
 #[path = "../../../features/mentions/repository.rs"]
 pub mod mention_repository;
-// Vertical-slice migration (recent): repository lives in features/recent/repository.rs.
-#[path = "../../../features/recent/repository.rs"]
-pub mod recent_documents_repository;
 // Vertical-slice migration (settings): repository lives in features/settings/repository.rs.
 #[path = "../../../features/settings/repository.rs"]
 pub mod settings_repository;
@@ -73,7 +70,6 @@ pub use downloaded_model_repository::DownloadedModelRepository;
 pub use embedding_repository::{Embedding, EmbeddingRepository};
 pub use favorites_repository::FavoritesRepository;
 pub use mention_repository::MentionRepository;
-pub use recent_documents_repository::RecentDocumentsRepository;
 pub use settings_repository::SettingsRepository;
 pub use summary_repository::SummaryRepository;
 pub use tag_repository::TagRepository;
