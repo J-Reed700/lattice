@@ -82,7 +82,7 @@ async fn initialize_database_layer(
 /// * `Option<Arc<EmbeddingService>>` - Embedding service if successful, None otherwise
 async fn initialize_embedding_layer(
     model_dir: &Path,
-) -> Option<Arc<crate::infrastructure::services::embedding::EmbeddingService>> {
+) -> Option<Arc<crate::features::embedding::service::EmbeddingService>> {
     tracing::info!("Loading embedding models...");
     super::setup_embedding_service(model_dir).await
 }
@@ -121,7 +121,7 @@ fn initialize_tokenizer_layer(model_dir: &Path) -> Option<std::sync::Arc<tokeniz
 fn initialize_indexing_layer(
     pool: sqlx::SqlitePool,
     app_dir: PathBuf,
-    embedder: Option<Arc<crate::infrastructure::services::embedding::EmbeddingService>>,
+    embedder: Option<Arc<crate::features::embedding::service::EmbeddingService>>,
     tokenizer: Option<Arc<tokenizers::Tokenizer>>,
 ) -> Option<indexing::IndexingService> {
     match (embedder, tokenizer) {
@@ -589,7 +589,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     app_handle.manage(container);
     tracing::info!("✅ DI Container available for all commands");
 
-    let embedding_state = commands::embeddings::EmbeddingState::default();
+    let embedding_state = crate::features::embedding::commands::EmbeddingState::default();
     app_handle.manage(embedding_state);
 
     app_handle.manage(download_state);

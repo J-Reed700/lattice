@@ -11,8 +11,8 @@
 //! - EmbeddingRepositoryPort (DDD)
 
 use crate::application::ports::EmbeddingRepositoryPort;
-use crate::domain::entities::embedding::Embedding as DomainEmbedding;
-use crate::infrastructure::persistence::mappers::embedding_mapper::{
+use crate::features::embedding::entity::Embedding as DomainEmbedding;
+use crate::features::embedding::persistence_mapper::{
     EmbeddingDTO, EmbeddingMapper,
 };
 use crate::shared::error::{AppError, Result};

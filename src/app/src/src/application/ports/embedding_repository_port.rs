@@ -4,7 +4,7 @@
 //! Unlike generic `RepositoryPort<T>`, this explicitly manages vector data separately
 //! from domain metadata.
 
-use crate::domain::entities::embedding::Embedding;
+use crate::features::embedding::entity::Embedding;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 

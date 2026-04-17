@@ -1,4 +1,4 @@
-use super::ModelConfig;
+use super::generator::ModelConfig;
 use crate::shared::error::{AppError, Result};
 
 /// Error raised when embedding dimensions don't match between systems

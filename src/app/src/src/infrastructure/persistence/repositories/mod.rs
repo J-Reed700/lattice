@@ -9,9 +9,6 @@ pub mod chunk_repository;
 #[path = "../../../features/conversation/repository.rs"]
 pub mod conversation_repository;
 pub mod document_repository;
-// Vertical-slice migration (embedding): port-impl repository lives in features/embedding/.
-#[path = "../../../features/embedding/repository.rs"]
-pub mod embedding_repository;
 // Vertical-slice migration (settings): repository lives in features/settings/repository.rs.
 #[path = "../../../features/settings/repository.rs"]
 pub mod settings_repository;
@@ -21,9 +18,6 @@ pub mod summary_repository;
 pub mod batch_job;
 pub mod chunk;
 pub mod document;
-// Vertical-slice migration (embedding): tx-wrapper repository lives in features/embedding/repository_tx/.
-#[path = "../../../features/embedding/repository_tx/mod.rs"]
-pub mod embedding;
 // Vertical-slice migration (model_management): tx-wrapper repository lives in features/model_management/repository_tx/.
 #[path = "../../../features/model_management/repository_tx/mod.rs"]
 pub mod model;
@@ -49,7 +43,7 @@ pub use conversation_repository::ConversationRepository;
 // Document removed - use crate::domain::entities::Document (DDD)
 pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 pub use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
-pub use embedding_repository::{Embedding, EmbeddingRepository};
+pub use crate::features::embedding::repository::{Embedding, EmbeddingRepository};
 pub use crate::features::mentions::repository::MentionRepository;
 pub use settings_repository::SettingsRepository;
 pub use summary_repository::SummaryRepository;

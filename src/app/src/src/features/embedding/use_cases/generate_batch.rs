@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::embedding_dto::{
+use crate::features::embedding::dto::{
     GenerateBatchEmbeddingsRequestDto, GenerateBatchEmbeddingsResponseDto,
 };
 use crate::application::ports::EmbeddingPort;

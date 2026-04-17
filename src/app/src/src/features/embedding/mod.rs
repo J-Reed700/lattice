@@ -4,41 +4,39 @@
 //! plus persistence of embeddings tied to document chunks. One of the
 //! most cross-consumed features in the app — search, indexing, qa,
 //! and mentions all depend on the shared ports this feature provides.
+//! Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | Path                                | Canonical module path                                                     |
-//! |-------------------------------------|---------------------------------------------------------------------------|
-//! | `entity.rs`                         | `crate::domain::entities::embedding` (Embedding)                          |
-//! | `dto.rs`                            | `crate::application::dtos::embedding_dto`                                 |
-//! | `use_cases/`                        | `crate::application::use_cases::embedding`                                |
-//! | `onnx_service.rs`                   | `crate::infrastructure::ml::onnx_embedding_service`                       |
-//! | `remote_service.rs`                 | `crate::infrastructure::ml::remote_embedding_service`                     |
-//! | `generator.rs`                      | `crate::infrastructure::ml::generator` (EmbeddingGenerator, ModelConfig)  |
-//! | `validator.rs`                      | `crate::infrastructure::ml::validator`                                    |
-//! | `persistence_mapper.rs`             | `crate::infrastructure::persistence::mappers::embedding_mapper`           |
-//! | `repository.rs`                     | `crate::infrastructure::persistence::repositories::embedding_repository`  |
-//! | `repository_tx/`                    | `crate::infrastructure::persistence::repositories::embedding` (tx-wrapper) |
-//! | `service/`                          | `crate::infrastructure::services::embedding`                              |
-//! | `trait_def.rs`                      | `crate::infrastructure::services::traits` (merged re-exports)             |
-//! | `mocks.rs`                          | `crate::infrastructure::services::mocks` (merged re-exports)              |
-//! | `commands.rs`                       | `crate::interfaces::commands::embeddings`                                 |
-//! | `plugin.rs`                         | `crate::plugins::embeddings`                                              |
+//! - `crate::features::embedding::dto` — embedding DTOs
+//! - `crate::features::embedding::entity` — `Embedding` domain entity
+//! - `crate::features::embedding::use_cases` — embedding use cases
+//! - `crate::features::embedding::onnx_service` — OnnxEmbeddingService
+//! - `crate::features::embedding::remote_service` — RemoteEmbeddingService
+//! - `crate::features::embedding::generator` — EmbeddingGenerator, ModelConfig
+//! - `crate::features::embedding::validator` — validation utilities
+//! - `crate::features::embedding::persistence_mapper` — EmbeddingMapper, EmbeddingDTO
+//! - `crate::features::embedding::repository` — Embedding, EmbeddingRepository (port impl)
+//! - `crate::features::embedding::repository_tx` — tx-wrapper
+//! - `crate::features::embedding::service` — EmbeddingService
+//! - `crate::features::embedding::commands` — Tauri command handlers
+//! - `crate::features::embedding::plugin::init()` — Tauri plugin
 //!
-//! ## Deliberately NOT moved (shared infra)
-//!
-//! Three ports stay in `application/ports/` — they are consumed across
-//! many features:
-//! - `EmbeddingPort`
-//! - `EmbeddingRepositoryPort`
-//! - `MockEmbeddingPort` (runtime fallback, not a test mock)
-//!
-//! Also staying:
-//! - `domain/modules/embedding_constants.rs` — cross-feature constants
-//!   (default model name, dimensions, etc.)
-//! - `infrastructure/setup/embedding.rs` — app bootstrap wiring
-//! - `infrastructure/ml/tokenizer.rs` and `model_manager.rs` — orphaned
-//!   migration-placeholder code, nothing references them externally
-//!
-//! The `infrastructure/services/embedding_tests.rs` file is similarly
-//! an orphan (not registered in any mod.rs). Left in place.
+//! Ports (EmbeddingPort, EmbeddingRepositoryPort, MockEmbeddingPort)
+//! stay in `application/ports/`. `trait_def` and `mocks` remain loaded
+//! via the shared `infrastructure::services::{traits,mocks}` aggregators
+//! — consumers import through those aggregators.
+
+pub mod commands;
+pub mod dto;
+pub mod entity;
+pub mod generator;
+pub mod onnx_service;
+pub mod persistence_mapper;
+pub mod plugin;
+pub mod remote_service;
+pub mod repository;
+pub mod repository_tx;
+pub mod service;
+pub mod use_cases;
+pub mod validator;

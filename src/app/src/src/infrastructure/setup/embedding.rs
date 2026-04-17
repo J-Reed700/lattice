@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub async fn setup_embedding_service(
     model_dir: &Path,
-) -> Option<Arc<services::embedding::EmbeddingService>> {
+) -> Option<Arc<crate::features::embedding::service::EmbeddingService>> {
     tracing::info!("Checking model files availability...");
     let model_path = model_dir.join("model.onnx");
     let tokenizer_path = model_dir.join("tokenizer.json");
@@ -21,7 +21,7 @@ pub async fn setup_embedding_service(
     }
 
     tracing::info!("Model files found, initializing embedding service...");
-    match services::embedding::EmbeddingService::new(&model_path) {
+    match crate::features::embedding::service::EmbeddingService::new(&model_path) {
         Ok(embedder) => {
             tracing::info!("Embedding service initialized successfully");
             Some(Arc::new(embedder))

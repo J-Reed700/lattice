@@ -152,7 +152,7 @@ use crate::infrastructure::file_system::file_storage::SecureFileStorage;
 use crate::infrastructure::llm::inference::InferenceEngine;
 use crate::infrastructure::llm::noop_client::NoOpLLMClient;
 use crate::infrastructure::llm::ollama_client::OllamaClient;
-use crate::infrastructure::ml::onnx_embedding_service::OnnxEmbeddingService;
+use crate::features::embedding::onnx_service::OnnxEmbeddingService;
 use crate::infrastructure::search::text_search::SqliteTextSearch;
 // USearchVectorIndex is used directly via modules.rs — no direct import needed here
 use crate::infrastructure::storage::ContentAddressedStorage;
@@ -192,7 +192,7 @@ use crate::infrastructure::search::hybrid::HybridSearchService;
 // VectorSearchService removed — USearchVectorIndex implements SearchServiceTrait directly
 use crate::infrastructure::services::context_manager::ContextManager;
 use crate::infrastructure::services::conversational_qa_service::ConversationalQAService;
-use crate::infrastructure::services::embedding::DynamicEmbeddingService;
+use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::cache::llm_cache::LlmCache;
 use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
 use crate::features::tags::service_impl::TagServiceImpl;

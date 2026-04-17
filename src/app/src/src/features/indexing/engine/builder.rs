@@ -1,6 +1,6 @@
 use crate::infrastructure::indexing::actor::{IndexingActor, PauseGate};
 use crate::infrastructure::indexing::progress::ProgressTracker;
-use crate::infrastructure::services::embedding::EmbeddingService;
+use crate::features::embedding::service::EmbeddingService;
 use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::marker::PhantomData;

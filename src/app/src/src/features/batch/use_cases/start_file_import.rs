@@ -1042,7 +1042,7 @@ mod tests {
             EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, RepositoryPort,
         };
         use crate::domain::entities::document::Document;
-        use crate::domain::entities::embedding::Embedding;
+        use crate::features::embedding::entity::Embedding;
         use crate::domain::repositories::UnitOfWorkFactory;
         use std::path::Path;
 

@@ -4,7 +4,7 @@ use super::checksum::calculate_checksum;
 use crate::infrastructure::indexing::chunker::TextChunk;
 use crate::infrastructure::indexing::error::{IndexingError, Result};
 use crate::features::mentions::repository::MentionRepository;
-use crate::infrastructure::services::embedding::MODEL_NAME;
+use crate::features::embedding::service::MODEL_NAME;
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;
 use sqlx::SqlitePool;

@@ -4,8 +4,8 @@
 //! Routes to interfaces/commands/domains/embeddings.rs implementations.
 
 use crate::{
-    interfaces::commands::embeddings::{
-        self, EmbeddingOperation, EmbeddingResponse, EmbeddingState,
+    features::embedding::commands::{
+        self as embeddings, EmbeddingOperation, EmbeddingResponse, EmbeddingState,
     },
     interfaces::di::Container,
     shared::api_result::ApiError,

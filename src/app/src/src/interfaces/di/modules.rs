@@ -858,7 +858,7 @@ impl IndexingModule {
 
         // Web Ingestion Service (dynamic - uses embedding cache + fallback tokenizer)
         use crate::infrastructure::indexing::storage::IndexStorage;
-        use crate::infrastructure::services::embedding::DynamicEmbeddingService;
+        use crate::features::embedding::service::DynamicEmbeddingService;
         use crate::infrastructure::services::web_ingestion::WebIngestionService;
         use tokenizers::models::bpe::BPE;
         use tokenizers::pre_tokenizers::whitespace::Whitespace;

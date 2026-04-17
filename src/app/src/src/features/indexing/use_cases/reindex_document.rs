@@ -27,7 +27,7 @@ use crate::application::dtos::indexing_dto::IndexFileResponseDto;
 use crate::application::factories::FileMetadataFactory;
 use crate::application::ports::{EmbeddingPort, FileStoragePort, RepositoryPort};
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
-use crate::domain::entities::embedding::Embedding;
+use crate::features::embedding::entity::Embedding;
 use crate::domain::entities::Document;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
@@ -379,7 +379,7 @@ impl ReindexDocumentUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
-    use crate::domain::entities::embedding::Embedding;
+    use crate::features::embedding::entity::Embedding;
     use crate::domain::entities::Document;
     use crate::domain::repositories::UnitOfWorkFactory;
     use crate::shared::domain_types::ValidatedFilePath;

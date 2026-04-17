@@ -362,7 +362,7 @@ pub use shared::{
 pub mod domain;
 
 pub use domain::{
-    entities::{Chunk, Embedding, SearchResult},
+    entities::{Chunk, SearchResult},
     services::ChunkingService,
     value_objects::{
         Checksum, ChunkingStrategy, FileMetadata, IndexingOutcome, SearchMode, SearchQuery,

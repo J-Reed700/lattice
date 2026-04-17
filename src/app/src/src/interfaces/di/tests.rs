@@ -71,7 +71,7 @@ mod di_integration_tests {
         assert_eq!(embeddings[0].len(), DEFAULT_EMBEDDING_DIM);
 
         // Step 4: Store embeddings
-        use crate::domain::entities::embedding::Embedding as EmbeddingEntity;
+        use crate::features::embedding::entity::Embedding as EmbeddingEntity;
         let chunk_embeddings: Vec<(EmbeddingEntity, Vec<f32>)> = chunk_ids
             .iter()
             .zip(embeddings.iter())
@@ -662,7 +662,7 @@ mod di_integration_tests {
         assert_eq!(embeddings.len(), 100);
 
         // Store embeddings in batch
-        use crate::domain::entities::embedding::Embedding as EmbeddingEntity;
+        use crate::features::embedding::entity::Embedding as EmbeddingEntity;
         let chunk_embeddings: Vec<(EmbeddingEntity, Vec<f32>)> = chunk_ids
             .iter()
             .zip(embeddings.iter())

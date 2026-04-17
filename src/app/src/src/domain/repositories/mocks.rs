@@ -46,7 +46,9 @@ use crate::domain::repositories::{
 };
 
 #[cfg(test)]
-use crate::domain::entities::{Chunk, Document, Embedding};
+use crate::domain::entities::{Chunk, Document};
+#[cfg(test)]
+use crate::features::embedding::entity::Embedding;
 
 #[cfg(test)]
 use crate::domain::entities::model::Model;

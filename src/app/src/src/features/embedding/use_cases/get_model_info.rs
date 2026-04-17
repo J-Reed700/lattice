@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::embedding_dto::EmbeddingModelInfoDto;
+use crate::features::embedding::dto::EmbeddingModelInfoDto;
 use crate::application::ports::EmbeddingPort;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::shared::error::Result;

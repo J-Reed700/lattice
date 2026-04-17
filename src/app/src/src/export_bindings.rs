@@ -119,10 +119,10 @@ fn main() {
             vault::features::cache::commands::clear_search_cache,
             vault::features::cache::commands::cache_operation,
             // Embeddings Plugin (4 commands)
-            vault::plugins::embeddings::embedding_operation,
-            vault::plugins::embeddings::generate_embedding,
-            vault::plugins::embeddings::generate_embeddings_batch,
-            vault::plugins::embeddings::get_embedding_model_info,
+            vault::features::embedding::plugin::embedding_operation,
+            vault::features::embedding::plugin::generate_embedding,
+            vault::features::embedding::plugin::generate_embeddings_batch,
+            vault::features::embedding::plugin::get_embedding_model_info,
             // HuggingFace Plugin (4 commands)
             vault::features::huggingface::plugin::set_huggingface_token,
             vault::features::huggingface::plugin::get_huggingface_token_status,

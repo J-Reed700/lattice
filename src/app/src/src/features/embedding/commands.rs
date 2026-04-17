@@ -1,4 +1,4 @@
-use crate::infrastructure::ml::generator::{EmbeddingGenerator, ModelConfig};
+use crate::features::embedding::generator::{EmbeddingGenerator, ModelConfig};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use crate::shared::error::Result;

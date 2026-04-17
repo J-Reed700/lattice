@@ -627,7 +627,7 @@ mod tests {
             EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, RepositoryPort,
         };
         use crate::domain::entities::document::Document;
-        use crate::domain::entities::embedding::Embedding;
+        use crate::features::embedding::entity::Embedding;
         use crate::domain::repositories::UnitOfWorkFactory;
         use crate::shared::result::Result as AppResult;
         use std::path::Path;

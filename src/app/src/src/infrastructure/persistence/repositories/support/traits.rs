@@ -163,7 +163,7 @@ pub trait DocumentRepositoryTrait: Send + Sync {
 //
 // ```rust,ignore
 // use crate::application::ports::EmbeddingRepositoryPort;
-// use crate::domain::entities::embedding::Embedding;
+// use crate::features::embedding::entity::Embedding;
 //
 // let entity = Embedding::new(chunk_id, "model".to_string(), 384);
 // repo.save(&entity, vector).await?;
@@ -177,7 +177,7 @@ pub trait DocumentRepositoryTrait: Send + Sync {
 // - Phase 4 (THIS COMMIT): Embedding migrated to DDD ports
 //
 // # Key Changes:
-// - Domain entity: `crate::domain::entities::embedding::Embedding`
+// - Domain entity: `crate::features::embedding::entity::Embedding`
 // - Port trait: `crate::application::ports::EmbeddingRepositoryPort`
 // - Method name fix: `find_by_document()` → `find_by_document_id()`
 // - Dual-struct pattern: Entity (metadata) + Vector (data)

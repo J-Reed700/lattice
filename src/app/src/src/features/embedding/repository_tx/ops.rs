@@ -3,8 +3,8 @@
 //! Generic SQL operations for embedding persistence that work with any SQLite executor.
 //! These functions can be used with both connection pools and transactions.
 
-use crate::domain::entities::embedding::Embedding as DomainEmbedding;
-use crate::infrastructure::persistence::mappers::embedding_mapper::{
+use crate::features::embedding::entity::Embedding as DomainEmbedding;
+use crate::features::embedding::persistence_mapper::{
     EmbeddingDTO, EmbeddingMapper,
 };
 use crate::shared::error::{AppError, Result};

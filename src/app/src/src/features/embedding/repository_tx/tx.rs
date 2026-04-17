@@ -4,7 +4,7 @@
 //! This enables transactional operations within a broader unit of work.
 
 use crate::application::ports::EmbeddingRepositoryPort;
-use crate::domain::entities::embedding::Embedding as DomainEmbedding;
+use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::{Sqlite, Transaction};

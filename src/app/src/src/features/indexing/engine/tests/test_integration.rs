@@ -1,7 +1,7 @@
 use crate::infrastructure::persistence::database::initialize_database;
 use crate::infrastructure::indexing::actor::IndexingService;
 use crate::infrastructure::indexing::storage::IndexStorage;
-use crate::infrastructure::services::embedding::EmbeddingService;
+use crate::features::embedding::service::EmbeddingService;
 use sqlx::SqlitePool;
 use std::io::Write;
 use std::path::Path;

@@ -3,7 +3,7 @@
 //! SQLite pool-based implementation of EmbeddingRepository that delegates to ops.rs.
 
 use crate::application::ports::EmbeddingRepositoryPort;
-use crate::domain::entities::embedding::Embedding as DomainEmbedding;
+use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use sqlx::SqlitePool;

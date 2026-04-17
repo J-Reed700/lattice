@@ -115,7 +115,7 @@ pub mod web_archive;
 pub use entities::document::{Document, DocumentStatus};
 
 // Re-export entities
-pub use entities::{Chunk, Embedding, SearchResult};
+pub use entities::{Chunk, SearchResult};
 
 // Re-export value objects
 pub use value_objects::{

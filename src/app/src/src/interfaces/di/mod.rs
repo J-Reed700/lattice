@@ -114,7 +114,7 @@ use crate::infrastructure::persistence::repositories::traits::{
 use crate::infrastructure::persistence::repositories::{
     ChunkRepository, DocumentRepository, EmbeddingRepository, MentionRepository, TagRepository,
 };
-use crate::infrastructure::services::embedding::EmbeddingService;
+use crate::features::embedding::service::EmbeddingService;
 use crate::infrastructure::services::traits::TagRepositoryTrait;
 use crate::infrastructure::services::traits::*;
 
@@ -195,7 +195,7 @@ impl AppContainer {
     ///
     /// # Example
     /// ```rust
-    /// use crate::infrastructure::services::embedding::EmbeddingService;
+    /// use crate::features::embedding::service::EmbeddingService;
     ///
     /// let pool = get_pool().await?;
     /// let embedder = EmbeddingService::new("models/model.onnx").await?;

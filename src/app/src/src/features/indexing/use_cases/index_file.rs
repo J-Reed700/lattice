@@ -42,7 +42,8 @@ use crate::application::ports::{
     EmbeddingRepositoryPort, FileStoragePort, VectorSearchPort,
 };
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
-use crate::domain::entities::{Document, Embedding};
+use crate::domain::entities::Document;
+use crate::features::embedding::entity::Embedding;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use crate::shared::domain_types::ValidatedFilePath;
@@ -600,7 +601,7 @@ mod tests {
     use crate::application::ports::{
         ContentAddressedStoragePort, EmbeddingRepositoryPort, FileMetadata, Filter, NoFilter,
     };
-    use crate::domain::entities::embedding::Embedding;
+    use crate::features::embedding::entity::Embedding;
     use crate::domain::entities::Document;
     use crate::domain::repositories::UnitOfWorkFactory;
     use async_trait::async_trait;

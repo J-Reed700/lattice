@@ -10,7 +10,7 @@ use crate::infrastructure::indexing::progress::{IndexProgress, ProgressTracker};
 use crate::infrastructure::indexing::queue::IndexTask;
 use crate::infrastructure::indexing::storage::IndexStorage;
 use crate::infrastructure::indexing::transaction::FileIndexTransaction;
-use crate::infrastructure::services::embedding::EmbeddingService;
+use crate::features::embedding::service::EmbeddingService;
 use crate::infrastructure::services::file_storage::FileStorageService;
 use crate::infrastructure::services::file_type_detector::FileTypeDetector;
 use crate::infrastructure::services::traits::EmbeddingServiceTrait;

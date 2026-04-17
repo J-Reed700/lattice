@@ -49,7 +49,7 @@ use crate::shared::result::Result;
 use super::batch_job::SqliteBatchJobRepositoryTx;
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
-use super::embedding::SqliteEmbeddingRepositoryTx;
+use crate::features::embedding::repository_tx::SqliteEmbeddingRepositoryTx;
 use super::model::SqliteModelRepositoryTx;
 use super::model_file::SqliteModelFileRepositoryTx;
 use super::search::SqliteSearchRepositoryTx;

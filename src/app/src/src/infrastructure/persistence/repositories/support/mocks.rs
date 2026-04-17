@@ -35,13 +35,13 @@ use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort, Filter, RepositoryPort,
 };
 use crate::domain::entities::chunk::Chunk as ChunkEntity;
-use crate::domain::entities::embedding::Embedding as DomainEmbedding;
+use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use crate::domain::entities::{Chunk, Document};
 use crate::features::mentions::entity::Mention;
-use crate::infrastructure::persistence::mappers::embedding_mapper::{
+use crate::features::embedding::persistence_mapper::{
     EmbeddingDTO, EmbeddingMapper,
 };
-use crate::infrastructure::persistence::repositories::embedding_repository::Embedding;
+use crate::features::embedding::repository::Embedding;
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
 use crate::shared::error::{AppError, Result};
 // Tag removed - migrated to DDD (MockTagRepository now in shared/traits.rs)

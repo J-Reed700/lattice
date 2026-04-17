@@ -48,9 +48,6 @@ pub mod web_ingestion;
 pub mod web_service;
 
 // Directory-backed service modules
-// Vertical-slice migration (embedding): service directory lives in features/embedding/service/.
-#[path = "../../features/embedding/service/mod.rs"]
-pub mod embedding;
 pub mod file_storage;
 // Vertical-slice migration (qa): HyDE retrieval lives in features/qa/hyde/.
 #[path = "../../features/qa/hyde/mod.rs"]

@@ -20,7 +20,7 @@
 //! We test the `_impl` functions directly since they're easier to call from tests
 //! (no need to mock tauri::State). The public tauri commands are thin wrappers.
 
-use crate::interfaces::commands::embeddings::{
+use crate::features::embedding::commands::{
     generate_embedding_impl, generate_embeddings_batch_impl, get_embedding_model_info_impl,
     EmbeddingState,
 };

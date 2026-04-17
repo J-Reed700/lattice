@@ -191,9 +191,6 @@
 // Vertical-slice migration (conversation): use cases live in features/conversation/use_cases/.
 #[path = "../../features/conversation/use_cases/mod.rs"]
 pub mod conversation;
-// Vertical-slice migration (embedding): use cases live in features/embedding/use_cases/.
-#[path = "../../features/embedding/use_cases/mod.rs"]
-pub mod embedding;
 // Vertical-slice migration (extraction): use cases live in features/extraction/use_cases/.
 #[path = "../../features/extraction/use_cases/mod.rs"]
 pub mod extraction;
@@ -229,9 +226,6 @@ pub mod web;
 pub use conversation::{
     CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
     GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
-};
-pub use embedding::{
-    GenerateBatchEmbeddingsUseCase, GenerateSingleEmbeddingUseCase, GetEmbeddingModelInfoUseCase,
 };
 pub use extraction::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
