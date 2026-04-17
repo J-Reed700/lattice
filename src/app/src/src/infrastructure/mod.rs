@@ -38,6 +38,8 @@ pub mod llm;
 pub mod ml;
 pub mod observability;
 pub mod persistence;
+// Vertical-slice migration (qa): QA engine lives in features/qa/engine/.
+#[path = "../features/qa/engine/mod.rs"]
 pub mod qa;
 pub mod sagas;
 pub mod search;

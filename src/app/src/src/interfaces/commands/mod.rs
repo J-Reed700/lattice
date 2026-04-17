@@ -60,7 +60,8 @@ pub mod model_management;
 pub mod model_management_commands;
 #[path = "domains/model_setup.rs"]
 pub mod model_setup;
-#[path = "domains/qa_commands.rs"]
+// Vertical-slice migration (qa): commands live in features/qa/commands.rs.
+#[path = "../../features/qa/commands.rs"]
 pub mod qa_commands;
 #[path = "domains/recent_documents.rs"]
 pub mod recent_documents;

@@ -13,6 +13,8 @@ mod mock_function;
 mod mock_indexing;
 mod mock_mention;
 mod mock_model;
+// Vertical-slice migration (qa): mock lives in features/qa/mocks.rs.
+#[path = "../../../features/qa/mocks.rs"]
 mod mock_qa;
 mod mock_search;
 mod mock_tag;

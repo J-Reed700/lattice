@@ -33,6 +33,8 @@ mod function;
 mod indexing;
 mod mention;
 mod model;
+// Vertical-slice migration (qa): trait lives in features/qa/traits.rs.
+#[path = "../../../features/qa/traits.rs"]
 mod qa;
 mod search;
 mod tag;

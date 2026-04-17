@@ -206,6 +206,8 @@ pub mod llm;
 pub mod mentions;
 pub mod metrics;
 pub mod model_management;
+// Vertical-slice migration (qa): use cases live in features/qa/use_cases/.
+#[path = "../../features/qa/use_cases/mod.rs"]
 pub mod qa;
 pub mod recent;
 pub mod search;

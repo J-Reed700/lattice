@@ -58,6 +58,8 @@ pub mod aggregates;
 pub mod entities;
 pub mod events;
 pub mod ports;
+// Vertical-slice migration (qa): domain models live in features/qa/domain/.
+#[path = "../features/qa/domain/mod.rs"]
 pub mod qa;
 pub mod repositories;
 pub mod services;

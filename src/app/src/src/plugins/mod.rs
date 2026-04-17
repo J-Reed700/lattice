@@ -61,7 +61,8 @@ pub mod functions_plugin;
 pub mod huggingface;
 #[path = "domains/mention_plugin.rs"]
 pub mod mention_plugin;
-#[path = "domains/qa_plugin.rs"]
+// Vertical-slice migration (qa): plugin lives in features/qa/plugin.rs.
+#[path = "../features/qa/plugin.rs"]
 pub mod qa_plugin;
 #[path = "domains/settings_plugin.rs"]
 pub mod settings_plugin;

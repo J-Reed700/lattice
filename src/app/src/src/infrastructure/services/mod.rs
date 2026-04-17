@@ -11,7 +11,8 @@ pub mod batch_url_import;
 pub mod context_manager;
 #[path = "domains/conversation_service.rs"]
 pub mod conversation_service;
-#[path = "domains/conversational_qa_service.rs"]
+// Vertical-slice migration (qa): conversational service lives in features/qa/.
+#[path = "../../features/qa/conversational_service.rs"]
 pub mod conversational_qa_service;
 #[path = "domains/database.rs"]
 pub mod database;
@@ -62,6 +63,8 @@ pub mod web_service;
 pub mod custom_model;
 pub mod embedding;
 pub mod file_storage;
+// Vertical-slice migration (qa): HyDE retrieval lives in features/qa/hyde/.
+#[path = "../../features/qa/hyde/mod.rs"]
 pub mod hyde;
 pub mod mocks;
 
