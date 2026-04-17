@@ -30,9 +30,6 @@ pub mod model_setup;
 // Vertical-slice migration (search): commands live in features/search/commands.rs.
 #[path = "../../features/search/commands.rs"]
 pub mod search_commands;
-// Vertical-slice migration (web): commands live in features/web/commands.rs.
-#[path = "../../features/web/commands.rs"]
-pub mod web_ingest;
 
 // Test modules
 #[cfg(test)]

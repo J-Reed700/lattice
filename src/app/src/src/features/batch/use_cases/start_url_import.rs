@@ -37,9 +37,9 @@ use uuid::Uuid;
 use crate::features::batch::dto::{
     StartBatchUrlImportRequestDto, StartBatchUrlImportResponseDto,
 };
-use crate::application::dtos::web_dto::IngestWebUrlRequestDto;
+use crate::features::web::dto::IngestWebUrlRequestDto;
 use crate::application::ports::BatchJobRepositoryPort;
-use crate::application::use_cases::web::IngestWebUrlUseCase;
+use crate::features::web::use_cases::IngestWebUrlUseCase;
 use crate::shared::error::{AppError, Result};
 
 const MIN_BATCH_SIZE: usize = 1;
@@ -448,8 +448,8 @@ mod tests {
         async fn execute(
             &self,
             _request: IngestWebUrlRequestDto,
-        ) -> Result<crate::application::dtos::web_dto::IngestWebUrlResponseDto> {
-            Ok(crate::application::dtos::web_dto::IngestWebUrlResponseDto {
+        ) -> Result<crate::features::web::dto::IngestWebUrlResponseDto> {
+            Ok(crate::features::web::dto::IngestWebUrlResponseDto {
                 document_id: "doc-123".to_string(),
                 url: "https://example.com".to_string(),
                 title: "Test".to_string(),

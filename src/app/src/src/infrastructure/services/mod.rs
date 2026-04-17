@@ -29,15 +29,6 @@ pub mod startup_reconciliation;
 pub mod sync;
 #[path = "domains/validated_path.rs"]
 pub mod validated_path;
-// Vertical-slice migration (web): services live in features/web/services/.
-#[path = "../../features/web/services/archive.rs"]
-pub mod web_archive_service;
-#[path = "../../features/web/services/capture.rs"]
-pub mod web_capture;
-#[path = "../../features/web/services/ingestion.rs"]
-pub mod web_ingestion;
-#[path = "../../features/web/services/web.rs"]
-pub mod web_service;
 
 // Directory-backed service modules
 pub mod file_storage;
@@ -74,10 +65,10 @@ pub use crate::features::function_calling::executor::FunctionExecutor;
 pub use crate::features::function_calling::registry::{
     init_function_registry, register_custom_query_tools, FunctionRegistry,
 };
-pub use web_archive_service::WebArchiveService;
-pub use web_capture::WebCaptureService;
-pub use web_ingestion::{WebIngestionConfig, WebIngestionService, WebIngestionServiceBuilder};
-pub use web_service::WebService;
+pub use crate::features::web::services::archive::WebArchiveService;
+pub use crate::features::web::services::capture::WebCaptureService;
+pub use crate::features::web::services::ingestion::{WebIngestionConfig, WebIngestionService, WebIngestionServiceBuilder};
+pub use crate::features::web::services::web::WebService;
 
 // Re-export search services
 pub use crate::infrastructure::search::hybrid::HybridSearchService;

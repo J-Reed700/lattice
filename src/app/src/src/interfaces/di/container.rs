@@ -116,7 +116,7 @@ use crate::application::use_cases::llm::{
 };
 
 // Application Use Cases - Web
-use crate::application::use_cases::web::{
+use crate::features::web::use_cases::{
     CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase,
 };
 

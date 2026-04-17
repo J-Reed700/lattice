@@ -29,7 +29,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::web_dto::{CleanArticleRequestDto, CleanArticleResponseDto};
+use crate::features::web::dto::{CleanArticleRequestDto, CleanArticleResponseDto};
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::shared::error::{AppError, Result};
 

@@ -29,7 +29,7 @@
 
 use std::sync::Arc;
 
-use crate::application::dtos::web_dto::{IngestWebUrlRequestDto, IngestWebUrlResponseDto};
+use crate::features::web::dto::{IngestWebUrlRequestDto, IngestWebUrlResponseDto};
 use crate::infrastructure::services::traits::WebIngestionServiceTrait;
 use crate::shared::error::{AppError, Result};
 

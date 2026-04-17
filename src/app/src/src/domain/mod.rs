@@ -99,9 +99,6 @@ pub mod model_metadata;
 pub mod model_paths;
 #[path = "modules/model_type_classifier.rs"]
 pub mod model_type_classifier;
-// Vertical-slice migration (web): domain module lives in features/web/domain.rs.
-#[path = "../features/web/domain.rs"]
-pub mod web_archive;
 
 // ============================================================================
 // Phase 1: New DDD Structure (Pure Domain Layer)

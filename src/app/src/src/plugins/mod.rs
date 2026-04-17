@@ -38,9 +38,7 @@ pub mod model;
 // Vertical-slice migration (search): plugin lives in features/search/plugin/.
 #[path = "../features/search/plugin/mod.rs"]
 pub mod search;
-// Vertical-slice migration (web): plugin lives in features/web/plugin.rs.
-#[path = "../features/web/plugin.rs"]
-pub mod web;
+// web plugin lives in features/web/plugin.rs. Use `crate::features::web::plugin`.
 
 // Single-file plugin modules moved to domains/ for filesystem organization
 // backup plugin lives in features/backup/plugin.rs. Use `crate::features::backup::plugin`.
@@ -86,7 +84,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::embedding::plugin::init(),
         crate::features::huggingface::plugin::init(),
         crate::features::extraction::plugin::init(),
-        web::init(),
+        crate::features::web::plugin::init(),
         // Batch 4: Final domains (conversations, batch, backup, updates, QA)
         conversation_plugin::init(),
         crate::features::download::plugin::init(),

@@ -38,7 +38,7 @@ use crate::application::use_cases::indexing::{
 };
 
 // Application Use Cases - Web
-use crate::application::use_cases::web::{
+use crate::features::web::use_cases::{
     CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase,
 };
 
@@ -859,7 +859,7 @@ impl IndexingModule {
         // Web Ingestion Service (dynamic - uses embedding cache + fallback tokenizer)
         use crate::infrastructure::indexing::storage::IndexStorage;
         use crate::features::embedding::service::DynamicEmbeddingService;
-        use crate::infrastructure::services::web_ingestion::WebIngestionService;
+        use crate::features::web::services::ingestion::WebIngestionService;
         use tokenizers::models::bpe::BPE;
         use tokenizers::pre_tokenizers::whitespace::Whitespace;
         use tokenizers::Tokenizer;
@@ -969,7 +969,7 @@ impl IndexingModule {
         ));
 
         // Web use cases
-        use crate::application::use_cases::web::*;
+        use crate::features::web::use_cases::*;
         let ingest_web_url_use_case =
             Arc::new(IngestWebUrlUseCase::new(web_ingestion_service.clone()));
         let get_url_preview_use_case =
