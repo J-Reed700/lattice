@@ -30,6 +30,8 @@ pub mod document_mapper;
 #[path = "../../features/favorites/mapper.rs"]
 pub mod favorite_mapper;
 pub mod indexing_mapper;
+// Vertical-slice migration (mentions): mapper lives in features/mentions/mapper.rs.
+#[path = "../../features/mentions/mapper.rs"]
 pub mod mention_mapper;
 // Vertical-slice migration (recent): mapper lives in features/recent/mapper.rs.
 #[path = "../../features/recent/mapper.rs"]

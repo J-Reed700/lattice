@@ -11,6 +11,8 @@ mod mock_embedding;
 mod mock_file_storage;
 mod mock_function;
 mod mock_indexing;
+// Vertical-slice migration (mentions): mock lives in features/mentions/mocks.rs.
+#[path = "../../../features/mentions/mocks.rs"]
 mod mock_mention;
 mod mock_model;
 // Vertical-slice migration (qa): mock lives in features/qa/mocks.rs.

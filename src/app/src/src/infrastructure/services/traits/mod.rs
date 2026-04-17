@@ -31,6 +31,8 @@ mod embedding;
 mod file_storage;
 mod function;
 mod indexing;
+// Vertical-slice migration (mentions): trait lives in features/mentions/trait_def.rs.
+#[path = "../../../features/mentions/trait_def.rs"]
 mod mention;
 mod model;
 // Vertical-slice migration (qa): trait lives in features/qa/traits.rs.

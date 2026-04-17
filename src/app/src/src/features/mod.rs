@@ -10,6 +10,7 @@
 
 pub mod backup;
 pub mod favorites;
+pub mod mentions;
 pub mod metrics;
 pub mod qa;
 pub mod recent;

@@ -13,6 +13,8 @@ pub mod embedding_repository;
 // Vertical-slice migration (favorites): repository lives in features/favorites/repository.rs.
 #[path = "../../../features/favorites/repository.rs"]
 pub mod favorites_repository;
+// Vertical-slice migration (mentions): repository lives in features/mentions/repository.rs.
+#[path = "../../../features/mentions/repository.rs"]
 pub mod mention_repository;
 // Vertical-slice migration (recent): repository lives in features/recent/repository.rs.
 #[path = "../../../features/recent/repository.rs"]

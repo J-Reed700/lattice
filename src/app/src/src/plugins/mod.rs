@@ -61,7 +61,8 @@ pub mod favorites_plugin;
 pub mod functions_plugin;
 #[path = "domains/huggingface.rs"]
 pub mod huggingface;
-#[path = "domains/mention_plugin.rs"]
+// Vertical-slice migration (mentions): plugin lives in features/mentions/plugin.rs.
+#[path = "../features/mentions/plugin.rs"]
 pub mod mention_plugin;
 // Vertical-slice migration (qa): plugin lives in features/qa/plugin.rs.
 #[path = "../features/qa/plugin.rs"]

@@ -8,6 +8,8 @@
 pub mod chunk;
 pub mod document;
 pub mod embedding;
+// Vertical-slice migration (mentions): entity lives in features/mentions/entity.rs.
+#[path = "../../features/mentions/entity.rs"]
 pub mod mention;
 pub mod model;
 pub mod model_file;
