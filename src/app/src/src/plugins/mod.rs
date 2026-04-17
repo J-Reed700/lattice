@@ -28,6 +28,8 @@
 //! Plugins delegate to `interfaces/commands/*_impl` functions without duplication." - Gemini 3 Pro
 
 // Directory-backed plugin modules
+// Vertical-slice migration (config): plugin lives in features/config/plugin/.
+#[path = "../features/config/plugin/mod.rs"]
 pub mod config;
 // Vertical-slice migration (credentials): plugin lives in features/credentials/plugin/.
 #[path = "../features/credentials/plugin/mod.rs"]
