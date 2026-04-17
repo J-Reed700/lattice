@@ -108,7 +108,7 @@ use crate::features::initialization::use_cases::{
 };
 
 // Application Use Cases - Settings
-use crate::application::use_cases::settings::{
+use crate::features::settings::use_cases::{
     ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };

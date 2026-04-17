@@ -9,9 +9,6 @@ pub mod chunk_repository;
 #[path = "../../../features/conversation/repository.rs"]
 pub mod conversation_repository;
 pub mod document_repository;
-// Vertical-slice migration (settings): repository lives in features/settings/repository.rs.
-#[path = "../../../features/settings/repository.rs"]
-pub mod settings_repository;
 pub mod summary_repository;
 
 // Transaction-aware repository implementations (Tx modules)
@@ -45,7 +42,7 @@ pub use document_repository::DocumentRepository; // Repository only, not the old
 pub use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 pub use crate::features::embedding::repository::{Embedding, EmbeddingRepository};
 pub use crate::features::mentions::repository::MentionRepository;
-pub use settings_repository::SettingsRepository;
+pub use crate::features::settings::repository::SettingsRepository;
 pub use summary_repository::SummaryRepository;
 pub use crate::features::tags::repository::TagRepository;
 

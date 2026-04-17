@@ -51,7 +51,7 @@ use crate::application::use_cases::conversation::{
 };
 
 // Application Use Cases - Settings
-use crate::application::use_cases::settings::{
+use crate::features::settings::use_cases::{
     ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
@@ -108,7 +108,7 @@ use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVers
 use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - LLM
-use crate::application::dtos::settings::LLMProvider;
+use crate::features::settings::dto::LLMProvider;
 use crate::application::use_cases::llm::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
@@ -447,7 +447,7 @@ impl Container {
         }
         let custom_tool_map: HashMap<
             String,
-            crate::application::dtos::settings::CustomToolSettingsDto,
+            crate::features::settings::dto::CustomToolSettingsDto,
         > = configured_custom_tools
             .into_iter()
             .filter(|tool| tool.enabled)
@@ -593,14 +593,14 @@ impl Container {
 
         // 2) If local model not found, try Ollama if configured.
         let loaded = match settings.llm.provider {
-            crate::application::dtos::settings::LLMProvider::Local => {
+            crate::features::settings::dto::LLMProvider::Local => {
                 return Err(AppError::AiModelsNotInstalled(format!(
                     "Router model '{}' is not downloaded. Download it in Settings → Model Catalog.",
                     model_name
                 )));
             }
-            crate::application::dtos::settings::LLMProvider::Ollama
-            | crate::application::dtos::settings::LLMProvider::Auto => {
+            crate::features::settings::dto::LLMProvider::Ollama
+            | crate::features::settings::dto::LLMProvider::Auto => {
                 self.try_load_ollama_with_model(&settings.llm, &model_name, generation_config)
                     .await
                     .map_err(|e| {
@@ -699,7 +699,7 @@ impl Container {
             Ok(settings) => {
                 let custom_tool_map: HashMap<
                     String,
-                    crate::application::dtos::settings::CustomToolSettingsDto,
+                    crate::features::settings::dto::CustomToolSettingsDto,
                 > = settings
                     .llm
                     .custom_tools
@@ -725,7 +725,7 @@ impl Container {
     /// Returns Ok(None) if no active model or file doesn't exist
     /// Returns Err only on unrecoverable errors
     fn generation_config_from_settings(
-        settings: &crate::application::dtos::settings::LLMSettingsDto,
+        settings: &crate::features::settings::dto::LLMSettingsDto,
     ) -> crate::llm::GenerationConfig {
         crate::llm::GenerationConfig {
             temperature: settings.temperature,
@@ -901,7 +901,7 @@ impl Container {
     /// Returns Err if config missing, invalid, or Ollama not reachable
     async fn try_load_ollama(
         &self,
-        llm_settings: &crate::application::dtos::settings::LLMSettingsDto,
+        llm_settings: &crate::features::settings::dto::LLMSettingsDto,
         generation_config: crate::llm::GenerationConfig,
     ) -> Result<Arc<dyn LLMPort>> {
         use crate::infrastructure::llm::factory::create_ollama_llm;
@@ -949,7 +949,7 @@ impl Container {
     /// Try to load Ollama client with an explicit model override.
     async fn try_load_ollama_with_model(
         &self,
-        llm_settings: &crate::application::dtos::settings::LLMSettingsDto,
+        llm_settings: &crate::features::settings::dto::LLMSettingsDto,
         model: &str,
         generation_config: crate::llm::GenerationConfig,
     ) -> Result<Arc<dyn LLMPort>> {

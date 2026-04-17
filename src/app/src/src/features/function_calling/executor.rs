@@ -30,7 +30,7 @@
 //! ```
 
 use crate::features::function_calling::dto::*;
-use crate::application::dtos::settings::CustomToolSettingsDto;
+use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
     RecentDocumentsRepositoryPort,

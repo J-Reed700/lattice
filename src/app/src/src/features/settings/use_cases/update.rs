@@ -1,6 +1,6 @@
 //! Update Settings Use Case
 
-use crate::application::dtos::settings::{SettingsCategory, SettingsDto, UpdateSettingsRequestDto};
+use crate::features::settings::dto::{SettingsCategory, SettingsDto, UpdateSettingsRequestDto};
 use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::Result;
 use std::sync::Arc;

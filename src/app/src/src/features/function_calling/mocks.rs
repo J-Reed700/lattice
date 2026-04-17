@@ -3,7 +3,7 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::application::dtos::settings::CustomToolSettingsDto;
+use crate::features::settings::dto::CustomToolSettingsDto;
 #[cfg(test)]
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 #[cfg(test)]

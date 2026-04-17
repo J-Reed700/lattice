@@ -1,5 +1,5 @@
 use crate::application::dtos::search_dto::SearchResultDto;
-use crate::application::dtos::settings::LLMPromptSettingsDto;
+use crate::features::settings::dto::LLMPromptSettingsDto;
 
 use super::SearchFlags;
 

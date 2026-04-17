@@ -1,6 +1,6 @@
 //! Export Settings Use Case
 
-use crate::application::dtos::settings::{ExportSettingsRequestDto, ExportSettingsResponseDto};
+use crate::features::settings::dto::{ExportSettingsRequestDto, ExportSettingsResponseDto};
 use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::Result;
 use std::path::PathBuf;

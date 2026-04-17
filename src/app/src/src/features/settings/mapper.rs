@@ -6,7 +6,7 @@
 //! Currently, settings use DTOs directly without separate domain models, but this mapper
 //! provides a place for future domain model conversion if needed.
 
-use crate::application::dtos::settings::{
+use crate::features::settings::dto::{
     ExportSettingsRequestDto, ExportSettingsResponseDto, ImportSettingsRequestDto,
     ImportSettingsResponseDto, ResetSettingsRequestDto, SettingsCategory, SettingsDto,
     UpdateSettingsRequestDto, ValidationResult,

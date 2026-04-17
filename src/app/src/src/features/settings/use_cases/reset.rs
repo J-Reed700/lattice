@@ -1,6 +1,6 @@
 //! Reset Settings Use Case
 
-use crate::application::dtos::settings::{ResetSettingsRequestDto, SettingsCategory, SettingsDto};
+use crate::features::settings::dto::{ResetSettingsRequestDto, SettingsCategory, SettingsDto};
 use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::Result;
 use std::sync::Arc;
@@ -92,9 +92,9 @@ impl ResetSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::dtos::settings::UpdateSettingsRequestDto;
+    use crate::features::settings::dto::UpdateSettingsRequestDto;
     use crate::application::ports::MockSettingsRepository;
-    use crate::application::use_cases::settings::update_settings::UpdateSettingsUseCase;
+    use crate::features::settings::use_cases::update_settings::UpdateSettingsUseCase;
     use serde_json::json;
     use std::collections::HashMap;
 

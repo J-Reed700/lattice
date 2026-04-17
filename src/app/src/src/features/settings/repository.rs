@@ -14,7 +14,7 @@
 //! - **Import/Export**: Support for settings backup and migration
 //! - **Thread Safety**: Uses async file I/O with proper locking
 
-use crate::application::dtos::settings::{
+use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
 };
 use crate::application::ports::SettingsRepositoryPort;

@@ -1,6 +1,6 @@
 //! Get Settings Use Case
 
-use crate::application::dtos::settings::{SettingsCategory, SettingsDto};
+use crate::features::settings::dto::{SettingsCategory, SettingsDto};
 use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::Result;
 use std::sync::Arc;

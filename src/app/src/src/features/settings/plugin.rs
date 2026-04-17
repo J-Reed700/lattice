@@ -2,7 +2,7 @@
 //!
 //! Thin plugin wrapper for settings CRUD operations via use cases.
 
-use crate::application::dtos::settings::{
+use crate::features::settings::dto::{
     ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, UpdateSettingsRequestDto,
 };
 use crate::interfaces::di::Container;
@@ -401,7 +401,7 @@ pub async fn update_settings(
     };
     let invalidate_llm_cache = matches!(
         category,
-        Some(crate::application::dtos::settings::SettingsCategory::Llm)
+        Some(crate::features::settings::dto::SettingsCategory::Llm)
     );
 
     let updated = container

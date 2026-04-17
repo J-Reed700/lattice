@@ -1,5 +1,5 @@
 use crate::application::dtos::search_dto::SearchResultDto;
-use crate::application::dtos::settings::RetrievalTuningSettingsDto;
+use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
 use crate::shared::text_utils::safe_truncate;
 use std::collections::{HashMap, HashSet};

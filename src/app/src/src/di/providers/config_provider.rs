@@ -5,7 +5,7 @@
 //! - OS keyring for secure credential storage
 //! - Builder pattern for flexible configuration
 
-use crate::application::dtos::settings::SettingsDto;
+use crate::features::settings::dto::SettingsDto;
 use crate::infrastructure::security::keyring_storage::SecureStorage;
 use crate::shared::error::{AppError, Result};
 use parking_lot::RwLock;
@@ -474,7 +474,7 @@ mod tests {
 
         // Create a config file with custom settings
         let custom_settings = SettingsDto {
-            search: crate::application::dtos::settings::SearchSettingsDto {
+            search: crate::features::settings::dto::SearchSettingsDto {
                 max_results: 50,
                 ..Default::default()
             },

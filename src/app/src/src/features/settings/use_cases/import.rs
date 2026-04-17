@@ -1,6 +1,6 @@
 //! Import Settings Use Case
 
-use crate::application::dtos::settings::{ImportSettingsRequestDto, ImportSettingsResponseDto};
+use crate::features::settings::dto::{ImportSettingsRequestDto, ImportSettingsResponseDto};
 use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::Result;
 use std::path::Path;

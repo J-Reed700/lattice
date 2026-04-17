@@ -1,6 +1,6 @@
 //! Validate Settings Use Case
 
-use crate::application::dtos::settings::{SettingsDto, ValidationResult};
+use crate::features::settings::dto::{SettingsDto, ValidationResult};
 use crate::application::ports::SettingsRepositoryPort;
 use std::sync::Arc;
 

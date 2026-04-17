@@ -1,4 +1,4 @@
-use crate::application::dtos::settings::RouterSettingsDto;
+use crate::features::settings::dto::RouterSettingsDto;
 use crate::application::ports::LLMPort;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

@@ -5,7 +5,7 @@
 //! This port abstracts settings persistence, allowing different implementations
 //! (file-based, database, remote, etc.) while keeping the application layer independent.
 
-use crate::application::dtos::settings::{SettingsCategory, SettingsDto};
+use crate::features::settings::dto::{SettingsCategory, SettingsDto};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -157,7 +157,7 @@ pub trait SettingsRepositoryPort: Send + Sync {
     fn validate(
         &self,
         settings: &SettingsDto,
-    ) -> crate::application::dtos::settings::ValidationResult;
+    ) -> crate::features::settings::dto::ValidationResult;
 
     /// Check if a file path is valid and accessible.
     ///
@@ -353,8 +353,8 @@ impl SettingsRepositoryPort for MockSettingsRepository {
     fn validate(
         &self,
         settings: &SettingsDto,
-    ) -> crate::application::dtos::settings::ValidationResult {
-        use crate::application::dtos::settings::ValidationResult;
+    ) -> crate::features::settings::dto::ValidationResult {
+        use crate::features::settings::dto::ValidationResult;
 
         let mut result = ValidationResult::success();
 
@@ -409,7 +409,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         if settings.llm.max_tokens == 0 {
             result.add_error("llm", "max_tokens must be greater than 0".to_string());
         }
-        if settings.llm.provider == crate::application::dtos::settings::LLMProvider::Ollama {
+        if settings.llm.provider == crate::features::settings::dto::LLMProvider::Ollama {
             if settings.llm.ollama_url.is_empty() {
                 result.add_error("llm", "ollama_url cannot be empty".to_string());
             }

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::application::dtos::settings::RetrievalTuningSettingsDto;
+use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
 use crate::shared::text_utils::safe_truncate;
 

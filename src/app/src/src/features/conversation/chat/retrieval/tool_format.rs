@@ -2,7 +2,7 @@ use crate::features::function_calling::dto::{
     CustomQueryToolOutput, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput,
     WikiSummaryOutput,
 };
-use crate::application::dtos::settings::ToolOutputSettingsDto;
+use crate::features::settings::dto::ToolOutputSettingsDto;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::shared::text_utils::{build_excerpt, safe_truncate};
 

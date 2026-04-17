@@ -3,7 +3,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::application::dtos::search_dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
-use crate::application::dtos::settings::{
+use crate::features::settings::dto::{
     RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
 };
 use crate::domain::qa::hyde::QueryType;
@@ -511,7 +511,7 @@ pub(super) async fn load_recent_document_metadata(
 }
 
 fn build_router_clarify_response(
-    settings: &crate::application::dtos::settings::RouterSettingsDto,
+    settings: &crate::features::settings::dto::RouterSettingsDto,
     recent_doc_meta: &Option<RecentDocumentMetadata>,
     _message: &str,
     override_question: Option<&str>,

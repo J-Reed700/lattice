@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::application::dtos::search_dto::SearchResponseDto;
-use crate::application::dtos::settings::RetrievalTuningSettingsDto;
+use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use crate::infrastructure::search::reranker::{RerankResult, RerankerService};
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::safe_truncate;

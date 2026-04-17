@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use crate::application::dtos::search_dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
-use crate::application::dtos::settings::{RetrievalTuningSettingsDto, ToolOutputSettingsDto};
+use crate::features::settings::dto::{RetrievalTuningSettingsDto, ToolOutputSettingsDto};
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::safe_truncate;
 

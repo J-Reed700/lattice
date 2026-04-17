@@ -30,7 +30,7 @@
 
 use crate::application::dtos::conversation_dto::CreateConversationRequestDto;
 use crate::features::qa::dto::SourceDto;
-use crate::application::dtos::settings::{
+use crate::features::settings::dto::{
     CustomToolSettingsDto, LLMPromptSettingsDto, RouterSettingsDto,
 };
 use crate::application::services::context_window_builder::ContextWindowBuilder;

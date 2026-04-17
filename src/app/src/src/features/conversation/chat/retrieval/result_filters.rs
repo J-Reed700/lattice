@@ -1,5 +1,5 @@
 use crate::application::dtos::search_dto::{SearchResponseDto, SearchResultDto};
-use crate::application::dtos::settings::RetrievalTuningSettingsDto;
+use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 

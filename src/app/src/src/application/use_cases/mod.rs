@@ -203,9 +203,6 @@ pub mod model_management;
 // Vertical-slice migration (search): use cases live in features/search/use_cases/.
 #[path = "../../features/search/use_cases/mod.rs"]
 pub mod search;
-// Vertical-slice migration (settings): use cases live in features/settings/use_cases/.
-#[path = "../../features/settings/use_cases/mod.rs"]
-pub mod settings;
 // Vertical-slice migration (web): use cases live in features/web/use_cases/.
 #[path = "../../features/web/use_cases/mod.rs"]
 pub mod web;
@@ -227,8 +224,4 @@ pub use model_management::{
     SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase, TrackDownloadUseCase,
 };
 pub use search::{FileSearchUseCase, HybridSearchUseCase, SemanticSearchUseCase};
-pub use settings::{
-    ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
-    UpdateSettingsUseCase, ValidateSettingsUseCase,
-};
 pub use web::{CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase};
