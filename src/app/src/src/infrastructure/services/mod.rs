@@ -11,7 +11,8 @@ pub mod batch_file_import;
 pub mod batch_url_import;
 #[path = "domains/context_manager.rs"]
 pub mod context_manager;
-#[path = "domains/conversation_service.rs"]
+// Vertical-slice migration (conversation): service lives in features/conversation/service.rs.
+#[path = "../../features/conversation/service.rs"]
 pub mod conversation_service;
 // Vertical-slice migration (qa): conversational service lives in features/qa/.
 #[path = "../../features/qa/conversational_service.rs"]

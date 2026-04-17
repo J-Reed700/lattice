@@ -24,6 +24,8 @@
 //! - `favorite_mapper` - Favorite data ↔ FavoriteDto
 //! - `recent_document_mapper` - Recent document data ↔ RecentDocumentDto
 
+// Vertical-slice migration (conversation): application mapper lives in features/conversation/mapper.rs.
+#[path = "../../features/conversation/mapper.rs"]
 pub mod conversation_mapper;
 pub mod document_mapper;
 // Vertical-slice migration (favorites): mapper lives in features/favorites/mapper.rs.

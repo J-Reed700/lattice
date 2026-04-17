@@ -18,10 +18,12 @@ pub mod cache;
 pub mod config;
 #[path = "domains/consolidated.rs"]
 pub mod consolidated;
-#[path = "domains/conversation.rs"]
+// Vertical-slice migration (conversation): commands live in features/conversation/.
+#[path = "../../features/conversation/commands.rs"]
 pub mod conversation;
+#[path = "../../features/conversation/chat.rs"]
 pub mod conversation_chat;
-#[path = "domains/conversation_plugin_impl.rs"]
+#[path = "../../features/conversation/plugin_impl.rs"]
 pub mod conversation_plugin_impl;
 // Vertical-slice migration (credentials): commands live in features/credentials/commands.rs.
 #[path = "../../features/credentials/commands.rs"]

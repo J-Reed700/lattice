@@ -58,7 +58,8 @@ pub mod batch_plugin;
 // Vertical-slice migration (cache): plugin lives in features/cache/plugin.rs.
 #[path = "../features/cache/plugin.rs"]
 pub mod cache_plugin;
-#[path = "domains/conversation_plugin.rs"]
+// Vertical-slice migration (conversation): plugin lives in features/conversation/plugin.rs.
+#[path = "../features/conversation/plugin.rs"]
 pub mod conversation_plugin;
 // Vertical-slice migration (daily_notes): plugin lives in features/daily_notes/plugin.rs.
 #[path = "../features/daily_notes/plugin.rs"]

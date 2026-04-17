@@ -37,11 +37,12 @@ pub mod batch_dto;
 // Vertical-slice migration (cache): DTO physically lives in features/cache/dto.rs.
 #[path = "../../features/cache/dto.rs"]
 pub mod cache_dto;
-#[path = "modules/conversation_dto.rs"]
+// Vertical-slice migration (conversation): DTOs live in features/conversation/.
+#[path = "../../features/conversation/dto.rs"]
 pub mod conversation_dto;
-#[path = "modules/conversation_message_bookmark_dto.rs"]
+#[path = "../../features/conversation/message_bookmark_dto.rs"]
 pub mod conversation_message_bookmark_dto;
-#[path = "modules/conversation_space_dto.rs"]
+#[path = "../../features/conversation/space_dto.rs"]
 pub mod conversation_space_dto;
 // Vertical-slice migration (credentials): DTO physically lives in features/credentials/dto.rs.
 #[path = "../../features/credentials/dto.rs"]

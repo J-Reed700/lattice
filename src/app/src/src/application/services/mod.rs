@@ -1,4 +1,6 @@
 pub mod context_window_builder;
+// Vertical-slice migration (conversation): summarizer lives in features/conversation/summarizer.rs.
+#[path = "../../features/conversation/summarizer.rs"]
 pub mod conversation_summarizer;
 pub mod file_type_detector;
 pub mod model_reconciliation_service;

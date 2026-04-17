@@ -66,9 +66,10 @@ pub mod services;
 pub mod value_objects;
 
 // Single-file domain modules moved under modules/ for filesystem organization
-#[path = "modules/conversation.rs"]
+// Vertical-slice migration (conversation): domain modules live in features/conversation/domain/.
+#[path = "../features/conversation/domain/conversation.rs"]
 pub mod conversation;
-#[path = "modules/conversation_summary.rs"]
+#[path = "../features/conversation/domain/summary.rs"]
 pub mod conversation_summary;
 #[path = "modules/curated_models.rs"]
 pub mod curated_models;

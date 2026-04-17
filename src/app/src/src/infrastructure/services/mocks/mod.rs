@@ -5,6 +5,8 @@
 
 mod mock_chunk;
 mod mock_context;
+// Vertical-slice migration (conversation): mock lives in features/conversation/mocks.rs.
+#[path = "../../../features/conversation/mocks.rs"]
 mod mock_conversation;
 mod mock_document;
 // Vertical-slice migration (embedding): mock lives in features/embedding/mocks.rs.

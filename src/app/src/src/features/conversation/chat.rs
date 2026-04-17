@@ -46,11 +46,22 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{info, warn};
 
+// Submodules live in the sibling `chat/` directory at this file's
+// canonical physical location. Because `chat.rs` is loaded via a
+// Strangler Fig `#[path]` redirect from interfaces/commands/mod.rs,
+// Rust resolves `mod foo;` relative to the *registration site*, not
+// the physical location — so each submodule needs its own `#[path]`.
+#[path = "chat/cancellation.rs"]
 mod cancellation;
+#[path = "chat/persistence.rs"]
 mod persistence;
+#[path = "chat/prompting.rs"]
 mod prompting;
+#[path = "chat/retrieval/mod.rs"]
 mod retrieval;
+#[path = "chat/tool_loop.rs"]
 mod tool_loop;
+#[path = "chat/verification.rs"]
 mod verification;
 
 use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};

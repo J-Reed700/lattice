@@ -28,6 +28,8 @@ mod batch_file_import;
 mod batch_url_import;
 mod chunk; // Migration comment only - trait removed
 mod context;
+// Vertical-slice migration (conversation): trait lives in features/conversation/trait_def.rs.
+#[path = "../../../features/conversation/trait_def.rs"]
 mod conversation;
 mod document;
 // Vertical-slice migration (embedding): trait lives in features/embedding/trait_def.rs.

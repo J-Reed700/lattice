@@ -37,6 +37,8 @@
 //! ```
 
 pub mod chunk_mapper;
+// Vertical-slice migration (conversation): persistence mapper lives in features/conversation/persistence_mapper.rs.
+#[path = "../../../features/conversation/persistence_mapper.rs"]
 pub mod conversation_mapper;
 pub mod document_mapper;
 // Vertical-slice migration (embedding): persistence mapper lives in features/embedding/.
