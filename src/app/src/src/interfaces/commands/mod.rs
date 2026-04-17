@@ -27,9 +27,6 @@ pub mod model_management;
 pub mod model_management_commands;
 #[path = "domains/model_setup.rs"]
 pub mod model_setup;
-// Vertical-slice migration (qa): commands live in features/qa/commands.rs.
-#[path = "../../features/qa/commands.rs"]
-pub mod qa_commands;
 // Vertical-slice migration (search): commands live in features/search/commands.rs.
 #[path = "../../features/search/commands.rs"]
 pub mod search_commands;

@@ -1,4 +1,4 @@
-use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::qa::dto::SourceDto;
 use crate::shared::text_utils::normalize_whitespace;
 use once_cell::sync::Lazy;
 use rust_stemmers::{Algorithm, Stemmer};

@@ -28,7 +28,7 @@ mod tests {
     use crate::application::dtos::search_dto::SearchResultDto;
     use crate::domain::conversation::MessageRole;
     use crate::infrastructure::observability::Metrics;
-    use crate::infrastructure::services::conversational_qa_service::ConversationalQAService;
+    use crate::features::qa::conversational_service::ConversationalQAService;
     use crate::infrastructure::services::traits::{
         ContextManagerTrait, ConversationServiceTrait, MockContextManager, MockConversationService,
         MockQAEngine, QAEngineTrait,

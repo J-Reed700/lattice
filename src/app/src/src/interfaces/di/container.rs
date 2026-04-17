@@ -33,7 +33,7 @@ use crate::application::use_cases::indexing::{
 use crate::features::initialization::use_cases::{
     InitializeDatabaseUseCase, InitializeModelsUseCase,
 };
-use crate::application::use_cases::qa::AskQuestionUseCase;
+use crate::features::qa::use_cases::AskQuestionUseCase;
 use crate::application::use_cases::search::{
     FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
 };
@@ -191,7 +191,7 @@ use crate::infrastructure::search::bm25::BM25Search;
 use crate::infrastructure::search::hybrid::HybridSearchService;
 // VectorSearchService removed — USearchVectorIndex implements SearchServiceTrait directly
 use crate::infrastructure::services::context_manager::ContextManager;
-use crate::infrastructure::services::conversational_qa_service::ConversationalQAService;
+use crate::features::qa::conversational_service::ConversationalQAService;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::cache::llm_cache::LlmCache;
 use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;

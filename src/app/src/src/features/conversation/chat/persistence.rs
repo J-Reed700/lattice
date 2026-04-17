@@ -1,4 +1,4 @@
-use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;

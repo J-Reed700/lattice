@@ -1,5 +1,5 @@
 use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
-use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::qa::dto::SourceDto;
 use crate::application::dtos::search_dto::{
     SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
 };

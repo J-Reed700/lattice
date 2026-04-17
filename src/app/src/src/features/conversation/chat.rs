@@ -29,7 +29,7 @@
 //! ```
 
 use crate::application::dtos::conversation_dto::CreateConversationRequestDto;
-use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::qa::dto::SourceDto;
 use crate::application::dtos::settings::{
     CustomToolSettingsDto, LLMPromptSettingsDto, RouterSettingsDto,
 };

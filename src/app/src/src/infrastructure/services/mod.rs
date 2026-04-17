@@ -6,9 +6,6 @@ pub mod context_manager;
 // Vertical-slice migration (conversation): service lives in features/conversation/service.rs.
 #[path = "../../features/conversation/service.rs"]
 pub mod conversation_service;
-// Vertical-slice migration (qa): conversational service lives in features/qa/.
-#[path = "../../features/qa/conversational_service.rs"]
-pub mod conversational_qa_service;
 #[path = "domains/database.rs"]
 pub mod database;
 #[path = "domains/file_cleanup.rs"]

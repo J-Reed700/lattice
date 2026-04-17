@@ -272,7 +272,7 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         conversation_id: &str,
         question: &str,
         search_results: Vec<crate::application::dtos::search_dto::SearchResultDto>,
-    ) -> Result<crate::services::conversational_qa_service::ConversationalAnswer> {
+    ) -> Result<crate::features::qa::conversational_service::ConversationalAnswer> {
         // Load conversation to verify it exists
         let _aggregate = self
             .conversation_service
@@ -319,7 +319,7 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
             })?;
 
         Ok(
-            crate::services::conversational_qa_service::ConversationalAnswer {
+            crate::features::qa::conversational_service::ConversationalAnswer {
                 answer,
                 sources: search_results,
                 conversation_id: conversation_id.to_string(),

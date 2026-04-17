@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tracing::warn;
 
-use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::qa::dto::SourceDto;
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
 use crate::domain::entities::document::Document;

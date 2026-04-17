@@ -5,7 +5,7 @@ use std::sync::Arc;
 use vault::application::dtos::conversation_dto::{
     CreateConversationRequestDto, GetConversationRequestDto,
 };
-use vault::application::dtos::qa_dto::QARequestDto;
+use vault::features::qa::dto::QARequestDto;
 use vault::infrastructure::persistence::database::DatabaseConnection;
 use vault::infrastructure::services::ConversationService;
 use vault::interfaces::di::Container;

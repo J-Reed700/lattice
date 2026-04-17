@@ -13,7 +13,7 @@
 //! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
 //! and delegate RAG pipeline logic to dedicated use cases.
 
-use crate::application::dtos::qa_dto::{QARequestDto, QAResponseDto};
+use crate::features::qa::dto::{QARequestDto, QAResponseDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use futures::StreamExt;
@@ -142,13 +142,13 @@ pub async fn ask_question_stream<R: Runtime>(
 
                 // Accumulate data for final response
                 match chunk {
-                    crate::application::dtos::qa_dto::StreamChunkDto::Token { content } => {
+                    crate::features::qa::dto::StreamChunkDto::Token { content } => {
                         answer_acc.push_str(&content);
                     }
-                    crate::application::dtos::qa_dto::StreamChunkDto::Sources { sources } => {
+                    crate::features::qa::dto::StreamChunkDto::Sources { sources } => {
                         sources_acc = sources;
                     }
-                    crate::application::dtos::qa_dto::StreamChunkDto::Error { error } => {
+                    crate::features::qa::dto::StreamChunkDto::Error { error } => {
                         tracing::error!("Stream error event: {}", error);
                         // We continue to see if we can salvage partial response or receive Done
                     }
@@ -159,7 +159,7 @@ pub async fn ask_question_stream<R: Runtime>(
                 // Emit error event before returning (using llm-stream to match frontend listener)
                 let _ = app_handle.emit(
                     "llm-stream",
-                    crate::application::dtos::qa_dto::StreamChunkDto::Error {
+                    crate::features::qa::dto::StreamChunkDto::Error {
                         error: e.to_string(),
                     },
                 );

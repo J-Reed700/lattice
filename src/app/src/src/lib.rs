@@ -408,7 +408,6 @@ pub use application::{
     dtos::{
         document_dto::DocumentDto,
         indexing_dto::{IndexFileRequestDto, IndexFileResponseDto},
-        qa_dto::{QARequestDto, QAResponseDto},
         search_dto::{SearchRequestDto, SearchResponseDto, SearchResultDto},
     },
     mappers,
@@ -418,7 +417,6 @@ pub use application::{
     },
     use_cases::{
         indexing::{IndexDirectoryUseCase, IndexFileUseCase},
-        qa::AskQuestionUseCase,
         search::{HybridSearchUseCase, SemanticSearchUseCase},
     },
 };

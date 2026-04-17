@@ -1,5 +1,5 @@
 use crate::application::dtos::settings::{LLMPromptSettingsDto, ToolOutputSettingsDto};
-use crate::application::dtos::qa_dto::SourceDto;
+use crate::features::qa::dto::SourceDto;
 use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };

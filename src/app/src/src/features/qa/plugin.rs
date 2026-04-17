@@ -3,8 +3,8 @@
 //! Thin plugin wrapper for question-answering commands with Retrieval-Augmented Generation (RAG).
 //! Delegates all business logic to `interfaces/commands/domains/qa_commands.rs`.
 
-use crate::application::dtos::qa_dto::{QARequestDto, QAResponseDto};
-use crate::interfaces::commands::qa_commands::{
+use crate::features::qa::dto::{QARequestDto, QAResponseDto};
+use crate::features::qa::commands::{
     ask_question, ask_question_stream, check_llm_health, get_qa_model,
 };
 use crate::interfaces::di::Container;

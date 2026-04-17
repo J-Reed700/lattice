@@ -14,7 +14,7 @@ use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
 use std::sync::Arc;
 
-use crate::application::dtos::qa_dto::{QARequestDto, QAResponseDto, SourceDto, StreamChunkDto};
+use crate::features::qa::dto::{QARequestDto, QAResponseDto, SourceDto, StreamChunkDto};
 use crate::application::mappers::search_mapper::infer_category;
 use crate::application::mappers::SearchMapper;
 use crate::application::ports::{
@@ -188,7 +188,7 @@ impl AskQuestionUseCase {
             answer,
             sources,
             confidence: None,
-            metadata: Some(crate::application::dtos::qa_dto::QAMetadataDto {
+            metadata: Some(crate::features::qa::dto::QAMetadataDto {
                 model: self.llm.model_name().to_string(),
                 prompt_tokens: None,
                 completion_tokens: None,

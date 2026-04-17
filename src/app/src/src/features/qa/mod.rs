@@ -2,32 +2,34 @@
 //!
 //! Retrieval-Augmented Generation (RAG) question answering. Combines
 //! HyDE-based query interpretation, vector retrieval, and LLM completion
-//! to answer questions with inline citations.
+//! to answer questions with inline citations. Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! All files in this directory are loaded via `#[path]` redirects from their
-//! legacy module locations so existing imports keep working (Strangler Fig).
-//! Each file has exactly ONE canonical module path during migration:
+//! - `crate::features::qa::dto` — QA DTOs
+//! - `crate::features::qa::use_cases` — QA use cases
+//! - `crate::features::qa::conversational_service` — ConversationalQAService
+//! - `crate::features::qa::commands` — Tauri command handlers
+//! - `crate::features::qa::plugin::init()` — Tauri plugin
 //!
-//! | File                                | Canonical module path                                              |
-//! |-------------------------------------|--------------------------------------------------------------------|
-//! | `dto.rs`                            | `crate::application::dtos::qa_dto`                                 |
-//! | `use_cases/`                        | `crate::application::use_cases::qa`                                |
-//! | `domain/`                           | `crate::domain::qa`                                                |
-//! | `engine/`                           | `crate::infrastructure::qa`                                        |
-//! | `hyde/`                             | `crate::infrastructure::services::hyde`                            |
-//! | `conversational_service.rs`         | `crate::infrastructure::services::conversational_qa_service`       |
-//! | `traits.rs`                         | `crate::infrastructure::services::traits` (merged into trait re-exports) |
-//! | `mocks.rs`                          | `crate::infrastructure::services::mocks` (merged into mock re-exports) |
-//! | `tests/conversational_service.rs`   | `crate::infrastructure::services::tests::test_conversational_qa_service` |
-//! | `commands.rs`                       | `crate::interfaces::commands::qa_commands`                         |
-//! | `plugin.rs`                         | `crate::plugins::qa_plugin`                                        |
+//! ## Kept as shared namespaces (redirects retained)
 //!
-//! Shared ports (`EmbeddingPort`, `LLMPort`, `VectorSearchPort`,
-//! `ChunkRepositoryPort`, `DocumentRepositoryPort`) remain in
-//! `application/ports/` — features consume shared ports, they don't own them.
+//! - `crate::domain::qa::*` (domain types like HyDEInterpretation, QueryType)
+//!   — consumed broadly by conversation chat retrieval, etc.
+//! - `crate::infrastructure::qa` (QA engine modules) — consumed by
+//!   conversation chat retrieval
+//! - `crate::infrastructure::services::hyde` — HyDE retrieval, consumed
+//!   by conversation chat retrieval
+//! - `trait_def` (traits.rs) and `mocks` remain via shared
+//!   `infrastructure::services::{traits,mocks}` aggregators
+//! - `tests/conversational_service.rs` remains via
+//!   `infrastructure::services::tests` aggregator
 //!
-//! This `features/qa/mod.rs` exists only so the directory is recognized by
-//! `cargo` as a module; it intentionally does not declare submodules to
-//! avoid loading each file under two module paths and duplicating types.
+//! Shared ports (EmbeddingPort, LLMPort, VectorSearchPort, etc.) stay
+//! in `application/ports/`.
+
+pub mod commands;
+pub mod conversational_service;
+pub mod dto;
+pub mod plugin;
+pub mod use_cases;

@@ -57,9 +57,7 @@ pub mod conversation_plugin;
 // function_calling plugin lives in features/function_calling/plugin.rs. Use `crate::features::function_calling::plugin`.
 // huggingface plugin lives in features/huggingface/plugin.rs. Use `crate::features::huggingface::plugin`.
 // mentions plugin lives in features/mentions/plugin.rs. Use `crate::features::mentions::plugin`.
-// Vertical-slice migration (qa): plugin lives in features/qa/plugin.rs.
-#[path = "../features/qa/plugin.rs"]
-pub mod qa_plugin;
+// qa plugin lives in features/qa/plugin.rs. Use `crate::features::qa::plugin`.
 // Vertical-slice migration (settings): plugin lives in features/settings/plugin.rs.
 #[path = "../features/settings/plugin.rs"]
 pub mod settings_plugin;
@@ -97,6 +95,6 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::batch::plugin::init(),
         crate::features::backup::plugin::init(),
         crate::features::updates::plugin::init(),
-        qa_plugin::init(),
+        crate::features::qa::plugin::init(),
     ]
 }

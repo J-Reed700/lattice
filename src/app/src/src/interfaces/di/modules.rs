@@ -1260,7 +1260,7 @@ impl AIModule {
         use crate::infrastructure::observability::metrics::Metrics;
         use crate::infrastructure::qa::engine::QAEngine;
         use crate::infrastructure::services::context_manager::ContextManager;
-        use crate::infrastructure::services::conversational_qa_service::ConversationalQAService;
+        use crate::features::qa::conversational_service::ConversationalQAService;
         use crate::infrastructure::services::traits::{ContextManagerTrait, QAEngineTrait};
 
         // Create LLM client from cache (degraded mode if not loaded)
