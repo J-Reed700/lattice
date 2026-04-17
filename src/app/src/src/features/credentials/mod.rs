@@ -2,17 +2,24 @@
 //!
 //! API key / credential storage via the OS keyring. Set / get / delete
 //! API keys for LLM providers, plus custom endpoint configuration.
+//! Self-contained vertical slice.
 //!
-//! ## File layout
+//! ## Public surface
 //!
-//! | File             | Canonical module path                                         |
-//! |------------------|---------------------------------------------------------------|
-//! | `dto.rs`         | `crate::application::dtos::credential_dto`                    |
-//! | `use_cases/`     | `crate::application::use_cases::credentials`                  |
-//! | `adapter.rs`     | `crate::infrastructure::security::credentials_adapter`        |
-//! | `commands.rs`    | `crate::interfaces::commands::credentials` (aka `credentials_commands`) |
-//! | `plugin/`        | `crate::plugins::credentials` (directory plugin)              |
+//! - `crate::features::credentials::dto` — credential DTOs
+//! - `crate::features::credentials::use_cases` — CRUD use cases
+//! - `crate::features::credentials::adapter::CredentialsAdapter` —
+//!   OS keyring impl of `CredentialsPort`
+//! - `crate::features::credentials::commands` — Tauri command impls
+//! - `crate::features::credentials::plugin::init()` — Tauri plugin
+//!   (directory-shaped)
 //!
 //! `CredentialsPort` stays in `application/ports/`. Keyring primitives
 //! (keyring_storage, migration) remain in `infrastructure/security/` —
 //! those are shared security infrastructure used by multiple features.
+
+pub mod adapter;
+pub mod commands;
+pub mod dto;
+pub mod plugin;
+pub mod use_cases;

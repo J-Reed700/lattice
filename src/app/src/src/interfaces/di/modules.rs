@@ -136,7 +136,7 @@ use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDIN
 use crate::infrastructure::observability::metrics::Metrics;
 
 // Application Use Cases - Credentials
-use crate::application::use_cases::credentials::{
+use crate::features::credentials::use_cases::{
     DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
 };
 
@@ -223,7 +223,7 @@ impl CoreModule {
         let file_access_config = Arc::new(FileAccessConfig::new(allowed_roots));
 
         // Credentials Adapter (secure storage)
-        use crate::infrastructure::security::credentials_adapter::CredentialsAdapter;
+        use crate::features::credentials::adapter::CredentialsAdapter;
         let credentials_path = data_dir.join("credentials.json");
         let credentials =
             Arc::new(CredentialsAdapter::new(credentials_path)) as Arc<dyn CredentialsPort>;

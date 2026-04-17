@@ -1,6 +1,6 @@
 //! Credentials plugin commands - secure API key storage
 
-use crate::interfaces::commands::credentials;
+use crate::features::credentials::commands as credentials;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::State;

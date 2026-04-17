@@ -29,9 +29,7 @@
 
 // Directory-backed plugin modules
 // config plugin lives in features/config/plugin/. Use `crate::features::config::plugin`.
-// Vertical-slice migration (credentials): plugin lives in features/credentials/plugin/.
-#[path = "../features/credentials/plugin/mod.rs"]
-pub mod credentials;
+// credentials plugin lives in features/credentials/plugin/. Use `crate::features::credentials::plugin`.
 // Vertical-slice migration (file): plugin lives in features/file/plugin/.
 #[path = "../features/file/plugin/mod.rs"]
 pub mod file;
@@ -94,7 +92,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         search::init(),
         file::init(),
         crate::features::config::plugin::init(),
-        credentials::init(),
+        crate::features::credentials::plugin::init(),
         crate::features::health::plugin::init(),
         settings_plugin::init(),
         // Batch 2: Metadata & caching (tags, favorites, cache, mentions)

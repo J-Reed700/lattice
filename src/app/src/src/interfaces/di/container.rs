@@ -86,7 +86,7 @@ use crate::application::use_cases::extraction::{
 };
 
 // Application Use Cases - Credentials
-use crate::application::use_cases::credentials::{
+use crate::features::credentials::use_cases::{
     DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
 };
 
@@ -176,7 +176,7 @@ use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
 use crate::infrastructure::model_cache_adapter::ModelCacheAdapter;
 use crate::features::metrics::adapter::MetricsAdapter;
 use crate::features::backup::adapter::BackupAdapter;
-use crate::infrastructure::security::credentials_adapter::CredentialsAdapter;
+use crate::features::credentials::adapter::CredentialsAdapter;
 use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 use crate::features::updates::adapter::UpdateCheckerAdapter;
 

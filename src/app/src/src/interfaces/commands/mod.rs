@@ -19,9 +19,6 @@ pub mod conversation;
 pub mod conversation_chat;
 #[path = "../../features/conversation/plugin_impl.rs"]
 pub mod conversation_plugin_impl;
-// Vertical-slice migration (credentials): commands live in features/credentials/commands.rs.
-#[path = "../../features/credentials/commands.rs"]
-pub mod credentials;
 // Vertical-slice migration (custom_model): commands live in features/custom_model/commands.rs.
 #[path = "../../features/custom_model/commands.rs"]
 pub mod custom_model_commands;
@@ -81,7 +78,6 @@ mod command_tests;
 
 // Module aliases retained for migration/backward compatibility.
 pub use conversation as conversation_commands;
-pub use credentials as credentials_commands;
 pub use file as file_commands;
 pub use mentions as mentions_commands;
 pub use tag_commands_full as tags;

@@ -38,9 +38,6 @@ pub mod conversation_dto;
 pub mod conversation_message_bookmark_dto;
 #[path = "../../features/conversation/space_dto.rs"]
 pub mod conversation_space_dto;
-// Vertical-slice migration (credentials): DTO physically lives in features/credentials/dto.rs.
-#[path = "../../features/credentials/dto.rs"]
-pub mod credential_dto;
 #[path = "modules/document_dto.rs"]
 pub mod document_dto;
 // Vertical-slice migration (embedding): DTO lives in features/embedding/dto.rs.
@@ -88,7 +85,6 @@ pub use batch_dto::*;
 pub use conversation_dto::*;
 pub use conversation_message_bookmark_dto::*;
 pub use conversation_space_dto::*;
-pub use credential_dto::*;
 pub use document_dto::*;
 pub use embedding_dto::*;
 pub use extraction_dto::*;

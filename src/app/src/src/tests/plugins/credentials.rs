@@ -15,7 +15,7 @@
 //! - Test core operations: set/get/delete API keys, check existence
 //! - Assert commands return Result, not specific values
 
-use crate::interfaces::commands::credentials::{
+use crate::features::credentials::commands::{
     delete_api_key_impl, get_api_key_impl, has_api_key_impl, set_api_key_impl,
 };
 use crate::tests::common::setup_test_container;

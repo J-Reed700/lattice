@@ -16,7 +16,7 @@
 //! use_case.execute("ollama".into(), "http://localhost:11434".into()).await?;
 //! ```
 
-use crate::application::dtos::credential_dto::CredentialOperationResultDto;
+use crate::features::credentials::dto::CredentialOperationResultDto;
 use crate::application::ports::CredentialsPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;

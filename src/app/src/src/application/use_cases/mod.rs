@@ -194,9 +194,6 @@ pub mod batch;
 // Vertical-slice migration (conversation): use cases live in features/conversation/use_cases/.
 #[path = "../../features/conversation/use_cases/mod.rs"]
 pub mod conversation;
-// Vertical-slice migration (credentials): use cases live in features/credentials/use_cases/.
-#[path = "../../features/credentials/use_cases/mod.rs"]
-pub mod credentials;
 // Vertical-slice migration (custom_model): use cases live in features/custom_model/use_cases/.
 #[path = "../../features/custom_model/use_cases/mod.rs"]
 pub mod custom_model;

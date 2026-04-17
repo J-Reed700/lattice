@@ -16,7 +16,7 @@
 //! use_case.execute("anthropic".into(), "sk-ant-...".into()).await?;
 //! ```
 
-use crate::application::dtos::credential_dto::CredentialOperationResultDto;
+use crate::features::credentials::dto::CredentialOperationResultDto;
 use crate::application::ports::CredentialsPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;
