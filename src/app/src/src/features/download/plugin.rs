@@ -2,7 +2,7 @@
 //!
 //! Thin plugin wrapper over `interfaces::commands::downloads`.
 
-use crate::interfaces::commands::downloads::{
+use crate::features::download::commands::{
     self, DownloadCommandState, DownloadStatusResponse, StartDownloadRequest,
 };
 use tauri::{
@@ -16,7 +16,7 @@ pub async fn start_model_download(
     state: State<'_, DownloadCommandState>,
     request: StartDownloadRequest,
 ) -> Result<String, String> {
-    downloads::start_model_download(state, request).await
+    commands::start_model_download(state, request).await
 }
 
 #[tauri::command]
@@ -25,7 +25,7 @@ pub async fn pause_download(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<(), String> {
-    downloads::pause_download(state, id).await
+    commands::pause_download(state, id).await
 }
 
 #[tauri::command]
@@ -34,7 +34,7 @@ pub async fn resume_download(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<(), String> {
-    downloads::resume_download(state, id).await
+    commands::resume_download(state, id).await
 }
 
 #[tauri::command]
@@ -43,7 +43,7 @@ pub async fn download_cancel(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<(), String> {
-    downloads::cancel_download(state, id).await
+    commands::cancel_download(state, id).await
 }
 
 #[tauri::command]
@@ -52,7 +52,7 @@ pub async fn retry_download(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<(), String> {
-    downloads::retry_download(state, id).await
+    commands::retry_download(state, id).await
 }
 
 #[tauri::command]
@@ -61,7 +61,7 @@ pub async fn remove_download(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<(), String> {
-    downloads::remove_download(state, id).await
+    commands::remove_download(state, id).await
 }
 
 #[tauri::command]
@@ -69,7 +69,7 @@ pub async fn remove_download(
 pub async fn clear_completed_downloads(
     state: State<'_, DownloadCommandState>,
 ) -> Result<usize, String> {
-    downloads::clear_completed_downloads(state).await
+    commands::clear_completed_downloads(state).await
 }
 
 #[tauri::command]
@@ -78,7 +78,7 @@ pub async fn download_get_status(
     state: State<'_, DownloadCommandState>,
     id: String,
 ) -> Result<Option<DownloadStatusResponse>, String> {
-    downloads::get_download_status(state, id).await
+    commands::get_download_status(state, id).await
 }
 
 #[tauri::command]
@@ -86,7 +86,7 @@ pub async fn download_get_status(
 pub async fn list_downloads(
     state: State<'_, DownloadCommandState>,
 ) -> Result<Vec<DownloadStatusResponse>, String> {
-    downloads::list_downloads(state).await
+    commands::list_downloads(state).await
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

@@ -33,9 +33,9 @@ pub enum DownloadEventDto {
     Cancelled { id: String },
 }
 
-impl From<crate::infrastructure::services::download_manager::DownloadEvent> for DownloadEventDto {
-    fn from(event: crate::infrastructure::services::download_manager::DownloadEvent) -> Self {
-        use crate::infrastructure::services::download_manager::DownloadEvent;
+impl From<crate::features::download::manager::DownloadEvent> for DownloadEventDto {
+    fn from(event: crate::features::download::manager::DownloadEvent) -> Self {
+        use crate::features::download::manager::DownloadEvent;
 
         match event {
             DownloadEvent::Started { id } => Self::Started { id },

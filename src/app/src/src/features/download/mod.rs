@@ -3,29 +3,35 @@
 //! Model file download pipeline: fetch model weights/config from a
 //! remote source (HuggingFace, GitHub release, etc.), verify checksums,
 //! track progress, persist download state, emit events for UI.
+//! Self-contained vertical slice.
 //!
-//! ~9 KLOC across 13 files.
+//! ## Public surface
 //!
-//! ## File layout
+//! - `crate::features::download::download_repository` — download state repo
+//! - `crate::features::download::downloaded_model_repository` —
+//!   DownloadedModelRepository (implements the domain port)
+//! - `crate::features::download::engine` — DownloadEngine
+//! - `crate::features::download::manager` — DownloadManager, DownloadEvent
+//! - `crate::features::download::saga` — DownloadSaga
+//! - `crate::features::download::commands` — Tauri command handlers
+//! - `crate::features::download::plugin::init()` — Tauri plugin
 //!
-//! | Path                                  | Canonical module path                                            |
-//! |---------------------------------------|------------------------------------------------------------------|
-//! | `domain/download.rs`                  | `crate::domain::download` (DownloadSession, state machine)       |
-//! | `domain/snapshot.rs`                  | `crate::domain::download_snapshot`                               |
-//! | `domain/downloaded_model.rs`          | `crate::domain::downloaded_model`                                |
-//! | `domain/downloaded_model_repository.rs` | `crate::domain::repositories::downloaded_model_repository`     |
-//! | `events/model_download_events.rs`     | `crate::domain::events::model_download_events`                   |
-//! | `events/infra_events.rs`              | `crate::infrastructure::events::download_events`                 |
-//! | `download_repository.rs`              | `crate::infrastructure::persistence::download_repository`        |
-//! | `downloaded_model_repository.rs`      | `crate::infrastructure::persistence::repositories::downloaded_model_repository` |
-//! | `saga.rs`                             | `crate::infrastructure::sagas::download_saga`                    |
-//! | `engine.rs`                           | `crate::infrastructure::services::download_engine`               |
-//! | `manager.rs`                          | `crate::infrastructure::services::download_manager`              |
-//! | `commands.rs`                         | `crate::interfaces::commands::downloads`                         |
-//! | `plugin.rs`                           | `crate::plugins::download_plugin`                                |
+//! Domain types remain accessible via the shared `crate::domain::*`
+//! paths (DownloadSession, DownloadError, DownloadedModel, etc.) —
+//! their Strangler Fig redirects in `domain/mod.rs`,
+//! `domain/events/mod.rs`, and `domain/repositories/mod.rs` are kept
+//! because the `domain` namespace is a shared aggregator consumed
+//! broadly across features (shared/error, llm, model_management,
+//! infrastructure/services, interfaces/commands).
 //!
-//! No dedicated use cases under `application/use_cases/download/` —
-//! download is consumed *through* the LLM and model-management
-//! features, which orchestrate the download pipeline for model files.
-//! Those use cases (e.g., `DownloadModelUseCase`, `TrackDownloadUseCase`)
-//! will graduate into those features' slices.
+//! No use cases here — download is orchestrated *through* the LLM and
+//! model-management features, which own the model-download use cases.
+
+pub mod commands;
+pub mod download_repository;
+pub mod downloaded_model_repository;
+pub mod engine;
+pub mod events;
+pub mod manager;
+pub mod plugin;
+pub mod saga;

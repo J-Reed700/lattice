@@ -29,7 +29,7 @@
 use std::future::Future;
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
-use vault::infrastructure::services::download_manager::DownloadEvent;
+use vault::features::download::manager::DownloadEvent;
 
 /// Collect download events until terminal state
 ///

@@ -32,7 +32,7 @@ use crate::domain::embedding_constants::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
-use crate::infrastructure::services::download_manager::{
+use crate::features::download::manager::{
     DownloadManager, DownloadManagerService, DownloadRequest,
 };
 use crate::shared::error::{AppError, Result};
@@ -221,7 +221,7 @@ mod tests {
     use crate::domain::embedding_constants::{
         DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
     };
-    use crate::infrastructure::services::download_manager::DownloadEvent;
+    use crate::features::download::manager::DownloadEvent;
     use async_trait::async_trait;
     use tempfile::TempDir;
     use tokio::sync::{mpsc, RwLock};

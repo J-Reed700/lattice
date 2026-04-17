@@ -9,9 +9,6 @@ pub mod chunk_repository;
 #[path = "../../../features/conversation/repository.rs"]
 pub mod conversation_repository;
 pub mod document_repository;
-// Vertical-slice migration (download): downloaded_model repository lives in features/download/.
-#[path = "../../../features/download/downloaded_model_repository.rs"]
-pub mod downloaded_model_repository;
 // Vertical-slice migration (embedding): port-impl repository lives in features/embedding/.
 #[path = "../../../features/embedding/repository.rs"]
 pub mod embedding_repository;
@@ -51,7 +48,7 @@ pub use chunk_repository::ChunkRepository; // Repository only, not the old Chunk
 pub use conversation_repository::ConversationRepository;
 // Document removed - use crate::domain::entities::Document (DDD)
 pub use document_repository::DocumentRepository; // Repository only, not the old Document type
-pub use downloaded_model_repository::DownloadedModelRepository;
+pub use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 pub use embedding_repository::{Embedding, EmbeddingRepository};
 pub use crate::features::mentions::repository::MentionRepository;
 pub use settings_repository::SettingsRepository;

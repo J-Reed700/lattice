@@ -9,9 +9,9 @@
 #![allow(deprecated)]
 
 #[cfg(feature = "test-utils")]
-use vault::infrastructure::persistence::download_repository::mock::MockDownloadRepository;
+use vault::features::download::download_repository::mock::MockDownloadRepository;
 #[cfg(feature = "test-utils")]
-use vault::infrastructure::services::download_engine::mock::MockDownloadEngine;
+use vault::features::download::engine::mock::MockDownloadEngine;
 
 #[tokio::test]
 #[cfg(feature = "test-utils")]

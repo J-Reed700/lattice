@@ -65,10 +65,10 @@ impl DownloadEventEmitter {
 
 pub struct DownloadEventBridge {
     emitter: Arc<DownloadEventEmitter>,
-    download_manager: Arc<dyn crate::infrastructure::services::download_manager::DownloadManager>,
-    repository: Arc<dyn crate::infrastructure::persistence::download_repository::DownloadRepository>,
-    event_rx_arc: Arc<RwLock<Option<mpsc::UnboundedReceiver<crate::infrastructure::services::download_manager::DownloadEvent>>>>,
-    downloaded_model_repository: Option<Arc<crate::infrastructure::persistence::repositories::downloaded_model_repository::DownloadedModelRepository>>,
+    download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
+    repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
+    event_rx_arc: Arc<RwLock<Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>>>,
+    downloaded_model_repository: Option<Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>>,
     event_bus: Option<Arc<crate::infrastructure::event_bus::EventBus<crate::domain::events::model_download_events::ModelDownloadEvent>>>,
 }
 
@@ -76,21 +76,21 @@ impl DownloadEventBridge {
     pub fn new(
         app_handle: AppHandle,
         download_manager: Arc<
-            dyn crate::infrastructure::services::download_manager::DownloadManager,
+            dyn crate::features::download::manager::DownloadManager,
         >,
         repository: Arc<
-            dyn crate::infrastructure::persistence::download_repository::DownloadRepository,
+            dyn crate::features::download::download_repository::DownloadRepository,
         >,
         event_rx_arc: Arc<
             RwLock<
                 Option<
                     mpsc::UnboundedReceiver<
-                        crate::infrastructure::services::download_manager::DownloadEvent,
+                        crate::features::download::manager::DownloadEvent,
                     >,
                 >,
             >,
         >,
-        downloaded_model_repository: Option<Arc<crate::infrastructure::persistence::repositories::downloaded_model_repository::DownloadedModelRepository>>,
+        downloaded_model_repository: Option<Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>>,
         event_bus: Option<
             Arc<
                 crate::infrastructure::event_bus::EventBus<
@@ -159,13 +159,13 @@ impl DownloadEventBridge {
     /// Converts to snapshot and emits
     async fn handle_infrastructure_event(
         &self,
-        manager_event: crate::infrastructure::services::download_manager::DownloadEvent,
+        manager_event: crate::features::download::manager::DownloadEvent,
     ) {
         let is_terminal_event = matches!(
             manager_event,
-            crate::infrastructure::services::download_manager::DownloadEvent::Completed { .. }
-                | crate::infrastructure::services::download_manager::DownloadEvent::Failed { .. }
-                | crate::infrastructure::services::download_manager::DownloadEvent::Cancelled { .. }
+            crate::features::download::manager::DownloadEvent::Completed { .. }
+                | crate::features::download::manager::DownloadEvent::Failed { .. }
+                | crate::features::download::manager::DownloadEvent::Cancelled { .. }
         );
 
         // Bridge manager events into domain download events so DownloadSaga can
@@ -174,7 +174,7 @@ impl DownloadEventBridge {
             tracing::warn!("Failed to publish domain download event: {}", e);
         }
 
-        if let crate::infrastructure::services::download_manager::DownloadEvent::Failed {
+        if let crate::features::download::manager::DownloadEvent::Failed {
             id,
             error,
         } = &manager_event
@@ -215,13 +215,13 @@ impl DownloadEventBridge {
 
     async fn publish_domain_event(
         &self,
-        manager_event: &crate::infrastructure::services::download_manager::DownloadEvent,
+        manager_event: &crate::features::download::manager::DownloadEvent,
     ) -> Result<(), String> {
         use crate::domain::events::model_download_events::{
             FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadProgressEvent,
             FileDownloadStartedEvent, ModelDownloadEvent,
         };
-        use crate::infrastructure::services::download_manager::DownloadEvent as ME;
+        use crate::features::download::manager::DownloadEvent as ME;
 
         let Some(event_bus) = &self.event_bus else {
             return Ok(());
@@ -508,10 +508,10 @@ impl DownloadEventBridge {
 
     async fn convert_event(
         &self,
-        event: crate::infrastructure::services::download_manager::DownloadEvent,
+        event: crate::features::download::manager::DownloadEvent,
     ) -> Result<DownloadEvent, String> {
         use crate::domain::download_snapshot::{DownloadStatus, SingleFileSnapshot};
-        use crate::infrastructure::services::download_manager::DownloadEvent as ME;
+        use crate::features::download::manager::DownloadEvent as ME;
 
         match event {
             ME::Started { id } => {

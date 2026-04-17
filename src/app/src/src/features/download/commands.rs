@@ -1,7 +1,7 @@
 use crate::audit::AuditAction;
 use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
 use crate::infrastructure::security::RateLimiter;
-use crate::infrastructure::services::download_manager::{DownloadManager, DownloadRequest};
+use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::shared::ValidatedFilePath;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -571,9 +571,9 @@ pub async fn clear_completed_downloads(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::persistence::download_repository::mock::MockDownloadRepository;
-    use crate::infrastructure::services::download_engine::mock::MockDownloadEngine;
-    use crate::infrastructure::services::download_manager::DownloadManagerService;
+    use crate::features::download::download_repository::mock::MockDownloadRepository;
+    use crate::features::download::engine::mock::MockDownloadEngine;
+    use crate::features::download::manager::DownloadManagerService;
 
     fn temp_root() -> std::path::PathBuf {
         std::env::temp_dir().join("recall-download-command-tests")

@@ -16,7 +16,7 @@
 //! - Integration between DownloadSession and DownloadProgress
 //! - Event conversion in DownloadEventBridge
 use vault::domain::download::{DownloadProgress, DownloadSession, DownloadState};
-use vault::infrastructure::events::download_events::DownloadEvent as TauriDownloadEvent;
+use vault::features::download::events::infra_events::DownloadEvent as TauriDownloadEvent;
 
 #[test]
 fn test_download_progress_snapshot_creation() {

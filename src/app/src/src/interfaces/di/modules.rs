@@ -1205,7 +1205,7 @@ pub struct AIModule {
     credentials: Arc<dyn CredentialsPort>,
 
     // Services
-    download_manager: Arc<dyn crate::infrastructure::services::download_manager::DownloadManager>,
+    download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
 }
 
 impl AIModule {
@@ -1326,10 +1326,10 @@ impl AIModule {
         // For now, create a stub that returns "not implemented" error
         // Full implementation should be in a separate DownloadModule
         use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
-        use crate::infrastructure::persistence::download_repository::SqliteDownloadRepository;
+        use crate::features::download::download_repository::SqliteDownloadRepository;
         use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
-        use crate::infrastructure::services::download_engine::HttpDownloadEngine;
-        use crate::infrastructure::services::download_manager::DownloadManagerService;
+        use crate::features::download::engine::HttpDownloadEngine;
+        use crate::features::download::manager::DownloadManagerService;
 
         let download_repository = Arc::new(SqliteDownloadRepository::new(core.db_conn().clone()));
         let download_engine = Arc::new(HttpDownloadEngine::new()?);
@@ -1338,7 +1338,7 @@ impl AIModule {
             download_engine,
             core.data_dir().clone(),
         ))
-            as Arc<dyn crate::infrastructure::services::download_manager::DownloadManager>;
+            as Arc<dyn crate::features::download::manager::DownloadManager>;
         let file_system = Arc::new(crate::infrastructure::file_system::FileSystemAdapter::new())
             as Arc<dyn crate::application::ports::FileSystemPort>;
         let checksum_service = Arc::new(TokioChecksumAdapter)
@@ -1512,7 +1512,7 @@ impl AIModule {
 
     pub fn download_manager(
         &self,
-    ) -> &Arc<dyn crate::infrastructure::services::download_manager::DownloadManager> {
+    ) -> &Arc<dyn crate::features::download::manager::DownloadManager> {
         &self.download_manager
     }
 }

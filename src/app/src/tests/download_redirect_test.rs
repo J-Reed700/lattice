@@ -17,7 +17,7 @@ use tempfile::TempDir;
 /// - GET request must use the FINAL redirect URL, not the original URL
 ///
 /// Without the fix, GET would use original URL and return 0 bytes.
-use vault::infrastructure::services::download_engine::{
+use vault::features::download::engine::{
     DownloadEngine, DownloadOptions, HttpDownloadEngine,
 };
 use wiremock::{

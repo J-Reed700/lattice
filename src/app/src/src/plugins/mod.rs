@@ -52,9 +52,7 @@ pub mod web;
 #[path = "../features/conversation/plugin.rs"]
 pub mod conversation_plugin;
 // daily_notes plugin lives in features/daily_notes/plugin.rs. Use `crate::features::daily_notes::plugin`.
-// Vertical-slice migration (download): plugin lives in features/download/plugin.rs.
-#[path = "../features/download/plugin.rs"]
-pub mod download_plugin;
+// download plugin lives in features/download/plugin.rs. Use `crate::features::download::plugin`.
 // Vertical-slice migration (embedding): plugin lives in features/embedding/plugin.rs.
 #[path = "../features/embedding/plugin.rs"]
 pub mod embeddings;
@@ -103,7 +101,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         web::init(),
         // Batch 4: Final domains (conversations, batch, backup, updates, QA)
         conversation_plugin::init(),
-        download_plugin::init(),
+        crate::features::download::plugin::init(),
         crate::features::batch::plugin::init(),
         crate::features::backup::plugin::init(),
         crate::features::updates::plugin::init(),

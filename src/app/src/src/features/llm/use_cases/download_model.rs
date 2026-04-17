@@ -35,7 +35,7 @@ use crate::domain::model_paths::ModelPaths;
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
-use crate::infrastructure::services::download_manager::{DownloadManager, DownloadRequest};
+use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::shared::error::AppError;
 use chrono::Utc;
 use std::path::{Path, PathBuf};

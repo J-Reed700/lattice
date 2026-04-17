@@ -4,7 +4,7 @@ use crate::domain::repositories::unit_of_work::ModelFileRepositoryPort;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::model_status::FileStatus;
 use crate::infrastructure::event_bus::EventBus;
-use crate::infrastructure::persistence::repositories::downloaded_model_repository::DownloadedModelRepository;
+use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::persistence::repositories::model_file::SqliteModelFileRepository;
 use chrono::Utc;
 use std::path::PathBuf;

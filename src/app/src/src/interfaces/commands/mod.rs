@@ -14,9 +14,6 @@ pub mod conversation_chat;
 pub mod conversation_plugin_impl;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
-// Vertical-slice migration (download): commands live in features/download/commands.rs.
-#[path = "../../features/download/commands.rs"]
-pub mod downloads;
 // Vertical-slice migration (embedding): commands live in features/embedding/commands.rs.
 #[path = "../../features/embedding/commands.rs"]
 pub mod embeddings;

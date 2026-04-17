@@ -28,13 +28,10 @@
 //! - Provides: Concrete repository implementations
 
 pub mod database;
-// Vertical-slice migration (download): repository lives in features/download/download_repository.rs.
-#[path = "../../features/download/download_repository.rs"]
-pub mod download_repository;
 pub mod helpers;
 pub mod mappers;
 pub mod migrations;
 pub mod repositories;
 
-pub use download_repository::{DownloadRepository, SqliteDownloadRepository};
+pub use crate::features::download::download_repository::{DownloadRepository, SqliteDownloadRepository};
 pub use helpers::query_indexed_directories;

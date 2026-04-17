@@ -1951,7 +1951,7 @@ impl Container {
     /// Arc<dyn DownloadManager> - The download manager service
     pub fn download_manager(
         &self,
-    ) -> Result<Arc<dyn crate::infrastructure::services::download_manager::DownloadManager>> {
+    ) -> Result<Arc<dyn crate::features::download::manager::DownloadManager>> {
         Ok(Arc::clone(self.ai.download_manager()))
     }
 

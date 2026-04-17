@@ -1,8 +1,8 @@
 use crate::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
-use crate::infrastructure::persistence::download_repository::DownloadRepository;
-use crate::infrastructure::services::download_engine::{
+use crate::features::download::download_repository::DownloadRepository;
+use crate::features::download::engine::{
     DownloadEngine, DownloadOptions, ProgressCallback,
 };
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
@@ -874,8 +874,8 @@ impl DownloadManager for DownloadManagerService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::persistence::download_repository::mock::MockDownloadRepository;
-    use crate::infrastructure::services::download_engine::mock::MockDownloadEngine;
+    use crate::features::download::download_repository::mock::MockDownloadRepository;
+    use crate::features::download::engine::mock::MockDownloadEngine;
     use std::future::Future;
     use std::pin::Pin;
     use tokio::time::Duration;
@@ -1186,7 +1186,7 @@ mod tests {
         mock_engine.set_download_result(
             "https://example.com/file.bin",
             Ok(
-                crate::infrastructure::services::download_engine::DownloadResult {
+                crate::features::download::engine::DownloadResult {
                     bytes_downloaded: 1000,
                     total_bytes: Some(1000),
                     sha256_checksum: "a".repeat(64),
@@ -1309,7 +1309,7 @@ mod tests {
         mock_engine.set_download_result(
             "https://example.com/large_file.bin",
             Ok(
-                crate::infrastructure::services::download_engine::DownloadResult {
+                crate::features::download::engine::DownloadResult {
                     bytes_downloaded: 1000, // Total bytes after resume (500 existing + 500 new)
                     total_bytes: Some(1000),
                     sha256_checksum: "a".repeat(64),
@@ -1818,7 +1818,7 @@ mod tests {
         mock_engine.set_download_result(
             "https://example.com/file0.bin",
             Ok(
-                crate::infrastructure::services::download_engine::DownloadResult {
+                crate::features::download::engine::DownloadResult {
                     bytes_downloaded: 1000,
                     total_bytes: Some(1000),
                     sha256_checksum: "a".repeat(64),
@@ -1829,7 +1829,7 @@ mod tests {
         mock_engine.set_download_result(
             "https://example.com/file1.bin",
             Ok(
-                crate::infrastructure::services::download_engine::DownloadResult {
+                crate::features::download::engine::DownloadResult {
                     bytes_downloaded: 1000,
                     total_bytes: Some(1000),
                     sha256_checksum: "b".repeat(64),
@@ -1840,7 +1840,7 @@ mod tests {
         mock_engine.set_download_result(
             "https://example.com/file2.bin",
             Ok(
-                crate::infrastructure::services::download_engine::DownloadResult {
+                crate::features::download::engine::DownloadResult {
                     bytes_downloaded: 1000,
                     total_bytes: Some(1000),
                     sha256_checksum: "c".repeat(64),
@@ -1851,7 +1851,7 @@ mod tests {
         mock_engine.set_download_result(
             "https://example.com/file3.bin",
             Ok(
-                crate::infrastructure::services::download_engine::DownloadResult {
+                crate::features::download::engine::DownloadResult {
                     bytes_downloaded: 1000,
                     total_bytes: Some(1000),
                     sha256_checksum: "d".repeat(64),
@@ -1944,7 +1944,7 @@ mod tests {
             mock_engine.set_download_result(
                 &format!("https://example.com/concurrent{}.bin", i),
                 Ok(
-                    crate::infrastructure::services::download_engine::DownloadResult {
+                    crate::features::download::engine::DownloadResult {
                         bytes_downloaded: 1000,
                         total_bytes: Some(1000),
                         sha256_checksum: format!("{}", char::from_u32('a' as u32 + i).unwrap())

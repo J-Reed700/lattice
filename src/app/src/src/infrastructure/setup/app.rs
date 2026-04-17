@@ -3,13 +3,13 @@ use crate::application::use_cases::indexing::IndexFileUseCase;
 use crate::domain::entities::Document;
 use crate::domain::events::model_download_events::ModelDownloadEvent;
 use crate::infrastructure::event_bus::EventBus;
-use crate::infrastructure::events::download_events::DownloadEventBridge;
+use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::infrastructure::indexing;
 use crate::infrastructure::persistence::repositories::summary_repository::SummaryRepository;
 use crate::infrastructure::persistence::repositories::DocumentRepository as DddDocumentRepository;
 use crate::infrastructure::sagas::conversation_summary_saga::ConversationSummarySaga;
-use crate::infrastructure::sagas::download_saga::DownloadSaga;
-use crate::infrastructure::services::download_manager::DownloadManager;
+use crate::features::download::manager::DownloadManager;
+use crate::features::download::saga::DownloadSaga;
 #[cfg(test)]
 use crate::infrastructure::services::mocks::MockSearchService;
 use crate::infrastructure::services::traits::{
@@ -429,9 +429,9 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     // Initialize download management
     tracing::info!("Initializing download management...");
     let download_repository: Arc<
-        dyn crate::infrastructure::persistence::download_repository::DownloadRepository,
+        dyn crate::features::download::download_repository::DownloadRepository,
     > = Arc::new(
-        crate::infrastructure::persistence::download_repository::SqliteDownloadRepository::new(
+        crate::features::download::download_repository::SqliteDownloadRepository::new(
             container.db_conn().clone(),
         ),
     );
@@ -449,7 +449,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     let reconcile_startup_ts = Utc::now();
     let reconcile_grace = chrono::Duration::seconds(30);
     let model_repo_for_cleanup = Arc::new(
-        crate::infrastructure::persistence::repositories::downloaded_model_repository::DownloadedModelRepository::new(
+        crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
             container.db_pool().clone()
         )
     );
@@ -529,7 +529,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     // Step 2: Create repositories needed by DownloadSaga
     let downloaded_model_repository = Arc::new(
-        crate::infrastructure::persistence::repositories::downloaded_model_repository::DownloadedModelRepository::new(
+        crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
             container.db_pool().clone()
         )
     );
@@ -577,7 +577,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     tracing::info!("Download event bridge started with EventBus integration");
 
     let download_state =
-        crate::interfaces::commands::downloads::DownloadCommandState::new(download_manager);
+        crate::features::download::commands::DownloadCommandState::new(download_manager);
     tracing::info!("Download management initialized");
 
     // Resume any queued sessions left in pending state from earlier attempts.
