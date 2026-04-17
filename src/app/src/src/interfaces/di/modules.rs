@@ -50,7 +50,7 @@ use crate::features::batch::use_cases::{
 };
 
 // Application Use Cases - Conversation
-use crate::application::use_cases::conversation::{
+use crate::features::conversation::use_cases::{
     CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
     GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
 };
@@ -1282,7 +1282,7 @@ impl AIModule {
         // === Build Use Cases ===
 
         // Conversation use cases
-        use crate::application::use_cases::conversation::*;
+        use crate::features::conversation::use_cases::*;
         let create_conversation_use_case =
             Arc::new(CreateConversationUseCase::new(conversation_service.clone()));
         let list_conversations_use_case =

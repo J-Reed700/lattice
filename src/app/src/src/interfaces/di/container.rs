@@ -45,7 +45,7 @@ use crate::features::tags::use_cases::{
 };
 
 // Application Use Cases - Conversation
-use crate::application::use_cases::conversation::{
+use crate::features::conversation::use_cases::{
     CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
     GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
 };

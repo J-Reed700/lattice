@@ -24,11 +24,8 @@
 //! - `favorite_mapper` - Favorite data ↔ FavoriteDto
 //! - `recent_document_mapper` - Recent document data ↔ RecentDocumentDto
 
-// Vertical-slice migration (conversation): application mapper lives in features/conversation/mapper.rs.
-#[path = "../../features/conversation/mapper.rs"]
-pub mod conversation_mapper;
 pub mod document_mapper;
 
 // Re-export mappers
-pub use conversation_mapper::{ConversationMapper, MessageMapper};
+pub use crate::features::conversation::mapper::{ConversationMapper, MessageMapper};
 pub use document_mapper::DocumentMapper;

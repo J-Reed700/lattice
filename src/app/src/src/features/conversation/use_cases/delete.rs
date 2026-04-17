@@ -1,6 +1,6 @@
 //! Delete Conversation Use Case
 
-use crate::application::dtos::conversation_dto::{
+use crate::features::conversation::dto::{
     DeleteConversationRequestDto, DeleteConversationResponseDto,
 };
 use crate::infrastructure::services::traits::ConversationServiceTrait;

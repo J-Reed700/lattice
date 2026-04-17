@@ -5,13 +5,6 @@ pub mod api_boundary;
 pub mod config;
 #[path = "domains/consolidated.rs"]
 pub mod consolidated;
-// Vertical-slice migration (conversation): commands live in features/conversation/.
-#[path = "../../features/conversation/commands.rs"]
-pub mod conversation;
-#[path = "../../features/conversation/chat.rs"]
-pub mod conversation_chat;
-#[path = "../../features/conversation/plugin_impl.rs"]
-pub mod conversation_plugin_impl;
 #[path = "domains/document_list.rs"]
 pub mod document_list;
 // Vertical-slice migration (llm): commands live in features/llm/commands.rs.
@@ -31,4 +24,3 @@ pub mod model_setup;
 mod command_tests;
 
 // Module aliases retained for migration/backward compatibility.
-pub use conversation as conversation_commands;

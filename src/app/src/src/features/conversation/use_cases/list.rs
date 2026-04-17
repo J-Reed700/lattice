@@ -1,9 +1,9 @@
 //! List Conversations Use Case
 
-use crate::application::dtos::conversation_dto::{
+use crate::features::conversation::dto::{
     ListConversationsQuery, ListConversationsResponseDto,
 };
-use crate::application::mappers::conversation_mapper::ConversationMapper;
+use crate::features::conversation::mapper::ConversationMapper;
 use crate::infrastructure::services::traits::ConversationServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;

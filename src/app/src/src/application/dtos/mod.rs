@@ -28,13 +28,6 @@
 //! - `update_dto` - Update checking
 //! - `metric_dto` - Application metrics
 
-// Vertical-slice migration (conversation): DTOs live in features/conversation/.
-#[path = "../../features/conversation/dto.rs"]
-pub mod conversation_dto;
-#[path = "../../features/conversation/message_bookmark_dto.rs"]
-pub mod conversation_message_bookmark_dto;
-#[path = "../../features/conversation/space_dto.rs"]
-pub mod conversation_space_dto;
 #[path = "modules/document_dto.rs"]
 pub mod document_dto;
 // Vertical-slice migration (llm): DTO lives in features/llm/dto.rs.
@@ -42,8 +35,5 @@ pub mod document_dto;
 pub mod llm_dto;
 
 // Re-export commonly used DTOs
-pub use conversation_dto::*;
-pub use conversation_message_bookmark_dto::*;
-pub use conversation_space_dto::*;
 pub use document_dto::*;
 pub use llm_dto::*;

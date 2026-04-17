@@ -4,7 +4,7 @@
 //!
 //! This mapper handles conversion between conversation domain models and their DTO representations.
 
-use crate::application::dtos::conversation_dto::{ConversationDto, MessageDto};
+use crate::features::conversation::dto::{ConversationDto, MessageDto};
 use crate::domain::{Conversation, ConversationAggregate, ConversationMessage};
 
 /// Mapper for conversation-related conversions.

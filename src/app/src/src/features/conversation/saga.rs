@@ -1,4 +1,4 @@
-use crate::application::services::conversation_summarizer::ConversationSummarizer;
+use crate::features::conversation::summarizer::ConversationSummarizer;
 use crate::infrastructure::event_bus::EventBus;
 use crate::infrastructure::events::{ConversationEvent, SummaryRefreshRequestedEvent};
 use crate::infrastructure::persistence::repositories::summary_repository::SummaryRepository;

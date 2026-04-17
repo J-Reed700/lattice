@@ -28,7 +28,7 @@
 //! });
 //! ```
 
-use crate::application::dtos::conversation_dto::CreateConversationRequestDto;
+use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{
     CustomToolSettingsDto, LLMPromptSettingsDto, RouterSettingsDto,

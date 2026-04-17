@@ -188,9 +188,6 @@
 //! ```
 
 // Export use case modules
-// Vertical-slice migration (conversation): use cases live in features/conversation/use_cases/.
-#[path = "../../features/conversation/use_cases/mod.rs"]
-pub mod conversation;
 // Vertical-slice migration (llm): use cases live in features/llm/use_cases/.
 #[path = "../../features/llm/use_cases/mod.rs"]
 pub mod llm;
@@ -199,10 +196,6 @@ pub mod llm;
 pub mod model_management;
 
 // Re-export all use cases for convenience
-pub use conversation::{
-    CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
-    GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
-};
 pub use llm::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,

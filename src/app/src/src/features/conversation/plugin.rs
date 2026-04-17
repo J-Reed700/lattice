@@ -1,18 +1,18 @@
 //! Conversation Plugin - Thin Tauri wrappers over conversation command implementations.
 
-use crate::application::dtos::conversation_dto::{
+use crate::features::conversation::dto::{
     CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
     DeleteConversationResponseDto, GetConversationMessagesRequestDto,
     GetConversationMessagesResponseDto, GetConversationRequestDto, GetConversationResponseDto,
     ListConversationsQuery, ListConversationsResponseDto, RenameConversationRequestDto,
     RenameConversationResponseDto,
 };
-use crate::application::dtos::conversation_message_bookmark_dto::{
+use crate::features::conversation::message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, DeleteConversationMessageRequestDto,
     ListMessageBookmarksQueryDto, ListMessageBookmarksResponseDto,
     UnbookmarkConversationMessageRequestDto,
 };
-use crate::application::dtos::conversation_space_dto::{
+use crate::features::conversation::space_dto::{
     AddConversationToJournalRequestDto, ArchiveConversationJournalRequestDto,
     ArchiveConversationSpaceRequestDto, ConversationJournalDto, ConversationSpaceDto,
     ConversationSpaceMemberDto, CreateConversationJournalRequestDto,
@@ -23,8 +23,8 @@ use crate::application::dtos::conversation_space_dto::{
     UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
-use crate::interfaces::commands::conversation_chat::{ChatResponse, ToolPreferences};
-use crate::interfaces::commands::conversation_plugin_impl as conversation_impl;
+use crate::features::conversation::chat::{ChatResponse, ToolPreferences};
+use crate::features::conversation::plugin_impl as conversation_impl;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
@@ -32,7 +32,7 @@ use tauri::{
     State,
 };
 
-pub use crate::interfaces::commands::conversation_plugin_impl::{
+pub use crate::features::conversation::plugin_impl::{
     ConversationLinkedDocumentDto, ConversationWebSourceDto, DocumentSpaceMembershipDto,
     SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
 };

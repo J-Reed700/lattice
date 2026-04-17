@@ -1,9 +1,9 @@
 //! Get Conversation Messages Use Case
 
-use crate::application::dtos::conversation_dto::{
+use crate::features::conversation::dto::{
     GetConversationMessagesRequestDto, GetConversationMessagesResponseDto,
 };
-use crate::application::mappers::conversation_mapper::MessageMapper;
+use crate::features::conversation::mapper::MessageMapper;
 use crate::infrastructure::services::traits::ConversationServiceTrait;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;

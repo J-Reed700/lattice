@@ -1,6 +1,6 @@
 //! Smoke tests for Conversation plugin DTOs
 
-use vault::application::dtos::conversation_dto::*;
+use vault::features::conversation::dto::*;
 
 #[test]
 fn test_create_conversation_request_dto() {

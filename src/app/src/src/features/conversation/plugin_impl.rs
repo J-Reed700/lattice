@@ -2,19 +2,19 @@
 //!
 //! Migrated from ipc/domains/conversation.rs as part of Operation Scorched Earth Batch 4
 
-use crate::application::dtos::conversation_dto::{
+use crate::features::conversation::dto::{
     CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
     DeleteConversationResponseDto, GetConversationMessagesRequestDto,
     GetConversationMessagesResponseDto, GetConversationRequestDto, GetConversationResponseDto,
     ListConversationsQuery, ListConversationsResponseDto, RenameConversationRequestDto,
     RenameConversationResponseDto,
 };
-use crate::application::dtos::conversation_message_bookmark_dto::{
+use crate::features::conversation::message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, ConversationMessageBookmarkDto,
     DeleteConversationMessageRequestDto, ListMessageBookmarksQueryDto,
     ListMessageBookmarksResponseDto, UnbookmarkConversationMessageRequestDto,
 };
-use crate::application::dtos::conversation_space_dto::{
+use crate::features::conversation::space_dto::{
     AddConversationToJournalRequestDto, ArchiveConversationJournalRequestDto,
     ArchiveConversationSpaceRequestDto, ConversationJournalDto, ConversationSpaceDto,
     ConversationSpaceMemberDto, CreateConversationJournalRequestDto,
@@ -25,8 +25,8 @@ use crate::application::dtos::conversation_space_dto::{
     UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
-use crate::interfaces::commands::conversation;
-use crate::interfaces::commands::conversation_chat::{
+use crate::features::conversation::commands as conversation;
+use crate::features::conversation::chat::{
     chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
 };
 use crate::interfaces::di::Container;
@@ -231,7 +231,7 @@ async fn fetch_conversation_state(
 fn to_conversation_dto(
     c: &crate::domain::conversation::Conversation,
     state: Option<ConversationStateRow>,
-) -> crate::application::dtos::conversation_dto::ConversationDto {
+) -> crate::features::conversation::dto::ConversationDto {
     let (
         space_id,
         is_saved,
@@ -271,7 +271,7 @@ fn to_conversation_dto(
         )
     };
 
-    crate::application::dtos::conversation_dto::ConversationDto {
+    crate::features::conversation::dto::ConversationDto {
         id: c.id.to_string(),
         title: c.title.clone(),
         model_name: c.model_name.clone(),
@@ -644,7 +644,7 @@ pub async fn get_conversation_messages_impl(
     Ok(GetConversationMessagesResponseDto {
         messages: messages
             .iter()
-            .map(|m| crate::application::dtos::conversation_dto::MessageDto {
+            .map(|m| crate::features::conversation::dto::MessageDto {
                 id: m.id.to_string(),
                 conversation_id: m.conversation_id.to_string(),
                 role: m.role.to_string(),
@@ -1916,7 +1916,7 @@ pub async fn list_journal_conversations_impl(
     let conversations = rows
         .into_iter()
         .map(
-            |row| crate::application::dtos::conversation_dto::ConversationDto {
+            |row| crate::features::conversation::dto::ConversationDto {
                 id: row.id,
                 title: row.title,
                 model_name: row.model_name,
@@ -3051,7 +3051,7 @@ pub async fn list_conversations_explorer_impl(
     let conversations = rows
         .into_iter()
         .map(
-            |row| crate::application::dtos::conversation_dto::ConversationDto {
+            |row| crate::features::conversation::dto::ConversationDto {
                 id: row.id,
                 title: row.title,
                 model_name: row.model_name,

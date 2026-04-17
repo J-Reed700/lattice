@@ -1,6 +1,6 @@
 //! Rename Conversation Use Case
 
-use crate::application::dtos::conversation_dto::{
+use crate::features::conversation::dto::{
     RenameConversationRequestDto, RenameConversationResponseDto,
 };
 use crate::infrastructure::services::traits::ConversationServiceTrait;

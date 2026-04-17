@@ -2,7 +2,7 @@
 
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
-use vault::application::dtos::conversation_dto::{
+use vault::features::conversation::dto::{
     CreateConversationRequestDto, GetConversationRequestDto,
 };
 use vault::features::qa::dto::QARequestDto;

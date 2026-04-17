@@ -134,12 +134,12 @@ fn main() {
             vault::features::extraction::plugin::resolve_wikilink,
             vault::features::extraction::plugin::extract_and_resolve_links,
             // Conversation Plugin (6 commands)
-            vault::plugins::conversation_plugin::create_conversation,
-            vault::plugins::conversation_plugin::get_conversation,
-            vault::plugins::conversation_plugin::list_conversations,
-            vault::plugins::conversation_plugin::delete_conversation,
-            vault::plugins::conversation_plugin::get_conversation_messages,
-            vault::plugins::conversation_plugin::rename_conversation,
+            vault::features::conversation::plugin::create_conversation,
+            vault::features::conversation::plugin::get_conversation,
+            vault::features::conversation::plugin::list_conversations,
+            vault::features::conversation::plugin::delete_conversation,
+            vault::features::conversation::plugin::get_conversation_messages,
+            vault::features::conversation::plugin::rename_conversation,
             // Batch Plugin (5 commands)
             vault::features::batch::plugin::batch_import_files,
             vault::features::batch::plugin::batch_import_urls,

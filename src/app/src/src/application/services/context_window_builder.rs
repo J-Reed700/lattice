@@ -45,7 +45,7 @@
 //! # }
 //! ```
 
-use crate::application::services::conversation_summarizer::ConversationSummarizer;
+use crate::features::conversation::summarizer::ConversationSummarizer;
 use crate::domain::conversation::MessageRole;
 use crate::infrastructure::services::ConversationService;
 use crate::shared::error::{AppError, Result};

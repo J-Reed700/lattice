@@ -42,31 +42,48 @@ Delta between steps is ~3% L — visible as a tonal shift, not a contrast jump. 
 
 Three tiers because "typography carries hierarchy, not borders" but borders still do real work: resting vs. interactive vs. engaged. Anything more granular = decoration.
 
-### 1.3 Text — 4 levels
+### 1.3 Text — 4 peer registers + 1 state
+
+Four peer registers (`primary / secondary / tertiary / muted`) plus `disabled` as a state-only level.
 
 | Token | HSL | Hex | Contrast vs `--bg` | Role |
 |---|---|---|---|---|
-| `--text-primary` | `220 15% 96%` | `#f2f4f8` | **15.8:1** | Body, headings, primary content. |
-| `--text-secondary` | `220 12% 72%` | `#b0b6c2` | **8.3:1** | Supporting copy, metadata, secondary labels. |
-| `--text-muted` | `220 10% 55%` | `#848b98` | **4.7:1** | Timestamps, hints, placeholder-ish info. Meets AA body. |
-| `--text-disabled` | `220 10% 38%` | `#565c68` | 2.4:1 | Disabled state only. Fails AA by design — never carries meaning. |
+| `--text-primary` | `220 15% 96%` | `#f2f4f8` | **15.8:1** | Body, headings, primary content. AA+. |
+| `--text-secondary` | `220 12% 76%` | `#bbc1cc` | **9.1:1** | Supporting copy, subheads, active metadata. AA+. |
+| `--text-tertiary` | `220 11% 60%` | `#8f95a3` | **5.3:1** | Inline labels, captions, contextual descriptors. AA body. |
+| `--text-muted` | `220 10% 45%` | `#676d79` | 3.4:1 | Timestamps, hints, placeholder-ish info. ≥3:1 — supplemental only, never load-bearing. |
+| `--text-disabled` | `220 10% 32%` | `#494f59` | 2.0:1 | Disabled state only. Fails AA by design — never carries meaning. |
 
-Four because the app genuinely has four registers (primary > secondary > muted > off). No "tertiary" — `muted` covers it and contrast budget doesn't leave room for a fifth.
+Four peer registers because the app genuinely has four (see §11.2 for how I widened the gaps to keep them distinct). Contrast steps go **15.8 → 9.1 → 5.3 → 3.4 → 2.0** — each a visible jump, no fuzzy middle. `muted` and `tertiary` are deliberately ~1.9:1 apart so they don't collapse into each other in practice.
+
+**When to use each:**
+
+| Register | Use for | Don't use for |
+|---|---|---|
+| `primary` | Body prose, headings, editable field values, selected item | Secondary metadata, hints |
+| `secondary` | Subheads, table column headers, active filter labels, current-nav label | Timestamps, de-emphasized info |
+| `tertiary` | Inline descriptors ("2 items · edited 3d ago"), form field helper text, breadcrumb parents | Critical info |
+| `muted` | Placeholder text, dim timestamps, icon-only affordance labels, background metadata | Anything a user must read |
+| `disabled` | Disabled controls only | Anything that needs to be read but de-emphasized |
 
 ### 1.4 Accent — one hue
 
-**Chosen:** **Amber** — HSL `38 92% 58%`, hex **`#f5a524`**.
+**Chosen:** **Burnt amber** — HSL `38 77% 45%`, hex **`#cb8919`**.
 
-Reasoning defended below (§11 tensions). Token set is minimal:
+Darker than the original proposal (`38 92% 58%` / `#f5a524`). Josh's call: "a little darker." The brighter amber read as candy / highlighter; this one reads as aged gold / tobacco / well-used brass — warm without being cheerful, editorial without being soft. Reasoning defended below (§11 tensions).
 
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--accent` | `38 92% 58%` | `#f5a524` | Primary accent. Focus rings, selection, primary button bg. |
-| `--accent-hover` | `38 94% 52%` | `#f09808` | Hover/pressed on primary button. |
-| `--accent-muted` | `38 70% 22%` | `#5e4412` | Subtle accent tint (selected-row bg, current-line highlight). |
-| `--accent-fg` | `30 20% 10%` | `#1f1a14` | Text *on* `--accent` solid fill. Deep warm-black, not pure black. |
+| `--accent` | `38 77% 45%` | `#cb8919` | Primary accent. Focus rings, selection, primary button bg. |
+| `--accent-hover` | `38 77% 51%` | `#e09a1c` | Hover/pressed on primary button. +6% L — conventional brighten on dark UI. |
+| `--accent-muted` | `38 45% 18%` | `#433319` | Subtle accent tint (selected-row bg, current-line highlight). Same hue, much lower saturation + lightness. |
+| `--accent-fg` | `30 20% 8%` | `#181411` | Text *on* `--accent` solid fill. Near-black — the darker amber forced this flip (see below). |
 
-Contrast `--accent-fg` on `--accent`: **11.2:1** — far above AA for large and AA+ for body. Contrast `--accent` on `--bg` (as thin ring/text): **8.1:1** — comfortably above AA.
+**Contrast notes — read these, they matter:**
+
+- `--accent-fg` on `--accent` (`#181411` on `#cb8919`): **9.6:1** — AA+ for body and large.
+- `--accent` on `--bg` (`#cb8919` on `#0f1115`), for accent-as-text / thin rings: **5.9:1** — passes AA body.
+- **Why `--accent-fg` went near-black, not white:** at L=45%, white text on amber gives ~3.1:1 (fails AA body) while near-black gives ~9.6:1. The earlier brighter amber (L=58%) could support either. Darker amber can't — foreground **must** be dark. This is the single biggest cascade effect from darkening the accent.
 
 One accent — no `accent-2`, no `accent-secondary`. If a second visual hue is ever needed, it's a semantic state (§1.5), not a mood.
 
@@ -79,14 +96,14 @@ Each has a foreground (text/icon *on* the muted bg) and a saturated variant used
 | `--success-muted` | `152 40% 18%` | `#1e3a2d` | Background tint for "saved," "indexed," success chips. |
 | `--success-fg` | `152 60% 70%` | `#7dd3a8` | Text/icon on `--success-muted`. 5.6:1 vs muted. |
 | `--success` | `152 60% 50%` | `#33cc85` | Reserved. Only for critical confirmations. |
-| `--warning-muted` | `38 45% 20%` | `#4a3a12` | Background tint for warning chips. |
-| `--warning-fg` | `38 85% 68%` | `#f0b85c` | Text/icon on `--warning-muted`. 5.1:1 vs muted. |
-| `--warning` | `38 85% 55%` | `#e59b24` | Reserved. Only for blocking warnings. |
+| `--warning-muted` | `28 45% 20%` | `#4a2f12` | Background tint for warning chips. |
+| `--warning-fg` | `28 85% 68%` | `#f2a066` | Text/icon on `--warning-muted`. 5.0:1 vs muted. |
+| `--warning` | `28 85% 55%` | `#e57324` | Reserved. Only for blocking warnings. |
 | `--danger-muted` | `0 45% 22%` | `#522220` | Background tint for destructive affordances (delete-row hover). |
 | `--danger-fg` | `0 75% 72%` | `#ea8383` | Text/icon on `--danger-muted`. 5.0:1 vs muted. |
 | `--danger` | `0 72% 55%` | `#e04545` | Reserved. Destructive confirm buttons, error toasts. |
 
-Note: `--warning` and `--accent` share the amber family deliberately — warning is a more saturated yellow-amber (`38 85% 55%`), accent is softer gold (`38 92% 58%` with different lightness). In practice they never co-occur: accent = identity/focus, warning = state. If that feels too close in review, we shift warning toward `32°` (orange-warn) — noted as an open question in §12.
+**Warning is orange (`28°`), not amber.** Now that accent has moved to `38 77% 45%` (darker, more saturated-warm), keeping warning at `38°` would have collapsed the two into the same visual family — and `warning-fg` in particular would have hovered just one lightness step from accent. Shifting warning to `28°` gives it genuine hue separation (perceptually red-orange rather than gold), which is what "warning" should read as anyway. Warning also stays saturation-forward (`85%`) against accent's more restrained `77%`, so even side-by-side the two read as *different categories*, not *different shades of the same thing*.
 
 **No `--info`.** The audit showed 0 places where info is semantically different from "secondary text." Dead token.
 
@@ -94,7 +111,7 @@ Note: `--warning` and `--accent` share the amber family deliberately — warning
 
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--ring` | `38 92% 58%` | `#f5a524` | Focus ring. Identical to `--accent`. Single token for discoverability. |
+| `--ring` | `38 77% 45%` | `#cb8919` | Focus ring. Identical to `--accent`. Single token for discoverability. |
 | `--overlay` | `222 40% 3% / 0.6` | `rgba(6,8,12,0.6)` | Modal scrim. Dark, slightly saturated, not pure black. |
 
 ---
@@ -123,21 +140,24 @@ Same token names, re-anchored. Philosophy: "same app in a different lighting con
 
 | Token | HSL | Hex | Contrast vs `--bg` | Role |
 |---|---|---|---|---|
-| `--text-primary` | `220 30% 10%` | `#121823` | **16.1:1** | Body, headings. |
-| `--text-secondary` | `220 15% 32%` | `#474d5c` | **8.7:1** | Supporting. |
-| `--text-muted` | `220 10% 46%` | `#696f7c` | **4.8:1** | Hints, timestamps. Meets AA body. |
-| `--text-disabled` | `220 10% 68%` | `#a5aab4` | 2.1:1 | Disabled only. |
+| `--text-primary` | `220 30% 10%` | `#121823` | **16.1:1** | Body, headings. AA+. |
+| `--text-secondary` | `220 15% 30%` | `#434957` | **9.5:1** | Subheads, active metadata. AA+. |
+| `--text-tertiary` | `220 12% 44%` | `#636a7b` | **5.1:1** | Captions, inline descriptors. AA body. |
+| `--text-muted` | `220 10% 55%` | `#808795` | 3.3:1 | Placeholder, dim timestamps. ≥3:1 supplemental. |
+| `--text-disabled` | `220 10% 70%` | `#adb1bb` | 1.9:1 | Disabled only. |
 
 ### 2.4 Accent
 
+Light-mode accent darkens further from the dark-mode value. A darker canvas-ready amber needs to go darker still against a bright canvas to maintain identity and legibility.
+
 | Token | HSL | Hex | Role |
 |---|---|---|---|
-| `--accent` | `36 88% 45%` | `#d68510` | Darker than dark mode's accent — light mode needs more saturation depth for legibility on a bright canvas. |
-| `--accent-hover` | `36 90% 38%` | `#b86e08` | Hover state. |
-| `--accent-muted` | `38 80% 92%` | `#fbecd2` | Selected-row tint, subtle highlights. |
-| `--accent-fg` | `30 30% 98%` | `#fbf9f6` | Text on solid `--accent`. Off-white, not pure white. |
+| `--accent` | `36 82% 36%` | `#a76708` | Deeper still than dark mode's `#cb8919` — bright canvas needs more depth. |
+| `--accent-hover` | `36 85% 30%` | `#8f5608` | Hover state. Darkens further (opposite of dark mode's brighten). |
+| `--accent-muted` | `38 70% 92%` | `#fbecd0` | Selected-row tint, subtle highlights. |
+| `--accent-fg` | `30 30% 98%` | `#fbf9f6` | Text on solid `--accent`. Off-white — at L=36% amber, white wins over black (6.4:1 vs 3.3:1). Inverse of the dark-mode situation. |
 
-Contrast `--accent-fg` on `--accent`: **4.9:1** — AA body. Contrast `--accent` on `--bg`: **4.6:1** — AA body for accent-as-text usage.
+Contrast `--accent-fg` on `--accent` (`#fbf9f6` on `#a76708`): **6.4:1** — AA+ body. Contrast `--accent` on `--bg` (`#a76708` on `#f7f8fa`), for accent-as-text: **5.7:1** — AA body.
 
 ### 2.5 Semantic state
 
@@ -146,9 +166,11 @@ Contrast `--accent-fg` on `--accent`: **4.9:1** — AA body. Contrast `--accent`
 | `--success-muted` | `#e6f5ec` | | `--danger-muted` | `#fbe7e7` |
 | `--success-fg` | `#1e7d4a` | | `--danger-fg` | `#a62828` |
 | `--success` | `#1f9d54` | | `--danger` | `#c32d2d` |
-| `--warning-muted` | `#fcf1d8` | | `--ring` | `#d68510` |
-| `--warning-fg` | `#8c5a08` | | `--overlay` | `rgba(20,22,28,0.45)` |
-| `--warning` | `#c47808` | | | |
+| `--warning-muted` | `#fbe5cf` | | `--ring` | `#a76708` |
+| `--warning-fg` | `#8a4208` | | `--overlay` | `rgba(20,22,28,0.45)` |
+| `--warning` | `#c15c08` | | | |
+
+Warning in light mode is now `28°` orange (matching the dark-mode shift). `--warning-fg` (`#8a4208`) on `--warning-muted` (`#fbe5cf`): ~**6.9:1**, AA+.
 
 All `-fg` on `-muted` pairs meet AA (≥4.5:1). Verified.
 
@@ -160,26 +182,36 @@ All `-fg` on `-muted` pairs meet AA (≥4.5:1). Verified.
 
 | Family | Stack | Role |
 |---|---|---|
-| `--font-sans` | `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` | Default. Inter is already loaded; no change. |
+| `--font-sans` | `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` | Default chrome. Inter is already loaded; no change. |
 | `--font-mono` | `'JetBrains Mono', Menlo, Monaco, Consolas, monospace` | Code, keyboard shortcuts, file paths, identifiers. |
-| **No serif.** | | Rejected. A serif would be an "editorial moment" accent — but the aesthetic guide's editorial-ness is about *restraint*, not *typographic variety*. Linear, Arc, Vercel ship no serif. |
+| `--font-serif` | `'Source Serif 4', 'Charter', 'Iowan Old Style', 'Apple Garamond', Georgia, Cambria, 'Times New Roman', serif` | **Prose surfaces only** — rendered note body, markdown output, long-form reading. Never chrome. |
 
-### 3.2 Scale — fixed, 1.125 modular (major second)
+**Why Source Serif 4:** open-source (SIL OFL), designed by Frank Grießhammer for sustained reading, ships a full weight and optical-size range, and pairs with Inter because both trace from the same humanist-sans/humanist-serif design lineage. Charter is the classic Bitstream-era fallback (present on most macOS installs as "Charter"). Iowan and Apple Garamond are Apple-system fallbacks. Georgia/Cambria/TNR close out the chain for Windows and legacy environments.
+
+**Loading:** Source Serif 4 is **not** currently loaded in the app. Adding `--font-serif` requires either a `@font-face` block pulling from `fonts.googleapis.com`/self-hosted WOFF2, or a `<link>` preload in `index.html`. **Flag this for implementation** — the token can ship, but until the font loads, the stack will fall through to Charter/Iowan/Georgia (still acceptable, but not the designed-for default).
+
+**Usage rule (critical, codify in lint later):** Serif appears in **prose surfaces only** — rendered markdown, note body, reader views. Never in chrome, UI controls, labels, buttons, menus, or headings of chrome. If a heading sits *above* prose content and is semantically part of the prose (e.g. an `<h2>` inside a rendered note), it uses serif. If it sits in chrome (sidebar heading, panel title, dialog title), it uses sans.
+
+### 3.2 Scale — fixed, 1.125 modular (major second), anchored at 16px
 
 No `clamp()`. Tauri desktop app, predictable viewport, fixed scale is cleaner and more editorial.
 
-Semantic names. The old `text-display-*` / `text-heading-*` /  `text-body-*` names were zero-used — but the Tailwind-ish `text-xs/sm/base/lg/xl/2xl/3xl` names ARE what the 1,349 current usages reach for. Keep the ergonomics, re-anchor the values. Add an `xxs` for micro-labels. Drop `4xl+` — nothing in a desktop tool needs 48px+ type.
+Semantic names. The old `text-display-*` / `text-heading-*` / `text-body-*` names were zero-used — but the Tailwind-ish `text-xs/sm/base/lg/xl/2xl/3xl` names ARE what the 1,349 current usages reach for. Keep the ergonomics, re-anchor the values. Add an `xxs` for micro-labels. Drop `4xl+` — nothing in a desktop tool needs 48px+ type.
+
+**Base is 16px.** (Previously 15px — see §11.3 for why I changed my mind.)
 
 | Token | Size (rem) | Size (px) | Line-height | Tracking | Weight default | Role |
 |---|---|---|---|---|---|---|
 | `text-xxs` | `0.6875rem` | 11px | 1.45 | `0.02em` (+loose) | 500 | Micro-labels, kbd chips, status dots. |
 | `text-xs` | `0.75rem` | 12px | 1.5 | `0.01em` (+slight) | 400 | Captions, timestamps, table meta. |
-| `text-sm` | `0.8125rem` | 13px | 1.55 | `0` | 400 | Secondary UI text. |
-| `text-base` | `0.9375rem` | 15px | 1.6 | `0` | 400 | **Body default.** (Not 16px — desktop app, denser.) |
-| `text-lg` | `1.0625rem` | 17px | 1.55 | `-0.005em` | 500 | Emphasized body, large labels. |
+| `text-sm` | `0.875rem` | 14px | 1.55 | `0` | 400 | Secondary UI text, dense table rows. |
+| `text-base` | `1rem` | **16px** | 1.6 | `0` | 400 | **Body default.** Convention over density (see §11.3). |
+| `text-lg` | `1.125rem` | 18px | 1.55 | `-0.005em` | 500 | Emphasized body, large labels. |
 | `text-xl` | `1.25rem` | 20px | 1.4 | `-0.01em` | 600 | H3-equivalent, section headings. |
 | `text-2xl` | `1.5rem` | 24px | 1.3 | `-0.015em` | 600 | H2. |
 | `text-3xl` | `1.875rem` | 30px | 1.2 | `-0.02em` | 600 | H1 / page titles. Ceiling. |
+
+Steps are the 1.125 major-second ratio loosely applied with small roundings for whole-px landings (e.g. 18 instead of 18.0, 14 instead of 14.22). Keeping whole pixels matters more than ratio purity on a desktop viewport — subpixel type is noisier than a clean grid.
 
 Tracking rule (single rule, spelled out): **display tightens, body is neutral, caption loosens.** Codified in the table above.
 
@@ -342,7 +374,7 @@ For inputs where outline-offset clips on adjacent elements, we fall back to `box
 | `--chart-1..5` | keep, restate | derive from accent + semantic; defer spec to charting work |
 | `--radius` | keep, renamed | `--radius-md` (shadcn components read `--radius`; keep as alias pointing at `--radius-md`) |
 | `--bg-primary/secondary/tertiary` (themes.css) | **DELETED** | map to `--bg` / `--surface` / `--surface-raised` |
-| `--text-primary/secondary/tertiary` | **DELETED + re-added** | re-introduced above with new scale (primary/secondary/muted/disabled) |
+| `--text-primary/secondary/tertiary` | **DELETED + re-added** | re-introduced with 4-peer scale: `--text-primary / --text-secondary / --text-tertiary / --text-muted`, plus `--text-disabled` as state |
 | `--border-color`, `--border-hover` | **DELETED** | `--border-subtle`, `--border-strong` |
 | `--brand-primary/hover/light/dark` | **DELETED** | `--accent` / `--accent-hover` / `--accent-muted` (no `-dark`) |
 | `--accent-primary/hover/light` | **DELETED** | `--accent` / `--accent-hover` / `--accent-muted` |
@@ -381,7 +413,8 @@ For inputs where outline-offset clips on adjacent elements, we fall back to `box
 | `tailwind.config.js` | Remove `brand.*`, `accent.{purple,pink,orange,emerald}`, fluid `fontSize`, `fluid-*` spacing, `boxShadow.glow/elevation-*`, `backdropBlur.xs`, all `keyframes`/`animation` entries, `bounce-in`. Add new `fontSize` map, confirm `letterSpacing` removed or simplified, point `boxShadow` entries at `--shadow-sm/md`, point `borderRadius` at `--radius-sm/md/lg`. |
 | `websrc/styles/themes.css` | **Delete entire file.** Remove imports. |
 | `websrc/styles/command-palette.css` | Audit for hardcoded hex literals (166 across codebase, some here). Replace with tokens or move to component styling phase. |
-| `websrc/hooks/useApplyTheme.ts` | Remove the dual-apply logic — `[data-theme]` is the source of truth; keep `.dark` class only if shadcn primitives need it (they do, for `darkMode: 'class'`). Apply both, same values, no conflict. |
+| `websrc/hooks/useApplyTheme.ts` | **Keep dual-apply as-is.** Both `.dark` and `[data-theme="dark"]` remain applied in sync, pointing at the same values. Collapsing to a single mechanism is out of scope for this phase and tracked as tech debt (see Decisions log §12). |
+| `websrc/index.html` (or font loader) | **Add Source Serif 4.** Not currently loaded. Either add a `@font-face` block to `index.css`, or `<link rel="preload">` + Google Fonts / self-hosted WOFF2. Weights needed: 400, 600 (match what serif content will actually use). Until loaded, `--font-serif` falls through to Charter/Georgia — acceptable, not ideal. |
 
 ### 9.3 Not handled by this spec (Phase 4 lint)
 
@@ -397,7 +430,7 @@ For inputs where outline-offset clips on adjacent elements, we fall back to `box
 - **Iconography.** Icon sizing, stroke weight, the icon set — out of scope.
 - **Illustration / empty-state art.** Out of scope.
 - **Charting.** `--chart-1..5` is preserved as a stub; palette will be defined alongside whatever chart library lands.
-- **Typography for rendered Markdown / user content.** The scale above is for *chrome*. User-authored content (notes, chat messages) may need its own prose scale (`prose-*`) later — deferred.
+- **Prose typography scale / rendered-Markdown styling.** The scale above is for *chrome*. `--font-serif` is defined for prose surfaces but the full prose treatment (size, line-height, measure, heading rhythm, blockquote styling) is deferred to whenever the note/reader view is actually spec'd.
 - **Lint enforcement.** Phase 4.
 
 ---
@@ -414,24 +447,30 @@ I considered five: **neutral-zinc (shadcn default), Linear-purple, IA-orange, te
 - **IA-orange / red-orange** (~`15°`) is warm and editorial but sits too close to `--danger`; warnings and identity would collide.
 - **Amber (`38°`)** — warm, editorial, legibly distinct from the cool-neutral hue `220` surfaces, has enough contrast headroom at 58% L to meet AA on dark bg, and reads as considered rather than trendy. It nods to analog / paper / editor highlight (the `--accent-muted` tint is essentially the "current line" color from Solarized / One Dark). It also gives the app an *identity* without claiming a trend — amber hasn't been the hot-take accent of 2024/25, which fits the "unfinished-feeling" adjective.
 
-The risk I'm accepting: amber is also my warning hue. I'm resolving this by making warning a different lightness/saturation (`38 85% 55%` vs. accent `38 92% 58%`) and, critically, by convention — accent is identity/focus/selection, warning is state on chips and banners. In practice they shouldn't co-occupy a region. If in review it feels too close, shift warning to `28°` (orange) — noted in §12.
+The risk I originally flagged — amber accent colliding with an amber warning — is now resolved. Warning has moved to `28°` (orange), giving genuine hue separation. Accent stays at `38°` but darkened to `77% 45%` per Josh's call (previously `92% 58%`), which pulls it away from anything that reads as a state color and toward aged-gold territory. Accent and warning can now safely co-occupy a region without confusion.
 
-**Defense in one sentence:** Amber because it's warm enough to feel human in a tool that's otherwise quiet, distinct enough from both our neutral hue and our danger hue to carry meaning cleanly, and not claimed by a major reference app — so Recall owns it.
+**Defense in one sentence:** Burnt amber because it's warm enough to feel human in a tool that's otherwise quiet, dark and restrained enough not to read as marketing or celebration, and now safely distinct from our orange warning hue — so Recall owns it.
 
-### 11.2 Three text levels, then disabled — not four peer levels
+### 11.2 Four peer text levels — widen the gaps to keep them distinct
 
-The obvious answer is `primary / secondary / tertiary / quaternary` as peers. I went `primary / secondary / muted / disabled` — three semantic levels plus one state-only level. Reason: every system I've seen with four peer text levels ends up with nobody knowing when to use level 3 vs level 4, and they degrade into noise. By making the fourth level *state-only* (disabled), I remove the decision. If you need a fourth *semantic* register, you don't — use `--text-muted` with weight 500 or a size step.
+Originally I ran three peer levels plus disabled (`primary / secondary / muted / disabled`), on the theory that four peers always degrade into noise. Josh pushed back: the app genuinely has four registers in use (lead text, sub-text, contextual descriptor, background metadata). I agreed, but with a condition — to avoid the "tertiary vs muted are basically the same" failure mode, I deliberately widened the contrast gaps. On dark mode the lightness steps are **96 → 76 → 60 → 45 → 32**, yielding contrasts of **15.8 → 9.1 → 5.3 → 3.4 → 2.0**. Each step is a perceptually clear jump, not a delta of taste. The usage table in §1.3 codifies when each is correct, so the decision isn't left to eyeball. If in review tertiary and muted still blur together, I widen further (muted drops to L=42%) — but the current spread should hold.
 
-### 11.3 `text-base` = 15px, not 16px
+### 11.3 `text-base` = 16px (convention over density, Josh's call)
 
-Web-standard body is 16px. I'm shipping 15px as the default. Reason: this is a desktop app with power-user density as an explicit goal ("closer to a code editor than a marketing site"). Linear ships 13-14px body; Arc ships 13px chrome; Vercel dashboard sits at 14px. 16px reads as marketing-site / onboarding. 15px is the middle — denser than web default, legible enough that nobody complains. If users with accessibility needs bump their OS zoom, the rem unit scales cleanly.
+Originally I shipped 15px as a density move — desktop app, power-user audience, Linear/Arc/Vercel all run 13-14px chrome. Josh chose **16px** instead. The tradeoff: we give up ~6% vertical density per body line in exchange for hitting web-standard body size, which means (a) any rendered user content (notes, chat messages) reads at expected reading-comfort size without an extra override, (b) OS zoom and accessibility tooling behave with zero surprise, and (c) nobody ever has to defend "why is your body text 15px?" in a usability review. Chrome density is recovered via `text-sm` (14px) and `text-xs` (12px) where needed — table rows, secondary metadata, dense sidebars. This is explicitly chosen over density per Josh's call.
 
 ---
 
-## 12. Open questions for Josh
+## 12. Decisions log
 
-1. **Amber warning vs. amber accent proximity.** If in a real component review these read too similar, do we shift warning to orange (`28°`) or keep the shared family and rely on context? My lean: ship as specified, revisit after component work.
-2. **`text-base` at 15px vs. 16px.** Are you comfortable with the density tradeoff? (This is the single most debatable typography decision — affects every screen.)
-3. **`.dark` class vs. `[data-theme="dark"]` attribute.** Tailwind's `darkMode: ['selector', 'class']` reads `.dark`; shadcn components assume it. Current app toggles both. Spec assumes we keep both applied in sync (same values). Acceptable, or do you want a single-mechanism fix in this phase?
-4. **Serif rejection.** I cut it outright. If you want an editorial serif for, e.g., rendered Markdown headings in notes, say so and I'll spec an optional `--font-serif` for *prose content only* (not chrome).
-5. **`--chart-*` tokens.** Keeping the five-color chart palette stubbed but not specified. Defer to whenever charts actually ship, or do you want me to propose now?
+The first draft of this spec ended with a list of open questions. This revision closes them — recording what was asked and what Josh decided, so future readers can reconstruct the rationale without digging through chat history.
+
+| Question | Decision | Rationale |
+|---|---|---|
+| Should accent amber be brighter (`#f5a524`, `38 92% 58%`) or darker? | **Darker.** Final: `#cb8919` (`38 77% 45%`) in dark mode; `#a76708` (`36 82% 36%`) in light mode. | Original amber read as candy-bright / highlighter. Darker reads as aged gold / tobacco — warm without cheerful, editorial without soft. Cascade: `--accent-fg` had to flip from deep-warm-brown to near-black because at L=45% white fails AA on amber. |
+| Keep amber warning (`38°`) and rely on context, or shift to orange (`28°`)? | **Shift to orange (`28°`).** | Once accent darkened and moved into amber-amber territory, keeping warning at `38°` would have collapsed the two into the same visual family. `28°` gives genuine hue separation — warning reads as red-orange, accent as gold. Also slightly higher saturation on warning keeps them distinct even adjacent. |
+| `text-base` at 15px (density) or 16px (convention)? | **16px.** | Josh chose convention. Gives up ~6% vertical density per body line; gains zero-surprise behavior for rendered prose, OS zoom, and accessibility. Density is still recoverable via `text-sm` (14px) where chrome needs it. |
+| Three peer text levels + disabled, or four peer + disabled? | **Four peer + disabled.** Final: `primary / secondary / tertiary / muted / disabled`. | App has four genuine registers. To keep them distinct, I widened the lightness steps and codified per-level usage in §1.3 so the decision isn't left to eyeball. Muted dropped to 3.4:1 (supplemental only); tertiary holds 5.3:1 (AA body). |
+| Ship with no serif, or add `--font-serif` for prose? | **Add `--font-serif`.** Scope: rendered note body / markdown / long-form reading surfaces only. Never chrome. Primary: Source Serif 4. | An editorial serif in prose surfaces reinforces the "content is the interface" principle — user-authored text gets a reading-optimized face, chrome stays sans. Strict scoping keeps it from becoming decoration. Requires font loading (flagged in §9.2). |
+| `.dark` class vs. `[data-theme="dark"]` attribute — collapse to one? | **Keep both.** | During this migration both mechanisms stay applied in sync via `useApplyTheme`, pointing at the same values. Collapsing to one is out of scope for this phase and is tracked as tech debt for a later cleanup. |
+| `--chart-*` tokens — specify now or defer? | **Defer.** | Five-color chart palette remains stubbed. Specified alongside whichever charting library actually ships — palette decisions without a use case are guesswork. |
