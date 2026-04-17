@@ -249,6 +249,8 @@ pub mod tags;
 // Vertical-slice migration (updates): use cases live in features/updates/use_cases/.
 #[path = "../../features/updates/use_cases/mod.rs"]
 pub mod updates;
+// Vertical-slice migration (web): use cases live in features/web/use_cases/.
+#[path = "../../features/web/use_cases/mod.rs"]
 pub mod web;
 
 // Re-export all use cases for convenience

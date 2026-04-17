@@ -102,7 +102,8 @@ pub mod model_metadata;
 pub mod model_paths;
 #[path = "modules/model_type_classifier.rs"]
 pub mod model_type_classifier;
-#[path = "modules/web_archive.rs"]
+// Vertical-slice migration (web): domain module lives in features/web/domain.rs.
+#[path = "../features/web/domain.rs"]
 pub mod web_archive;
 
 // ============================================================================

@@ -50,6 +50,8 @@ pub mod storage;
 pub mod system;
 pub mod system_info_adapter;
 pub mod updates;
+// Vertical-slice migration (web): infrastructure web module lives in features/web/infra_mod.rs.
+#[path = "../features/web/infra_mod.rs"]
 pub mod web;
 
 // Model catalog infrastructure

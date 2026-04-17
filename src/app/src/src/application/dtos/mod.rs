@@ -96,7 +96,8 @@ pub mod tag_dto;
 // import surface intact (Strangler Fig).
 #[path = "../../features/updates/dto.rs"]
 pub mod update_dto;
-#[path = "modules/web_dto.rs"]
+// Vertical-slice migration (web): DTO lives in features/web/dto.rs.
+#[path = "../../features/web/dto.rs"]
 pub mod web_dto;
 
 // Re-export commonly used DTOs

@@ -40,6 +40,8 @@ pub mod file;
 pub mod health;
 pub mod model;
 pub mod search;
+// Vertical-slice migration (web): plugin lives in features/web/plugin.rs.
+#[path = "../features/web/plugin.rs"]
 pub mod web;
 
 // Single-file plugin modules moved to domains/ for filesystem organization

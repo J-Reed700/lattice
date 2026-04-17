@@ -47,8 +47,12 @@ mod search;
 // Vertical-slice migration (tags): trait lives in features/tags/trait_def.rs.
 #[path = "../../../features/tags/trait_def.rs"]
 mod tag;
+// Vertical-slice migration (web): traits live in features/web/traits/.
+#[path = "../../../features/web/traits/web.rs"]
 mod web;
+#[path = "../../../features/web/traits/archive.rs"]
 mod web_archive;
+#[path = "../../../features/web/traits/capture.rs"]
 mod web_capture;
 
 // Re-export all traits

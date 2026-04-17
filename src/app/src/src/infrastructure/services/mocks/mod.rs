@@ -24,8 +24,12 @@ mod mock_search;
 // Vertical-slice migration (tags): mock lives in features/tags/mocks.rs.
 #[path = "../../../features/tags/mocks.rs"]
 mod mock_tag;
+// Vertical-slice migration (web): mocks live in features/web/mocks/.
+#[path = "../../../features/web/mocks/web.rs"]
 mod mock_web;
+#[path = "../../../features/web/mocks/archive.rs"]
 mod mock_web_archive;
+#[path = "../../../features/web/mocks/capture.rs"]
 mod mock_web_capture;
 
 // Re-export all mocks

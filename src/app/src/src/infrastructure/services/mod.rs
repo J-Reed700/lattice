@@ -55,13 +55,14 @@ pub mod tag_service;
 pub mod tag_service_impl;
 #[path = "domains/validated_path.rs"]
 pub mod validated_path;
-#[path = "domains/web_archive_service.rs"]
+// Vertical-slice migration (web): services live in features/web/services/.
+#[path = "../../features/web/services/archive.rs"]
 pub mod web_archive_service;
-#[path = "domains/web_capture.rs"]
+#[path = "../../features/web/services/capture.rs"]
 pub mod web_capture;
-#[path = "domains/web_ingestion.rs"]
+#[path = "../../features/web/services/ingestion.rs"]
 pub mod web_ingestion;
-#[path = "domains/web_service.rs"]
+#[path = "../../features/web/services/web.rs"]
 pub mod web_service;
 
 // Directory-backed service modules
