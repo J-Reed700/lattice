@@ -1677,193 +1677,97 @@ impl LibraryModule {
 /// - Document repository (read-only for paths)
 #[derive(Clone)]
 pub struct FileOpsModule {
-    // Use Cases - File Operations
-    open_file_use_case: Arc<OpenFileUseCase>,
-    open_file_by_id_use_case: Arc<OpenFileByIdUseCase>,
-    get_file_path_by_id_use_case: Arc<GetFilePathByIdUseCase>,
-    show_in_folder_use_case: Arc<ShowInFolderUseCase>,
-    get_file_metadata_use_case: Arc<GetFileMetadataUseCase>,
-    read_file_content_use_case: Arc<ReadFileContentUseCase>,
-    read_file_bytes_use_case: Arc<ReadFileBytesUseCase>,
-    update_file_metadata_use_case: Arc<UpdateFileMetadataUseCase>,
-
-    // Use Cases - Extraction
-    parse_wikilinks_use_case: Arc<ParseWikilinksUseCase>,
-    extract_document_title_use_case: Arc<ExtractDocumentTitleUseCase>,
-    resolve_wikilink_use_case: Arc<ResolveWikilinkUseCase>,
-    extract_and_resolve_links_use_case: Arc<ExtractAndResolveLinksUseCase>,
-
-    // Adapters
-    file_system: Arc<dyn FileSystemPort>,
-
-    // Repositories
-    document_repo: Arc<dyn DocumentRepository>,
+    file: crate::features::file::di::FileDi,
+    extraction: crate::features::extraction::di::ExtractionDi,
 }
 
 impl FileOpsModule {
-    /// Build FileOpsModule with all its dependencies
-    ///
-    /// Constructs repositories, adapters, and use cases for file operations:
-    /// - File operations (open, show in folder, get metadata, read content)
-    /// - Wikilink operations (parse, extract title, resolve)
+    /// Build FileOpsModule by composing the file + extraction feature builders.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
     ) -> crate::shared::error::Result<Self> {
-        // === Build Adapters ===
-
-        // File System adapter (uses security context from core)
         use crate::infrastructure::file_system::FileSystemAdapter;
-        let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
-
-        // File Storage adapter - use SecureFileStorage
         use crate::infrastructure::file_system::file_storage::SecureFileStorage;
+        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
+        use crate::features::tags::service::TagService;
+
+        let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
         let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
-
-        // Get FileAccessConfig from core
-        let file_access_config = core.file_access_config().clone();
-
-        // Get vault path from core data_dir (parent of data_dir)
+        let file_access_config = Arc::clone(core.file_access_config());
         let vault_path = core
             .data_dir()
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| core.data_dir().clone());
 
-        // === Build Repositories ===
-
-        // Document Repository
-        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
         let document_repo =
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
+        let tag_service = Arc::new(TagService::new(db_pool)) as Arc<dyn TagServiceTrait>;
 
-        use crate::features::tags::service::TagService;
-        let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
-
-        // === Build Use Cases ===
-
-        // File operations use cases
-        use crate::features::file::use_cases::*;
-        let open_file_use_case = Arc::new(OpenFileUseCase::new(
-            file_system.clone(),
-            file_storage.clone(),
-            file_access_config.clone(),
-        ));
-        let open_file_by_id_use_case = Arc::new(OpenFileByIdUseCase::new(
+        let file = crate::features::file::di::build(
             document_repo.clone(),
-            file_system.clone(),
-            file_storage.clone(),
-            file_access_config.clone(),
-            vault_path.clone(),
-        ));
-        let get_file_path_by_id_use_case = Arc::new(GetFilePathByIdUseCase::new(
-            document_repo.clone(),
-            file_storage.clone(),
-            file_access_config.clone(),
-            vault_path.clone(),
-        ));
-        let show_in_folder_use_case = Arc::new(ShowInFolderUseCase::new(
-            file_system.clone(),
-            file_storage.clone(),
-            file_access_config.clone(),
-        ));
-        let get_file_metadata_use_case = Arc::new(GetFileMetadataUseCase::new(
-            file_storage.clone(),
-            file_access_config.clone(),
-        ));
-        let read_file_content_use_case = Arc::new(ReadFileContentUseCase::new(
-            file_storage.clone(),
-            file_access_config.clone(),
-        ));
-        let read_file_bytes_use_case = Arc::new(ReadFileBytesUseCase::new(
-            file_storage.clone(),
-            file_access_config.clone(),
-        ));
-        let update_file_metadata_use_case = Arc::new(UpdateFileMetadataUseCase::new(
-            document_repo.clone() as Arc<dyn crate::application::ports::DocumentRepositoryPort>,
-            tag_service.clone(),
-        ));
-
-        // Extraction use cases
-        use crate::features::extraction::use_cases::*;
-        let parse_wikilinks_use_case = Arc::new(ParseWikilinksUseCase::new());
-        let extract_document_title_use_case = Arc::new(ExtractDocumentTitleUseCase::new());
-        let resolve_wikilink_use_case = Arc::new(ResolveWikilinkUseCase::new());
-
-        // ExtractAndResolveLinksUseCase needs parse, resolve, and document repo
-        use crate::domain::entities::Document;
-        let extract_and_resolve_links_use_case = Arc::new(ExtractAndResolveLinksUseCase::new(
-            Arc::clone(&parse_wikilinks_use_case) as Arc<dyn ParseWikilinksPort>,
-            Arc::clone(&resolve_wikilink_use_case) as Arc<dyn ResolveWikilinkPort>,
-            Arc::clone(&document_repo) as Arc<dyn RepositoryPort<Document>>,
-        ));
-
-        Ok(Self {
-            open_file_use_case,
-            open_file_by_id_use_case,
-            get_file_path_by_id_use_case,
-            show_in_folder_use_case,
-            get_file_metadata_use_case,
-            read_file_content_use_case,
-            read_file_bytes_use_case,
-            update_file_metadata_use_case,
-            parse_wikilinks_use_case,
-            extract_document_title_use_case,
-            resolve_wikilink_use_case,
-            extract_and_resolve_links_use_case,
             file_system,
-            document_repo,
-        })
+            file_storage,
+            tag_service,
+            file_access_config,
+            vault_path,
+        );
+        let extraction = crate::features::extraction::di::build(
+            document_repo as Arc<dyn RepositoryPort<crate::domain::entities::Document>>,
+        );
+
+        Ok(Self { file, extraction })
     }
 
     // File operation use case getters
     pub fn open_file_use_case(&self) -> &Arc<OpenFileUseCase> {
-        &self.open_file_use_case
+        &self.file.open_file_use_case
     }
 
     pub fn open_file_by_id_use_case(&self) -> &Arc<OpenFileByIdUseCase> {
-        &self.open_file_by_id_use_case
+        &self.file.open_file_by_id_use_case
     }
 
     pub fn get_file_path_by_id_use_case(&self) -> &Arc<GetFilePathByIdUseCase> {
-        &self.get_file_path_by_id_use_case
+        &self.file.get_file_path_by_id_use_case
     }
 
     pub fn show_in_folder_use_case(&self) -> &Arc<ShowInFolderUseCase> {
-        &self.show_in_folder_use_case
+        &self.file.show_in_folder_use_case
     }
 
     pub fn get_file_metadata_use_case(&self) -> &Arc<GetFileMetadataUseCase> {
-        &self.get_file_metadata_use_case
+        &self.file.get_file_metadata_use_case
     }
 
     pub fn read_file_content_use_case(&self) -> &Arc<ReadFileContentUseCase> {
-        &self.read_file_content_use_case
+        &self.file.read_file_content_use_case
     }
 
     pub fn read_file_bytes_use_case(&self) -> &Arc<ReadFileBytesUseCase> {
-        &self.read_file_bytes_use_case
+        &self.file.read_file_bytes_use_case
     }
 
     pub fn update_file_metadata_use_case(&self) -> &Arc<UpdateFileMetadataUseCase> {
-        &self.update_file_metadata_use_case
+        &self.file.update_file_metadata_use_case
     }
 
     // Extraction use case getters
     pub fn parse_wikilinks_use_case(&self) -> &Arc<ParseWikilinksUseCase> {
-        &self.parse_wikilinks_use_case
+        &self.extraction.parse_wikilinks_use_case
     }
 
     pub fn extract_document_title_use_case(&self) -> &Arc<ExtractDocumentTitleUseCase> {
-        &self.extract_document_title_use_case
+        &self.extraction.extract_document_title_use_case
     }
 
     pub fn resolve_wikilink_use_case(&self) -> &Arc<ResolveWikilinkUseCase> {
-        &self.resolve_wikilink_use_case
+        &self.extraction.resolve_wikilink_use_case
     }
 
     pub fn extract_and_resolve_links_use_case(&self) -> &Arc<ExtractAndResolveLinksUseCase> {
-        &self.extract_and_resolve_links_use_case
+        &self.extraction.extract_and_resolve_links_use_case
     }
 }
 

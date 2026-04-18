@@ -16,6 +16,7 @@
 //! `ContentExtractionPort` stays in `application/ports/`.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod plugin;
 pub mod use_cases;
