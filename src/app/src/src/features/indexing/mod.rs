@@ -24,6 +24,7 @@
 //! No port or plugin — indexing flows through other plugins.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod outcome;

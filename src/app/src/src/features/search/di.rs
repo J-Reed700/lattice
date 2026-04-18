@@ -1,0 +1,166 @@
+//! Search feature dependency injection.
+//!
+//! Owns the shared USearch vector index (referenced by IndexingModule
+//! too — the composition root passes `vector_search` across).
+
+use std::sync::{Arc, RwLock};
+
+use sqlx::SqlitePool;
+
+use crate::application::ports::{
+    DocumentRepository, EmbeddingPort, RecentDocumentsRepositoryPort, TextSearchPort,
+    VectorSearchPort,
+};
+use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+use crate::features::embedding::service::DynamicEmbedding;
+use crate::features::recent::repository::RecentDocumentsRepository;
+use crate::features::search::use_cases::{
+    FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
+};
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
+use crate::infrastructure::search::bm25::BM25Search;
+use crate::infrastructure::search::hybrid::{HybridSearchService, SearchConfig, SearchMode};
+use crate::infrastructure::search::text_search::SqliteTextSearch;
+use crate::infrastructure::search::vector_search::USearchVectorIndex;
+use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
+use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
+use crate::shared::error::{AppError, Result};
+
+#[derive(Clone)]
+pub struct SearchDi {
+    // Use cases
+    pub semantic_search_use_case: Arc<SemanticSearchUseCase>,
+    pub hybrid_search_use_case: Arc<HybridSearchUseCase>,
+    pub file_search_use_case: Arc<FileSearchUseCase>,
+    pub recency_search_use_case: Arc<RecencySearchUseCase>,
+
+    // Services
+    pub search_service: Arc<dyn SearchServiceTrait>,
+    pub bm25_search: Arc<dyn BM25SearchTrait>,
+    pub hybrid_search_service: Arc<dyn HybridSearchTrait>,
+    pub search_enrichment_service: Arc<dyn SearchEnrichmentServiceTrait>,
+
+    // Ports (exported so IndexingModule can write to the same USearch index)
+    pub vector_search: Arc<dyn VectorSearchPort>,
+    pub document_repo: Arc<dyn DocumentRepository>,
+    pub embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+}
+
+pub async fn build(
+    db_pool: SqlitePool,
+    usearch_index_path: std::path::PathBuf,
+    embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+) -> Result<SearchDi> {
+    // USearch: single index that implements both VectorSearchPort and SearchServiceTrait.
+    let usearch_index = Arc::new(
+        USearchVectorIndex::open_or_create(DEFAULT_EMBEDDING_DIM, usearch_index_path.clone())
+            .map_err(|e| {
+                AppError::InternalError(format!("Failed to initialize USearch index: {}", e))
+            })?,
+    );
+
+    // One-time migration: rebuild from SQLite if USearch file is empty
+    // but embeddings exist in the text_embeddings table.
+    if usearch_index.count() == 0 {
+        let rows = sqlx::query_as::<_, (String, Vec<u8>, String, String, String)>(
+            "SELECT te.id, te.embedding, COALESCE(tc.content, ''), tc.id, COALESCE(tc.document_id, '') \
+             FROM text_embeddings te \
+             LEFT JOIN text_chunks tc ON te.chunk_id = tc.id",
+        )
+        .fetch_all(&db_pool)
+        .await?;
+
+        if !rows.is_empty() {
+            let enriched: Vec<(String, Vec<f32>, String, String, String)> = rows
+                .into_iter()
+                .map(|(emb_id, bytes, content, chunk_id, doc_id)| {
+                    let floats = crate::shared::utils::alignment::bytes_to_f32_vec(&bytes)
+                        .unwrap_or_default();
+                    (emb_id, floats, content, chunk_id, doc_id)
+                })
+                .filter(|(_, v, _, _, _)| v.len() == DEFAULT_EMBEDDING_DIM)
+                .collect();
+
+            if !enriched.is_empty() {
+                tracing::info!(
+                    count = enriched.len(),
+                    "Rebuilding USearch index from SQLite embeddings (one-time migration)"
+                );
+                match usearch_index.rebuild_from_embeddings(enriched) {
+                    Ok(added) => tracing::info!(added, "USearch index rebuilt successfully"),
+                    Err(e) => tracing::error!(error = %e, "Failed to rebuild USearch index"),
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        size = usearch_index.count(),
+        path = %usearch_index_path.display(),
+        "USearch vector index ready"
+    );
+
+    let vector_search = usearch_index.clone() as Arc<dyn VectorSearchPort>;
+    let search_service = usearch_index.clone() as Arc<dyn SearchServiceTrait>;
+
+    let text_search =
+        Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
+    let document_repo =
+        Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
+    let _recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool.clone()))
+        as Arc<dyn RecentDocumentsRepositoryPort>;
+
+    let bm25_search = Arc::new(BM25Search::new(db_pool.clone())) as Arc<dyn BM25SearchTrait>;
+    let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
+        as Arc<dyn SearchEnrichmentServiceTrait>;
+
+    let hybrid_config = SearchConfig {
+        mode: SearchMode::Hybrid,
+        vector_weight: 0.7,
+        keyword_weight: 0.3,
+        min_score: crate::shared::constants::MIN_SIMILARITY_SCORE,
+        enable_reranking: true,
+        recency_boost: 1.0,
+        max_results: 100,
+    };
+    let hybrid_search_service = Arc::new(HybridSearchService::new(
+        search_service.clone(),
+        bm25_search.clone(),
+        db_pool,
+        search_enrichment_service.clone(),
+        hybrid_config,
+    )) as Arc<dyn HybridSearchTrait>;
+
+    let dynamic_embedding =
+        Arc::new(DynamicEmbedding::new(embedding_cache.clone())) as Arc<dyn EmbeddingPort>;
+
+    let semantic_search_use_case = Arc::new(SemanticSearchUseCase::new(
+        dynamic_embedding.clone(),
+        vector_search.clone(),
+    ));
+    let hybrid_search_use_case = Arc::new(HybridSearchUseCase::new(
+        dynamic_embedding.clone(),
+        vector_search.clone(),
+        text_search.clone(),
+    ));
+    let file_search_use_case = Arc::new(FileSearchUseCase::new(text_search));
+    let recency_search_use_case = Arc::new(RecencySearchUseCase::new(
+        dynamic_embedding,
+        hybrid_search_service.clone(),
+    ));
+
+    Ok(SearchDi {
+        semantic_search_use_case,
+        hybrid_search_use_case,
+        file_search_use_case,
+        recency_search_use_case,
+        search_service,
+        bm25_search,
+        hybrid_search_service,
+        search_enrichment_service,
+        vector_search,
+        document_repo,
+        embedding_cache,
+    })
+}

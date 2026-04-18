@@ -312,847 +312,220 @@ impl CoreModule {
 /// - Document and recent docs repositories
 #[derive(Clone)]
 pub struct SearchModule {
-    // Use Cases
-    semantic_search_use_case: Arc<SemanticSearchUseCase>,
-    hybrid_search_use_case: Arc<HybridSearchUseCase>,
-    file_search_use_case: Arc<FileSearchUseCase>,
-    recency_search_use_case: Arc<RecencySearchUseCase>,
-
-    // Services
-    search_service: Arc<dyn SearchServiceTrait>,
-    bm25_search: Arc<dyn BM25SearchTrait>,
-    hybrid_search_service: Arc<dyn HybridSearchTrait>,
-    search_enrichment_service: Arc<dyn SearchEnrichmentServiceTrait>,
-
-    // Ports
-    vector_search: Arc<dyn VectorSearchPort>,
-    text_search: Arc<dyn TextSearchPort>,
-    embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
-
-    // Repositories
-    document_repo: Arc<dyn DocumentRepository>,
-    recent_docs_repo: Arc<dyn RecentDocumentsRepositoryPort>,
+    search: crate::features::search::di::SearchDi,
 }
 
 impl SearchModule {
-    /// Build SearchModule with its own dependencies - Layer 2
-    ///
-    /// Constructs all search-related infrastructure internally:
-    /// - Vector search index (USearchVectorIndex — unified HNSW + persistence)
-    /// - Text search (SQLite FTS)
-    /// - Search services (USearch, HybridSearch, BM25, Enrichment)
-    /// - Search use cases
-    ///
-    /// Stack frame is freed after return, independent of other modules.
+    /// Build SearchModule by composing the search feature builder.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
     ) -> crate::shared::error::Result<Self> {
-        // === Build Search Infrastructure ===
-
-        // USearch Vector Index (single unified index replaces both FlatVectorIndex and HNSW)
-        use crate::infrastructure::search::vector_search::USearchVectorIndex;
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
-
-        let usearch_index = Arc::new(
-            USearchVectorIndex::open_or_create(DEFAULT_EMBEDDING_DIM, usearch_index_path.clone())
-                .map_err(|e| {
-                crate::shared::error::AppError::InternalError(format!(
-                    "Failed to initialize USearch index: {}",
-                    e
-                ))
-            })?,
-        );
-
-        // If USearch index is empty but embeddings exist in SQLite, rebuild from DB.
-        // This handles first-time migration from the old BLOB-based storage.
-        if usearch_index.count() == 0 {
-            let enriched_query = sqlx::query_as::<_, (String, Vec<u8>, String, String, String)>(
-                "SELECT te.id, te.embedding, COALESCE(tc.content, ''), tc.id, COALESCE(tc.document_id, '') \
-                 FROM text_embeddings te \
-                 LEFT JOIN text_chunks tc ON te.chunk_id = tc.id"
-            );
-            let enriched_rows = enriched_query.fetch_all(&db_pool).await?;
-
-            if !enriched_rows.is_empty() {
-                let enriched: Vec<(String, Vec<f32>, String, String, String)> = enriched_rows
-                    .into_iter()
-                    .map(|(emb_id, bytes, content, chunk_id, doc_id)| {
-                        let floats = crate::shared::utils::alignment::bytes_to_f32_vec(&bytes)
-                            .unwrap_or_else(|_| vec![]);
-                        (emb_id, floats, content, chunk_id, doc_id)
-                    })
-                    .filter(|(_emb_id, v, _, _, _)| v.len() == DEFAULT_EMBEDDING_DIM)
-                    .collect();
-
-                if !enriched.is_empty() {
-                    tracing::info!(
-                        count = enriched.len(),
-                        "Rebuilding USearch index from SQLite embeddings (one-time migration)"
-                    );
-                    match usearch_index.rebuild_from_embeddings(enriched) {
-                        Ok(added) => {
-                            tracing::info!(added, "USearch index rebuilt successfully");
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "Failed to rebuild USearch index from SQLite");
-                        }
-                    }
-                }
-            }
-        }
-
-        tracing::info!(
-            size = usearch_index.count(),
-            path = %usearch_index_path.display(),
-            "USearch vector index ready"
-        );
-
-        // USearch implements both VectorSearchPort and SearchServiceTrait
-        let vector_search = usearch_index.clone() as Arc<dyn VectorSearchPort>;
-        let search_service = usearch_index.clone() as Arc<dyn SearchServiceTrait>;
-
-        // Text Search (SQLite FTS5)
-        use crate::infrastructure::search::text_search::SqliteTextSearch;
-        let text_search =
-            Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
-
-        // Document Repository (for search results)
-        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
-        let document_repo =
-            Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-
-        // Recent Documents Repository (for recency search)
-        use crate::features::recent::repository::RecentDocumentsRepository;
-        let recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool.clone()))
-            as Arc<dyn RecentDocumentsRepositoryPort>;
-
-        // BM25 Search (keyword-based)
-        use crate::infrastructure::search::bm25::BM25Search;
-        let bm25_search = Arc::new(BM25Search::new(db_pool.clone())) as Arc<dyn BM25SearchTrait>;
-
-        // Search Enrichment Service (result enhancement)
-        use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
-        let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
-            as Arc<dyn SearchEnrichmentServiceTrait>;
-
-        // Hybrid Search Service (combines vector + keyword)
-        use crate::infrastructure::search::hybrid::HybridSearchService;
-        use crate::infrastructure::search::hybrid::{SearchConfig, SearchMode};
-        let hybrid_config = SearchConfig {
-            mode: SearchMode::Hybrid,
-            vector_weight: 0.7,
-            keyword_weight: 0.3,
-            min_score: crate::shared::constants::MIN_SIMILARITY_SCORE,
-            enable_reranking: true,
-            recency_boost: 1.0,
-            max_results: 100,
-        };
-        let hybrid_search_service = Arc::new(HybridSearchService::new(
-            search_service.clone(),
-            bm25_search.clone(),
-            db_pool.clone(),
-            search_enrichment_service.clone(),
-            hybrid_config,
-        )) as Arc<dyn HybridSearchTrait>;
-
-        // === Build Dynamic Embedding Adapter ===
-        // Wrapper that checks embedding_cache and falls back to mock if None
-        struct DynamicEmbedding {
-            cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
-        }
-
-        #[async_trait::async_trait]
-        impl EmbeddingPort for DynamicEmbedding {
-            async fn embed_single(&self, text: &str) -> crate::shared::result::Result<Vec<f32>> {
-                // Clone Arc before dropping lock to avoid holding guard across await
-                let embedding_opt = {
-                    let cache_read = self.cache.read().map_err(|e| {
-                        crate::shared::error::AppError::InternalError(format!(
-                            "Embedding cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
-                    cache_read.as_ref().cloned()
-                }; // Lock guard dropped here
-
-                if let Some(embedding) = embedding_opt {
-                    // Use real embedding if loaded
-                    embedding.embed_single(text).await
-                } else {
-                    // Fall back to mock (degraded mode)
-                    use crate::application::ports::MockEmbeddingPort;
-                    MockEmbeddingPort::new_degraded().embed_single(text).await
-                }
-            }
-
-            async fn embed_batch(
-                &self,
-                texts: &[String],
-            ) -> crate::shared::result::Result<Vec<Vec<f32>>> {
-                // Clone Arc before dropping lock to avoid holding guard across await
-                let embedding_opt = {
-                    let cache_read = self.cache.read().map_err(|e| {
-                        crate::shared::error::AppError::InternalError(format!(
-                            "Embedding cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
-                    cache_read.as_ref().cloned()
-                }; // Lock guard dropped here
-
-                if let Some(embedding) = embedding_opt {
-                    // Use real embedding if loaded
-                    embedding.embed_batch(texts).await
-                } else {
-                    // Fall back to mock (degraded mode)
-                    use crate::application::ports::MockEmbeddingPort;
-                    MockEmbeddingPort::new_degraded().embed_batch(texts).await
-                }
-            }
-
-            fn dimension(&self) -> usize {
-                // Return standard dimension (DEFAULT_EMBEDDING_DIM)
-                // This matches MockEmbeddingPort::dimension() for consistency
-                DEFAULT_EMBEDDING_DIM
-            }
-
-            async fn is_ready(&self) -> crate::shared::result::Result<bool> {
-                // Clone Arc before dropping lock to avoid holding guard across await
-                let embedding_opt = {
-                    let cache_read = self.cache.read().map_err(|e| {
-                        crate::shared::error::AppError::InternalError(format!(
-                            "Embedding cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
-                    cache_read.as_ref().cloned()
-                }; // Lock guard dropped here
-
-                if let Some(embedding) = embedding_opt {
-                    // Check if real embedding is ready
-                    embedding.is_ready().await
-                } else {
-                    // Mock is never ready
-                    Ok(false)
-                }
-            }
-        }
-
-        let dynamic_embedding = Arc::new(DynamicEmbedding {
-            cache: embedding_cache.clone(),
-        }) as Arc<dyn EmbeddingPort>;
-
-        // === Build Use Cases ===
-
-        let semantic_search_use_case = Arc::new(SemanticSearchUseCase::new(
-            dynamic_embedding.clone(),
-            vector_search.clone(),
-        ));
-
-        let hybrid_search_use_case = Arc::new(HybridSearchUseCase::new(
-            dynamic_embedding.clone(),
-            vector_search.clone(),
-            text_search.clone(),
-        ));
-
-        let file_search_use_case = Arc::new(FileSearchUseCase::new(text_search.clone()));
-
-        let recency_search_use_case = Arc::new(RecencySearchUseCase::new(
-            dynamic_embedding.clone(),
-            hybrid_search_service.clone(),
-        ));
-
-        Ok(Self {
-            semantic_search_use_case,
-            hybrid_search_use_case,
-            file_search_use_case,
-            recency_search_use_case,
-            search_service,
-            bm25_search,
-            hybrid_search_service,
-            search_enrichment_service,
-            vector_search,
-            text_search,
-            embedding_cache,
-            document_repo,
-            recent_docs_repo,
-        })
+        let search =
+            crate::features::search::di::build(db_pool, usearch_index_path, embedding_cache)
+                .await?;
+        Ok(Self { search })
     }
 
-    // Getters for use cases
+    // Use case getters
     pub fn semantic_search_use_case(&self) -> &Arc<SemanticSearchUseCase> {
-        &self.semantic_search_use_case
+        &self.search.semantic_search_use_case
     }
 
     pub fn hybrid_search_use_case(&self) -> &Arc<HybridSearchUseCase> {
-        &self.hybrid_search_use_case
+        &self.search.hybrid_search_use_case
     }
 
     pub fn file_search_use_case(&self) -> &Arc<FileSearchUseCase> {
-        &self.file_search_use_case
+        &self.search.file_search_use_case
     }
 
     pub fn recency_search_use_case(&self) -> &Arc<RecencySearchUseCase> {
-        &self.recency_search_use_case
+        &self.search.recency_search_use_case
     }
 
-    // Getters for services (backward compatibility with old commands)
     pub fn search_service(&self) -> &Arc<dyn SearchServiceTrait> {
-        &self.search_service
+        &self.search.search_service
     }
 
     pub fn bm25_search_service(&self) -> &Arc<dyn BM25SearchTrait> {
-        &self.bm25_search
+        &self.search.bm25_search
     }
 
     pub fn hybrid_search_service(&self) -> &Arc<dyn HybridSearchTrait> {
-        &self.hybrid_search_service
+        &self.search.hybrid_search_service
     }
 
     pub fn search_enrichment_service(&self) -> &Arc<dyn SearchEnrichmentServiceTrait> {
-        &self.search_enrichment_service
+        &self.search.search_enrichment_service
     }
 
-    // Port getters (for Container - needed for Q&A use case and embedding cache)
     pub fn embedding_cache(&self) -> &Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>> {
-        &self.embedding_cache
+        &self.search.embedding_cache
     }
 
     pub fn vector_search(&self) -> &Arc<dyn VectorSearchPort> {
-        &self.vector_search
+        &self.search.vector_search
     }
 
     pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
-        &self.document_repo
+        &self.search.document_repo
     }
 }
+
 
 // ==============================================================================
 // 3. IndexingModule - Document Ingestion and Processing
 // ==============================================================================
 
-/// Indexing module for document ingestion, web scraping, and batch imports
-///
-/// **Fields**: ~20
-/// - 16 use cases (indexing, web, batch)
-/// - 7 services
-/// - Embedding cache (write access)
-/// - File storage port
-/// - Document and batch job repositories
+/// Indexing module — hollow composition root over the indexing, web, and
+/// batch feature slices. Shares `vector_search` with [`SearchModule`] so
+/// index-time writes reach the same USearch instance queried at search time.
 #[derive(Clone)]
 pub struct IndexingModule {
-    // Use Cases - Indexing
-    index_file_use_case: Arc<IndexFileUseCase>,
-    index_directory_use_case: Arc<IndexDirectoryUseCase>,
-    reindex_document_use_case: Arc<ReindexDocumentUseCase>,
-    delete_document_use_case: Arc<DeleteDocumentUseCase>,
-    rename_document_use_case: Arc<RenameDocumentUseCase>,
-
-    // Use Cases - Web
-    ingest_web_url_use_case: Arc<IngestWebUrlUseCase>,
-    get_url_preview_use_case: Arc<GetUrlPreviewUseCase>,
-    clean_article_content_use_case: Arc<CleanArticleContentUseCase>,
-
-    // Use Cases - Batch
-    start_batch_file_import_use_case: Arc<StartBatchFileImportUseCase>,
-    get_batch_file_status_use_case: Arc<GetBatchFileStatusUseCase>,
-    start_batch_url_import_use_case: Arc<StartBatchUrlImportUseCase>,
-    get_batch_job_status_use_case: Arc<GetBatchJobStatusUseCase>,
-    cancel_batch_job_use_case: Arc<CancelBatchJobUseCase>,
-    list_batch_jobs_use_case: Arc<ListBatchJobsUseCase>,
-    delete_batch_job_use_case: Arc<DeleteBatchJobUseCase>,
-    retry_failed_items_use_case: Arc<RetryFailedItemsUseCase>,
-
-    // Services
-    indexing_service: Arc<dyn IndexingServiceTrait>,
-    indexing_state: Arc<crate::infrastructure::indexing::IndexingState>,
-    web_ingestion_service: Arc<dyn WebIngestionServiceTrait>,
-    web_capture_service: Arc<dyn WebCaptureServiceTrait>,
-    article_extractor_service: Arc<dyn ArticleExtractorServiceTrait>,
-    web_archive: Arc<dyn WebArchiveServiceTrait>,
-    batch_file_import_service: Arc<dyn BatchFileImportServiceTrait>,
-    batch_url_import_service: Arc<dyn BatchUrlImportServiceTrait>,
-
-    // Ports
-    embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
-    file_storage: Arc<dyn FileStoragePort>,
-
-    // Repositories
-    document_repo: Arc<dyn DocumentRepository>,
-    chunk_repo: Arc<dyn ChunkRepositoryPort>,
-    batch_job_repo: Arc<dyn BatchJobRepositoryPort>,
-
-    // File system
-    file_system: Arc<dyn FileSystemPort>,
+    indexing: crate::features::indexing::di::IndexingDi,
+    web: crate::features::web::di::WebDi,
+    batch: crate::features::batch::di::BatchDi,
 }
 
 impl IndexingModule {
-    /// Build IndexingModule with all its dependencies
-    ///
-    /// Constructs repositories, services, adapters, and use cases for indexing:
-    /// - Document indexing (5 operations)
-    /// - Web ingestion (3 operations)
-    /// - Batch processing (8 operations)
-    ///
-    /// Note: embedding_cache and vector_search are passed in (shared state with SearchModule)
+    /// Build IndexingModule by composing indexing + web + batch features.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
         vector_search: Arc<dyn VectorSearchPort>,
     ) -> crate::shared::error::Result<Self> {
-        // === Build Repositories ===
-
-        // Document Repository
-        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
-        let document_repo =
-            Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-
-        // Batch Job Repository
-        use crate::infrastructure::persistence::repositories::BatchJobRepository;
-        let batch_job_repo =
-            Arc::new(BatchJobRepository::new(db_pool.clone())) as Arc<dyn BatchJobRepositoryPort>;
-
-        // Chunk Repository (for delete operations)
-        use crate::application::ports::ChunkRepositoryPort;
-        use crate::infrastructure::persistence::repositories::ChunkRepositoryImpl;
-        let chunk_repo =
-            Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn ChunkRepositoryPort>;
-
-        // Embedding Repository (for embeddings persistence)
-        use crate::infrastructure::persistence::repositories::EmbeddingRepository;
-        let embedding_repo =
-            Arc::new(EmbeddingRepository::new(db_pool.clone())) as Arc<dyn EmbeddingRepositoryPort>;
-
-        // Unit of Work Factory (for batch transactions)
-        use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
-        let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool.clone()))
-            as Arc<dyn crate::domain::repositories::UnitOfWorkFactory>;
-
-        // === Build Adapters ===
-
-        // Content-Addressed Storage (for file imports)
-        use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
-        let content_storage =
-            Arc::new(ContentAddressedStorage::new()?) as Arc<dyn ContentAddressedStoragePort>;
-
-        // File Storage (secure file operations)
-        use crate::infrastructure::file_system::SecureFileStorage;
-        let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
-
-        // Content Extractor (text extraction from files)
-        use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
-        let content_extractor =
-            Arc::new(ContentExtractionAdapter::new()) as Arc<dyn ContentExtractionPort>;
-
-        // File System (from CoreModule)
-        use crate::infrastructure::file_system::FileSystemAdapter;
-        let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
-
-        // Indexing Embedding adapter - shares embedding cache with SearchModule.
-        // If a real embedding model is loaded into cache, indexing uses it.
-        // Otherwise, degraded mock behavior is preserved.
-        struct DynamicIndexingEmbedding {
-            cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
-        }
-
-        #[async_trait::async_trait]
-        impl EmbeddingPort for DynamicIndexingEmbedding {
-            async fn embed_single(&self, text: &str) -> crate::shared::result::Result<Vec<f32>> {
-                let embedding_opt = {
-                    let cache_read = self.cache.read().map_err(|e| {
-                        crate::shared::error::AppError::InternalError(format!(
-                            "Embedding cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
-                    cache_read.as_ref().cloned()
-                };
-
-                if let Some(embedding) = embedding_opt {
-                    embedding.embed_single(text).await
-                } else {
-                    use crate::application::ports::MockEmbeddingPort;
-                    MockEmbeddingPort::new_degraded().embed_single(text).await
-                }
-            }
-
-            async fn embed_batch(
-                &self,
-                texts: &[String],
-            ) -> crate::shared::result::Result<Vec<Vec<f32>>> {
-                let embedding_opt = {
-                    let cache_read = self.cache.read().map_err(|e| {
-                        crate::shared::error::AppError::InternalError(format!(
-                            "Embedding cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
-                    cache_read.as_ref().cloned()
-                };
-
-                if let Some(embedding) = embedding_opt {
-                    embedding.embed_batch(texts).await
-                } else {
-                    use crate::application::ports::MockEmbeddingPort;
-                    MockEmbeddingPort::new_degraded().embed_batch(texts).await
-                }
-            }
-
-            fn dimension(&self) -> usize {
-                DEFAULT_EMBEDDING_DIM
-            }
-
-            async fn is_ready(&self) -> crate::shared::result::Result<bool> {
-                let embedding_opt = {
-                    let cache_read = self.cache.read().map_err(|e| {
-                        crate::shared::error::AppError::InternalError(format!(
-                            "Embedding cache lock poisoned: {}",
-                            e
-                        ))
-                    })?;
-                    cache_read.as_ref().cloned()
-                };
-
-                if let Some(embedding) = embedding_opt {
-                    embedding.is_ready().await
-                } else {
-                    Ok(false)
-                }
-            }
-        }
-
-        let indexing_embedding = Arc::new(DynamicIndexingEmbedding {
-            cache: embedding_cache.clone(),
-        }) as Arc<dyn EmbeddingPort>;
-
-        // Vector Search: shared with SearchModule (same instance) so that
-        // delete operations and runtime indexing operate on the same index
-        // that SemanticSearchUseCase queries against.
-
-        // === Build Services ===
-
-        // NOTE: Using degraded implementations for services that require AI models
-        // Real implementations are initialized later when models are downloaded
-        use crate::infrastructure::setup::degraded_mocks;
-
-        // Indexing Service (degraded - requires embeddings/tokenizer)
-        let indexing_service = degraded_mocks::create_degraded_indexing();
-
-        // Web Capture Service (HTTP client - no AI needed)
-        use crate::infrastructure::services::WebCaptureService;
-        let web_capture_service =
-            Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
-
-        // Article Extractor Service (HTTP client - no AI needed)
-        use crate::infrastructure::services::ArticleExtractorService;
-        let article_extractor_service =
-            Arc::new(ArticleExtractorService::new()?) as Arc<dyn ArticleExtractorServiceTrait>;
-
-        // Web Archive Service (file storage - no AI needed)
-        use crate::infrastructure::services::WebArchiveService;
-        let web_archive = Arc::new(WebArchiveService::new().map_err(|e| {
-            crate::shared::error::AppError::Other(format!(
-                "Failed to create web archive service: {}",
-                e
-            ))
-        })?) as Arc<dyn WebArchiveServiceTrait>;
-
-        // Web Ingestion Service (dynamic - uses embedding cache + fallback tokenizer)
-        use crate::infrastructure::indexing::storage::IndexStorage;
-        use crate::features::embedding::service::DynamicEmbeddingService;
-        use crate::features::web::services::ingestion::WebIngestionService;
-        use tokenizers::models::bpe::BPE;
-        use tokenizers::pre_tokenizers::whitespace::Whitespace;
-        use tokenizers::Tokenizer;
-
-        fn build_fallback_tokenizer() -> Arc<Tokenizer> {
-            use std::collections::HashMap;
-
-            // Minimal BPE tokenizer with whitespace pre-tokenizer.
-            // Avoids network fetches and provides deterministic tokenization.
-            let mut vocab = HashMap::new();
-            for c in b'a'..=b'z' {
-                vocab.insert(String::from_utf8(vec![c]).unwrap(), c as u32);
-            }
-            for c in b'A'..=b'Z' {
-                vocab.insert(String::from_utf8(vec![c]).unwrap(), (c + 26) as u32);
-            }
-            for c in b'0'..=b'9' {
-                vocab.insert(String::from_utf8(vec![c]).unwrap(), (c + 52) as u32);
-            }
-            vocab.insert(" ".to_string(), 62);
-            vocab.insert(".".to_string(), 63);
-            vocab.insert(",".to_string(), 64);
-            vocab.insert("-".to_string(), 65);
-            vocab.insert("[UNK]".to_string(), 66);
-
-            let merges = vec![];
-            let bpe = BPE::builder()
-                .vocab_and_merges(vocab, merges)
-                .unk_token("[UNK]".to_string())
-                .build()
-                .expect("Failed to build fallback tokenizer");
-
-            let mut tokenizer = Tokenizer::new(bpe);
-            tokenizer.with_pre_tokenizer(Whitespace {});
-
-            Arc::new(tokenizer)
-        }
-
+        let indexing = crate::features::indexing::di::build(
+            db_pool.clone(),
+            embedding_cache.clone(),
+            vector_search,
+        )?;
         let model_dir = core.data_dir().join("models");
-        let tokenizer = crate::infrastructure::setup::setup_tokenizer(&model_dir)
-            .unwrap_or_else(build_fallback_tokenizer);
-
-        let embedding_service = Arc::new(DynamicEmbeddingService::new(embedding_cache.clone()))
-            as Arc<dyn EmbeddingServiceTrait>;
-        let index_storage =
-            Arc::new(IndexStorage::new(db_pool.clone())) as Arc<dyn IndexStorageTrait>;
-
-        let web_ingestion_service = Arc::new(
-            WebIngestionService::builder()
-                .article_extractor(article_extractor_service.clone())
-                .web_archive(web_archive.clone())
-                .embedding_service(embedding_service)
-                .index_storage(index_storage)
-                .tokenizer(tokenizer)
-                .build()?,
-        ) as Arc<dyn WebIngestionServiceTrait>;
-
-        // Batch File Import Service (degraded - depends on indexing service)
-        let batch_file_import_service = degraded_mocks::create_degraded_batch_file_import();
-
-        // Batch URL Import Service (uses web ingestion service)
-        use crate::infrastructure::services::BatchUrlImportService;
-        let batch_url_import_service = Arc::new(BatchUrlImportService::new(
-            web_ingestion_service.clone(),
-            batch_job_repo.clone(),
-        )) as Arc<dyn BatchUrlImportServiceTrait>;
-
-        // === Build Use Cases ===
-
-        // Indexing state (progress tracking)
-        let indexing_state = Arc::new(crate::infrastructure::indexing::IndexingState::new());
-
-        // Indexing use cases
-        use crate::application::ports::DocumentRepositoryPort;
-        use crate::features::indexing::use_cases::*;
-        let index_file_use_case = Arc::new(
-            IndexFileUseCase::new(
-                content_storage.clone(),
-                file_storage.clone(),
-                content_extractor.clone(),
-                indexing_embedding.clone(),
-                document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-                embedding_repo.clone(),
-                uow_factory.clone(),
-            )
-            .with_vector_search(vector_search.clone()),
+        let web = crate::features::web::di::build(db_pool, &model_dir, embedding_cache)?;
+        let batch = crate::features::batch::di::build(
+            indexing.batch_job_repo.clone(),
+            indexing.index_file_use_case.clone(),
+            web.ingest_web_url_use_case.clone(),
+            web.web_ingestion_service.clone(),
+            indexing.uow_factory.clone(),
         );
-        let index_directory_use_case = Arc::new(IndexDirectoryUseCase::new(
-            index_file_use_case.clone(),
-            indexing_state.clone(),
-        ));
-        let reindex_document_use_case = Arc::new(ReindexDocumentUseCase::new(
-            file_storage.clone(),
-            indexing_embedding.clone(),
-            document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-            uow_factory.clone(),
-        ));
-        let delete_document_use_case = Arc::new(DeleteDocumentUseCase::new(
-            document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-            chunk_repo.clone(),
-            vector_search.clone(),
-            uow_factory.clone(),
-            file_storage.clone(),
-        ));
-        let rename_document_use_case = Arc::new(RenameDocumentUseCase::new(
-            document_repo.clone() as Arc<dyn DocumentRepositoryPort>
-        ));
 
-        // Web use cases
-        use crate::features::web::use_cases::*;
-        let ingest_web_url_use_case =
-            Arc::new(IngestWebUrlUseCase::new(web_ingestion_service.clone()));
-        let get_url_preview_use_case =
-            Arc::new(GetUrlPreviewUseCase::new(web_capture_service.clone()));
-        let clean_article_content_use_case = Arc::new(CleanArticleContentUseCase::new(
-            article_extractor_service.clone(),
-        ));
-
-        // Batch use cases
-        use crate::features::batch::use_cases::*;
-        let start_batch_file_import_use_case = Arc::new(StartBatchFileImportUseCase::new(
-            batch_job_repo.clone(),
-            index_file_use_case.clone(),
-            uow_factory.clone(),
-        ));
-        let get_batch_file_status_use_case =
-            Arc::new(GetBatchFileStatusUseCase::new(batch_job_repo.clone()));
-        let start_batch_url_import_use_case = Arc::new(StartBatchUrlImportUseCase::new(
-            batch_job_repo.clone(),
-            ingest_web_url_use_case.clone(),
-        ));
-        let get_batch_job_status_use_case =
-            Arc::new(GetBatchJobStatusUseCase::new(batch_job_repo.clone()));
-        let cancel_batch_job_use_case =
-            Arc::new(CancelBatchJobUseCase::new(batch_job_repo.clone()));
-        let list_batch_jobs_use_case = Arc::new(ListBatchJobsUseCase::new(batch_job_repo.clone()));
-        let delete_batch_job_use_case =
-            Arc::new(DeleteBatchJobUseCase::new(batch_job_repo.clone()));
-        // Note: RetryFailedItemsUseCase needs StartBatchUrlImportUseCase but we haven't created it yet
-        // We need to create it after start_batch_url_import_use_case
-        let retry_failed_items_use_case = Arc::new(RetryFailedItemsUseCase::new(
-            batch_job_repo.clone(),
-            start_batch_url_import_use_case.clone(),
-        ));
-
-        Ok(Self {
-            index_file_use_case,
-            index_directory_use_case,
-            reindex_document_use_case,
-            delete_document_use_case,
-            rename_document_use_case,
-            ingest_web_url_use_case,
-            get_url_preview_use_case,
-            clean_article_content_use_case,
-            start_batch_file_import_use_case,
-            get_batch_file_status_use_case,
-            start_batch_url_import_use_case,
-            get_batch_job_status_use_case,
-            cancel_batch_job_use_case,
-            list_batch_jobs_use_case,
-            delete_batch_job_use_case,
-            retry_failed_items_use_case,
-            indexing_service,
-            indexing_state,
-            web_ingestion_service,
-            web_capture_service,
-            article_extractor_service,
-            web_archive,
-            batch_file_import_service,
-            batch_url_import_service,
-            embedding_cache,
-            file_storage,
-            document_repo,
-            chunk_repo,
-            batch_job_repo,
-            file_system,
-        })
+        Ok(Self { indexing, web, batch })
     }
 
-    // Use case getters - Indexing
+    // Indexing use case getters
     pub fn index_file_use_case(&self) -> &Arc<IndexFileUseCase> {
-        &self.index_file_use_case
+        &self.indexing.index_file_use_case
     }
 
     pub fn index_directory_use_case(&self) -> &Arc<IndexDirectoryUseCase> {
-        &self.index_directory_use_case
+        &self.indexing.index_directory_use_case
     }
 
     pub fn reindex_document_use_case(&self) -> &Arc<ReindexDocumentUseCase> {
-        &self.reindex_document_use_case
+        &self.indexing.reindex_document_use_case
     }
 
     pub fn delete_document_use_case(&self) -> &Arc<DeleteDocumentUseCase> {
-        &self.delete_document_use_case
+        &self.indexing.delete_document_use_case
     }
 
     pub fn rename_document_use_case(&self) -> &Arc<RenameDocumentUseCase> {
-        &self.rename_document_use_case
+        &self.indexing.rename_document_use_case
     }
 
-    // Use case getters - Web
+    // Web use case getters
     pub fn ingest_web_url_use_case(&self) -> &Arc<IngestWebUrlUseCase> {
-        &self.ingest_web_url_use_case
+        &self.web.ingest_web_url_use_case
     }
 
     pub fn get_url_preview_use_case(&self) -> &Arc<GetUrlPreviewUseCase> {
-        &self.get_url_preview_use_case
+        &self.web.get_url_preview_use_case
     }
 
     pub fn clean_article_content_use_case(&self) -> &Arc<CleanArticleContentUseCase> {
-        &self.clean_article_content_use_case
+        &self.web.clean_article_content_use_case
     }
 
-    // Use case getters - Batch
+    // Batch use case getters
     pub fn start_batch_file_import_use_case(&self) -> &Arc<StartBatchFileImportUseCase> {
-        &self.start_batch_file_import_use_case
+        &self.batch.start_batch_file_import_use_case
     }
 
     pub fn get_batch_file_status_use_case(&self) -> &Arc<GetBatchFileStatusUseCase> {
-        &self.get_batch_file_status_use_case
+        &self.batch.get_batch_file_status_use_case
     }
 
     pub fn start_batch_url_import_use_case(&self) -> &Arc<StartBatchUrlImportUseCase> {
-        &self.start_batch_url_import_use_case
+        &self.batch.start_batch_url_import_use_case
     }
 
     pub fn get_batch_job_status_use_case(&self) -> &Arc<GetBatchJobStatusUseCase> {
-        &self.get_batch_job_status_use_case
+        &self.batch.get_batch_job_status_use_case
     }
 
     pub fn cancel_batch_job_use_case(&self) -> &Arc<CancelBatchJobUseCase> {
-        &self.cancel_batch_job_use_case
+        &self.batch.cancel_batch_job_use_case
     }
 
     pub fn list_batch_jobs_use_case(&self) -> &Arc<ListBatchJobsUseCase> {
-        &self.list_batch_jobs_use_case
+        &self.batch.list_batch_jobs_use_case
     }
 
     pub fn delete_batch_job_use_case(&self) -> &Arc<DeleteBatchJobUseCase> {
-        &self.delete_batch_job_use_case
+        &self.batch.delete_batch_job_use_case
     }
 
     pub fn retry_failed_items_use_case(&self) -> &Arc<RetryFailedItemsUseCase> {
-        &self.retry_failed_items_use_case
+        &self.batch.retry_failed_items_use_case
     }
 
-    // Service getters (backward compatibility)
+    // Service getters
     pub fn indexing_state(&self) -> &Arc<crate::infrastructure::indexing::IndexingState> {
-        &self.indexing_state
+        &self.indexing.indexing_state
     }
 
     pub fn indexing_service(&self) -> &Arc<dyn IndexingServiceTrait> {
-        &self.indexing_service
+        &self.indexing.indexing_service
     }
 
     pub fn web_ingestion_service(&self) -> &Arc<dyn WebIngestionServiceTrait> {
-        &self.web_ingestion_service
+        &self.web.web_ingestion_service
     }
 
     pub fn web_capture_service(&self) -> &Arc<dyn WebCaptureServiceTrait> {
-        &self.web_capture_service
+        &self.web.web_capture_service
     }
 
     pub fn article_extractor_service(&self) -> &Arc<dyn ArticleExtractorServiceTrait> {
-        &self.article_extractor_service
+        &self.web.article_extractor_service
     }
 
     pub fn web_archive(&self) -> &Arc<dyn WebArchiveServiceTrait> {
-        &self.web_archive
+        &self.web.web_archive
     }
 
     pub fn batch_file_import_service(&self) -> &Arc<dyn BatchFileImportServiceTrait> {
-        &self.batch_file_import_service
+        &self.batch.batch_file_import_service
     }
 
     pub fn batch_url_import_service(&self) -> &Arc<dyn BatchUrlImportServiceTrait> {
-        &self.batch_url_import_service
+        &self.batch.batch_url_import_service
     }
 
     pub fn file_storage(&self) -> &Arc<dyn FileStoragePort> {
-        &self.file_storage
+        &self.indexing.file_storage
     }
 
     pub fn chunk_repository(&self) -> &Arc<dyn ChunkRepositoryPort> {
-        &self.chunk_repo
+        &self.indexing.chunk_repo
     }
 
     pub fn batch_job_repo(&self) -> &Arc<dyn BatchJobRepositoryPort> {
-        &self.batch_job_repo
+        &self.indexing.batch_job_repo
     }
 }
 

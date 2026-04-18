@@ -28,6 +28,7 @@
 
 pub mod commands;
 pub mod domain;
+pub mod di;
 pub mod dto;
 pub mod plugin;
 pub mod services;

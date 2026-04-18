@@ -28,6 +28,7 @@
 //! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, HybridSearchTrait}`.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod plugin;
