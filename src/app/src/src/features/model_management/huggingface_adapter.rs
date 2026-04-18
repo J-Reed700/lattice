@@ -237,14 +237,43 @@ impl HuggingFaceModel {
         Some((chosen.filename.clone(), chosen.size))
     }
 
+    /// Choose a preferred safetensors file for Candle-backed embedding models.
+    ///
+    /// Candle loads weights directly from `model.safetensors`. Requires
+    /// `tokenizer.json` and `config.json` at repo root. Returns `None` if
+    /// the repo is missing any of these.
+    fn select_preferred_safetensors_file(&self) -> Option<(String, Option<u64>)> {
+        let safetensors: Vec<&HuggingFaceSibling> = self
+            .siblings
+            .iter()
+            .filter(|s| {
+                let lower = s.filename.to_lowercase();
+                lower.ends_with(".safetensors")
+                    && !lower.ends_with(".safetensors.index.json")
+                    && !s.filename.contains('/') // single-file only for now
+            })
+            .collect();
+
+        let chosen = safetensors.into_iter().find(|s| s.filename == "model.safetensors")?;
+
+        let has_tokenizer = self.siblings.iter().any(|s| s.filename == "tokenizer.json");
+        let has_config = self.siblings.iter().any(|s| s.filename == "config.json");
+        if !has_tokenizer || !has_config {
+            return None;
+        }
+
+        Some((chosen.filename.clone(), chosen.size))
+    }
+
     /// Choose a preferred downloadable file from the repository.
     ///
-    /// For embedding models, prefers ONNX files (required by OnnxEmbeddingService),
-    /// falling back to GGUF so the model is still discoverable (filtered later).
-    /// For all other models, prefers GGUF files.
+    /// For embedding models, prefers safetensors (the Candle runtime loads
+    /// these directly), falling back to ONNX only for legacy models that
+    /// lack safetensors. For all other models, prefers GGUF files.
     fn select_preferred_file(&self) -> Option<(String, Option<u64>)> {
         if self.is_embedding_model() {
-            self.select_preferred_onnx_file()
+            self.select_preferred_safetensors_file()
+                .or_else(|| self.select_preferred_onnx_file())
                 .or_else(|| self.select_preferred_gguf_file())
         } else {
             self.select_preferred_gguf_file()

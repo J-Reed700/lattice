@@ -156,6 +156,53 @@ impl DownloadModelUseCase {
         }
     }
 
+    /// Build a file list for Candle-backed safetensors embedding models.
+    ///
+    /// These require exactly:
+    /// - `model.safetensors` — the weights
+    /// - `tokenizer.json` — tokenizer vocab
+    /// - `config.json` — model configuration (hidden_size, architecture)
+    ///
+    /// Optionally includes `1_Pooling/config.json` if it exists at the repo
+    /// root — this tells the inference service whether to CLS- or mean-pool.
+    /// Absent is fine: `CandleEmbeddingService` defaults to CLS.
+    async fn build_safetensors_embedding_file_list(
+        repo_id: &str,
+    ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
+        use crate::domain::model_metadata::ModelFileMetadata;
+
+        let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
+        let mut files = vec![
+            ModelFileMetadata::new(
+                "model.safetensors".to_string(),
+                format!("{}/model.safetensors", base_url),
+                0,
+            ),
+            ModelFileMetadata::new(
+                "tokenizer.json".to_string(),
+                format!("{}/tokenizer.json", base_url),
+                0,
+            ),
+            ModelFileMetadata::new(
+                "config.json".to_string(),
+                format!("{}/config.json", base_url),
+                0,
+            ),
+        ];
+
+        // Optional pooling config — only present on sentence-transformers repos.
+        let pooling_url = format!("{}/1_Pooling/config.json", base_url);
+        if Self::remote_file_exists(&pooling_url).await {
+            files.push(ModelFileMetadata::new(
+                "1_Pooling/config.json".to_string(),
+                pooling_url,
+                0,
+            ));
+        }
+
+        files
+    }
+
     /// Build a file list for ONNX embedding models with required companion files.
     ///
     /// ONNX embedding models require at minimum:
@@ -290,15 +337,21 @@ impl DownloadModelUseCase {
                 resolved.total_size_bytes = (resolved.size_gb * 1_000_000_000.0) as u64;
             }
 
-            // For ONNX embedding models, populate the files list with required
-            // companion files (tokenizer.json, config.json, etc.) so the multi-file
-            // download path downloads everything needed by OnnxEmbeddingService.
+            // Embedding models need a multi-file download (weights + tokenizer
+            // + config). Dispatch on filename extension — safetensors is the
+            // Candle path; .onnx is the legacy ORT path (will be removed once
+            // all consumers have migrated).
             if resolved.category == crate::features::model_management::domain::ModelCategory::Embedding
-                && filename.ends_with(".onnx")
             {
-                resolved.files =
-                    Self::build_onnx_embedding_file_list(&repo_id, &filename).await;
-                resolved.default_filename = None; // Use files list instead
+                if filename.ends_with(".safetensors") {
+                    resolved.files =
+                        Self::build_safetensors_embedding_file_list(&repo_id).await;
+                    resolved.default_filename = None;
+                } else if filename.ends_with(".onnx") {
+                    resolved.files =
+                        Self::build_onnx_embedding_file_list(&repo_id, &filename).await;
+                    resolved.default_filename = None;
+                }
             }
 
             return Ok(resolved);
