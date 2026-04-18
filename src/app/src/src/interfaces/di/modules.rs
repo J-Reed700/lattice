@@ -156,9 +156,10 @@ use crate::infrastructure::services::traits::{
     ArticleExtractorServiceTrait, BM25SearchTrait, BatchFileImportServiceTrait,
     BatchUrlImportServiceTrait, ConversationServiceTrait, ConversationalQAServiceTrait,
     EmbeddingServiceTrait, HybridSearchTrait, IndexStorageTrait, IndexingServiceTrait,
-    ModelManagerTrait, SearchEnrichmentServiceTrait, SearchServiceTrait, TagServiceTrait,
+    ModelManagerTrait, SearchEnrichmentServiceTrait, SearchServiceTrait,
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
 };
+use crate::features::tags::TagServiceTrait;
 
 use crate::application::ports::LLMPort;
 use crate::infrastructure::llm::inference::InferenceEngine;

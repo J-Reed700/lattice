@@ -12,7 +12,7 @@ use crate::features::tags::generator::{
 };
 use crate::infrastructure::persistence::repositories::{DocumentRepositoryImpl, TagRepository};
 use crate::features::tags::service::DocumentLockGuard;
-use crate::infrastructure::services::traits::TagServiceTrait;
+use crate::features::tags::TagServiceTrait;
 use crate::features::tags::entity::Tag; use crate::features::tags::dto::TagWithCountDto as TagWithCount;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;

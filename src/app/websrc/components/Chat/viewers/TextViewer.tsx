@@ -34,7 +34,7 @@ export const TextViewer: FC<TextViewerProps> = ({ content, language = 'text' }) 
   const style = theme === 'dark' ? atomOneDark : atomOneLight;
 
   return (
-    <div className="rounded-lg overflow-hidden border border-[var(--border-color)] dark:border-[var(--border-hover)]">
+    <div className="rounded-lg overflow-hidden border border-[hsl(var(--border-subtle))] dark:border-[hsl(var(--border-default))]">
       <SyntaxHighlighter
         language={language}
         style={style}

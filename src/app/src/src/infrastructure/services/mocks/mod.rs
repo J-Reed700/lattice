@@ -29,9 +29,6 @@ mod mock_qa;
 // Vertical-slice migration (search): mock lives in features/search/mocks.rs.
 #[path = "../../../features/search/mocks.rs"]
 mod mock_search;
-// Vertical-slice migration (tags): mock lives in features/tags/mocks.rs.
-#[path = "../../../features/tags/mocks.rs"]
-mod mock_tag;
 // Vertical-slice migration (web): mocks live in features/web/mocks/.
 #[path = "../../../features/web/mocks/web.rs"]
 mod mock_web;
@@ -65,8 +62,6 @@ pub use mock_model::*;
 pub use mock_qa::*;
 #[allow(unused_imports)]
 pub use mock_search::*;
-#[allow(unused_imports)]
-pub use mock_tag::*;
 #[allow(unused_imports)]
 pub use mock_web::*;
 #[allow(unused_imports)]

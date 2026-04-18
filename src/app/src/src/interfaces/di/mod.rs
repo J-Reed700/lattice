@@ -94,8 +94,10 @@ pub use modules::{
 use crate::infrastructure::persistence::repositories::mocks::*;
 #[cfg(test)]
 use crate::infrastructure::services::mocks::{
-    MockEmbeddingService, MockMentionRepository, MockSearchService, MockTagRepository,
+    MockEmbeddingService, MockMentionRepository, MockSearchService,
 };
+#[cfg(test)]
+use crate::features::tags::mocks::MockTagRepository;
 use crate::shared::error::{AppError, Result};
 // MockDocumentRepository is in infrastructure/persistence/repositories::mocks (imported via line 89)
 // Note: MockChunkRepository is in infrastructure::persistence::repositories::mocks, not services::mocks
@@ -115,7 +117,7 @@ use crate::infrastructure::persistence::repositories::{
     ChunkRepository, DocumentRepository, EmbeddingRepository, MentionRepository, TagRepository,
 };
 use crate::features::embedding::service::EmbeddingService;
-use crate::infrastructure::services::traits::TagRepositoryTrait;
+use crate::features::tags::TagRepositoryTrait;
 use crate::infrastructure::services::traits::*;
 
 // ============================================================================

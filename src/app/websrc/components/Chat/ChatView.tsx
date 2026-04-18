@@ -91,10 +91,10 @@ export function ChatView() {
       const target = document.getElementById(selector);
       if (target) {
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        target.classList.add('ring-2', 'ring-cyan-300/70');
+        target.classList.add('chat-message-highlighted');
         window.setTimeout(() => {
-          target.classList.remove('ring-2', 'ring-cyan-300/70');
-        }, 1300);
+          target.classList.remove('chat-message-highlighted');
+        }, 1500);
         return;
       }
 

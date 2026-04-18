@@ -4,7 +4,9 @@ export { ChatPanel } from './ChatPanel';
 export { ConversationSidebar } from './ConversationSidebar';
 export { ConversationSpotlight } from './ConversationSpotlight';
 export { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
-export { MessageBubble } from './MessageBubble';
+export { Message } from './Message';
+// Backwards-compat alias — downstream code may still import MessageBubble.
+export { Message as MessageBubble } from './Message';
 
 // Utility components
 export { CitationFootnote } from './CitationFootnote';

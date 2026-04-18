@@ -37,6 +37,53 @@ export function formatRelativeTime(dateStr: string): string {
   return `${Math.floor(diffDays / 30)}mo ago`;
 }
 
+/**
+ * Format a date using the Chat feature's standard format.
+ *
+ * - <1 minute ago: "Just now"
+ * - 1-59 minutes ago: "12m ago"
+ * - <1 hour ago (but still today): "59m ago"
+ * - <24h ago (but >1h): "3h ago"
+ * - Yesterday: "Yesterday"
+ * - <7 days: weekday + time (e.g., "Tue 3:42 PM")
+ * - Current year: "Apr 15"
+ * - Other years: "Apr 15, 2025"
+ */
+export function formatChatTimestamp(input: string | Date): string {
+  const date = typeof input === 'string' ? new Date(input) : input;
+  if (Number.isNaN(date.getTime())) return 'Recently';
+
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60_000);
+  const diffHours = Math.floor(diffMs / 3_600_000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86_400_000);
+
+  if (diffDays === 1) return 'Yesterday';
+
+  if (diffDays < 7) {
+    return date.toLocaleDateString(undefined, {
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: sameYear ? undefined : 'numeric',
+  });
+}
+
 export function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((groups, item) => {
     const key = keyFn(item);

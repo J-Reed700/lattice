@@ -17,15 +17,10 @@
 //! - `crate::features::tags::repository::TagRepository`
 //! - `crate::features::tags::service::TagService` — DocumentLockGuard helper
 //! - `crate::features::tags::service_impl::TagServiceImpl`
+//! - `crate::features::tags::{TagServiceTrait, TagRepositoryTrait}` — traits
+//! - `crate::features::tags::{MockTagService, MockTagRepository}` — test mocks
 //! - `crate::features::tags::commands` — Tauri command handlers
 //! - `crate::features::tags::plugin::init()` — Tauri plugin
-//!
-//! `trait_def` (TagServiceTrait) and `mocks` (MockTagService) are
-//! loaded via the shared `infrastructure::services::{traits,mocks}`
-//! aggregator modules — their Strangler Fig redirects stay in place
-//! because those aggregators are architectural re-export machinery,
-//! not feature-private paths. Consumers import via
-//! `crate::infrastructure::services::traits::TagServiceTrait` etc.
 
 pub mod commands;
 pub mod dto;
@@ -37,4 +32,11 @@ pub mod plugin;
 pub mod repository;
 pub mod service;
 pub mod service_impl;
+pub mod trait_def;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+// Re-export public traits at the feature root.
+pub use trait_def::{TagRepositoryTrait, TagServiceTrait};

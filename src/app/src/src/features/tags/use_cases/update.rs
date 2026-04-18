@@ -1,7 +1,7 @@
 //! Update Tag Use Case
 
 use crate::features::tags::dto::{TagDto, UpdateTagRequestDto};
-use crate::infrastructure::services::traits::TagServiceTrait;
+use crate::features::tags::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;
 
@@ -41,7 +41,7 @@ impl UpdateTagUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::traits::MockTagService;
+    use crate::features::tags::mocks::MockTagService;
 
     #[tokio::test]
 

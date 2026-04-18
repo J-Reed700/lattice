@@ -40,8 +40,9 @@ use crate::infrastructure::search::hybrid::{HybridSearchResult, SearchMode as Hy
 use crate::infrastructure::search::service::SearchResult as InfraSearchResult;
 use crate::infrastructure::services::traits::{
     BM25SearchTrait, EmbeddingServiceTrait, FunctionExecutorTrait, FunctionRegistryTrait,
-    HybridSearchTrait, SearchServiceTrait, TagServiceTrait, WebServiceTrait,
+    HybridSearchTrait, SearchServiceTrait, WebServiceTrait,
 };
+use crate::features::tags::TagServiceTrait;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -1418,8 +1419,9 @@ mod tests {
     use crate::features::function_calling::registry::FunctionRegistry;
     use crate::infrastructure::services::mocks::{
         MockBM25Search, MockEmbeddingService, MockFunctionRegistry, MockHybridSearch,
-        MockSearchService, MockTagService, MockWebService,
+        MockSearchService, MockWebService,
     };
+    use crate::features::tags::mocks::MockTagService;
     use crate::RepositoryPort;
     use async_trait::async_trait;
     use std::path::{Path, PathBuf};

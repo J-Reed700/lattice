@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { formatDistanceToNow } from 'date-fns';
-import { ChevronDown, ChevronRight, ExternalLink, Link2, Trash2 } from 'lucide-react';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
+import { formatDistanceToNow } from 'date-fns';
+import { ChevronDown, ChevronRight, ExternalLink, Trash2 } from 'lucide-react';
 
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
@@ -126,7 +126,7 @@ export function ConversationLinkedDocumentsPanel({
     try {
       const result = await VaultAPI.openFileById(documentId);
       if (!result.ok) {
-        toast.error('Failed to open document', { message: result.error });
+        toast.error("Couldn't open document", { message: result.error });
       }
     } finally {
       setOpeningDocumentId(null);
@@ -218,7 +218,7 @@ export function ConversationLinkedDocumentsPanel({
       });
 
       if (!result.ok) {
-        toast.error(`Failed to ingest ${source.label}`, { message: result.error });
+        toast.error(`Couldn't index ${source.label}`, { message: result.error });
         return false;
       }
 
@@ -253,39 +253,40 @@ export function ConversationLinkedDocumentsPanel({
       await loadConversationLinkedDocuments(conversationId);
 
       if (successCount > 0) {
-        toast.success(`Ingested ${successCount} source${successCount === 1 ? '' : 's'}`);
+        toast.success(`Indexed ${successCount} source${successCount === 1 ? '' : 's'}`);
       }
     } finally {
       setIsIngestingAllSources(false);
     }
   };
 
+  if (linkedContextCount === 0 && !expanded) {
+    return null;
+  }
+
   return (
-    <section className="border-b border-white/10 bg-white/[0.03]">
+    <section className="border-t border-subtle py-4">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center justify-between px-5 py-3 text-left transition hover:bg-white/[0.04]"
+        className="flex w-full items-center gap-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))]"
+        aria-expanded={expanded}
       >
-        <span className="inline-flex items-center gap-2 text-sm font-medium text-white/85">
-          <Link2 className="h-4 w-4" />
-          Linked Documents
-          <span className="rounded-full border border-white/15 bg-white/[0.08] px-2 py-0.5 text-xs text-white/75">
-            {linkedContextCount}
-          </span>
-        </span>
         {expanded ? (
-          <ChevronDown className="h-4 w-4 text-white/50" />
+          <ChevronDown className="h-3.5 w-3.5" />
         ) : (
-          <ChevronRight className="h-4 w-4 text-white/50" />
+          <ChevronRight className="h-3.5 w-3.5" />
         )}
+        <span>
+          Sources in this conversation · {linkedContextCount}
+        </span>
       </button>
 
       {expanded && (
-        <div className="space-y-2 px-4 pb-4">
+        <div className="mt-3 space-y-3">
           {linkedDocuments.length === 0 && citedWebSources.length === 0 && (
-            <p className="rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 py-2 text-xs text-white/55">
-              No sources are linked to this conversation yet.
+            <p className="text-xs text-[hsl(var(--text-muted))]">
+              Nothing linked. Sources cited in answers will appear here.
             </p>
           )}
 
@@ -300,14 +301,14 @@ export function ConversationLinkedDocumentsPanel({
             return (
               <article
                 key={document.documentId}
-                className="rounded-xl border border-white/10 bg-white/[0.02] p-3"
+                className="rounded-sm border border-subtle bg-surface p-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-white/90">
+                    <p className="truncate text-sm font-semibold text-[hsl(var(--text-primary))]">
                       {document.fileName}
                     </p>
-                    <p className="mt-1 text-xs text-white/55">
+                    <p className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
                       {document.referenceCount} reference
                       {document.referenceCount === 1 ? '' : 's'}
                       {' · '}
@@ -322,18 +323,18 @@ export function ConversationLinkedDocumentsPanel({
                       type="button"
                       onClick={() => void handleOpenDocument(document.documentId)}
                       disabled={openingDocumentId === document.documentId}
-                      className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-xs text-white/75 transition hover:border-white/30 hover:text-white disabled:opacity-60"
+                      className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-60"
                     >
-                      <ExternalLink className="h-3.5 w-3.5" />
+                      <ExternalLink className="h-3 w-3" />
                       Open
                     </button>
                     <button
                       type="button"
                       onClick={() => void handleRemoveDocument(document.documentId)}
                       disabled={removingDocumentId === document.documentId}
-                      className="inline-flex items-center gap-1 rounded-md border border-rose-400/25 px-2 py-1 text-xs text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-60"
+                      className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3 w-3" />
                       Remove
                     </button>
                   </div>
@@ -348,19 +349,19 @@ export function ConversationLinkedDocumentsPanel({
                     }
                   }}
                 >
-                  <summary className="cursor-pointer list-none text-xs text-white/60 hover:text-white/80">
+                  <summary className="cursor-pointer list-none text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))]">
                     Scope: {spaceTriggerLabel}
                   </summary>
-                  <div className="mt-2 grid gap-1 rounded-lg border border-white/10 bg-black/20 p-2">
+                  <div className="mt-2 grid gap-1 rounded-sm border border-subtle bg-surface-raised p-2">
                     {loadingMembershipDocumentId === document.documentId && (
-                      <p className="text-xs text-white/55">Loading spaces...</p>
+                      <p className="text-xs text-[hsl(var(--text-muted))]">Loading spaces...</p>
                     )}
                     {spaces.map((space) => {
                       const key = `${document.documentId}:${space.id}`;
                       return (
                         <label
                           key={space.id}
-                          className="flex items-center gap-2 rounded px-2 py-1 text-xs text-white/75 hover:bg-white/[0.05]"
+                          className="flex items-center gap-2 rounded-sm px-2 py-1 text-xs text-[hsl(var(--text-secondary))] hover:bg-surface"
                         >
                           <input
                             type="checkbox"
@@ -373,7 +374,7 @@ export function ConversationLinkedDocumentsPanel({
                               )
                             }
                             disabled={savingMembershipKey === key}
-                            className="h-3.5 w-3.5 rounded border-white/30 bg-transparent"
+                            className="h-3.5 w-3.5 rounded-sm border-default bg-transparent accent-[hsl(var(--accent))]"
                           />
                           <span className="truncate">
                             {space.name}
@@ -388,80 +389,84 @@ export function ConversationLinkedDocumentsPanel({
             );
           })}
 
-          <article className="rounded-xl border border-cyan-300/20 bg-cyan-500/[0.06] p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-medium text-cyan-100">Chat Web Sources</p>
-                <p className="mt-1 text-xs text-cyan-100/70">
-                  URL sources linked to this conversation context. Ingest only when you want them indexed.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void handleIngestAllSources()}
-                disabled={pendingWebSources.length === 0 || isIngestingAllSources}
-                className="inline-flex items-center gap-1 rounded-md border border-cyan-300/35 bg-cyan-500/15 px-2 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/25 disabled:opacity-50"
-              >
-                Ingest All Sources
-              </button>
-            </div>
-
-            <div className="mt-3 space-y-2">
-              {pendingWebSources.length === 0 ? (
-                <p className="text-xs text-cyan-100/70">
-                  No pending web citation sources.
-                </p>
-              ) : (
-                pendingWebSources.map((source) => (
-                  <div
-                    key={source.key}
-                    className="rounded-lg border border-white/10 bg-black/20 p-2.5"
+          {citedWebSources.length > 0 && (
+            <article className="rounded-sm border border-subtle bg-surface p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">Web sources</p>
+                  <p className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
+                    URLs cited in this conversation. Ingest to include them in search.
+                  </p>
+                </div>
+                {pendingWebSources.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void handleIngestAllSources()}
+                    disabled={isIngestingAllSources}
+                    className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:opacity-50"
                   >
-                    <p className="text-xs font-medium text-white/90">{source.label}</p>
-                    <p className="mt-1 break-all text-[11px] text-white/60">{source.url}</p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleOpenSourceUrl(source.url)}
-                        className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-xs text-white/75 transition hover:border-white/30 hover:text-white"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Open URL
-                      </button>
-                      {source.persisted && source.sourceId ? (
+                    Index all
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {pendingWebSources.length === 0 ? (
+                  <p className="text-xs text-[hsl(var(--text-muted))]">
+                    Nothing pending.
+                  </p>
+                ) : (
+                  pendingWebSources.map((source) => (
+                    <div
+                      key={source.key}
+                      className="rounded-sm border border-subtle bg-surface-raised p-2.5"
+                    >
+                      <p className="text-sm font-medium text-[hsl(var(--text-primary))]">{source.label}</p>
+                      <p className="mt-0.5 break-all text-xs text-[hsl(var(--text-muted))]">{source.url}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => void handleRemoveSource(source.sourceId!)}
-                          disabled={removingSourceId === source.sourceId}
-                          className="inline-flex items-center gap-1 rounded-md border border-rose-400/25 px-2 py-1 text-xs text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-60"
+                          onClick={() => void handleOpenSourceUrl(source.url)}
+                          className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Remove Link
+                          <ExternalLink className="h-3 w-3" />
+                          Open URL
                         </button>
-                      ) : (
+                        {source.persisted && source.sourceId ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveSource(source.sourceId!)}
+                            disabled={removingSourceId === source.sourceId}
+                            className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Remove link
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void handleLinkSource(source)}
+                            disabled={linkingSourceKey === source.key}
+                            className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-60"
+                          >
+                            Link
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => void handleLinkSource(source)}
-                          disabled={linkingSourceKey === source.key}
-                          className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-xs text-white/75 transition hover:border-white/30 hover:text-white disabled:opacity-60"
+                          onClick={() => void ingestSourceUrl(source)}
+                          disabled={ingestingSourceKey === source.key || isIngestingAllSources}
+                          className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:opacity-50"
                         >
-                          Link Source
+                          Index
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void ingestSourceUrl(source)}
-                        disabled={ingestingSourceKey === source.key || isIngestingAllSources}
-                        className="inline-flex items-center gap-1 rounded-md border border-cyan-300/35 bg-cyan-500/15 px-2 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/25 disabled:opacity-50"
-                      >
-                        Ingest
-                      </button>
+                      </div>
                     </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
+                  ))
+                )}
+              </div>
+            </article>
+          )}
         </div>
       )}
     </section>

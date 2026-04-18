@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
-use crate::infrastructure::services::traits::TagServiceTrait;
+use crate::features::tags::TagServiceTrait;
 
 /// A guard that holds an owned mutex guard
 ///

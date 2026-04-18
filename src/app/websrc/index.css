@@ -176,4 +176,20 @@
       transition-duration: 0.01ms !important;
     }
   }
+
+  /* Streaming cursor blink (CHAT-REDESIGN-SPEC §3.7) */
+  @keyframes chat-cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* Deep-linked message highlight — 2px accent bar fade (CHAT-REDESIGN-SPEC §8) */
+  @keyframes chat-message-highlight {
+    0% { box-shadow: inset 2px 0 0 hsl(var(--accent)); }
+    100% { box-shadow: inset 2px 0 0 hsl(var(--accent) / 0); }
+  }
+
+  .chat-message-highlighted {
+    animation: chat-message-highlight 1500ms var(--ease-out) forwards;
+  }
 }

@@ -52,9 +52,6 @@ mod qa;
 // Vertical-slice migration (search): trait lives in features/search/trait_def.rs.
 #[path = "../../../features/search/trait_def.rs"]
 mod search;
-// Vertical-slice migration (tags): trait lives in features/tags/trait_def.rs.
-#[path = "../../../features/tags/trait_def.rs"]
-mod tag;
 // Vertical-slice migration (web): traits live in features/web/traits/.
 #[path = "../../../features/web/traits/web.rs"]
 mod web;
@@ -76,7 +73,6 @@ pub use indexing::*;
 pub use model::*;
 pub use qa::*;
 pub use search::*;
-pub use tag::*;
 pub use web::*;
 pub use web_archive::*;
 pub use web_capture::*;
@@ -89,6 +85,6 @@ pub use web_capture::*;
 pub use crate::infrastructure::services::mocks::{
     MockContextManager, MockConversationService, MockConversationalQAService, MockEmbeddingService,
     MockFileStorageService, MockFunctionExecutor, MockFunctionRegistry, MockIndexingService,
-    MockModelManager, MockQAEngine, MockSearchEnrichmentService, MockSearchService, MockTagService,
+    MockModelManager, MockQAEngine, MockSearchEnrichmentService, MockSearchService,
     MockWebArchiveService, MockWebCaptureService, MockWebIngestionService, MockWebService,
 };

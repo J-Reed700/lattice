@@ -1,6 +1,6 @@
 import { type FC } from 'react';
 
-import * as Tooltip from '@radix-ui/react-tooltip';
+import * as Popover from '@radix-ui/react-popover';
 
 import type { SourceWithMetadata } from '@/types/conversation';
 import { sanitizeFileName } from '@/utils/sanitize';
@@ -8,15 +8,11 @@ import { sanitizeFileName } from '@/utils/sanitize';
 /**
  * CitationFootnote
  *
- * Purpose: Display inline citation with hover tooltip and click-to-preview
+ * Purpose: Inline superscript citation marker (e.g. [1], [2]) that opens
+ * a click-to-pin popover showing source metadata and a preview.
  *
- * Features:
- * - Clickable superscript citation number [1], [2], etc.
- * - Tooltip shows file metadata and content preview
- * - Accessible with keyboard navigation
- * - Smooth animations
- *
- * Accessibility: WCAG AA, keyboard nav, ARIA labels, semantic HTML
+ * Follows CHAT-REDESIGN-SPEC §3.4 — click-to-pin (not hover tooltip),
+ * accent marker, serif-first editorial styling.
  */
 
 interface CitationFootnoteProps {
@@ -31,69 +27,50 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
   onViewFile,
 }) => {
   const sanitizedFileName = sanitizeFileName(source.fileName);
-  
-  return (
-    <Tooltip.Provider delayDuration={300}>
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>
-          <sup
-            onClick={onViewFile}
-            className="
-              cursor-pointer
-              text-[var(--accent-primary)] hover:text-[var(--accent-hover)]
-              dark:text-[var(--accent-light)] dark:hover:text-[var(--accent-primary)]
-              font-semibold
-              transition-colors
-              px-0.5
-              underline decoration-dotted
-              inline-block
-            "
-            role="button"
-            tabIndex={0}
-            aria-label={`Citation ${number}: ${sanitizedFileName}`}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onViewFile();
-              }
-            }}
-          >
-            [{number}]
-          </sup>
-        </Tooltip.Trigger>
 
-        <Tooltip.Portal>
-          <Tooltip.Content
-            className="
-              max-w-xs p-3
-              bg-[var(--surface-primary)] dark:bg-[var(--surface-elevated)]
-              border border-[var(--border-color)] dark:border-[var(--border-hover)]
-              rounded-lg shadow-lg
-              z-50
-              animate-in fade-in-0 zoom-in-95
-              data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95
-            "
-            sideOffset={5}
-            side="top"
-          >
-            <div className="space-y-2">
-              <p className="font-semibold text-sm text-[var(--text-primary)] dark:text-[var(--text-primary)] break-words">
-                {sanitizedFileName}
-              </p>
-              <p className="text-xs text-[var(--text-tertiary)] dark:text-[var(--text-tertiary)]">
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <sup
+          role="button"
+          tabIndex={0}
+          aria-label={`Citation ${number}: ${sanitizedFileName}`}
+          className="inline-block cursor-pointer px-0.5 font-mono text-xs text-[hsl(var(--accent))] transition-colors duration-fast hover:text-[hsl(var(--accent-hover))] hover:underline"
+        >
+          [{number}]
+        </sup>
+      </Popover.Trigger>
+
+      <Popover.Portal>
+        <Popover.Content
+          sideOffset={6}
+          side="top"
+          align="start"
+          className="z-50 max-w-xs rounded-md border border-subtle bg-surface-raised p-3 text-[hsl(var(--text-primary))] shadow-md outline-none data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+        >
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-[hsl(var(--text-primary))] break-words">
+              {sanitizedFileName}
+            </p>
+            {source.category && (
+              <p className="text-xs text-[hsl(var(--text-muted))]">
                 {source.category}
               </p>
-              <p className="text-xs text-[var(--text-primary)] dark:text-[var(--text-secondary)] line-clamp-3 break-words">
-                {source.excerpt ?? source.content}
-              </p>
-              <p className="text-xs text-[var(--accent-primary)] dark:text-[var(--accent-light)] font-medium pt-1 border-t border-[var(--border-color)] dark:border-[var(--border-hover)]">
-                Click to view source
-              </p>
-            </div>
-            <Tooltip.Arrow className="fill-[var(--surface-primary)] dark:fill-[var(--surface-elevated)]" />
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
-    </Tooltip.Provider>
+            )}
+            <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-3 break-words">
+              {source.excerpt ?? source.content}
+            </p>
+            <button
+              type="button"
+              onClick={onViewFile}
+              className="block pt-1 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+            >
+              View source
+            </button>
+          </div>
+          <Popover.Arrow className="fill-[hsl(var(--surface-raised))]" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 };

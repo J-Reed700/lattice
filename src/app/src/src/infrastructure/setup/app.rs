@@ -15,8 +15,8 @@ use crate::infrastructure::services::mocks::MockSearchService;
 use crate::infrastructure::services::traits::{
     BM25SearchTrait, EmbeddingServiceTrait, FileStorageServiceTrait, HybridSearchTrait,
     IndexStorageTrait, ModelManagerTrait, SearchEnrichmentServiceTrait, SearchServiceTrait,
-    TagRepositoryTrait, TagServiceTrait,
 };
+use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
 use crate::interfaces::commands;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use crate::infrastructure::search::bm25::BM25Search;

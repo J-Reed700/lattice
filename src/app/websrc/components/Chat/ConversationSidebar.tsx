@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { formatDistanceToNow } from 'date-fns';
+import { differenceInDays, formatDistanceToNow, isToday, isYesterday, startOfDay } from 'date-fns';
+import { motion, useReducedMotion } from 'framer-motion';
 import {
   Plus,
   MessageSquare,
@@ -11,6 +12,7 @@ import {
   Star,
   Bookmark,
   Pin,
+  PanelLeft,
   Search,
   Archive,
   RotateCcw,
@@ -41,6 +43,19 @@ import { handleAsyncEvent } from '../../utils/promiseHandlers';
 import type { ConversationMessageBookmarkDto } from '../../types';
 import type { ConversationJournalDto } from '../../types/api/conversation';
 
+const formatRoleLabel = (role: string | null | undefined): string => {
+  switch ((role ?? '').toLowerCase()) {
+    case 'assistant':
+      return 'Assistant';
+    case 'user':
+      return 'You';
+    case 'system':
+      return 'System';
+    default:
+      return role ? role.charAt(0).toUpperCase() + role.slice(1) : '';
+  }
+};
+
 const scrollToMessage = (messageId: string) => {
   let attempts = 0;
   const maxAttempts = 12;
@@ -49,10 +64,10 @@ const scrollToMessage = (messageId: string) => {
     const element = document.getElementById(`message-${messageId}`);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      element.classList.add('ring-2', 'ring-blue-400/70');
+      element.classList.add('chat-message-highlighted');
       window.setTimeout(() => {
-        element.classList.remove('ring-2', 'ring-blue-400/70');
-      }, 1200);
+        element.classList.remove('chat-message-highlighted');
+      }, 1500);
       return;
     }
 
@@ -134,24 +149,6 @@ const normalizeHexColor = (value: string | null | undefined): string | null => {
   return isHex ? candidate.toLowerCase() : null;
 };
 
-const hexToRgb = (hexColor: string): { r: number; g: number; b: number } => {
-  const hex = hexColor.replace('#', '');
-  const normalized = hex.length === 3
-    ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`
-    : hex;
-  const num = Number.parseInt(normalized, 16);
-  return {
-    r: (num >> 16) & 255,
-    g: (num >> 8) & 255,
-    b: num & 255,
-  };
-};
-
-const withAlpha = (hexColor: string, alpha: number): string => {
-  const { r, g, b } = hexToRgb(hexColor);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
 const getLocalDayKey = (value: Date): string => {
   const year = value.getFullYear();
   const month = `${value.getMonth() + 1}`.padStart(2, '0');
@@ -175,6 +172,33 @@ const formatJournalGroupLabel = (dateValue: Date): string => {
   });
 };
 
+type TimeBucketKey = 'today' | 'yesterday' | 'last-7-days' | 'last-30-days' | 'older';
+
+const TIME_BUCKET_ORDER: readonly TimeBucketKey[] = [
+  'today',
+  'yesterday',
+  'last-7-days',
+  'last-30-days',
+  'older',
+];
+
+const TIME_BUCKET_LABELS: Record<TimeBucketKey, string> = {
+  'today': 'Today',
+  'yesterday': 'Yesterday',
+  'last-7-days': 'Last 7 days',
+  'last-30-days': 'Last 30 days',
+  'older': 'Older',
+};
+
+const getTimeBucket = (updatedAt: Date, now: Date): TimeBucketKey => {
+  if (isToday(updatedAt)) return 'today';
+  if (isYesterday(updatedAt)) return 'yesterday';
+  const diff = differenceInDays(startOfDay(now), startOfDay(updatedAt));
+  if (diff < 7) return 'last-7-days';
+  if (diff < 30) return 'last-30-days';
+  return 'older';
+};
+
 const SPACES_MODAL_LAYER_CLASSES = {
   root: 'z-[200]',
   backdrop: 'z-[210]',
@@ -195,6 +219,7 @@ const isReferenceInboxEnabled = (): boolean => {
 
 export function ConversationSidebar() {
   const navigate = useNavigate();
+  const prefersReducedMotion = useReducedMotion();
   const {
     spaces,
     selectedSpaceId,
@@ -211,7 +236,6 @@ export function ConversationSidebar() {
     createConversation,
     selectConversation,
     setConversationSaved,
-    setConversationBookmarked,
     setConversationPinned,
     setConversationArchived,
     renameConversation,
@@ -361,7 +385,7 @@ export function ConversationSidebar() {
     if (!result.ok) {
       setJournalsLoadError(result.error);
       if (!silent) {
-        toast.error('Failed to load journals', {
+        toast.error("Couldn't load journals", {
           message: result.error,
           duration: 4200,
         });
@@ -429,11 +453,34 @@ export function ConversationSidebar() {
 
   const journalConversationGroups = useMemo(() => {
     if (!isJournalScope) {
-      return [{
-        key: 'all-conversations',
-        label: null as string | null,
-        items: conversations,
-      }];
+      const now = new Date();
+      const buckets = new Map<TimeBucketKey, typeof conversations>();
+      for (const conversation of conversations) {
+        const updatedAt = new Date(conversation.updatedAt);
+        const baseDate = Number.isNaN(updatedAt.getTime()) ? now : updatedAt;
+        const bucket = getTimeBucket(baseDate, now);
+        const existing = buckets.get(bucket);
+        if (existing) {
+          existing.push(conversation);
+        } else {
+          buckets.set(bucket, [conversation]);
+        }
+      }
+
+      return TIME_BUCKET_ORDER
+        .filter((key) => buckets.has(key))
+        .map((key) => {
+          const items = [...(buckets.get(key) ?? [])].sort((a, b) => {
+            const aTime = new Date(a.updatedAt).getTime();
+            const bTime = new Date(b.updatedAt).getTime();
+            return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+          });
+          return {
+            key,
+            label: TIME_BUCKET_LABELS[key],
+            items,
+          };
+        });
     }
 
     const groups = new Map<string, { label: string; dayValue: Date; items: typeof conversations }>();
@@ -833,7 +880,7 @@ export function ConversationSidebar() {
         toolPreferencesJson: null,
       });
       if (!result.ok) {
-        toast.error('Failed to create journal', {
+        toast.error("Couldn't create journal", {
           message: result.error,
           duration: 4200,
         });
@@ -870,8 +917,7 @@ export function ConversationSidebar() {
     icon: typeof Star;
   }> = [
     { id: 'all', label: 'All', icon: MessageSquare },
-    { id: 'saved', label: 'Saved', icon: Star },
-    { id: 'bookmarked', label: 'Bookmarked', icon: Bookmark },
+    { id: 'saved', label: 'Starred', icon: Star },
     { id: 'pinned', label: 'Pinned', icon: Pin },
     { id: 'snippets', label: 'References', icon: Save },
     { id: 'archived', label: 'Archived', icon: Archive },
@@ -1116,49 +1162,64 @@ export function ConversationSidebar() {
   return (
     <div
       ref={sidebarRef}
-      className={`relative h-full w-[clamp(16rem,28vw,20rem)] max-w-full shrink-0 bg-black/30 backdrop-blur-2xl border-r border-white/[0.06] flex flex-col overflow-hidden ${
+      className={`relative h-full w-[280px] max-w-full shrink-0 bg-surface border-r border-subtle flex flex-col overflow-hidden ${
         isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
       }`}
     >
-      <div className="p-4 border-b border-white/10 overflow-x-hidden">
+      {/* Top rail (CHAT-REDESIGN-SPEC §5.1) */}
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-subtle bg-surface px-4">
+        <span className="font-serif text-base font-semibold text-[hsl(var(--text-primary))]">
+          Recall
+        </span>
+        <button
+          type="button"
+          aria-label="Toggle sidebar"
+          title="Toggle sidebar"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
+        >
+          <PanelLeft className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="p-4 border-b border-subtle overflow-x-hidden">
         <button
           onClick={handleAsyncEvent(handleNewConversation)}
           disabled={isCreating}
           aria-label="Create new conversation"
-          className="w-full px-4 py-3 bg-white/[0.04] hover:bg-gradient-to-r hover:from-blue-500/15 hover:to-indigo-500/15 border border-white/[0.08] hover:border-blue-500/30 rounded-xl text-white/80 hover:text-white/90 font-medium transition-all duration-300 flex items-center justify-center gap-2 backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--accent))] px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isCreating ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Plus className="w-4 h-4" />
           )}
-          <span>{isJournalScope ? 'New Journal Entry' : 'New Conversation'}</span>
+          <span>{isJournalScope ? 'New entry' : 'New conversation'}</span>
         </button>
 
-        <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-sm border border-subtle bg-surface-raised px-3 py-2">
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-wide text-white/45">Space Scope</p>
-            <p className="truncate text-xs text-white/80">
+            <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">Scope</p>
+            <p className="truncate text-xs text-[hsl(var(--text-primary))]">
               {selectedSpace
                 ? `${selectedSpace.icon ? `${selectedSpace.icon} ` : ''}${selectedSpace.name}`
                 : selectedJournal
                   ? `${selectedJournal.icon ? `${selectedJournal.icon} ` : ''}${selectedJournal.name} · Journal`
-                  : 'All Spaces'}
+                  : 'All spaces'}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
             {isJournalScope && selectedJournal && (
               <button
                 onClick={openSelectedJournalNotebook}
-                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/12 px-2.5 py-1.5 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60"
+                className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
               >
                 <NotebookPen className="w-3.5 h-3.5" />
-                Open Notebook
+                Notebook
               </button>
             )}
             <button
               onClick={() => setIsSpacesOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white/90"
+              className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
             >
               <Settings2 className="w-3.5 h-3.5" />
               Spaces
@@ -1166,57 +1227,54 @@ export function ConversationSidebar() {
           </div>
         </div>
 
-        {isJournalScope && (
-          <div className="mt-2 rounded-lg border border-emerald-300/30 bg-emerald-500/10 px-3 py-2">
+        {isJournalScope && journalSpaces.length > 0 && (
+          <div className="mt-2 rounded-sm border border-subtle bg-surface-raised px-3 py-2">
             <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-emerald-100/70">Notebook Mode</p>
-                <p className="mt-1 text-xs text-emerald-100/90">
-                  Journal v2 is active: entries, pinned highlights, and notebook pages.
-                </p>
-              </div>
-              {journalSpaces.length > 0 && (
-                <button
-                  onClick={openSelectedJournalNotebook}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-100 hover:border-emerald-200/70"
-                >
-                  <NotebookPen className="h-3 w-3" />
-                  Open
-                </button>
-              )}
+              <p className="text-xs text-[hsl(var(--text-secondary))]">
+                Entries, pinned highlights, and notebook pages.
+              </p>
+              <button
+                onClick={openSelectedJournalNotebook}
+                className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
+              >
+                <NotebookPen className="h-3 w-3" />
+                Open
+              </button>
             </div>
           </div>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           {filterOptions.map((option) => {
             const Icon = option.icon;
+            const active = filterMode === option.id;
             return (
             <button
               key={option.id}
               onClick={handleAsyncEvent(() => handleFilterSelect(option.id))}
               aria-label={`${option.label} conversations`}
-              aria-pressed={filterMode === option.id}
+              aria-pressed={active}
               title={option.label}
-              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                filterMode === option.id
-                  ? 'bg-white/15 border-white/30 text-white'
-                  : 'bg-white/5 border-white/10 text-white/60 hover:text-white/90'
+              className={`inline-flex items-center gap-1 pb-1 text-xs transition-colors duration-fast ${
+                active
+                  ? 'text-[hsl(var(--text-primary))] border-b-2 border-[hsl(var(--accent))]'
+                  : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] border-b-2 border-transparent'
               }`}
             >
-              <Icon className="h-3.5 w-3.5" />
+              <Icon className="h-3 w-3" />
+              <span>{option.label}</span>
             </button>
           );
           })}
         </div>
 
         <div className="mt-3 relative">
-          <Search className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-[hsl(var(--text-muted))] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             value={localQuery}
             onChange={(e) => setLocalQuery(e.target.value)}
-            placeholder={isJournalScope ? 'Search journal entries...' : 'Search conversations...'}
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.03] text-sm text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+            placeholder={isJournalScope ? 'Search entries' : 'Search conversations'}
+            className="w-full h-8 pl-9 pr-3 rounded-sm border border-default bg-surface text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
           />
         </div>
 
@@ -1231,21 +1289,21 @@ export function ConversationSidebar() {
                     void loadJournals(false);
                   }
                 }}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${
                   isSelectionMode
-                    ? 'border-blue-400/45 bg-blue-500/20 text-blue-100'
-                    : 'border-white/15 bg-white/5 text-white/70 hover:border-white/30 hover:text-white/90'
+                    ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                    : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                 }`}
               >
                 {isSelectionMode ? (
                   <>
-                    <X className="h-3.5 w-3.5" />
-                    Done Selecting
+                    <X className="h-3 w-3" />
+                    Done
                   </>
                 ) : (
                   <>
-                    <Bookmark className="h-3.5 w-3.5" />
-                    Select Multiple
+                    <Bookmark className="h-3 w-3" />
+                    Select multiple
                   </>
                 )}
               </button>
@@ -1253,16 +1311,16 @@ export function ConversationSidebar() {
               {isSelectionMode && (
                 <button
                   onClick={toggleSelectAllVisibleConversations}
-                  className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white"
+                  className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                 >
-                  {areAllVisibleConversationsSelected ? 'Clear Page' : 'Select Page'}
+                  {areAllVisibleConversationsSelected ? 'Clear' : 'Select all'}
                 </button>
               )}
             </div>
 
             {isSelectionMode && (
-              <div className="mt-2 rounded-lg border border-blue-400/20 bg-blue-500/8 px-2.5 py-2.5">
-                <p className="text-[11px] text-blue-100/85">
+              <div className="mt-2 rounded-sm border border-subtle bg-surface-raised px-3 py-2.5">
+                <p className="text-xs text-[hsl(var(--text-secondary))]">
                   {selectedConversationCount} selected
                 </p>
                 <div className="mt-2 flex items-center gap-1.5">
@@ -1270,15 +1328,15 @@ export function ConversationSidebar() {
                     value={bulkSpaceIdDraft}
                     onChange={(e) => setBulkSpaceIdDraft(e.target.value)}
                     disabled={isLoadingJournals}
-                    className="min-w-0 flex-1 rounded-md border border-white/15 bg-white/[0.05] px-2 py-1.5 text-[11px] text-white/85 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                    className="min-w-0 flex-1 rounded-sm border border-default bg-surface px-2 py-1 text-xs text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                   >
                     {isLoadingJournals ? (
                       <option value="" disabled>
-                        Loading journals...
+                        Loading...
                       </option>
                     ) : journalsLoadError ? (
                       <option value="" disabled>
-                        Failed to load journals
+                        Couldn't load journals
                       </option>
                     ) : journalSpaces.length === 0 ? (
                       <option value="" disabled>
@@ -1287,10 +1345,10 @@ export function ConversationSidebar() {
                     ) : (
                       <>
                         <option value="" disabled>
-                          Choose journal...
+                          Choose a journal
                         </option>
                         {journalSpaces.map((space) => (
-                          <option key={space.id} value={space.id} className="bg-slate-900 text-white">
+                          <option key={space.id} value={space.id}>
                             {space.name}
                           </option>
                         ))}
@@ -1306,23 +1364,23 @@ export function ConversationSidebar() {
                       || Boolean(journalsLoadError)
                       || journalSpaces.length === 0
                     }
-                    className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-sm border border-default bg-surface px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isBulkMoving ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
-                      <ArrowUpRight className="h-3.5 w-3.5" />
+                      <ArrowUpRight className="h-3 w-3" />
                     )}
-                    Add to Journal
+                    Add
                   </button>
                 </div>
                 {journalsLoadError ? (
-                  <p className="mt-2 text-[11px] text-rose-200/85">
-                    Failed to load journals: {journalsLoadError}
+                  <p className="mt-2 text-xs text-[hsl(var(--danger-fg))]">
+                    Couldn't load journals. {journalsLoadError}
                   </p>
                 ) : journalSpaces.length === 0 && (
                   <div className="mt-2 space-y-1.5">
-                    <p className="text-[11px] text-blue-100/65">
+                    <p className="text-xs text-[hsl(var(--text-muted))]">
                       No journals yet. Create one to organize selected conversations.
                     </p>
                     <div className="flex items-center gap-1.5">
@@ -1330,22 +1388,22 @@ export function ConversationSidebar() {
                         type="button"
                         onClick={handleAsyncEvent(createQuickJournal)}
                         disabled={isCreatingQuickJournal}
-                        className="inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-500/15 px-2 py-1 text-[11px] text-blue-100 transition-colors hover:border-blue-300/65 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isCreatingQuickJournal ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          <Plus className="h-3.5 w-3.5" />
+                          <Plus className="h-3 w-3" />
                         )}
-                        Create Journal
+                        Create journal
                       </button>
                       <button
                         type="button"
                         onClick={() => navigate('/journals')}
-                        className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[11px] text-emerald-100 transition-colors hover:border-emerald-300/60"
+                        className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                       >
-                        <ArrowUpRight className="h-3.5 w-3.5" />
-                        Open Journals
+                        <ArrowUpRight className="h-3 w-3" />
+                        Open journals
                       </button>
                     </div>
                   </div>
@@ -1357,38 +1415,36 @@ export function ConversationSidebar() {
       </div>
 
       {error && (
-        <div className="mx-4 mt-4 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-400" />
-            <p className="text-sm text-red-300">{error}</p>
+        <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-sm border border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-[hsl(var(--danger-fg))]" />
+            <p className="text-xs text-[hsl(var(--danger-fg))]">{error}</p>
           </div>
           <button
             onClick={clearError}
-            className="text-red-400/60 hover:text-red-400 transition-colors"
-            aria-label="Clear error"
+            className="text-[hsl(var(--danger-fg))] opacity-70 transition-opacity hover:opacity-100"
+            aria-label="Dismiss error"
+            title="Dismiss"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3 h-3" />
           </button>
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
         {filterMode === 'snippets' && (
-          <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.08),rgba(251,191,36,0.06)_35%,transparent_72%)] p-2.5">
-            <div className="rounded-xl border border-white/10 bg-black/25 p-3 backdrop-blur-sm">
+          <div className="border-b border-subtle p-2.5">
+            <div className="rounded-sm border border-subtle bg-surface-raised p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-cyan-100/65">
-                    Knowledge Capture
+                  <p className="text-sm font-medium text-[hsl(var(--text-primary))]">
+                    References
                   </p>
-                  <p className="mt-1 text-sm font-medium text-white/90">
-                    Saved References
-                  </p>
-                  <p className="mt-1 text-[11px] text-white/55">
-                    Review and process references in Reference Inbox.
+                  <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">
+                    Review and process them below.
                   </p>
                 </div>
-                <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/35 bg-cyan-400/15 px-2.5 py-1 text-[11px] text-cyan-100">
+                <span className="inline-flex items-center gap-1 rounded-sm border border-subtle bg-surface px-2 py-0.5 text-xs text-[hsl(var(--text-secondary))]">
                   <Bookmark className="h-3 w-3" />
                   {snippetResults.length}
                 </span>
@@ -1398,17 +1454,17 @@ export function ConversationSidebar() {
                 <div className="flex items-center gap-1.5">
                   {([
                     ['all', 'All'],
-                    ['assistant', 'AI'],
+                    ['assistant', 'Assistant'],
                     ['user', 'You'],
                     ['system', 'System'],
                   ] as const).map(([value, label]) => (
                     <button
                       key={value}
                       onClick={() => setSnippetRoleFilter(value)}
-                      className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                      className={`rounded-sm border px-2 py-0.5 text-xs transition-colors duration-fast ${
                         snippetRoleFilter === value
-                          ? 'border-cyan-300/60 bg-cyan-400/18 text-cyan-100'
-                          : 'border-white/15 bg-white/5 text-white/60 hover:text-white/85 hover:border-white/30'
+                          ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                          : 'border-default text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))]'
                       }`}
                     >
                       {label}
@@ -1418,7 +1474,7 @@ export function ConversationSidebar() {
 
                 <button
                   onClick={() => navigate('/references')}
-                  className="inline-flex items-center gap-1 rounded-full border border-emerald-300/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-100/85 transition-colors hover:border-emerald-300/55 hover:text-emerald-100"
+                  className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-0.5 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                 >
                   <ArrowUpRight className="h-3 w-3" />
                   Inbox
@@ -1426,7 +1482,7 @@ export function ConversationSidebar() {
               </div>
 
               {referenceInboxEnabled && (
-                <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-white/55">
+                <div className="mt-2 inline-flex items-center gap-1 text-xs text-[hsl(var(--text-muted))]">
                   {isLoadingCaptureIndex && <Loader2 className="h-3 w-3 animate-spin" />}
                   {snippetCaptureStats.pending} pending · {snippetCaptureStats.captured} captured
                 </div>
@@ -1434,17 +1490,17 @@ export function ConversationSidebar() {
             </div>
 
             {isLoadingSnippets ? (
-              <div className="h-12 flex items-center justify-center text-white/45">
+              <div className="h-12 flex items-center justify-center text-[hsl(var(--text-muted))]">
                 <Loader2 className="h-4 w-4 animate-spin" />
               </div>
             ) : filteredSnippets.length === 0 ? (
-              <div className="px-2 py-3 text-xs text-white/45">
+              <div className="px-2 py-3 text-xs text-[hsl(var(--text-muted))]">
                 {roleFilteredSnippets.length === 0
-                  ? 'No saved references yet.'
-                  : 'No references match the selected role filter.'}
+                  ? 'No references yet. Reference any message with the bookmark icon.'
+                  : 'No matches in this filter.'}
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="mt-2 space-y-2">
                 <div className="space-y-1">
                   {filteredSnippets.slice(0, 20).map((bookmark) => {
                     const isSelected = bookmark.id === selectedSnippetId;
@@ -1454,65 +1510,70 @@ export function ConversationSidebar() {
                     return (
                       <div
                         key={bookmark.id}
-                        className={`rounded-xl border transition-colors ${
+                        className={`relative rounded-sm transition-colors duration-fast ${
                           isSelected
-                            ? 'border-cyan-300/45 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.18)]'
-                            : 'border-white/10 bg-white/[0.02] hover:border-white/25'
+                            ? 'bg-surface-raised'
+                            : 'hover:bg-surface-raised'
                         }`}
                       >
+                        {isSelected && (
+                          <span
+                            className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                            aria-hidden="true"
+                          />
+                        )}
                         <button
                           onClick={() => setSelectedSnippetId(bookmark.id)}
                           className="w-full text-left px-3 pt-2.5 pb-2"
                         >
                           <div className="mb-1 flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5">
-                              <p className="text-xs text-cyan-200 truncate">
-                                {bookmark.messageRole.toUpperCase()}
+                              <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-tertiary))] truncate">
+                                {formatRoleLabel(bookmark.messageRole)}
                               </p>
                               <span
-                                className={`rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                                className={`rounded-sm border px-1.5 py-0 text-xxs uppercase tracking-[0.04em] ${
                                   capturedReference
-                                    ? 'border-emerald-300/45 bg-emerald-500/15 text-emerald-100'
-                                    : 'border-amber-300/40 bg-amber-500/15 text-amber-100'
+                                    ? 'border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]'
+                                    : 'border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))]'
                                 }`}
                               >
                                 {capturedReference ? 'Captured' : 'Pending'}
                               </span>
                             </div>
-                            <p className="text-[11px] text-white/45">
+                            <p className="text-xs text-[hsl(var(--text-muted))]">
                               {new Date(bookmark.createdAt).toLocaleDateString()}
                             </p>
                           </div>
-                          <p className="text-xs text-white/90 truncate">
+                          <p className="text-sm text-[hsl(var(--text-primary))] truncate">
                             {bookmark.title || bookmark.conversationTitle}
                           </p>
-                          <p className="mt-0.5 text-[11px] text-white/40 truncate">
-                            <span
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border border-white/15 bg-white/5"
-                              style={(() => {
+                          <p className="mt-0.5 text-xs text-[hsl(var(--text-tertiary))] truncate">
+                            <span className="inline-flex items-center gap-1">
+                              {(() => {
                                 const accent = spaceAccentById.get(bookmark.spaceId) ?? null;
-                                if (!accent) return undefined;
-                                return {
-                                  borderColor: withAlpha(accent, 0.55),
-                                  backgroundColor: withAlpha(accent, 0.16),
-                                  color: '#e2e8f0',
-                                };
+                                return accent ? (
+                                  <span
+                                    className="inline-block h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: accent }}
+                                    aria-hidden="true"
+                                  />
+                                ) : null;
                               })()}
-                            >
                               {bookmark.conversationTitle}
                             </span>
                           </p>
-                          <p className="mt-1.5 text-[11px] text-white/60 line-clamp-2 break-words">
+                          <p className="mt-1.5 text-xs text-[hsl(var(--text-muted))] line-clamp-2 break-words">
                             {bookmark.messagePreview}
                           </p>
                         </button>
                         <div className="px-3 pb-2.5">
                           <button
                             onClick={handleAsyncEvent(() => openSnippet(bookmark))}
-                            className="text-[11px] inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-white/70 hover:text-white hover:border-cyan-300/40 transition-colors"
+                            className="text-xs inline-flex items-center gap-1 rounded-sm border border-default px-2 py-0.5 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
                           >
                             <ArrowUpRight className="w-3 h-3" />
-                            Open in Chat
+                            Open in chat
                           </button>
                         </div>
                       </div>
@@ -1521,24 +1582,24 @@ export function ConversationSidebar() {
                 </div>
 
                 {selectedSnippet && (
-                  <div className="rounded-xl border border-white/10 bg-[linear-gradient(155deg,rgba(34,211,238,0.08),rgba(0,0,0,0.25)_45%)] p-3">
-                    <p className="text-[11px] text-cyan-100/70 uppercase tracking-wide">
-                      Selected Reference
+                  <div className="rounded-sm border border-subtle bg-surface-raised p-3">
+                    <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+                      Selected reference
                     </p>
-                    <p className="mt-1 text-xs text-white/80 line-clamp-2">
+                    <p className="mt-1 text-sm text-[hsl(var(--text-primary))] line-clamp-2">
                       {selectedSnippet.title || selectedSnippet.conversationTitle}
                     </p>
-                    <p className="mt-1 text-[11px] text-white/50">
+                    <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">
                       {selectedSnippetCapture
                         ? `Captured in ${selectedSnippetCapture.noteTitle}.`
                         : 'Pending capture.'}
                     </p>
                     <button
                       onClick={() => navigate('/references')}
-                      className="mt-2 w-full inline-flex items-center justify-center gap-1 text-[11px] rounded-md border border-white/20 px-2 py-1.5 text-white/70 hover:text-white hover:border-white/35 transition-colors"
+                      className="mt-2 w-full inline-flex items-center justify-center gap-1 text-xs rounded-sm border border-default px-2 py-1 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
                     >
                       <ArrowUpRight className="w-3 h-3" />
-                      Manage in Reference Inbox
+                      Manage references
                     </button>
                   </div>
                 )}
@@ -1548,29 +1609,46 @@ export function ConversationSidebar() {
         )}
 
         {isLoading && conversations.length === 0 ? (
-          <div className="flex items-center justify-center h-32 text-white/40">
+          <div className="flex items-center justify-center h-32 text-[hsl(var(--text-muted))]">
             <Loader2 className="w-5 h-5 animate-spin" />
           </div>
         ) : conversations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-white/40 px-4 text-center">
-            <MessageSquare className="w-8 h-8 mb-2 opacity-50" />
-            <p className="text-sm">{isJournalScope ? 'No journal entries yet' : 'No conversations yet'}</p>
-            <p className="text-xs mt-1">Start a new conversation above</p>
+          <div className="flex flex-col items-center justify-center min-h-[8rem] px-6 py-8 text-center">
+            <MessageSquare className="w-6 h-6 mb-3 text-[hsl(var(--text-muted))]" />
+            {isJournalScope ? (
+              <>
+                <p className="text-sm text-[hsl(var(--text-secondary))]">No entries in this journal.</p>
+                <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">Each entry is a day's conversation.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-[hsl(var(--text-secondary))]">No conversations here.</p>
+                <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">Every question you ask lives in a conversation.</p>
+              </>
+            )}
           </div>
         ) : (
           <nav
-            className={`p-2 pr-3 ${isJournalScope ? 'space-y-3' : 'space-y-1'}`}
+            className="p-2 pr-3"
             role="navigation"
             aria-label="Conversations"
           >
-            {journalConversationGroups.map((group) => (
-              <section key={group.key} className={isJournalScope ? 'space-y-1.5' : 'space-y-1'}>
+            {journalConversationGroups.map((group, groupIdx) => (
+              <section
+                key={group.key}
+                className={`space-y-0.5 ${!isJournalScope && groupIdx > 0 ? 'mt-4' : ''}`}
+              >
                 {isJournalScope && group.label && (
-                  <p className="px-2 text-[10px] uppercase tracking-wide text-emerald-100/55">
-                    Notebook · {group.label}
+                  <p className="px-2 py-1 text-xs italic font-serif text-[hsl(var(--text-tertiary))]">
+                    {group.label}
                   </p>
                 )}
-                <div className="space-y-1">
+                {!isJournalScope && group.label && (
+                  <p className="px-4 py-2 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+                    {group.label}
+                  </p>
+                )}
+                <div className="space-y-0.5">
                   {group.items.map((conversation, groupIndex) => {
                     const isActive = conversation.id === activeConversationId;
                     const isDeleting = deletingId === conversation.id;
@@ -1580,15 +1658,6 @@ export function ConversationSidebar() {
                     const conversationSpaceKind = conversation.spaceId
                       ? (spaceKindById.get(conversation.spaceId) ?? 'standard')
                       : 'standard';
-                    const rowStyle = accent
-                      ? {
-                        borderColor: isActive ? withAlpha(accent, 0.65) : withAlpha(accent, 0.28),
-                        background: isActive
-                          ? `linear-gradient(90deg, ${withAlpha(accent, 0.2)} 0%, rgba(255,255,255,0.02) 100%)`
-                          : withAlpha(accent, 0.08),
-                        boxShadow: isActive ? `0 0 0 1px ${withAlpha(accent, 0.2)} inset` : undefined,
-                      }
-                      : undefined;
 
                     return (
                       <div
@@ -1621,43 +1690,60 @@ export function ConversationSidebar() {
                         })}
                         aria-label={`Select conversation: ${conversation.title}`}
                         aria-current={isActive ? 'page' : undefined}
-                        className={`group w-full text-left px-4 py-3 rounded-xl transition-all duration-300 cursor-pointer ${
-                          isJournalScope
-                            ? (isActive
-                              ? 'bg-[linear-gradient(165deg,rgba(16,185,129,0.2),rgba(20,184,166,0.1))] shadow-lg shadow-emerald-900/25 border border-emerald-300/35'
-                              : 'bg-[linear-gradient(165deg,rgba(16,185,129,0.09),rgba(15,23,42,0.15))] hover:bg-[linear-gradient(165deg,rgba(16,185,129,0.14),rgba(15,23,42,0.2))] border border-emerald-300/20')
-                            : (isActive
-                              ? 'bg-white/[0.08] backdrop-blur-xl shadow-lg shadow-blue-500/10 border border-blue-500/15'
-                              : 'bg-white/[0.02] hover:bg-white/[0.04] border border-transparent hover:border-white/[0.06]')
+                        className={`group relative w-full text-left px-4 py-2 rounded-sm transition-colors duration-fast cursor-pointer ${
+                          isActive
+                            ? 'bg-surface-raised'
+                            : 'hover:bg-surface-raised'
                         }`}
-                        style={rowStyle}
                       >
+                        {isActive && (
+                          prefersReducedMotion ? (
+                            <span
+                              className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <motion.span
+                              layoutId="sidebar-active-bar"
+                              className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                              aria-hidden="true"
+                              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                            />
+                          )
+                        )}
                         <div className="relative flex items-start gap-2">
-                          <div className={`flex-1 min-w-0 transition-[padding] duration-200 ${isSelectionMode ? '' : 'pr-28'}`}>
+                          <div className={`flex-1 min-w-0 transition-[padding] duration-fast ${isSelectionMode ? '' : 'pr-28'}`}>
                             {isJournalScope && (
-                              <p className="mb-1 text-[10px] uppercase tracking-wide text-emerald-100/65">
-                                Page {groupIndex + 1}
+                              <p className="mb-1 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+                                Entry {groupIndex + 1}
                               </p>
                             )}
-                            <div className="flex items-center gap-2 mb-1">
+                            <div className="flex items-center gap-2 mb-0.5">
                               {isSelectionMode && (
                                 <input
                                   type="checkbox"
                                   checked={selectedConversationIds.has(conversation.id)}
                                   onChange={() => toggleConversationSelection(conversation.id)}
                                   onClick={(e) => e.stopPropagation()}
-                                  className="h-3.5 w-3.5 rounded border-white/25 bg-white/10 accent-blue-400"
+                                  className="h-3.5 w-3.5 rounded-sm border-default bg-transparent accent-[hsl(var(--accent))]"
                                   aria-label={`Select conversation: ${conversation.title}`}
                                 />
                               )}
-                              {isJournalScope ? (
-                                <NotebookPen className="w-4 h-4 text-emerald-100/80 flex-shrink-0" />
+                              {/* Per-space 8x8 identity dot (CHAT-REDESIGN-SPEC §5.4) */}
+                              {accent ? (
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: accent }}
+                                  aria-label={conversation.spaceId ? `Space: ${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}` : undefined}
+                                />
+                              ) : isJournalScope ? (
+                                <NotebookPen className="w-3.5 h-3.5 text-[hsl(var(--text-tertiary))] flex-shrink-0" />
                               ) : (
-                                <MessageSquare className="w-4 h-4 text-white/60 flex-shrink-0" />
+                                <MessageSquare className="w-3.5 h-3.5 text-[hsl(var(--text-tertiary))] flex-shrink-0" />
                               )}
                               {renamingConversationId === conversation.id ? (
                                 <div
-                                  className="flex min-w-0 flex-1 items-center gap-1.5"
+                                  className="flex min-w-0 flex-1 items-center gap-1"
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   <input
@@ -1681,7 +1767,7 @@ export function ConversationSidebar() {
                                         cancelRenameConversation();
                                       }
                                     }}
-                                    className="h-7 min-w-0 flex-1 rounded-md border border-white/20 bg-black/25 px-2 text-xs text-white/90 placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-blue-400/70"
+                                    className="h-6 min-w-0 flex-1 rounded-sm border border-default bg-surface px-2 text-xs text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                                     aria-label={`Rename conversation: ${conversation.title}`}
                                   />
                                   <button
@@ -1692,27 +1778,31 @@ export function ConversationSidebar() {
                                         conversation.title
                                       );
                                     })}
-                                    className="rounded-md border border-emerald-300/35 bg-emerald-500/15 p-1 text-emerald-100 transition-colors hover:border-emerald-300/60"
+                                    className="rounded-sm border border-default p-1 text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--accent))]"
                                     aria-label="Save conversation title"
                                     title="Save title"
                                   >
-                                    <Check className="h-3.5 w-3.5" />
+                                    <Check className="h-3 w-3" />
                                   </button>
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       cancelRenameConversation();
                                     }}
-                                    className="rounded-md border border-white/20 bg-white/5 p-1 text-white/70 transition-colors hover:border-white/35 hover:text-white"
+                                    className="rounded-sm border border-default p-1 text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                                     aria-label="Cancel rename"
                                     title="Cancel"
                                   >
-                                    <X className="h-3.5 w-3.5" />
+                                    <X className="h-3 w-3" />
                                   </button>
                                 </div>
                               ) : (
                                 <h3
-                                  className="text-sm font-medium text-white/90 break-words"
+                                  className={`text-sm line-clamp-1 break-words ${
+                                    isActive
+                                      ? 'font-medium text-[hsl(var(--text-primary))]'
+                                      : 'font-normal text-[hsl(var(--text-primary))]'
+                                  }`}
                                   onDoubleClick={(e) => {
                                     e.stopPropagation();
                                     beginRenameConversation(conversation.id, conversation.title);
@@ -1724,33 +1814,12 @@ export function ConversationSidebar() {
                               )}
                             </div>
                             {conversation.spaceId && (
-                              <p className={`text-[11px] mb-1 break-words ${isJournalScope ? 'text-emerald-100/65' : 'text-white/35'}`}>
-                                <span
-                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border ${
-                                    isJournalScope
-                                      ? 'border-emerald-300/30 bg-emerald-500/10'
-                                      : 'border-white/15 bg-white/5'
-                                  }`}
-                                  style={(() => {
-                                    const spaceAccent = spaceAccentById.get(conversation.spaceId) ?? null;
-                                    if (!spaceAccent) return undefined;
-                                    return {
-                                      borderColor: withAlpha(spaceAccent, 0.55),
-                                      backgroundColor: withAlpha(spaceAccent, 0.16),
-                                      color: '#e2e8f0',
-                                    };
-                                  })()}
-                                >
-                                  {spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}
-                                  {conversationSpaceKind === 'journal' && (
-                                    <span className="rounded-full border border-emerald-300/35 bg-emerald-500/15 px-1 py-0 text-[9px] uppercase tracking-wide text-emerald-100">
-                                      Journal
-                                    </span>
-                                  )}
-                                </span>
+                              <p className="text-xs text-[hsl(var(--text-muted))] truncate">
+                                {spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}
+                                {conversationSpaceKind === 'journal' && ' · Journal'}
                               </p>
                             )}
-                            <p className="text-xs text-white/40">
+                            <p className="text-xs text-[hsl(var(--text-muted))] line-clamp-1">
                               {(() => {
                                 const date = new Date(conversation.updatedAt);
                                 return isNaN(date.getTime()) ? 'Recently' : formatDistanceToNow(date, { addSuffix: true });
@@ -1761,17 +1830,15 @@ export function ConversationSidebar() {
                           <div className={`${
                             isSelectionMode
                               ? 'hidden'
-                              : isJournalScope
-                                ? 'absolute right-0 top-0'
-                                : 'absolute right-0 top-0 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
-                          } transition-opacity duration-300 flex items-center gap-1`}>
+                              : 'absolute right-0 top-0 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                          } transition-opacity duration-fast flex items-center gap-0.5`}>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 beginRenameConversation(conversation.id, conversation.title);
                               }}
                               aria-label={`Rename conversation: ${conversation.title}`}
-                              className="p-1.5 rounded-md bg-white/5 text-white/60 hover:text-cyan-200 transition-colors"
+                              className="p-1 rounded-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
                               title="Rename conversation"
                             >
                               <Pencil className="w-3.5 h-3.5" />
@@ -1782,31 +1849,15 @@ export function ConversationSidebar() {
                                 e.stopPropagation();
                                 await setConversationSaved(conversation.id, !conversation.isSaved);
                               })}
-                              aria-label={`Save conversation: ${conversation.title}`}
-                              className={`p-1.5 rounded-md transition-colors ${
+                              aria-label={`${conversation.isSaved ? 'Unstar' : 'Star'} conversation: ${conversation.title}`}
+                              className={`p-1 rounded-sm transition-colors duration-fast ${
                                 conversation.isSaved
-                                  ? 'bg-amber-500/20 text-amber-300'
-                                  : 'bg-white/5 text-white/60 hover:text-amber-300'
+                                  ? 'text-[hsl(var(--accent))]'
+                                  : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]'
                               }`}
-                              title={conversation.isSaved ? 'Unsave' : 'Save'}
+                              title={conversation.isSaved ? 'Unstar conversation' : 'Star conversation'}
                             >
-                              <Star className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              onClick={handleAsyncEvent(async (e) => {
-                                e.stopPropagation();
-                                await setConversationBookmarked(conversation.id, !conversation.isBookmarked);
-                              })}
-                              aria-label={`Bookmark conversation: ${conversation.title}`}
-                              className={`p-1.5 rounded-md transition-colors ${
-                                conversation.isBookmarked
-                                  ? 'bg-sky-500/20 text-sky-300'
-                                  : 'bg-white/5 text-white/60 hover:text-sky-300'
-                              }`}
-                              title={conversation.isBookmarked ? 'Remove bookmark' : 'Bookmark'}
-                            >
-                              <Bookmark className="w-3.5 h-3.5" />
+                              <Star className={`w-3.5 h-3.5 ${conversation.isSaved ? 'fill-current' : ''}`} />
                             </button>
 
                             <button
@@ -1814,13 +1865,13 @@ export function ConversationSidebar() {
                                 e.stopPropagation();
                                 await setConversationPinned(conversation.id, !conversation.isPinned);
                               })}
-                              aria-label={`Pin conversation: ${conversation.title}`}
-                              className={`p-1.5 rounded-md transition-colors ${
+                              aria-label={`${conversation.isPinned ? 'Unpin' : 'Pin'} conversation: ${conversation.title}`}
+                              className={`p-1 rounded-sm transition-colors duration-fast ${
                                 conversation.isPinned
-                                  ? 'bg-violet-500/20 text-violet-300'
-                                  : 'bg-white/5 text-white/60 hover:text-violet-300'
+                                  ? 'text-[hsl(var(--accent))]'
+                                  : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]'
                               }`}
-                              title={conversation.isPinned ? 'Unpin' : 'Pin'}
+                              title={conversation.isPinned ? 'Unpin conversation' : 'Pin conversation'}
                             >
                               <Pin className="w-3.5 h-3.5" />
                             </button>
@@ -1831,7 +1882,7 @@ export function ConversationSidebar() {
                                 await setConversationArchived(conversation.id, !conversation.isArchived);
                               })}
                               aria-label={`${conversation.isArchived ? 'Unarchive' : 'Archive'} conversation: ${conversation.title}`}
-                              className="p-1.5 rounded-md bg-white/5 text-white/60 hover:text-orange-300 transition-colors"
+                              className="p-1 rounded-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
                               title={conversation.isArchived ? 'Unarchive' : 'Archive'}
                             >
                               {conversation.isArchived ? (
@@ -1845,7 +1896,7 @@ export function ConversationSidebar() {
                               onClick={handleAsyncEvent((e) => handleDelete(conversation.id, e))}
                               disabled={isDeleting}
                               aria-label={`Delete conversation: ${conversation.title}`}
-                              className="p-1.5 rounded-md bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 disabled:opacity-50 transition-colors"
+                              className="p-1 rounded-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--danger-fg))] disabled:opacity-50 transition-colors duration-fast"
                               title="Delete conversation"
                             >
                               {isDeleting ? (
@@ -1858,9 +1909,7 @@ export function ConversationSidebar() {
                         </div>
 
                         {(conversation.lastMessagePreview || (conversation.messages && conversation.messages.length > 0)) && (
-                          <p className={`text-xs mt-2 break-words ${
-                            isJournalScope ? 'line-clamp-3 text-emerald-100/75' : 'line-clamp-2 text-white/50'
-                          }`}>
+                          <p className="mt-1 text-xs text-[hsl(var(--text-muted))] line-clamp-2 break-words">
                             {conversation.lastMessagePreview ?? conversation.messages?.[conversation.messages.length - 1]?.content}
                           </p>
                         )}
@@ -1874,34 +1923,41 @@ export function ConversationSidebar() {
         )}
       </div>
 
-      <div className="p-4 border-t border-white/10">
-        <div className="text-xs text-white/40 text-center">
+      <div className="p-3 border-t border-subtle">
+        <div className="text-xs text-[hsl(var(--text-muted))] text-center">
           {conversations.length} {isJournalScope ? 'entry' : 'conversation'}{conversations.length !== 1 ? 's' : ''}
         </div>
       </div>
 
       {isSpacesOpen && createPortal(
         <>
-          <button
+          <motion.button
             type="button"
             aria-label="Close spaces panel"
             onClick={() => setIsSpacesOpen(false)}
-            className={`fixed inset-0 bg-black/40 backdrop-blur-[1px] ${SPACES_MODAL_LAYER_CLASSES.backdrop}`}
+            className={`fixed inset-0 bg-[hsl(var(--overlay))] ${SPACES_MODAL_LAYER_CLASSES.backdrop}`}
+            initial={prefersReducedMotion ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
           />
-          <aside
-            className={`fixed border-r border-white/10 bg-[#0b1118]/95 backdrop-blur-xl shadow-2xl shadow-black/40 ${SPACES_MODAL_LAYER_CLASSES.panel}`}
+          <motion.aside
+            className={`fixed border-r border-subtle bg-surface-raised shadow-md ${SPACES_MODAL_LAYER_CLASSES.panel}`}
             style={spacesPanelFrame ?? undefined}
+            initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
           >
             <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col overflow-hidden`}>
-              <div className={`flex items-center justify-between border-b border-white/10 px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
+              <div className={`flex items-center justify-between border-b border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-white/40">Per-Space Context</p>
-                  <h3 className="text-sm font-medium text-white/90">Spaces</h3>
+                  <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">Per-space context</p>
+                  <h3 className="text-sm font-medium text-[hsl(var(--text-primary))]">Spaces</h3>
                 </div>
                 <button
                   onClick={() => setIsSpacesOpen(false)}
-                  className="rounded-md border border-white/15 bg-white/5 p-1.5 text-white/60 transition-colors hover:border-white/30 hover:text-white"
+                  className="rounded-sm p-1.5 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]"
                   aria-label="Close spaces panel"
+                  title="Close"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -1911,23 +1967,23 @@ export function ConversationSidebar() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsCreateSpaceOpen((open) => !open)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white/90"
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                   >
                     <FolderPlus className="w-3.5 h-3.5" />
-                    {isCreateSpaceOpen ? 'Cancel' : 'New Space'}
+                    {isCreateSpaceOpen ? 'Cancel' : 'New space'}
                   </button>
                   <button
                     onClick={() => setIsSpaceEditorOpen((open) => !open)}
                     disabled={!selectedSpace}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 transition-colors hover:border-white/30 hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Settings2 className="w-3.5 h-3.5" />
-                    Environment
+                    Edit space
                   </button>
                 </div>
 
                 {isCreateSpaceOpen && (
-                  <div className="mt-2 space-y-2 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+                  <div className="mt-2 space-y-2 rounded-sm border border-subtle bg-surface p-2.5">
                     <input
                       value={newSpaceNameDraft}
                       onChange={(e) => setNewSpaceNameDraft(e.target.value)}
@@ -1936,16 +1992,16 @@ export function ConversationSidebar() {
                           ? 'Journal name (e.g. Food Research, Weekly Notes)'
                           : 'Space name (e.g. Product, Research, Personal)'
                       }
-                      className="w-full rounded-md border border-white/10 bg-white/[0.02] px-2.5 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                      className="w-full rounded-sm border border-default bg-surface-raised px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                     />
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => setNewSpaceKindDraft('standard')}
-                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                        className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${
                           newSpaceKindDraft === 'standard'
-                            ? 'border-blue-400/45 bg-blue-500/20 text-blue-100'
-                            : 'border-white/15 bg-white/5 text-white/65 hover:border-white/30 hover:text-white'
+                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                            : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                         }`}
                       >
                         Standard
@@ -1953,10 +2009,10 @@ export function ConversationSidebar() {
                       <button
                         type="button"
                         onClick={() => setNewSpaceKindDraft('journal')}
-                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                        className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${
                           newSpaceKindDraft === 'journal'
-                            ? 'border-emerald-400/45 bg-emerald-500/20 text-emerald-100'
-                            : 'border-white/15 bg-white/5 text-white/65 hover:border-white/30 hover:text-white'
+                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                            : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                         }`}
                       >
                         Journal
@@ -1970,14 +2026,14 @@ export function ConversationSidebar() {
                           setNewSpaceNameDraft('');
                           setNewSpaceKindDraft('standard');
                         }}
-                        className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2.5 py-1 text-[11px] text-white/65 transition-colors hover:border-white/30 hover:text-white"
+                        className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                       >
                         Cancel
                       </button>
                       <button
                         onClick={handleAsyncEvent(createSpace)}
                         disabled={isCreatingSpace}
-                        className="inline-flex items-center gap-1 rounded-md border border-blue-400/30 bg-blue-500/10 px-2.5 py-1 text-[11px] text-blue-200 transition-colors hover:border-blue-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded-sm bg-[hsl(var(--accent))] px-2 py-1 text-xs text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isCreatingSpace ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1991,33 +2047,37 @@ export function ConversationSidebar() {
                 )}
 
                 <div className="mt-3 flex min-h-0 flex-1 flex-col">
-                  <p className="mb-2 text-[10px] uppercase tracking-wide text-white/40">
-                    Space Selector
+                  <p className="mb-2 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+                    Choose space
                   </p>
-                  <div className="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
+                  <div className="flex-1 min-h-0 space-y-0.5 overflow-y-auto pr-1">
                     <button
                       onClick={handleAsyncEvent(() => handleSpaceSelect(null))}
-                      className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors ${
-                        selectedSpaceId === null
-                          ? 'border-blue-400/40 bg-blue-500/25 text-blue-100'
-                          : 'border-white/10 bg-white/5 text-white/70 hover:border-white/25 hover:text-white'
+                      className={`relative w-full rounded-sm px-3 py-2 text-left transition-colors duration-fast ${
+                        selectedSpaceId === null ? 'bg-surface' : 'hover:bg-surface'
                       }`}
                     >
+                      {selectedSpaceId === null && (
+                        <span
+                          className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                          aria-hidden="true"
+                        />
+                      )}
                       <div className="flex items-start gap-2.5">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/20 bg-white/10 text-sm">
+                        <div className="flex h-6 w-6 shrink-0 items-center justify-center text-[hsl(var(--text-tertiary))]">
                           <MessageSquare className="h-4 w-4" />
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate text-xs font-medium">All Spaces</p>
-                          <p className="mt-0.5 text-[11px] text-white/55">
-                            View every conversation
+                          <p className="truncate text-sm text-[hsl(var(--text-primary))]">All spaces</p>
+                          <p className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
+                            Every conversation, all scopes
                           </p>
                         </div>
                       </div>
                     </button>
 
                     {standardSpaces.length > 0 && (
-                      <p className="px-1 pt-1 text-[10px] uppercase tracking-wide text-white/45">
+                      <p className="px-2 pt-3 pb-1 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
                         Spaces
                       </p>
                     )}
@@ -2025,52 +2085,52 @@ export function ConversationSidebar() {
                     {standardSpaces.map((space) => {
                       const isSelected = selectedSpaceId === space.id;
                       const accent = normalizeHexColor(space.accentColor);
-                      const cardStyle = accent
-                        ? {
-                          borderColor: withAlpha(accent, isSelected ? 0.65 : 0.35),
-                          backgroundColor: withAlpha(accent, isSelected ? 0.2 : 0.08),
-                          boxShadow: isSelected
-                            ? `inset 0 0 0 1px ${withAlpha(accent, 0.22)}`
-                            : undefined,
-                        }
-                        : undefined;
-                      const iconStyle = accent
-                        ? {
-                          borderColor: withAlpha(accent, 0.55),
-                          backgroundColor: withAlpha(accent, 0.2),
-                        }
-                        : undefined;
 
                       return (
                         <button
                           key={space.id}
                           onClick={handleAsyncEvent(() => handleSpaceSelect(space.id))}
-                          className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors ${
-                            accent
-                              ? 'text-white/85 hover:text-white'
-                              : isSelected
-                                ? 'border-blue-400/40 bg-blue-500/25 text-blue-100'
-                                : 'border-white/10 bg-white/5 text-white/70 hover:border-white/25 hover:text-white'
+                          className={`relative w-full rounded-sm px-3 py-2 text-left transition-colors duration-fast ${
+                            isSelected ? 'bg-surface' : 'hover:bg-surface'
                           }`}
-                          style={cardStyle}
                           title={space.description ?? space.name}
                         >
+                          {isSelected && (
+                            <span
+                              className="absolute inset-y-0 left-0 w-0.5"
+                              style={{ backgroundColor: accent ?? undefined }}
+                              aria-hidden="true"
+                            />
+                          )}
+                          {isSelected && !accent && (
+                            <span
+                              className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                              aria-hidden="true"
+                            />
+                          )}
                           <div className="flex items-start gap-2.5">
-                            <div
-                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/20 bg-white/10 text-sm"
-                              style={iconStyle}
-                            >
-                              {space.icon || <MessageSquare className="h-4 w-4" />}
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center text-sm text-[hsl(var(--text-tertiary))]">
+                              {space.icon || (
+                                accent ? (
+                                  <span
+                                    className="h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: accent }}
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <MessageSquare className="h-4 w-4" />
+                                )
+                              )}
                             </div>
                             <div className="min-w-0">
-                              <p className="truncate text-xs font-medium">{space.name}</p>
+                              <p className="truncate text-sm text-[hsl(var(--text-primary))]">{space.name}</p>
                               {space.description ? (
-                                <p className="mt-0.5 line-clamp-2 text-[11px] text-white/55">
+                                <p className="mt-0.5 line-clamp-2 text-xs text-[hsl(var(--text-muted))]">
                                   {space.description}
                                 </p>
                               ) : (
-                                <p className="mt-0.5 text-[11px] text-white/45">
-                                  Custom space context
+                                <p className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
+                                  No description
                                 </p>
                               )}
                             </div>
@@ -2082,46 +2142,48 @@ export function ConversationSidebar() {
                 </div>
 
                 {isSpaceEditorOpen && selectedSpace && (
-                  <div className="mt-2 space-y-2 rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                    <p className="text-[11px] uppercase tracking-wide text-white/45">
-                      Space Environment
+                  <div className="mt-2 space-y-2 rounded-sm border border-subtle bg-surface p-3">
+                    <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+                      Settings
                     </p>
 
-                    <details open className="rounded-md border border-white/10 bg-white/[0.02] p-2">
-                      <summary className="cursor-pointer text-[11px] text-white/70">Basics</summary>
+                    <details open className="rounded-sm border border-subtle bg-surface-raised p-2">
+                      <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Basics</summary>
                       <div className="mt-2 space-y-2">
                         <div className="grid grid-cols-[72px_1fr] gap-2">
                           <input
                             value={spaceIconDraft}
                             onChange={(e) => setSpaceIconDraft(e.target.value)}
                             placeholder="Icon"
-                            className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                            className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                           />
                           <input
                             value={spaceNameDraft}
                             onChange={(e) => setSpaceNameDraft(e.target.value)}
                             placeholder="Space name"
-                            className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                            className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                           />
                         </div>
                         <div className="grid grid-cols-[92px_1fr_56px] gap-2">
                           <input
                             type="color"
-                            value={normalizeHexColor(spaceAccentDraft) ?? '#3b82f6'}
+                            value={normalizeHexColor(spaceAccentDraft) ?? '#8b72ff'}
                             onChange={(e) => setSpaceAccentDraft(e.target.value)}
-                            className="h-8 w-full rounded-md border border-white/10 bg-white/[0.03] p-1"
+                            className="h-8 w-full rounded-sm border border-default bg-surface p-1"
                             title="Accent color"
                           />
                           <input
                             value={spaceAccentDraft}
                             onChange={(e) => setSpaceAccentDraft(e.target.value)}
-                            placeholder="#3b82f6"
-                            className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                            placeholder="#8b72ff"
+                            className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                           />
                           <button
                             type="button"
                             onClick={() => setSpaceAccentDraft('')}
-                            className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-white/65 transition-colors hover:border-white/30 hover:text-white"
+                            aria-label="Clear accent color"
+                            title="Clear accent color"
+                            className="rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                           >
                             Clear
                           </button>
@@ -2130,20 +2192,20 @@ export function ConversationSidebar() {
                           value={spaceDescriptionDraft}
                           onChange={(e) => setSpaceDescriptionDraft(e.target.value)}
                           placeholder="Description"
-                          className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                          className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                         />
                       </div>
                     </details>
 
-                    <details className="rounded-md border border-white/10 bg-white/[0.02] p-2">
-                      <summary className="cursor-pointer text-[11px] text-white/70">AI Defaults</summary>
+                    <details className="rounded-sm border border-subtle bg-surface-raised p-2">
+                      <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Defaults</summary>
                       <div className="mt-2 space-y-2">
                         <input
                           value={spaceModelDraft}
                           onChange={(e) => setSpaceModelDraft(e.target.value)}
                           placeholder="Default model id (optional)"
                           list="space-model-options"
-                          className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60"
+                          className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                         />
                         <datalist id="space-model-options">
                           {availableSpaceModels.map((modelId) => (
@@ -2153,52 +2215,52 @@ export function ConversationSidebar() {
                         <textarea
                           value={spacePromptDraft}
                           onChange={(e) => setSpacePromptDraft(e.target.value)}
-                          placeholder="Space prompt (prepended for this environment)"
+                          placeholder="System prompt for this space"
                           rows={4}
-                          className="w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-blue-400/60 resize-y"
+                          className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
                         />
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             onClick={() => setSpaceKbDefault((value) => !value)}
-                            className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
+                            className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${
                               spaceKbDefault
-                                ? 'bg-blue-500/20 border-blue-400/45 text-blue-100'
-                                : 'bg-white/5 border-white/10 text-white/60 hover:text-white/90'
+                                ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                                : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                             }`}
                           >
-                            KB Default
+                            Knowledge base by default
                           </button>
                           <button
                             type="button"
                             onClick={() => setSpaceWebDefault((value) => !value)}
-                            className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
+                            className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${
                               spaceWebDefault
-                                ? 'bg-blue-500/20 border-blue-400/45 text-blue-100'
-                                : 'bg-white/5 border-white/10 text-white/60 hover:text-white/90'
+                                ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                                : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                             }`}
                           >
-                            Web Default
+                            Web by default
                           </button>
                           <button
                             type="button"
                             onClick={toggleSpaceDeepResearchDefault}
-                            className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
+                            className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${
                               spaceDeepResearchDefault
-                                ? 'bg-blue-500/20 border-blue-400/45 text-blue-100'
-                                : 'bg-white/5 border-white/10 text-white/60 hover:text-white/90'
+                                ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                                : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                             }`}
                           >
-                            Deep Research
+                            Deep research by default
                           </button>
                         </div>
                         {spaceDeepResearchDefault && (
                           <div
                             role="status"
                             aria-live="polite"
-                            className="rounded-md border border-amber-400/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100/90"
+                            className="rounded-sm border border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] px-2 py-1.5 text-xs text-[hsl(var(--warning-fg))]"
                           >
-                            Deep Research default is on for this space, so responses can take longer.
+                            Deep research is on for this space. Responses will be slower.
                           </div>
                         )}
                       </div>
@@ -2208,49 +2270,49 @@ export function ConversationSidebar() {
                       <button
                         onClick={handleAsyncEvent(saveSpaceEnvironment)}
                         disabled={isSavingSpace}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-emerald-400/40 text-emerald-200 hover:border-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="inline-flex items-center gap-1 rounded-sm bg-[hsl(var(--accent))] px-2.5 py-1 text-xs text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isSavingSpace ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <Save className="w-3.5 h-3.5" />
                         )}
-                        Save Space
+                        Save
                       </button>
                       {selectedSpace.id !== 'space_general' && (
                         <button
                           onClick={handleAsyncEvent(() => setSelectedSpaceArchived(!selectedSpace.isArchived))}
                           disabled={isArchivingSpace}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-orange-400/35 text-orange-200 hover:border-orange-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          className="inline-flex items-center gap-1 rounded-sm border border-default px-2.5 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isArchivingSpace ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           ) : (
                             <Archive className="w-3.5 h-3.5" />
                           )}
-                          {selectedSpace.isArchived ? 'Restore Space' : 'Archive Space'}
+                          {selectedSpace.isArchived ? 'Restore' : 'Archive'}
                         </button>
                       )}
                     </div>
 
                     {archivedSpaces.length > 0 && (
-                      <details className="rounded-md border border-white/10 bg-white/[0.02] p-2">
-                        <summary className="cursor-pointer text-[11px] text-white/60">
-                          Archived Spaces ({archivedSpaces.length})
+                      <details className="rounded-sm border border-subtle bg-surface-raised p-2">
+                        <summary className="cursor-pointer text-xs text-[hsl(var(--text-muted))]">
+                          Archived spaces · {archivedSpaces.length}
                         </summary>
                         <div className="mt-2 space-y-1">
                           {archivedSpaces.slice(0, 6).map((space) => (
                             <div
                               key={space.id}
-                              className="flex items-center justify-between rounded-md border border-white/10 bg-white/[0.02] px-2 py-1"
+                              className="flex items-center justify-between rounded-sm border border-subtle bg-surface px-2 py-1"
                             >
-                              <span className="text-[11px] text-white/70 truncate">
+                              <span className="text-xs text-[hsl(var(--text-secondary))] truncate">
                                 {space.icon ? `${space.icon} ` : ''}{space.name}
                               </span>
                               <button
                                 onClick={handleAsyncEvent(() => restoreArchivedSpace(space.id))}
                                 disabled={isRestoringSpace}
-                                className="text-[11px] rounded border border-white/20 px-1.5 py-0.5 text-white/70 hover:text-white hover:border-white/35 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="rounded-sm border border-default px-1.5 py-0.5 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-fast"
                               >
                                 Restore
                               </button>
@@ -2263,13 +2325,13 @@ export function ConversationSidebar() {
                 )}
               </div>
 
-              <div className={`border-t border-white/10 px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
-                <p className="text-xs text-white/45 text-center">
+              <div className={`border-t border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
+                <p className="text-xs text-[hsl(var(--text-muted))] text-center">
                   {activeSpacesOrdered.length} space{activeSpacesOrdered.length !== 1 ? 's' : ''}
                 </p>
               </div>
             </div>
-          </aside>
+          </motion.aside>
         </>,
         document.body
       )}

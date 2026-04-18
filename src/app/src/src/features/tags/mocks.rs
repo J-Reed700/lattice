@@ -5,6 +5,8 @@
 #[cfg(test)]
 use crate::infrastructure::services::traits::*;
 #[cfg(test)]
+use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
+#[cfg(test)]
 use crate::shared::error::Result;
 // Removed: use crate::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
 #[cfg(test)]

@@ -1,34 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  AlertCircle,
-  BookOpen,
-  ChevronDown,
-  ChevronUp,
-  Database,
-  Globe,
-  MessageSquarePlus,
-  Send,
-  SlidersHorizontal,
-  Sparkles,
-  Square,
-  Wrench,
-  X,
-} from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
+import { motion, useReducedMotion } from 'framer-motion';
+import { MessageSquare, Plus, Send, Settings2, Square } from 'lucide-react';
 
+import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from './ComposerControls';
 import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
-import { MessageBubble } from './MessageBubble';
+import { Message } from './Message';
 import { VaultAPI } from '../../lib/api';
 import { getConversationMessages, useConversationsStore } from '../../stores/conversationsStore';
 import { toast } from '../../stores/toastStore';
+import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 
 import type { CustomToolSettings, ToolPreferences } from '../../types';
 
-const WEB_TOOL_NAMES = ['web_search', 'fetch_url_content'] as const;
-const WIKI_TOOL_NAMES = ['wiki_search', 'wiki_summary'] as const;
 type TurnMode = 'auto' | 'followup' | 'query';
-const DEEP_RESEARCH_WARNING_MESSAGE =
-  'Deep Research runs recursive multi-step retrieval and can take noticeably longer than standard replies.';
 
 const normalizeEnabledTools = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) {
@@ -53,13 +39,6 @@ const setToolNames = (
   }
   return [...set];
 };
-
-const formatToolLabel = (name: string): string =>
-  name
-    .split('_')
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ');
 
 const defaultToolPreferences = (): ToolPreferences => ({
   knowledgeBase: false,
@@ -141,31 +120,55 @@ export function ChatPanel() {
     conversations,
     spaces,
     isSending,
-    error,
     sendMessage,
     cancelGeneration,
-    clearError,
+    createConversation,
     optimisticMessages,
   } = useConversationsStore();
 
   const [input, setInput] = useState('');
   const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(loadInitialToolPreferences);
-  const [showComposerControls, setShowComposerControls] = useState(false);
   const [customTools, setCustomTools] = useState<CustomToolSettings[]>([]);
+  const [isControlsOpen, setIsControlsOpen] = useState(false);
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
   const lastAppliedToolPreferenceConversationRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const previousConversationIdRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const knownMessageIdsRef = useRef<{ conversationId: string | null; ids: Set<string> }>({
+    conversationId: null,
+    ids: new Set(),
+  });
+  const prefersReducedMotion = useReducedMotion();
 
   const enabledToolSet = useMemo(
     () => new Set(toolPreferences.enabledTools ?? []),
     [toolPreferences.enabledTools]
   );
-  const wikiEnabled = WIKI_TOOL_NAMES.some((toolName) => enabledToolSet.has(toolName));
 
-  // Use selector to get combined real + optimistic messages
   const messages = getConversationMessages(activeConversationId);
+
+  const getMessageKey = (message: typeof messages[number]): string =>
+    'tempId' in message ? message.tempId : message.id;
+
+  const freshMessageKeys = useMemo(() => {
+    const fresh = new Set<string>();
+    const tracker = knownMessageIdsRef.current;
+    if (tracker.conversationId !== activeConversationId) {
+      tracker.conversationId = activeConversationId ?? null;
+      tracker.ids = new Set(messages.map(getMessageKey));
+      return fresh;
+    }
+    for (const message of messages) {
+      const key = getMessageKey(message);
+      if (!tracker.ids.has(key)) {
+        fresh.add(key);
+        tracker.ids.add(key);
+      }
+    }
+    return fresh;
+  }, [activeConversationId, messages]);
 
   useEffect(() => {
     const loadCustomTools = async () => {
@@ -209,7 +212,7 @@ export function ChatPanel() {
     try {
       localStorage.setItem('toolPreferences', JSON.stringify(toolPreferences));
     } catch {
-      // Ignore storage errors (e.g., storage disabled)
+      // Ignore storage errors
     }
   }, [toolPreferences]);
 
@@ -324,7 +327,7 @@ export function ChatPanel() {
       deepResearchMode: !(prev.deepResearchMode ?? false),
     }));
     if (enabling) {
-      toast.warning('Deep Research enabled', {
+      toast.warning('Deep research enabled', {
         message: DEEP_RESEARCH_WARNING_MESSAGE,
         duration: 5000,
       });
@@ -339,6 +342,14 @@ export function ChatPanel() {
         enabledTools: setToolNames(prev.enabledTools, [toolName], !currentlyEnabled),
       };
     });
+  };
+
+  const handleTurnModeChange = (nextMode: TurnMode) => {
+    updateToolPreferences((prev) => ({
+      ...prev,
+      turnMode: nextMode,
+      followupMode: nextMode === 'followup',
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -384,316 +395,182 @@ export function ChatPanel() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !(e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSubmit(e);
+    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       handleSubmit(e);
     }
   };
 
-  const toolButtonClass = (active: boolean) =>
-    `inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition-all ${
-      active
-        ? 'bg-blue-500/20 text-blue-200 border-blue-500/40'
-        : 'bg-white/5 text-white/50 border-white/10 hover:bg-white/10'
-    }`;
-  const turnModeButtonClass = (active: boolean) =>
-    `inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition-all ${
-      active
-        ? 'bg-emerald-500/20 text-emerald-200 border-emerald-500/40'
-        : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10'
-    }`;
-  const turnMode =
+  const turnMode: TurnMode =
     normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
-  const customEnabledCount = customTools.filter((tool) => enabledToolSet.has(tool.name)).length;
-  const activeComposerFlags = [
-    turnMode !== 'auto' ? `Mode: ${turnMode}` : null,
-    toolPreferences.knowledgeBase ? 'KB' : null,
-    toolPreferences.webSearch ? 'Web' : null,
-    wikiEnabled ? 'Wiki' : null,
-    toolPreferences.deepResearchMode ? 'Deep' : null,
-    customEnabledCount > 0 ? `${customEnabledCount} Custom` : null,
-  ].filter((value): value is string => Boolean(value));
-  const visibleComposerFlags = activeComposerFlags.slice(0, 3);
-  const hiddenComposerFlagCount = Math.max(0, activeComposerFlags.length - visibleComposerFlags.length);
+
+  const placeholder =
+    turnMode === 'followup'
+      ? 'Follow up'
+      : turnMode === 'query'
+        ? 'Search sources and answer'
+        : 'Ask anything';
+
+  const handleCreateEmptyStateConversation = async () => {
+    if (isCreatingConversation) return;
+    setIsCreatingConversation(true);
+    try {
+      await createConversation(createDefaultConversationTitle());
+    } catch {
+      // Error surfaces via conversationsStore
+    } finally {
+      setIsCreatingConversation(false);
+    }
+  };
 
   if (!activeConversationId) {
     return (
-      <div className="flex-1 min-w-0 flex items-center justify-center bg-gradient-to-b from-[#0d1117] to-[#0a0e14]">
-        <div className="text-center px-8">
-          <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/30 flex items-center justify-center backdrop-blur-xl">
-            <MessageSquarePlus className="w-10 h-10 text-blue-400" />
-          </div>
-          <h2 className="text-2xl font-bold text-white/90 mb-3">
-            No Conversation Selected
+      <div className="flex-1 min-w-0 flex items-center justify-center bg-bg">
+        <div className="text-center px-8 max-w-md">
+          <MessageSquare className="mx-auto mb-4 h-8 w-8 text-[hsl(var(--text-muted))]" aria-hidden="true" />
+          <h2 className="text-lg font-semibold font-serif text-[hsl(var(--text-primary))]">
+            No conversation open.
           </h2>
-          <p className="text-white/60 max-w-md">
-            Select an existing conversation from the sidebar or create a new one to start chatting.
-          </p>
+          <button
+            type="button"
+            onClick={() => { void handleCreateEmptyStateConversation(); }}
+            disabled={isCreatingConversation}
+            aria-label="Create new conversation"
+            className="mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-[hsl(var(--accent))] px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            <span>New conversation</span>
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col bg-gradient-to-b from-[#0d1117] to-[#0a0e14]">
-      {error && (
-        <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-400" />
-            <p className="text-sm text-red-300">{error}</p>
-          </div>
-          <button
-            onClick={clearError}
-            aria-label="Dismiss error"
-            className="p-1 rounded-lg hover:bg-red-500/20 text-red-400 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      <ConversationLinkedDocumentsPanel conversationId={activeConversationId} />
-
+    <div className="flex-1 min-w-0 flex flex-col bg-bg">
+      {/* Thread scroll region */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-        {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center px-8">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-green-500/20 to-teal-500/20 border border-green-500/30 flex items-center justify-center backdrop-blur-xl">
-                <MessageSquarePlus className="w-8 h-8 text-green-400" />
+        <div className="mx-auto w-full max-w-[clamp(680px,72vw,900px)]">
+          {messages.length === 0 ? (
+            <div className="flex items-center justify-center min-h-[60vh] px-6">
+              <div className="text-center max-w-md">
+                <MessageSquare className="mx-auto mb-4 h-8 w-8 text-[hsl(var(--text-muted))]" aria-hidden="true" />
+                <h3 className="text-lg font-semibold font-serif text-[hsl(var(--text-primary))]">
+                  No messages yet.
+                </h3>
               </div>
-              <h3 className="text-lg font-semibold text-white/90 mb-2">
-                Start a Conversation
-              </h3>
-              <p className="text-white/60 text-sm max-w-sm">
-                Ask me anything! I can help you search your documents, answer questions, and more.
-              </p>
             </div>
+          ) : (
+            <motion.div
+              key={activeConversationId ?? 'empty'}
+              initial={prefersReducedMotion ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {messages.map((message) => {
+                const key = getMessageKey(message);
+                return (
+                  <Message
+                    key={key}
+                    message={message}
+                    isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
+                  />
+                );
+              })}
+            </motion.div>
+          )}
+
+          {/* Sticky sources-in-this-conversation footer, above the composer */}
+          <div className="px-6">
+            <ConversationLinkedDocumentsPanel conversationId={activeConversationId} />
           </div>
-        ) : (
-          <div className="divide-y divide-white/5">
-            {messages.map((message) => (
-              <MessageBubble
-                key={'tempId' in message ? message.tempId : message.id}
-                message={message}
-              />
-            ))}
-          </div>
-        )}
+        </div>
       </div>
 
-      <div className="border-t border-white/[0.06] bg-gradient-to-t from-black/30 to-transparent backdrop-blur-2xl">
-        <form onSubmit={handleSubmit} className="p-4">
-          <div className="relative">
+      {/* Composer — pinned bottom (CHAT-REDESIGN-SPEC §4) */}
+      <div className="border-t border-subtle bg-bg">
+        <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[clamp(680px,72vw,900px)] px-6 py-4">
+          <div className="relative rounded-md border border-default bg-surface focus-within:ring-2 focus-within:ring-[hsl(var(--ring))]">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={
-                turnMode === 'followup'
-                  ? 'Ask a follow-up about this conversation...'
-                  : (turnMode === 'query'
-                    ? 'Ask a query (retrieval + web enrichment run automatically)...'
-                    : 'Ask a question or type a message...')
-              }
+              placeholder={placeholder}
               disabled={isSending}
               rows={1}
-              aria-label="Message input"
-              className="w-full px-4 py-3 pr-12 bg-white/[0.04] border border-white/[0.08] rounded-2xl text-white/90 placeholder-white/40 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/30 focus:bg-white/[0.06] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed max-h-40"
-              style={{ minHeight: '48px' }}
+              aria-label="Message composer"
+              className="w-full resize-none bg-transparent px-4 py-3 pl-11 pr-11 font-sans text-base text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ minHeight: '48px', maxHeight: '240px' }}
             />
+
+            {/* Controls trigger (left) */}
+            <Popover.Root open={isControlsOpen} onOpenChange={setIsControlsOpen}>
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label="Composer controls"
+                  title="Turn mode and tools"
+                  className={`absolute left-3 bottom-3 inline-flex h-6 w-6 items-center justify-center rounded-sm transition-colors duration-fast active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none ${
+                    isControlsOpen
+                      ? 'text-[hsl(var(--text-secondary))]'
+                      : 'text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))]'
+                  }`}
+                >
+                  <Settings2 className="h-4 w-4" />
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  side="top"
+                  align="start"
+                  sideOffset={8}
+                  className="z-50 w-[320px] max-h-[480px] overflow-y-auto rounded-md border border-subtle bg-surface-raised p-4 text-[hsl(var(--text-primary))] shadow-md outline-none data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+                >
+                  <ComposerControls
+                    turnMode={turnMode}
+                    onTurnModeChange={handleTurnModeChange}
+                    toolPreferences={toolPreferences}
+                    onToggleKnowledgeBase={toggleKnowledgeBase}
+                    onToggleWebTools={toggleWebTools}
+                    onToggleWikiTools={toggleWikiTools}
+                    onToggleDeepResearch={toggleDeepResearch}
+                    customTools={customTools}
+                    enabledToolSet={enabledToolSet}
+                    onToggleCustomTool={toggleCustomTool}
+                  />
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+
+            {/* Send / Stop (right) */}
             {isSending ? (
               <button
                 type="button"
                 onClick={handleCancel}
-                aria-label="Stop generation"
-                className="absolute right-2 bottom-2 p-2 rounded-xl bg-gradient-to-r from-rose-500/20 to-orange-500/20 hover:from-rose-500/30 hover:to-orange-500/30 border border-rose-500/30 text-rose-300 hover:text-rose-200 shadow-lg shadow-rose-500/10 transition-all duration-200 backdrop-blur-sm"
-                title="Stop generation"
+                aria-label="Stop generating response"
+                title="Stop"
+                className="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-sm bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))] transition-[background-color,color,transform] duration-fast active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none hover:brightness-110"
               >
-                <Square className="w-4 h-4" />
+                <Square className="h-4 w-4" />
               </button>
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim() || isSending}
+                disabled={!input.trim()}
                 aria-label="Send message"
-                className="absolute right-2 bottom-2 p-2 rounded-xl bg-gradient-to-r from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 border border-blue-500/30 text-blue-400 hover:text-blue-300 shadow-lg shadow-blue-500/10 transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed backdrop-blur-sm"
-                title="Send message (Enter)"
+                title="Send · Enter"
+                className="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-sm bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] transition-[background-color,color,transform] duration-fast active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--border-default))] disabled:text-[hsl(var(--text-muted))] disabled:active:scale-100"
               >
-                <Send className="w-4 h-4" />
+                <Send className="h-4 w-4" />
               </button>
             )}
           </div>
-          <div className="mt-2">
-            <div className="flex items-center justify-between gap-2 text-[11px] text-white/40">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {activeComposerFlags.length === 0 ? (
-                  <span className="truncate text-white/35">Auto mode · minimal controls</span>
-                ) : (
-                  <>
-                    {visibleComposerFlags.map((flag) => (
-                    <span
-                      key={flag}
-                      className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-white/65"
-                    >
-                      {flag}
-                    </span>
-                    ))}
-                    {hiddenComposerFlagCount > 0 && (
-                      <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-white/55">
-                        +{hiddenComposerFlagCount}
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowComposerControls((prev) => !prev)}
-                className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/[0.04] px-2 py-1 text-white/70 transition-colors hover:border-white/30 hover:text-white"
-              >
-                <SlidersHorizontal className="h-3 w-3" />
-                Controls
-                {showComposerControls ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-              </button>
-            </div>
-
-            {showComposerControls && (
-              <div className="mt-2 space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-xs text-white/40">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wider text-white/35">Turn</span>
-                  <button
-                    type="button"
-                    className={turnModeButtonClass(turnMode === 'auto')}
-                    aria-pressed={turnMode === 'auto'}
-                    onClick={() =>
-                      updateToolPreferences((prev) => ({
-                        ...prev,
-                        followupMode: false,
-                        turnMode: 'auto',
-                      }))
-                    }
-                    title="Auto: let the assistant infer whether this is a new topic or follow-up"
-                  >
-                    Auto
-                  </button>
-                  <button
-                    type="button"
-                    className={turnModeButtonClass(turnMode === 'followup')}
-                    aria-pressed={turnMode === 'followup'}
-                    onClick={() =>
-                      updateToolPreferences((prev) => ({
-                        ...prev,
-                        followupMode: true,
-                        turnMode: 'followup',
-                      }))
-                    }
-                    title="Follow-up: treat this turn as context-dependent and prefer KB-first when KB and web are both enabled"
-                  >
-                    <MessageSquarePlus className="h-3 w-3" />
-                    Follow-up
-                  </button>
-                  <button
-                    type="button"
-                    className={turnModeButtonClass(turnMode === 'query')}
-                    aria-pressed={turnMode === 'query'}
-                    onClick={() =>
-                      updateToolPreferences((prev) => ({
-                        ...prev,
-                        followupMode: false,
-                        turnMode: 'query',
-                      }))
-                    }
-                    title="Query: force full retrieval mode for this turn (knowledge base + enabled tools)"
-                  >
-                    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-                      <Database className="h-3 w-3" />
-                      <Wrench className="h-3 w-3" />
-                    </span>
-                    Query
-                  </button>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wider text-white/35">Tools</span>
-                  <button
-                    type="button"
-                    className={toolButtonClass(toolPreferences.knowledgeBase)}
-                    aria-pressed={toolPreferences.knowledgeBase}
-                    onClick={toggleKnowledgeBase}
-                    title="Force knowledge base retrieval for this turn"
-                  >
-                    <Database className="h-3 w-3" />
-                    KB
-                  </button>
-                  <button
-                    type="button"
-                    className={toolButtonClass(toolPreferences.webSearch)}
-                    aria-pressed={toolPreferences.webSearch}
-                    onClick={toggleWebTools}
-                    title="Enable and force web retrieval for this turn"
-                  >
-                    <Globe className="h-3 w-3" />
-                    Web
-                  </button>
-                  <button
-                    type="button"
-                    className={toolButtonClass(wikiEnabled)}
-                    aria-pressed={wikiEnabled}
-                    onClick={toggleWikiTools}
-                    title="Enable Wikipedia search + summary tools"
-                  >
-                    <BookOpen className="h-3 w-3" />
-                    Wiki
-                  </button>
-                  <button
-                    type="button"
-                    className={toolButtonClass(Boolean(toolPreferences.deepResearchMode))}
-                    aria-pressed={Boolean(toolPreferences.deepResearchMode)}
-                    onClick={toggleDeepResearch}
-                    title="Run recursive deep research (multi-provider, multi-step web expansion)"
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    Deep
-                  </button>
-                  {customTools.map((tool) => {
-                    const enabled = enabledToolSet.has(tool.name);
-                    return (
-                      <button
-                        key={tool.name}
-                        type="button"
-                        className={toolButtonClass(enabled)}
-                        aria-pressed={enabled}
-                        onClick={() => toggleCustomTool(tool.name)}
-                        title={tool.description || tool.name}
-                      >
-                        <Wrench className="h-3 w-3" />
-                        {formatToolLabel(tool.name)}
-                      </button>
-                    );
-                  })}
-                  {isSending && <span className="text-blue-400">Sending...</span>}
-                </div>
-              </div>
-            )}
-
-            {toolPreferences.deepResearchMode && (
-              <div
-                role="status"
-                aria-live="polite"
-                className="mt-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100/90"
-              >
-                {isSending
-                  ? 'Deep Research is running and may take a while to finish.'
-                  : DEEP_RESEARCH_WARNING_MESSAGE}
-              </div>
-            )}
-
-            <div className="mt-2 text-[11px] text-white/35">Press Enter to send, Shift+Enter for new line</div>
+          <div className="mt-2 text-right text-xs text-[hsl(var(--text-muted))]">
+            <kbd className="font-mono">Enter</kbd> to send · <kbd className="font-mono">Shift</kbd> + <kbd className="font-mono">Enter</kbd> for new line
           </div>
         </form>
       </div>

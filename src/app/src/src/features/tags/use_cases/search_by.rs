@@ -1,7 +1,7 @@
 //! Search by Tag Use Case
 
 use crate::features::tags::dto::{SearchByTagRequestDto, SearchByTagResponseDto};
-use crate::infrastructure::services::traits::TagServiceTrait;
+use crate::features::tags::TagServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;
 
@@ -35,7 +35,7 @@ impl SearchByTagUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::traits::MockTagService;
+    use crate::features::tags::mocks::MockTagService;
 
     #[tokio::test]
 

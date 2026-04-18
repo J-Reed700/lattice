@@ -74,7 +74,7 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
   if (error) {
     return (
       <div className="flex items-center justify-center p-8">
-        <p className="text-[var(--error)] dark:text-[var(--error-light)]">{error}</p>
+        <p className="text-[hsl(var(--danger-fg))] dark:text-[hsl(var(--danger-muted))]">{error}</p>
       </div>
     );
   }

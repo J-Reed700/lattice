@@ -204,7 +204,7 @@ use crate::infrastructure::services::traits::ConversationServiceTrait;
 use crate::infrastructure::services::traits::ConversationalQAServiceTrait;
 use crate::infrastructure::services::traits::IndexingServiceTrait;
 use crate::infrastructure::services::traits::QAEngineTrait;
-use crate::infrastructure::services::traits::TagServiceTrait;
+use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::services::traits::WebArchiveServiceTrait;
 use crate::infrastructure::services::traits::WebCaptureServiceTrait;
 use crate::infrastructure::services::traits::WebIngestionServiceTrait;

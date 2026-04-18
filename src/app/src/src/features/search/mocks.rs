@@ -383,6 +383,8 @@ impl HybridSearchTrait for MockHybridSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::tags::TagServiceTrait;
+    use crate::features::tags::mocks::MockTagService;
 
     #[tokio::test]
     async fn test_mock_embedding_service() {
