@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_validate_compatibility_success() {
-        let config = ModelConfig::AllMpnetBaseV2;
+        let config = ModelConfig::Unset;
         let result =
             validate_embedding_compatibility(DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_DIM, &config);
         assert!(result.is_ok());
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_validate_compatibility_failure() {
-        let config = ModelConfig::AllMpnetBaseV2;
+        let config = ModelConfig::Unset;
         let result = validate_embedding_compatibility(DEFAULT_EMBEDDING_DIM, 384, &config);
         assert!(result.is_err());
 

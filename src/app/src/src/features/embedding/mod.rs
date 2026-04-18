@@ -32,7 +32,6 @@ pub mod compatibility;
 pub mod dto;
 pub mod entity;
 pub mod generator;
-pub mod onnx_service;
 pub mod persistence_mapper;
 pub mod plugin;
 pub mod remote_service;

@@ -58,6 +58,8 @@ notify = "6.1"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+# ORT remains only for the search reranker (see features/search/engine/reranker.rs).
+# Embeddings have migrated to Candle. The reranker migration is a separate PR.
 ort = "=2.0.0-rc.10"
 tokenizers = "0.15"
 ndarray = "0.16.1"
@@ -98,7 +100,7 @@ rust-stemmers = "1.2"
 async-trait = "0.1"
 ollama-rs = "0.2"
 tokio-stream = "0.1"
-fastembed = "5.5"
+# fastembed removed: see ORT note above.
 # Candle — pure-Rust ML framework for embedding model inference.
 # Metal acceleration is enabled on macOS via the `metal` feature on `candle-core`.
 candle-core = { version = "0.8", features = ["metal"] }

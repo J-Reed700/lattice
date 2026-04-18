@@ -8,8 +8,9 @@ pub mod builder;
 pub mod dynamic_embedding_service;
 pub mod dynamic_port;
 
-// Re-export the ONNX embedding service as the primary embedding service
-pub use crate::infrastructure::ml::OnnxEmbeddingService as EmbeddingService;
+// `EmbeddingService` is the primary local embedding implementation.
+// Was `OnnxEmbeddingService`; now Candle. Alias keeps every caller compiling.
+pub use crate::features::embedding::candle_service::CandleEmbeddingService as EmbeddingService;
 pub use dynamic_embedding_service::DynamicEmbeddingService;
 pub use dynamic_port::DynamicEmbedding;
 

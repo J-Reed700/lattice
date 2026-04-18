@@ -152,7 +152,7 @@ use crate::infrastructure::file_system::file_storage::SecureFileStorage;
 use crate::infrastructure::llm::inference::InferenceEngine;
 use crate::infrastructure::llm::noop_client::NoOpLLMClient;
 use crate::infrastructure::llm::ollama_client::OllamaClient;
-use crate::features::embedding::onnx_service::OnnxEmbeddingService;
+use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::infrastructure::search::text_search::SqliteTextSearch;
 // USearchVectorIndex is used directly via modules.rs — no direct import needed here
 use crate::infrastructure::storage::ContentAddressedStorage;
@@ -1273,31 +1273,60 @@ impl Container {
             }
         };
 
+        // Candle loads weights from a directory (config.json + tokenizer.json
+        // + model.safetensors live as siblings). Resolve the parent of the
+        // validated weight path.
+        let model_dir = validated_path
+            .parent()
+            .ok_or_else(|| {
+                AppError::ModelLoadFailed(format!(
+                    "validated model path has no parent directory: {}",
+                    validated_path.display()
+                ))
+            })?
+            .to_path_buf();
+
+        // Reject legacy ONNX downloads with a clear message. The ONNX runtime
+        // was removed in this release; users with legacy downloads need to
+        // re-download in safetensors format.
+        if validated_path.extension().and_then(|s| s.to_str()) == Some("onnx") {
+            tracing::error!(
+                "Active embedding model is a legacy ONNX download: {}",
+                validated_path.display()
+            );
+            return Err(AppError::ModelLoadFailed(format!(
+                "Embedding model '{}' was downloaded as ONNX, which is no longer supported. \
+                 Delete and re-download it from Settings → Models — the new download will use \
+                 the Candle-compatible safetensors format.",
+                active_model.model_name()
+            )));
+        }
+
         tracing::info!(
-            "Loading ONNX embedding model from validated path: {}",
-            validated_path.display()
+            "Loading Candle embedding model from validated dir: {}",
+            model_dir.display()
         );
 
-        // Attempt to load the ONNX model with validated path
-        let path_str = validated_path.to_string_lossy();
-        match OnnxEmbeddingService::new(path_str.as_ref()) {
+        match CandleEmbeddingService::new(&model_dir) {
             Ok(service) => {
-                // Verify the model's output dimension matches the vector index dimension
                 let expected_dim = self.search.vector_search().dimension();
                 let actual_dim = service.dimension();
                 if actual_dim != expected_dim {
+                    // The dimension-metadata sidecar (step 5) wipes the index
+                    // on switch, but we still hit this branch on first load
+                    // before the wipe propagates. Treat it as a hard error
+                    // here — the next app start picks up the new dimension.
                     tracing::error!(
                         "Embedding dimension mismatch: model '{}' produces {}-dim vectors \
-                         but the vector index expects {}-dim. Choose a {}-dim embedding model \
-                         or re-index with a different dimension.",
+                         but the vector index expects {}-dim. Restart the app to rebuild \
+                         the index at the new dimension.",
                         active_model.model_name(),
                         actual_dim,
-                        expected_dim,
                         expected_dim
                     );
                     return Err(AppError::ModelLoadFailed(format!(
                         "Model '{}' produces {}-dimensional embeddings but the search index \
-                         requires {}. Please select a compatible embedding model.",
+                         requires {}. Restart the app to migrate the index.",
                         active_model.model_name(),
                         actual_dim,
                         expected_dim
@@ -1305,9 +1334,10 @@ impl Container {
                 }
 
                 tracing::info!(
-                    "Successfully loaded active embedding model: {} ({}-dim)",
+                    "Successfully loaded active embedding model: {} ({}-dim, {:?})",
                     active_model.model_name(),
-                    actual_dim
+                    actual_dim,
+                    service.architecture()
                 );
                 Ok(Some(Arc::new(service) as Arc<dyn EmbeddingPort>))
             }
@@ -1320,7 +1350,7 @@ impl Container {
                 Err(AppError::ModelLoadFailed(format!(
                     "Failed to load active embedding model '{}' from '{}': {}",
                     active_model.model_name(),
-                    validated_path.display(),
+                    model_dir.display(),
                     e
                 )))
             }
