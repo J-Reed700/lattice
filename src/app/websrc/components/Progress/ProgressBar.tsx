@@ -69,7 +69,7 @@ export const ProgressBar = memo<ProgressBarProps>(
           ) : (
             // Determinate progress
             <div
-              className={`h-full ${bgColor} transition-all duration-300 ease-out rounded-full`}
+              className={`h-full ${bgColor} transition-colors duration-base ease-out rounded-full`}
               style={{ width: `${clampedProgress}%` }}
             />
           )}

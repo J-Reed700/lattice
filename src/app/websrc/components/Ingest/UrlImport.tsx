@@ -22,7 +22,7 @@ function formatInvokeError(err: unknown): string {
   try {
     return JSON.stringify(err);
   } catch {
-    return 'Failed to fetch preview';
+    return "Couldn't fetch preview";
   }
 }
 

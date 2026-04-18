@@ -125,7 +125,7 @@ export function ModelFilterPanel() {
                 px-2 py-2 text-[11px] font-semibold rounded-lg border transition-all truncate
                 ${
                   filters.category === cat.value
-                    ? 'bg-[hsl(var(--accent))] text-white border-[hsl(var(--accent))]'
+                    ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] border-[hsl(var(--accent))]'
                     : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                 }
               `}
@@ -157,7 +157,7 @@ export function ModelFilterPanel() {
                     px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-all
                     ${
                       isActive
-                        ? 'bg-[hsl(var(--accent))] text-white border-[hsl(var(--accent))]'
+                        ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] border-[hsl(var(--accent))]'
                         : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                     }
                   `}
@@ -214,7 +214,7 @@ export function ModelFilterPanel() {
                   px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-all
                   ${
                     isActive
-                      ? 'bg-[hsl(var(--accent))] text-white border-[hsl(var(--accent))]'
+                      ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] border-[hsl(var(--accent))]'
                       : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                   }
                 `}
@@ -265,7 +265,7 @@ export function ModelFilterPanel() {
                   </div>
                   {isActive && (
                     <div className="w-4 h-4 rounded-full bg-[hsl(var(--accent))] flex items-center justify-center">
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <svg className="w-3 h-3 text-[hsl(var(--accent-fg))]" fill="currentColor" viewBox="0 0 20 20">
                         <path
                           fillRule="evenodd"
                           d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"

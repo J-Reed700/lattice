@@ -63,7 +63,7 @@ const NotificationItem = memo<{
         ${style.borderColor}
         border rounded-lg p-4 shadow-lg
         max-w-sm w-full
-        transition-all duration-200 ease-out
+        transition-colors duration-fast ease-out
         ${isVisible ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-12 scale-95'}
       `}
       role="alert"

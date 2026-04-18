@@ -19,6 +19,7 @@
 //! `MentionRepositoryPort` stays in `application/ports/`.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod entity;
 pub mod mapper;

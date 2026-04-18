@@ -121,7 +121,7 @@ const StorageDashboard: React.FC = () => {
         setStats(null);
       }
     } catch (error) {
-      console.error('Failed to fetch storage stats:', error);
+      console.error("Couldn't fetch storage stats:", error);
       setStats(null);
     } finally {
       setLoading(false);

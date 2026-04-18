@@ -168,7 +168,7 @@ function ModelCard({
               {model.is_active_for_chat && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 cursor-help border border-blue-200 dark:border-blue-800">
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] cursor-help border border-[hsl(var(--accent-muted))]">
                       <Check className="w-3 h-3" />
                       <span>Chat</span>
                     </div>
@@ -181,7 +181,7 @@ function ModelCard({
               {model.is_active_for_embedding && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 cursor-help border border-purple-200 dark:border-purple-800">
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] cursor-help border border-[hsl(var(--accent-muted))]">
                       <Check className="w-3 h-3" />
                       <span>Embedding</span>
                     </div>
@@ -194,7 +194,7 @@ function ModelCard({
               {routerModelId && model.model_id === routerModelId && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 cursor-help border border-emerald-200 dark:border-emerald-800">
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))] cursor-help border border-[hsl(var(--success-muted))]">
                       <Check className="w-3 h-3" />
                       <span>Router</span>
                     </div>
@@ -256,7 +256,7 @@ function ModelCard({
                       size="sm"
                       onClick={handleAsyncEvent(handleSetActiveChatModel)}
                       disabled={isSettingActiveChatModel}
-                      className="flex-1 text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                      className="flex-1 text-[hsl(var(--warning-fg))] hover:bg-[hsl(var(--warning-muted))]"
                     >
                       {isSettingActiveChatModel ? 'Deactivating...' : 'Deactivate Chat'}
                     </Button>
@@ -269,7 +269,7 @@ function ModelCard({
                       size="sm"
                       onClick={handleAsyncEvent(handleSetActiveEmbeddingModel)}
                       disabled={isSettingActiveEmbedding}
-                      className="flex-1 text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                      className="flex-1 text-[hsl(var(--warning-fg))] hover:bg-[hsl(var(--warning-muted))]"
                     >
                       {isSettingActiveEmbedding ? 'Deactivating...' : 'Deactivate Embedding'}
                     </Button>
@@ -332,7 +332,7 @@ function ModelCard({
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="flex-1 relative z-10 pointer-events-auto text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-700 dark:hover:text-red-300"
+                  className="flex-1 relative z-10 pointer-events-auto text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] hover:text-[hsl(var(--danger-fg))]"
                 >
                   <Trash2 className="w-3.5 h-3.5 mr-1.5" />
                   <span>Delete</span>
@@ -563,21 +563,21 @@ function DownloadedModelsTabContent() {
         {/* Quick Guide Steps */}
         <div className="flex items-center justify-center gap-2 text-sm text-[hsl(var(--text-tertiary))]">
           <span className="flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100 text-xs font-bold">
+            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] text-xs font-bold">
               1
             </span>
             Browse
           </span>
           <ChevronRight className="w-4 h-4" />
           <span className="flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100 text-xs font-bold">
+            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] text-xs font-bold">
               2
             </span>
             Download
           </span>
           <ChevronRight className="w-4 h-4" />
           <span className="flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100 text-xs font-bold">
+            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] text-xs font-bold">
               3
             </span>
             Activate
@@ -635,8 +635,8 @@ function DownloadedModelsTabContent() {
 
         <Card padding="md">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
-              <Check className="w-5 h-5 text-green-800 dark:text-green-100" />
+            <div className="p-2 bg-[hsl(var(--success-muted))] rounded-lg">
+              <Check className="w-5 h-5 text-[hsl(var(--success-fg))]" />
             </div>
             <div>
               <div className="text-xs text-[hsl(var(--text-secondary))]">Active Model</div>
@@ -652,8 +652,8 @@ function DownloadedModelsTabContent() {
           <TooltipTrigger asChild>
             <Card padding="md" className="cursor-help">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-lg">
-                  <Sparkles className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+                  <Sparkles className="w-5 h-5 text-[hsl(var(--accent))]" />
                 </div>
                 <div>
                   <div className="text-xs text-[hsl(var(--text-secondary))]">Active Embedding</div>

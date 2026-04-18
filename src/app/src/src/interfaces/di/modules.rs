@@ -1534,289 +1534,134 @@ impl AIModule {
 /// - 4 repositories
 #[derive(Clone)]
 pub struct LibraryModule {
-    // Use Cases - Tags
-    create_tag_use_case: Arc<CreateTagUseCase>,
-    update_tag_use_case: Arc<UpdateTagUseCase>,
-    delete_tag_use_case: Arc<DeleteTagUseCase>,
-    remove_tag_from_document_use_case: Arc<RemoveTagFromDocumentUseCase>,
-    get_tags_use_case: Arc<GetTagsUseCase>,
-    apply_tags_use_case: Arc<ApplyTagsUseCase>,
-    search_by_tag_use_case: Arc<SearchByTagUseCase>,
-
-    // Use Cases - Favorites
-    add_favorite_use_case: Arc<AddFavoriteUseCase>,
-    remove_favorite_use_case: Arc<RemoveFavoriteUseCase>,
-    list_favorites_use_case: Arc<ListFavoritesUseCase>,
-    is_favorite_use_case: Arc<IsFavoriteUseCase>,
-
-    // Use Cases - Recent
-    track_access_use_case: Arc<TrackAccessUseCase>,
-    get_recent_documents_use_case: Arc<GetRecentDocumentsUseCase>,
-    clear_recent_history_use_case: Arc<ClearRecentHistoryUseCase>,
-
-    // Use Cases - Mentions
-    extract_mentions_use_case: Arc<ExtractMentionsUseCase>,
-    search_mentions_use_case: Arc<SearchMentionsUseCase>,
-    get_backlinks_use_case: Arc<GetBacklinksUseCase>,
-    get_mentions_by_type_use_case: Arc<GetMentionsByTypeUseCase>,
-    get_mentions_for_document_use_case: Arc<GetMentionsForDocumentUseCase>,
-    create_mention_use_case: Arc<CreateMentionUseCase>,
-    update_mention_use_case: Arc<UpdateMentionUseCase>,
-    delete_mention_use_case: Arc<DeleteMentionUseCase>,
-
-    // Services
-    tag_service: Arc<dyn TagServiceTrait>,
-
-    // Repositories
-    document_repo: Arc<dyn DocumentRepository>,
-    favorites_repo: Arc<dyn FavoritesRepositoryPort>,
-    recent_docs_repo: Arc<dyn RecentDocumentsRepositoryPort>,
-    mention_repo: Arc<dyn MentionRepositoryPort>,
+    tags: crate::features::tags::di::TagsDi,
+    favorites: crate::features::favorites::di::FavoritesDi,
+    recent: crate::features::recent::di::RecentDi,
+    mentions: crate::features::mentions::di::MentionsDi,
 }
 
 impl LibraryModule {
-    /// Build LibraryModule with all its dependencies
-    ///
-    /// Constructs all repositories, services, and use cases for document library features:
-    /// - Tags (create, update, delete, search by tag)
-    /// - Favorites (add, remove, list, check)
-    /// - Recent documents (track, list, clear)
-    /// - Mentions (extract, search, backlinks)
+    /// Build LibraryModule by composing feature-local DI builders.
     pub async fn new(
         db_pool: SqlitePool,
         _core: Arc<CoreModule>,
     ) -> crate::shared::error::Result<Self> {
-        // === Build Repositories ===
-
-        // Document Repository (for tag operations)
-        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
-        let document_repo =
-            Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-
-        // Favorites Repository
-        use crate::features::favorites::repository::FavoritesRepository;
-        let favorites_repo =
-            Arc::new(FavoritesRepository::new(db_pool.clone())) as Arc<dyn FavoritesRepositoryPort>;
-
-        // Recent Documents Repository
-        use crate::features::recent::repository::RecentDocumentsRepository;
-        let recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool.clone()))
-            as Arc<dyn RecentDocumentsRepositoryPort>;
-
-        // Mention Repository
-        use crate::infrastructure::persistence::repositories::MentionRepository;
-        let mention_repo =
-            Arc::new(MentionRepository::new(db_pool.clone())) as Arc<dyn MentionRepositoryPort>;
-
-        // === Build Services ===
-
-        // Tag Service
-        use crate::features::tags::service::TagService;
-        let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
-
-        // === Build Use Cases ===
-
-        // Tag use cases
-        use crate::features::tags::use_cases::*;
-        let create_tag_use_case = Arc::new(CreateTagUseCase::new(tag_service.clone()));
-        let update_tag_use_case = Arc::new(UpdateTagUseCase::new(tag_service.clone()));
-        let delete_tag_use_case = Arc::new(DeleteTagUseCase::new(tag_service.clone()));
-        let remove_tag_from_document_use_case =
-            Arc::new(RemoveTagFromDocumentUseCase::new(tag_service.clone()));
-        let get_tags_use_case = Arc::new(GetTagsUseCase::new(tag_service.clone()));
-        let apply_tags_use_case = Arc::new(ApplyTagsUseCase::new(tag_service.clone()));
-        let search_by_tag_use_case = Arc::new(SearchByTagUseCase::new(tag_service.clone()));
-
-        // Favorites use cases
-        use crate::features::favorites::use_cases::*;
-        let add_favorite_use_case = Arc::new(AddFavoriteUseCase::new(favorites_repo.clone()));
-        let remove_favorite_use_case = Arc::new(RemoveFavoriteUseCase::new(favorites_repo.clone()));
-        let list_favorites_use_case = Arc::new(ListFavoritesUseCase::new(favorites_repo.clone()));
-        let is_favorite_use_case = Arc::new(IsFavoriteUseCase::new(favorites_repo.clone()));
-
-        // Recent documents use cases
-        use crate::features::recent::use_cases::*;
-        let track_access_use_case = Arc::new(TrackAccessUseCase::new(recent_docs_repo.clone()));
-        let get_recent_documents_use_case =
-            Arc::new(GetRecentDocumentsUseCase::new(recent_docs_repo.clone()));
-        let clear_recent_history_use_case =
-            Arc::new(ClearRecentHistoryUseCase::new(recent_docs_repo.clone()));
-
-        // Mentions use cases - need MentionMapper
-        use crate::features::mentions::mapper::MentionMapper;
-        use crate::features::mentions::use_cases::{
-            CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase,
-            GetBacklinksUseCase, GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase,
-            SearchMentionsUseCase, UpdateMentionUseCase,
-        };
-        let mention_mapper = Arc::new(MentionMapper::new());
-
-        let extract_mentions_use_case = Arc::new(ExtractMentionsUseCase::new(
-            mention_repo.clone(),
-            mention_mapper.clone(),
-        ));
-        let search_mentions_use_case = Arc::new(SearchMentionsUseCase::new(
-            mention_repo.clone(),
-            mention_mapper.clone(),
-        ));
-        let get_backlinks_use_case = Arc::new(GetBacklinksUseCase::new(mention_repo.clone()));
-        let get_mentions_by_type_use_case = Arc::new(GetMentionsByTypeUseCase::new(
-            mention_repo.clone(),
-            mention_mapper.clone(),
-        ));
-        let get_mentions_for_document_use_case = Arc::new(GetMentionsForDocumentUseCase::new(
-            mention_repo.clone(),
-            mention_mapper.clone(),
-        ));
-        let create_mention_use_case = Arc::new(CreateMentionUseCase::new(
-            mention_repo.clone(),
-            mention_mapper.clone(),
-        ));
-        let update_mention_use_case = Arc::new(UpdateMentionUseCase::new(
-            mention_repo.clone(),
-            mention_mapper.clone(),
-        ));
-        let delete_mention_use_case = Arc::new(DeleteMentionUseCase::new(mention_repo.clone()));
-
         Ok(Self {
-            create_tag_use_case,
-            update_tag_use_case,
-            delete_tag_use_case,
-            remove_tag_from_document_use_case,
-            get_tags_use_case,
-            apply_tags_use_case,
-            search_by_tag_use_case,
-            add_favorite_use_case,
-            remove_favorite_use_case,
-            list_favorites_use_case,
-            is_favorite_use_case,
-            track_access_use_case,
-            get_recent_documents_use_case,
-            clear_recent_history_use_case,
-            extract_mentions_use_case,
-            search_mentions_use_case,
-            get_backlinks_use_case,
-            get_mentions_by_type_use_case,
-            get_mentions_for_document_use_case,
-            create_mention_use_case,
-            update_mention_use_case,
-            delete_mention_use_case,
-            tag_service,
-            document_repo,
-            favorites_repo,
-            recent_docs_repo,
-            mention_repo,
+            tags: crate::features::tags::di::build(db_pool.clone()),
+            favorites: crate::features::favorites::di::build(db_pool.clone()),
+            recent: crate::features::recent::di::build(db_pool.clone()),
+            mentions: crate::features::mentions::di::build(db_pool),
         })
     }
 
     // Tag use case getters
     pub fn create_tag_use_case(&self) -> &Arc<CreateTagUseCase> {
-        &self.create_tag_use_case
+        &self.tags.create_tag_use_case
     }
 
     pub fn update_tag_use_case(&self) -> &Arc<UpdateTagUseCase> {
-        &self.update_tag_use_case
+        &self.tags.update_tag_use_case
     }
 
     pub fn delete_tag_use_case(&self) -> &Arc<DeleteTagUseCase> {
-        &self.delete_tag_use_case
+        &self.tags.delete_tag_use_case
     }
 
     pub fn remove_tag_from_document_use_case(&self) -> &Arc<RemoveTagFromDocumentUseCase> {
-        &self.remove_tag_from_document_use_case
+        &self.tags.remove_tag_from_document_use_case
     }
 
     pub fn get_tags_use_case(&self) -> &Arc<GetTagsUseCase> {
-        &self.get_tags_use_case
+        &self.tags.get_tags_use_case
     }
 
     pub fn apply_tags_use_case(&self) -> &Arc<ApplyTagsUseCase> {
-        &self.apply_tags_use_case
+        &self.tags.apply_tags_use_case
     }
 
     pub fn search_by_tag_use_case(&self) -> &Arc<SearchByTagUseCase> {
-        &self.search_by_tag_use_case
+        &self.tags.search_by_tag_use_case
     }
 
     // Favorites use case getters
     pub fn add_favorite_use_case(&self) -> &Arc<AddFavoriteUseCase> {
-        &self.add_favorite_use_case
+        &self.favorites.add_favorite_use_case
     }
 
     pub fn remove_favorite_use_case(&self) -> &Arc<RemoveFavoriteUseCase> {
-        &self.remove_favorite_use_case
+        &self.favorites.remove_favorite_use_case
     }
 
     pub fn list_favorites_use_case(&self) -> &Arc<ListFavoritesUseCase> {
-        &self.list_favorites_use_case
+        &self.favorites.list_favorites_use_case
     }
 
     pub fn is_favorite_use_case(&self) -> &Arc<IsFavoriteUseCase> {
-        &self.is_favorite_use_case
+        &self.favorites.is_favorite_use_case
     }
 
     // Recent use case getters
     pub fn track_access_use_case(&self) -> &Arc<TrackAccessUseCase> {
-        &self.track_access_use_case
+        &self.recent.track_access_use_case
     }
 
     pub fn get_recent_documents_use_case(&self) -> &Arc<GetRecentDocumentsUseCase> {
-        &self.get_recent_documents_use_case
+        &self.recent.get_recent_documents_use_case
     }
 
     pub fn clear_recent_history_use_case(&self) -> &Arc<ClearRecentHistoryUseCase> {
-        &self.clear_recent_history_use_case
+        &self.recent.clear_recent_history_use_case
     }
 
     // Mentions use case getters
     pub fn extract_mentions_use_case(&self) -> &Arc<ExtractMentionsUseCase> {
-        &self.extract_mentions_use_case
+        &self.mentions.extract_mentions_use_case
     }
 
     pub fn search_mentions_use_case(&self) -> &Arc<SearchMentionsUseCase> {
-        &self.search_mentions_use_case
+        &self.mentions.search_mentions_use_case
     }
 
     pub fn get_backlinks_use_case(&self) -> &Arc<GetBacklinksUseCase> {
-        &self.get_backlinks_use_case
+        &self.mentions.get_backlinks_use_case
     }
 
     pub fn get_mentions_by_type_use_case(&self) -> &Arc<GetMentionsByTypeUseCase> {
-        &self.get_mentions_by_type_use_case
+        &self.mentions.get_mentions_by_type_use_case
     }
 
     pub fn get_mentions_for_document_use_case(&self) -> &Arc<GetMentionsForDocumentUseCase> {
-        &self.get_mentions_for_document_use_case
+        &self.mentions.get_mentions_for_document_use_case
     }
 
     pub fn favorites_repo(&self) -> &Arc<dyn FavoritesRepositoryPort> {
-        &self.favorites_repo
+        &self.favorites.favorites_repo
     }
 
     pub fn recent_docs_repo(&self) -> &Arc<dyn RecentDocumentsRepositoryPort> {
-        &self.recent_docs_repo
+        &self.recent.recent_docs_repo
     }
 
     pub fn create_mention_use_case(&self) -> &Arc<CreateMentionUseCase> {
-        &self.create_mention_use_case
+        &self.mentions.create_mention_use_case
     }
 
     pub fn update_mention_use_case(&self) -> &Arc<UpdateMentionUseCase> {
-        &self.update_mention_use_case
+        &self.mentions.update_mention_use_case
     }
 
     pub fn delete_mention_use_case(&self) -> &Arc<DeleteMentionUseCase> {
-        &self.delete_mention_use_case
+        &self.mentions.delete_mention_use_case
     }
 
     // Service getters
     pub fn tag_service(&self) -> &Arc<dyn TagServiceTrait> {
-        &self.tag_service
+        &self.tags.tag_service
     }
 
     // Repository getters needed by Container
     pub fn mention_repo(&self) -> &Arc<dyn MentionRepositoryPort> {
-        &self.mention_repo
+        &self.mentions.mention_repo
     }
 }
 

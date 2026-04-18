@@ -24,26 +24,26 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
     switch (level) {
       case 'Excellent':
         return {
-          bg: 'bg-green-100 dark:bg-green-900',
-          text: 'text-green-800 dark:text-green-100',
+          bg: 'bg-[hsl(var(--success-muted))]',
+          text: 'text-[hsl(var(--success-fg))]',
           icon: <CheckCircle2 className="w-3 h-3" />,
         };
       case 'Good':
         return {
-          bg: 'bg-yellow-100 dark:bg-yellow-900',
-          text: 'text-yellow-800 dark:text-yellow-100',
+          bg: 'bg-[hsl(var(--warning-muted))]',
+          text: 'text-[hsl(var(--warning-fg))]',
           icon: <CheckCircle2 className="w-3 h-3" />,
         };
       case 'Poor':
         return {
-          bg: 'bg-orange-100 dark:bg-orange-900',
-          text: 'text-orange-800 dark:text-orange-100',
+          bg: 'bg-[hsl(var(--warning-muted))]',
+          text: 'text-[hsl(var(--warning-fg))]',
           icon: null,
         };
       case 'Incompatible':
         return {
-          bg: 'bg-red-100 dark:bg-red-900',
-          text: 'text-red-800 dark:text-red-100',
+          bg: 'bg-[hsl(var(--danger-muted))]',
+          text: 'text-[hsl(var(--danger-fg))]',
           icon: null,
         };
     }

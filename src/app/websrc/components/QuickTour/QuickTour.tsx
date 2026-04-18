@@ -250,7 +250,7 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
               </div>
               <div className="w-full bg-[hsl(var(--surface))] rounded-full h-2">
                 <div
-                  className="bg-[hsl(var(--accent))] h-2 rounded-full transition-all duration-300 ease-out"
+                  className="bg-[hsl(var(--accent))] h-2 rounded-full transition-colors duration-base ease-out"
                   style={{ width: `${((currentIndex + 1) / tourSequence.length) * 100}%` }}
                 />
               </div>

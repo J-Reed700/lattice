@@ -251,7 +251,7 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
                         }}
                         className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                           defaultModel === model.name
-                            ? 'bg-[hsl(var(--accent))] text-white'
+                            ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))]'
                             : 'bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface))]'
                         }`}
                       >
@@ -269,7 +269,7 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
                     <button
                       onClick={() => handleDownloadModel(model.name)}
                       disabled={downloading === model.name}
-                      className="flex items-center gap-2 px-3 py-1 text-sm bg-[hsl(var(--accent))] text-white rounded-lg hover:bg-[hsl(var(--accent))] transition-colors disabled:opacity-50"
+                      className="flex items-center gap-2 px-3 py-1 text-sm bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-lg hover:bg-[hsl(var(--accent))] transition-colors disabled:opacity-50"
                     >
                       {downloading === model.name ? (
                         <>
@@ -308,7 +308,7 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
         <div className="flex justify-end pt-4 border-t border-[hsl(var(--border-subtle))]">
           <button
             onClick={onClose}
-            className="px-6 py-2 bg-[hsl(var(--accent))] text-white rounded-lg hover:bg-[hsl(var(--accent))] transition-colors"
+            className="px-6 py-2 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-lg hover:bg-[hsl(var(--accent))] transition-colors"
           >
             Done
           </button>

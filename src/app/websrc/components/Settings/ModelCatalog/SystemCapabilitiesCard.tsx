@@ -66,13 +66,13 @@ export function SystemCapabilitiesCard() {
       icon: Server,
       label: 'RAM',
       value: `${capabilities.total_ram_gb.toFixed(1)} GB`,
-      color: 'text-blue-500',
+      color: 'text-[hsl(var(--accent))]',
     },
     {
       icon: Cpu,
       label: 'CPU',
       value: `${capabilities.cpu_cores} cores (${capabilities.cpu_architecture})`,
-      color: 'text-purple-500',
+      color: 'text-[hsl(var(--accent))]',
     },
     {
       icon: Zap,
@@ -80,13 +80,13 @@ export function SystemCapabilitiesCard() {
       value: capabilities.gpu_type !== 'None'
         ? `${capabilities.gpu_type} (${capabilities.gpu_acceleration}${capabilities.vram_gb ? `, ${capabilities.vram_gb.toFixed(1)} GB VRAM` : ''})`
         : 'Not detected',
-      color: capabilities.gpu_type !== 'None' ? 'text-green-500' : 'text-[hsl(var(--text-tertiary))]',
+      color: capabilities.gpu_type !== 'None' ? 'text-[hsl(var(--success-fg))]' : 'text-[hsl(var(--text-tertiary))]',
     },
     {
       icon: HardDrive,
       label: 'Disk Space',
       value: `${capabilities.available_disk_gb.toFixed(1)} GB available`,
-      color: 'text-orange-500',
+      color: 'text-[hsl(var(--warning-fg))]',
     },
   ];
 

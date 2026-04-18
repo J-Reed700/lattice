@@ -197,26 +197,26 @@ export function ModelDetailPanel({
     switch (level) {
       case 'Excellent':
         return {
-          bg: 'bg-green-100 dark:bg-green-900',
-          text: 'text-green-800 dark:text-green-100',
+          bg: 'bg-[hsl(var(--success-muted))]',
+          text: 'text-[hsl(var(--success-fg))]',
           icon: <CheckCircle2 className="w-4 h-4" />,
         };
       case 'Good':
         return {
-          bg: 'bg-yellow-100 dark:bg-yellow-900',
-          text: 'text-yellow-800 dark:text-yellow-100',
+          bg: 'bg-[hsl(var(--warning-muted))]',
+          text: 'text-[hsl(var(--warning-fg))]',
           icon: <CheckCircle2 className="w-4 h-4" />,
         };
       case 'Poor':
         return {
-          bg: 'bg-orange-100 dark:bg-orange-900',
-          text: 'text-orange-800 dark:text-orange-100',
+          bg: 'bg-[hsl(var(--warning-muted))]',
+          text: 'text-[hsl(var(--warning-fg))]',
           icon: <AlertCircle className="w-4 h-4" />,
         };
       case 'Incompatible':
         return {
-          bg: 'bg-red-100 dark:bg-red-900',
-          text: 'text-red-800 dark:text-red-100',
+          bg: 'bg-[hsl(var(--danger-muted))]',
+          text: 'text-[hsl(var(--danger-fg))]',
           icon: <AlertCircle className="w-4 h-4" />,
         };
     }
@@ -320,9 +320,9 @@ export function ModelDetailPanel({
   // Score bar component
   const ScoreBar = ({ score, label }: { score: number; label: string }) => {
     const getColor = (s: number) => {
-      if (s >= 80) return 'bg-green-500';
-      if (s >= 50) return 'bg-yellow-500';
-      return 'bg-red-500';
+      if (s >= 80) return 'bg-[hsl(var(--success-fg))]';
+      if (s >= 50) return 'bg-[hsl(var(--warning-fg))]';
+      return 'bg-[hsl(var(--danger-fg))]';
     };
 
     return (
@@ -368,7 +368,7 @@ export function ModelDetailPanel({
                   {metadata.license}
                 </span>
                 {metadata.requires_auth && (
-                  <span className="px-2 py-1 bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-100 rounded flex items-center gap-1">
+                  <span className="px-2 py-1 bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))] rounded flex items-center gap-1">
                     <Lock className="w-3 h-3" />
                     Requires Token
                   </span>
@@ -397,7 +397,7 @@ export function ModelDetailPanel({
                   variant="default"
                   size="sm"
                   disabled
-                  className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 cursor-not-allowed"
+                  className="bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))] cursor-not-allowed"
                 >
                   <Check className="w-4 h-4" />
                   Already Downloaded

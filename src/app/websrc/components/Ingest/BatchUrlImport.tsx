@@ -397,7 +397,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
               'border-[hsl(var(--border-subtle))]',
               'placeholder-[hsl(var(--text-tertiary))]',
               'focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:ring-offset-0',
-              'transition-all duration-150',
+              'transition-colors duration-fast',
               'font-mono text-sm'
             )}
           />
@@ -429,7 +429,7 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2">
           <p className="text-[11px] uppercase tracking-wide text-[hsl(var(--text-tertiary))]">Ready</p>
-          <p className="text-sm font-semibold text-green-500">{readyItemCount}</p>
+          <p className="text-sm font-semibold text-[hsl(var(--success-fg))]">{readyItemCount}</p>
         </div>
         <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2">
           <p className="text-[11px] uppercase tracking-wide text-[hsl(var(--text-tertiary))]">Checking</p>
@@ -442,9 +442,9 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
       </div>
 
       {lastRunResult && (
-        <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-4 py-3">
-          <p className="text-sm font-medium text-emerald-200">Last import finished</p>
-          <p className="text-xs text-emerald-100/80 mt-1">
+        <div className="rounded-lg border border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] px-4 py-3">
+          <p className="text-sm font-medium text-[hsl(var(--success-fg))]">Last import finished</p>
+          <p className="text-xs text-[hsl(var(--success-fg))]/80 mt-1">
             {lastRunResult.successful} succeeded, {lastRunResult.failed} failed.
           </p>
         </div>
@@ -765,7 +765,7 @@ const StatusBadge: React.FC<{ status: ItemStatus; error?: string }> = ({
     ready: {
       icon: CheckCircle2,
       text: 'Ready',
-      className: 'text-green-500 bg-green-500/10',
+      className: 'text-[hsl(var(--success-fg))] bg-[hsl(var(--success-muted))]',
     },
     importing: {
       icon: Loader2,
@@ -776,7 +776,7 @@ const StatusBadge: React.FC<{ status: ItemStatus; error?: string }> = ({
     success: {
       icon: CheckCircle2,
       text: 'Success',
-      className: 'text-green-500 bg-green-500/10',
+      className: 'text-[hsl(var(--success-fg))] bg-[hsl(var(--success-muted))]',
     },
     error: {
       icon: XCircle,
@@ -805,9 +805,9 @@ const StatusIcon: React.FC<{ status: ItemStatus }> = ({ status }) => {
   const variants = {
     idle: { icon: Clock, className: 'text-[hsl(var(--text-tertiary))]' },
     fetching: { icon: Loader2, className: 'text-[hsl(var(--accent))] animate-spin' },
-    ready: { icon: CheckCircle2, className: 'text-green-500' },
+    ready: { icon: CheckCircle2, className: 'text-[hsl(var(--success-fg))]' },
     importing: { icon: Loader2, className: 'text-[hsl(var(--accent))] animate-spin' },
-    success: { icon: CheckCircle2, className: 'text-green-500' },
+    success: { icon: CheckCircle2, className: 'text-[hsl(var(--success-fg))]' },
     error: { icon: AlertCircle, className: 'text-[hsl(var(--danger-fg))]' },
   };
 

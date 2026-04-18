@@ -423,7 +423,7 @@ const JobStatusIcon: FC<{ status: BatchJobSummary['status'] }> = ({ status }) =>
     },
     completed: {
       icon: CheckCircle2,
-      className: 'text-[hsl(var(--success-fg))] bg-green-500/10',
+      className: 'text-[hsl(var(--success-fg))] bg-[hsl(var(--success-muted))]',
     },
     failed: {
       icon: XCircle,
@@ -431,7 +431,7 @@ const JobStatusIcon: FC<{ status: BatchJobSummary['status'] }> = ({ status }) =>
     },
     cancelled: {
       icon: AlertCircle,
-      className: 'text-orange-500 bg-orange-500/10',
+      className: 'text-[hsl(var(--warning-fg))] bg-[hsl(var(--warning-muted))]',
     },
   } as const;
 

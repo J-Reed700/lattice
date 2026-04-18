@@ -79,7 +79,7 @@ export const ProgressManager = memo<ProgressManagerProps>(({ className = '' }) =
       className={`
         fixed bottom-4 right-4 z-50
         w-96 max-w-[calc(100vw-2rem)]
-        transition-all duration-200 ease-out
+        transition-colors duration-fast ease-out
         ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-24'}
         ${className}
       `}

@@ -743,8 +743,8 @@ const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled }) => {
 
   const statusColor = {
     pending: 'text-muted-foreground',
-    importing: 'text-blue-500',
-    success: 'text-green-500',
+    importing: 'text-[hsl(var(--accent))]',
+    success: 'text-[hsl(var(--success-fg))]',
     error: 'text-[hsl(var(--danger-fg))]',
   }[file.status];
 

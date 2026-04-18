@@ -103,7 +103,7 @@ export function TagFilter({ onTagSelect, selectedTag, className = '' }: TagFilte
             onClick={() => handleTagClick(tag)}
             className={`
               inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm
-              transition-all duration-200
+              transition-colors duration-fast
               ${selectedTag?.id === tag.id
                 ? 'ring-2 ring-[hsl(var(--accent))] ring-offset-2'
                 : 'hover:opacity-80'

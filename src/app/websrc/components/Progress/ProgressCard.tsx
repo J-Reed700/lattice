@@ -130,7 +130,7 @@ export const ProgressCard = memo<ProgressCardProps>(
           ${statusConfig.bgColor}
           border ${statusConfig.borderColor}
           rounded-lg p-3
-          transition-all duration-200
+          transition-colors duration-fast
           ${className}
         `}
       >

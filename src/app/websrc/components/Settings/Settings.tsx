@@ -176,7 +176,7 @@ export function Settings() {
                         }
                       `}
                     >
-                      <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                      <Icon className="w-4 h-4 flex-shrink-0" />
                       <span className="font-medium">{tab.label}</span>
                     </button>
                   );

@@ -17,6 +17,7 @@
 //! `RecentDocumentsRepositoryPort` stays in `application/ports/`.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod repository;

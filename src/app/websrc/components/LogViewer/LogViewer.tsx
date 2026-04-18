@@ -57,14 +57,14 @@ export function LogViewer() {
   const getLevelBadgeColor = (level: string) => {
     switch (level.toLowerCase()) {
       case 'error':
-        return 'bg-[hsl(var(--danger-fg))] text-white';
+        return 'bg-[hsl(var(--danger-fg))] text-[hsl(var(--accent-fg))]';
       case 'warning':
       case 'warn':
-        return 'bg-[hsl(var(--warning-fg))] text-white';
+        return 'bg-[hsl(var(--warning-fg))] text-[hsl(var(--accent-fg))]';
       case 'info':
-        return 'bg-[hsl(var(--accent))] text-white';
+        return 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))]';
       default:
-        return 'bg-[hsl(var(--text-secondary))] text-white';
+        return 'bg-[hsl(var(--text-secondary))] text-[hsl(var(--accent-fg))]';
     }
   };
 
@@ -106,7 +106,7 @@ export function LogViewer() {
           <button
             onClick={loadLogs}
             disabled={loading}
-            className="px-6 py-3 bg-[hsl(var(--accent))] text-white rounded-lg
+            className="px-6 py-3 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-lg
                      hover:bg-[hsl(var(--accent-hover))] disabled:bg-[hsl(var(--surface-raised))]
                      transition-colors font-medium"
           >

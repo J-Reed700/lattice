@@ -41,7 +41,7 @@ export const DocumentViewerSkeleton: React.FC<DocumentViewerSkeletonProps> = mem
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Document Content Skeleton */}
-        <div className={`flex-1 overflow-hidden transition-all duration-300 ${showSidebar ? 'mr-96' : ''}`}>
+        <div className={`flex-1 overflow-hidden transition-[margin] duration-base ${showSidebar ? 'mr-96' : ''}`}>
           <DocumentContentSkeleton />
         </div>
 

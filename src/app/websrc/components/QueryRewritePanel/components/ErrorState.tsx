@@ -10,7 +10,7 @@ export function ErrorState({ error }: ErrorStateProps) {
       <div className="p-4">
         <div className="flex items-start gap-3">
           <svg
-            className="w-5 h-5 text-[hsl(var(--danger-fg))] flex-shrink-0 mt-0.5"
+            className="w-4 h-4 text-[hsl(var(--danger-fg))] flex-shrink-0 mt-0.5"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -18,13 +18,13 @@ export function ErrorState({ error }: ErrorStateProps) {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.75}
               d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
           <div className="flex-1">
             <h4 className="text-sm font-semibold text-[hsl(var(--danger-fg))] mb-1">
-              Failed to generate suggestions
+              Couldn't generate suggestions
             </h4>
             <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
             <p className="text-xs text-[hsl(var(--danger-fg))] mt-2">

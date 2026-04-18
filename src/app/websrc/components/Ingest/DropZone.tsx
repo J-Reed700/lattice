@@ -92,28 +92,28 @@ const DEFAULT_ACCEPT: Accept = {
 
 const getFileTypeIcon = (acceptedTypes?: Accept): React.ReactNode => {
   if (!acceptedTypes || Object.keys(acceptedTypes).length === 0) {
-    return <Upload className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+    return <Upload className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
   }
 
   const types = Object.keys(acceptedTypes);
 
   if (types.some(t => MIME_TYPE_CATEGORIES.documents.includes(t))) {
-    return <FileText className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+    return <FileText className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.images.includes(t))) {
-    return <Image className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+    return <Image className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.audio.includes(t))) {
-    return <Music className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+    return <Music className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.video.includes(t))) {
-    return <Video className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+    return <Video className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.archives.includes(t))) {
-    return <FileArchive className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+    return <FileArchive className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
   }
 
-  return <File className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
+  return <File className="w-10 h-10 mb-4 text-[hsl(var(--accent))]" />;
 };
 
 const getSupportedFormats = (acceptedTypes?: Accept): string => {
@@ -211,9 +211,9 @@ export const DropZone: React.FC<DropZoneProps> = ({
     <motion.div
       {...restRootProps}
       className={cn(
-        'relative border-2 border-dashed rounded-xl transition-all duration-300',
+        'relative border-2 border-dashed rounded-lg transition-colors duration-base',
         'min-h-[300px] flex flex-col items-center justify-center p-8',
-        'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] focus-visible:ring-offset-2',
+        'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2',
         isDragging
           ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent))]/5 shadow-lg shadow-[hsl(var(--accent))]/20'
           : 'border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]/50',

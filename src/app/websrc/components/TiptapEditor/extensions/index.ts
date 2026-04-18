@@ -41,7 +41,7 @@ export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
       HTMLAttributes: {
         target: '_blank',
         rel: 'noopener noreferrer',
-        class: 'text-blue-400 hover:text-blue-300 underline transition-colors',
+        class: 'text-[hsl(var(--accent))] hover:text-[hsl(var(--accent-hover))] underline transition-colors duration-fast',
       },
     }),
     Image.configure({

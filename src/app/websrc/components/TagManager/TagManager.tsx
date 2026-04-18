@@ -217,7 +217,7 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
           disabled={isGenerating || isOperationInProgress}
           className="
             px-3 py-1 text-xs font-medium rounded-md
-            bg-[hsl(var(--accent))] text-white
+            bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))]
             hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors
           "

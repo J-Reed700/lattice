@@ -23,6 +23,7 @@
 //! - `crate::features::tags::plugin::init()` — Tauri plugin
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod entity;
 pub mod generator;

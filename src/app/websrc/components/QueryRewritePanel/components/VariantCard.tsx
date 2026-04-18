@@ -37,7 +37,7 @@ export function VariantCard({
 
   return (
     <Card
-      className="cursor-pointer hover:shadow-md hover:border-[hsl(var(--accent-muted))] transition-all"
+      className="cursor-pointer hover:shadow-sm hover:border-[hsl(var(--accent-muted))] transition-colors duration-fast"
       onClick={onSelect}
     >
       <div className="flex items-start gap-3 p-4">
@@ -57,7 +57,7 @@ export function VariantCard({
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={2}
+                strokeWidth={1.75}
                 d="M13 10V3L4 14h7v7l9-11h-7z"
               />
             </svg>
@@ -78,7 +78,7 @@ export function VariantCard({
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={2}
+                strokeWidth={1.75}
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
