@@ -45,7 +45,7 @@ export const TagBadge = memo(({
     <span
       className={`
         inline-flex items-center gap-1.5 rounded-full font-medium
-        transition-all duration-200
+        transition-opacity duration-fast
         ${sizeClasses[size]}
         ${onClick && !removable ? 'cursor-pointer hover:opacity-80' : ''}
       `}
@@ -62,8 +62,8 @@ export const TagBadge = memo(({
         <button
           onClick={handleRemove}
           className={`
-            rounded-full hover:bg-black/10 
-            transition-colors p-0.5
+            rounded-full hover:bg-[hsl(var(--surface-raised))]
+            transition-colors duration-fast p-0.5
           `}
           aria-label={`Remove ${tag.name} tag`}
         >
@@ -76,7 +76,7 @@ export const TagBadge = memo(({
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
+              strokeWidth={1.75}
               d="M6 18L18 6M6 6l12 12"
             />
           </svg>

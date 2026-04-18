@@ -86,8 +86,8 @@ export function IndexProgress({
     if (error || progress?.status === 'error') {
       return {
         icon: <XCircle className="w-5 h-5" />,
-        color: 'text-[var(--error)]',
-        bgColor: 'bg-[var(--error-light)]/30',
+        color: 'text-[hsl(var(--danger-fg))]',
+        bgColor: 'bg-[hsl(var(--danger-muted))]/30',
         label: 'Error',
       };
     }
@@ -96,36 +96,36 @@ export function IndexProgress({
       case 'complete':
         return {
           icon: <CheckCircle2 className="w-5 h-5" />,
-          color: 'text-[var(--success)]',
-          bgColor: 'bg-[var(--success-light)]/30',
+          color: 'text-[hsl(var(--success-fg))]',
+          bgColor: 'bg-[hsl(var(--success-muted))]/30',
           label: 'Complete',
         };
       case 'cancelled':
         return {
           icon: <AlertCircle className="w-5 h-5" />,
-          color: 'text-[var(--warning)]',
-          bgColor: 'bg-[var(--warning-light)]/30',
+          color: 'text-[hsl(var(--warning-fg))]',
+          bgColor: 'bg-[hsl(var(--warning-muted))]/30',
           label: 'Cancelled',
         };
       case 'scanning':
         return {
           icon: <Loader2 className="w-5 h-5 animate-spin" />,
-          color: 'text-[var(--accent-primary)]',
-          bgColor: 'bg-[var(--accent-light)]/30',
+          color: 'text-[hsl(var(--accent))]',
+          bgColor: 'bg-[hsl(var(--accent-muted))]/30',
           label: 'Scanning',
         };
       case 'processing':
         return {
           icon: <Loader2 className="w-5 h-5 animate-spin" />,
-          color: 'text-[var(--accent-primary)]',
-          bgColor: 'bg-[var(--accent-light)]/30',
+          color: 'text-[hsl(var(--accent))]',
+          bgColor: 'bg-[hsl(var(--accent-muted))]/30',
           label: 'Processing',
         };
       default:
         return {
           icon: <Loader2 className="w-5 h-5" />,
-          color: 'text-[var(--text-secondary)]',
-          bgColor: 'bg-[var(--bg-primary)]',
+          color: 'text-[hsl(var(--text-secondary))]',
+          bgColor: 'bg-[hsl(var(--bg))]',
           label: 'Idle',
         };
     }
@@ -147,11 +147,11 @@ export function IndexProgress({
           {status.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-[var(--text-secondary)] truncate">
+          <div className="text-xs font-medium text-[hsl(var(--text-secondary))] truncate">
             {status.label}
           </div>
           {progress && isActive && (
-            <div className="text-xs text-[var(--text-tertiary)]">
+            <div className="text-xs text-[hsl(var(--text-tertiary))]">
               {progress.processed}/{progress.totalFiles}
             </div>
           )}
@@ -159,10 +159,10 @@ export function IndexProgress({
         {isActive && (
           <button
             onClick={handleAsyncEvent(handleCancel)}
-            className="p-1 hover:bg-[var(--bg-secondary)] rounded transition-colors"
+            className="p-1 hover:bg-[hsl(var(--surface))] rounded transition-colors duration-fast"
             aria-label="Cancel indexing"
           >
-            <X className="w-4 h-4 text-[var(--text-tertiary)]" />
+            <X className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
           </button>
         )}
       </div>
@@ -171,19 +171,19 @@ export function IndexProgress({
 
   // Full mode
   return (
-    <div className={`bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] shadow-sm overflow-hidden ${className}`}>
+    <div className={`bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] shadow-sm overflow-hidden ${className}`}>
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
+      <div className="flex items-center justify-between p-4 border-b border-[hsl(var(--border-subtle))]">
         <div className="flex items-center gap-3">
           <div className={`${status.bgColor} rounded-full p-2`}>
             {status.icon}
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+            <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
               {status.label}
             </h3>
             {isActive && progress && (
-              <p className="text-xs text-[var(--text-secondary)]">
+              <p className="text-xs text-[hsl(var(--text-secondary))]">
                 Processing documents
               </p>
             )}
@@ -196,19 +196,19 @@ export function IndexProgress({
             {/* Pause/Resume button (placeholder for future implementation) */}
             {/* <button
               onClick={handlePauseResume}
-              className="p-2 hover:bg-[var(--surface-hover)] rounded transition-colors"
+              className="p-2 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors duration-fast"
               aria-label={isPaused ? 'Resume indexing' : 'Pause indexing'}
             >
               {isPaused ? (
-                <Play className="w-4 h-4 text-[var(--text-secondary)]" />
+                <Play className="w-4 h-4 text-[hsl(var(--text-secondary))]" />
               ) : (
-                <Pause className="w-4 h-4 text-[var(--text-secondary)]" />
+                <Pause className="w-4 h-4 text-[hsl(var(--text-secondary))]" />
               )}
             </button> */}
 
             <button
               onClick={handleAsyncEvent(handleCancel)}
-              className="px-3 py-1.5 text-xs font-medium text-[var(--error)] hover:bg-[var(--error-light)] rounded transition-colors"
+              className="px-3 py-1.5 text-xs font-medium text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] rounded transition-colors duration-fast"
               aria-label="Cancel indexing"
             >
               Cancel
@@ -220,8 +220,8 @@ export function IndexProgress({
       {/* Progress content */}
       <div className="p-4">
         {error && (
-          <div className="mb-4 p-3 bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded">
-            <p className="text-sm text-[var(--error)]">{error}</p>
+          <div className="mb-4 p-3 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded">
+            <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
           </div>
         )}
 
@@ -230,16 +230,16 @@ export function IndexProgress({
             {/* Progress bar */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-[var(--text-secondary)]">
+                <span className="text-sm font-medium text-[hsl(var(--text-secondary))]">
                   {progress.processed} / {progress.totalFiles} files
                 </span>
-                <span className="text-sm font-semibold text-[var(--accent-primary)]">
+                <span className="text-sm font-semibold text-[hsl(var(--accent))]">
                   {percentage.toFixed(1)}%
                 </span>
               </div>
-              <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-2 overflow-hidden">
+              <div className="w-full bg-[hsl(var(--surface-raised))] rounded-full h-2 overflow-hidden">
                 <div
-                  className="bg-[var(--accent-primary)] h-2 rounded-full transition-all duration-300 ease-out"
+                  className="bg-[hsl(var(--accent))] h-2 rounded-full transition-colors duration-300 ease-out"
                   style={{ width: `${percentage}%` }}
                   role="progressbar"
                   aria-valuenow={percentage}
@@ -253,13 +253,13 @@ export function IndexProgress({
             {/* Current file */}
             {isActive && progress.currentFile && (
               <div className="mb-3">
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">
                   Current file:
                 </p>
-                <p className="text-sm text-[var(--text-primary)] truncate font-mono">
+                <p className="text-sm text-[hsl(var(--text-primary))] truncate font-mono">
                   {formatFileName(progress.currentFile)}
                 </p>
-                <p className="text-xs text-[var(--text-tertiary)] mt-0.5 truncate">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mt-0.5 truncate">
                   {progress.currentFile}
                 </p>
               </div>
@@ -269,10 +269,10 @@ export function IndexProgress({
             <div className="grid grid-cols-2 gap-3">
               {progress.failed > 0 && (
                 <div>
-                  <p className="text-xs text-[var(--text-tertiary)] mb-1">
+                  <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">
                     Failed
                   </p>
-                  <p className="text-sm font-semibold text-[var(--error)]">
+                  <p className="text-sm font-semibold text-[hsl(var(--danger-fg))]">
                     {progress.failed}
                   </p>
                 </div>
@@ -280,10 +280,10 @@ export function IndexProgress({
 
               {isActive && progress.estimatedRemainingMs && (
                 <div>
-                  <p className="text-xs text-[var(--text-tertiary)] mb-1">
+                  <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">
                     Time remaining
                   </p>
-                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                  <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                     {formatTime(progress.estimatedRemainingMs)}
                   </p>
                 </div>
@@ -292,8 +292,8 @@ export function IndexProgress({
 
             {/* Success message */}
             {progress.status === 'complete' && (
-              <div className="mt-4 p-3 bg-[var(--success-light)]/20 border border-[var(--success-light)] rounded">
-                <p className="text-sm text-[var(--success)]">
+              <div className="mt-4 p-3 bg-[hsl(var(--success-muted))]/20 border border-[hsl(var(--success-muted))] rounded">
+                <p className="text-sm text-[hsl(var(--success-fg))]">
                   Successfully indexed {progress.processed} document{progress.processed !== 1 ? 's' : ''}
                   {progress.failed > 0 && ` (${progress.failed} failed)`}
                 </p>

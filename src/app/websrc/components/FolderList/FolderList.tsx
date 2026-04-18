@@ -149,8 +149,8 @@ export function FolderList({
     return (
       <div className={`flex items-center justify-center p-8 ${className}`}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-primary)] mx-auto mb-3" />
-          <p className="text-sm text-[var(--text-secondary)]">Loading folders...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--accent))] mx-auto mb-3" />
+          <p className="text-sm text-[hsl(var(--text-secondary))]">Loading folders...</p>
         </div>
       </div>
     );
@@ -160,11 +160,11 @@ export function FolderList({
   if (error) {
     return (
       <div className={`p-6 ${className}`}>
-        <div className="bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded-lg p-4">
-          <p className="text-sm text-[var(--error)]">{error}</p>
+        <div className="bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg p-4">
+          <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
           <button
             onClick={handleAsyncEvent(loadFolders)}
-            className="mt-3 text-sm text-[var(--error)] hover:text-[var(--error)] font-medium"
+            className="mt-3 text-sm text-[hsl(var(--danger-fg))] hover:text-[hsl(var(--danger-fg))] font-medium"
           >
             Try again
           </button>
@@ -178,18 +178,18 @@ export function FolderList({
     return (
       <div className={`p-6 ${className}`}>
         <div className="text-center py-12">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-[var(--accent-light)]/30 rounded-full mb-4">
-            <FolderOpen className="w-8 h-8 text-[var(--accent-primary)]" />
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-[hsl(var(--accent-muted))]/30 rounded-full mb-4">
+            <FolderOpen className="w-8 h-8 text-[hsl(var(--accent))]" />
           </div>
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
             No folders indexed yet
           </h3>
-          <p className="text-sm text-[var(--text-secondary)] mb-6 max-w-sm mx-auto">
+          <p className="text-sm text-[hsl(var(--text-secondary))] mb-6 max-w-sm mx-auto">
             Add a folder to start indexing your documents. Vault will search through all supported files automatically.
           </p>
           <button
             onClick={handleAsyncEvent(handleAddFolder)}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg font-medium transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-hover))] text-[hsl(var(--accent-fg))] rounded-lg font-medium transition-colors duration-fast"
           >
             <Plus className="w-4 h-4" />
             Add Your First Folder
@@ -203,13 +203,13 @@ export function FolderList({
   return (
     <div className={className}>
       {/* Header with Add button */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-color)]">
-        <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[hsl(var(--border-subtle))]">
+        <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
           Indexed Folders ({folders.length})
         </h3>
         <button
           onClick={handleAsyncEvent(handleAddFolder)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-light)] rounded transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-muted))] rounded transition-colors duration-fast"
           aria-label="Add folder"
         >
           <Plus className="w-4 h-4" />
@@ -222,13 +222,13 @@ export function FolderList({
         {folders.map((folder) => (
           <div
             key={folder.path}
-            className="group p-4 hover:bg-[var(--surface-hover)]/50 transition-colors"
+            className="group p-4 hover:bg-[hsl(var(--surface-raised))]/50 transition-colors duration-fast"
           >
             <div className="flex items-start gap-3">
               {/* Folder icon */}
               <div className="flex-shrink-0 mt-1">
-                <div className="w-10 h-10 bg-[var(--accent-light)]/30 rounded-lg flex items-center justify-center">
-                  <Folder className="w-5 h-5 text-[var(--accent-primary)]" />
+                <div className="w-10 h-10 bg-[hsl(var(--accent-muted))]/30 rounded-lg flex items-center justify-center">
+                  <Folder className="w-5 h-5 text-[hsl(var(--accent))]" />
                 </div>
               </div>
 
@@ -236,10 +236,10 @@ export function FolderList({
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-[var(--text-primary)] truncate">
+                    <h4 className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">
                       {formatFolderPath(folder.path)}
                     </h4>
-                    <p className="text-xs text-[var(--text-tertiary)] mt-0.5 truncate font-mono">
+                    <p className="text-xs text-[hsl(var(--text-tertiary))] mt-0.5 truncate font-mono">
                       {folder.path}
                     </p>
                   </div>
@@ -250,35 +250,35 @@ export function FolderList({
                       onClick={handleAsyncEvent(async () => {
                         await handleReindexFolder(folder.path);
                       })}
-                      className="p-1.5 hover:bg-[var(--surface-hover)] rounded transition-colors"
+                      className="p-1.5 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors duration-fast"
                       aria-label="Re-index folder"
                       title="Re-index folder"
                     >
-                      <RefreshCw className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <RefreshCw className="w-4 h-4 text-[hsl(var(--text-secondary))]" />
                     </button>
                     <button
                       onClick={handleAsyncEvent(async () => {
                         await handleRemoveFolder(folder.path);
                       })}
                       disabled={removingFolder === folder.path}
-                      className="p-1.5 hover:bg-[var(--error-light)] rounded transition-colors disabled:opacity-50"
+                      className="p-1.5 hover:bg-[hsl(var(--danger-muted))] rounded transition-colors duration-fast disabled:opacity-50"
                       aria-label="Remove folder"
                       title="Remove folder"
                     >
-                      <Trash2 className="w-4 h-4 text-[var(--error)]" />
+                      <Trash2 className="w-4 h-4 text-[hsl(var(--danger-fg))]" />
                     </button>
                   </div>
                 </div>
 
                 {/* Metadata */}
                 <div className="flex items-center gap-4 mt-2">
-                  <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                  <div className="flex items-center gap-1.5 text-xs text-[hsl(var(--text-secondary))]">
                     <FileText className="w-3.5 h-3.5" />
                     <span>
                       {folder.document_count} document{folder.document_count !== 1 ? 's' : ''}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                  <div className="flex items-center gap-1.5 text-xs text-[hsl(var(--text-secondary))]">
                     <Clock className="w-3.5 h-3.5" />
                     <span>
                       {formatTimestamp(folder.last_scan ?? '')}

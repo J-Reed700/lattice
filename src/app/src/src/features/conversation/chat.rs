@@ -925,7 +925,7 @@ async fn build_linked_web_sources_prompt_context(
 
 async fn build_conversation_context(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     max_tokens: usize,
@@ -1015,7 +1015,7 @@ async fn build_conversation_context(
 
 async fn trigger_background_summary_refresh_if_needed(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     max_tokens: usize,

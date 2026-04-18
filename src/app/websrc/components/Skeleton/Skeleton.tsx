@@ -52,8 +52,8 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   const skeletonClass = [
     'skeleton',
     circle ? 'rounded-full' : 'rounded',
-    'bg-[var(--bg-tertiary)]',
-    'animate-shimmer',
+    'bg-[hsl(var(--surface-raised))]',
+    'animate-pulse',
     className,
   ].filter(Boolean).join(' ');
 
@@ -183,7 +183,7 @@ export const SkeletonButton: React.FC<SkeletonButtonProps> = ({
  */
 export const SkeletonCard: React.FC<{ className?: string }> = ({ className = '' }) => (
     <div
-      className={`bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-6 ${className}`}
+      className={`bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 ${className}`}
       aria-hidden="true"
     >
       <div className="space-y-4">

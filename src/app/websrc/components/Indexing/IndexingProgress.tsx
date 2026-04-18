@@ -34,24 +34,24 @@ export const IndexingProgress = memo<IndexingProgressProps>(({ className = '' })
   const currentOperation = activeIndexing[0];
 
   return (
-    <div className={`bg-[var(--accent-light)]/20 rounded-lg p-4 ${className}`}>
+    <div className={`bg-[hsl(var(--accent-muted))]/20 rounded-lg p-4 ${className}`}>
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0">
-          <Loader2 className="w-5 h-5 text-[var(--accent-primary)] animate-spin" />
+          <Loader2 className="w-5 h-5 text-[hsl(var(--accent))] animate-spin" />
         </div>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+            <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
               Indexing in Progress
             </h4>
-            <span className="text-xs text-[var(--text-secondary)]">
+            <span className="text-xs text-[hsl(var(--text-secondary))]">
               {currentOperation.current} / {currentOperation.total}
             </span>
           </div>
 
           {currentOperation.message && (
-            <p className="text-sm text-[var(--text-secondary)] mb-3 truncate">
+            <p className="text-sm text-[hsl(var(--text-secondary))] mb-3 truncate">
               {currentOperation.message}
             </p>
           )}
@@ -64,7 +64,7 @@ export const IndexingProgress = memo<IndexingProgressProps>(({ className = '' })
           />
 
           {currentOperation.eta && currentOperation.eta > 0 && (
-            <p className="text-xs text-[var(--text-secondary)] mt-2">
+            <p className="text-xs text-[hsl(var(--text-secondary))] mt-2">
               Estimated time remaining:{' '}
               {currentOperation.eta < 60
                 ? `${Math.round(currentOperation.eta)}s`
@@ -73,7 +73,7 @@ export const IndexingProgress = memo<IndexingProgressProps>(({ className = '' })
           )}
 
           {activeIndexing.length > 1 && (
-            <p className="text-xs text-[var(--text-secondary)] mt-2">
+            <p className="text-xs text-[hsl(var(--text-secondary))] mt-2">
               +{activeIndexing.length - 1} more operations in queue
             </p>
           )}

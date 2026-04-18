@@ -11,9 +11,11 @@ use crate::features::function_calling::dto::CleanArticle;
 use crate::infrastructure::indexing::chunker::{
     ChunkerConfig, ContextualizedChunk, SemanticChunker,
 };
-use crate::infrastructure::services::traits::{
-    ArticleExtractorServiceTrait, EmbeddingServiceTrait, IndexStorageTrait, WebArchiveServiceTrait,
-    WebIngestionResult, WebIngestionServiceTrait,
+use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::indexing::IndexStorageTrait;
+use crate::features::web::{
+    WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait,
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;

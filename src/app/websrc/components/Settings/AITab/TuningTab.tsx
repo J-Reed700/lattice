@@ -93,30 +93,30 @@ export function TuningTab() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-        <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-          <Settings2 className="w-5 h-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+          <Settings2 className="w-5 h-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Tuning</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Tuning</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Model runtime parameters, router layer, and tool output configuration
           </p>
         </div>
       </div>
 
       {isLoading || !llmSettings || !routerDraft || !toolOutputDraft ? (
-        <div className="text-xs text-[var(--text-tertiary)]">
+        <div className="text-xs text-[hsl(var(--text-tertiary))]">
           Loading tuning and layer settings...
         </div>
       ) : (
         <div className="space-y-6">
           {/* Model Runtime */}
-          <section className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
-            <div className="text-sm font-medium text-[var(--text-primary)]">Model Runtime</div>
+          <section className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
+            <div className="text-sm font-medium text-[hsl(var(--text-primary))]">Model Runtime</div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Temperature
                 </label>
                 <input
@@ -140,7 +140,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">Top P</label>
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">Top P</label>
                 <input
                   type="number"
                   min={0}
@@ -162,7 +162,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">Top K</label>
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">Top K</label>
                 <input
                   type="number"
                   min={0}
@@ -184,7 +184,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Repeat Penalty
                 </label>
                 <input
@@ -208,7 +208,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Max Tokens
                 </label>
                 <input
@@ -234,7 +234,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Context Window
                 </label>
                 <input
@@ -263,7 +263,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Timeout (seconds)
                 </label>
                 <input
@@ -289,14 +289,14 @@ export function TuningTab() {
                 />
               </div>
               <div className="flex items-end">
-                <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                <label className="inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                   <input
                     type="checkbox"
                     checked={llmSettings.streamResponses}
                     onChange={(event) =>
                       void saveLlmUpdates({ streamResponses: event.target.checked })
                     }
-                    className="h-4 w-4 rounded border-[var(--border-color)] bg-[var(--bg-tertiary)] text-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]"
+                    className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
                   />
                   Stream Responses
                 </label>
@@ -305,19 +305,19 @@ export function TuningTab() {
           </section>
 
           {/* Retrieval note */}
-          <section className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
-            <div className="text-sm font-medium text-[var(--text-primary)]">Retrieval Tuning</div>
-            <p className="text-xs text-[var(--text-secondary)]">
+          <section className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
+            <div className="text-sm font-medium text-[hsl(var(--text-primary))]">Retrieval Tuning</div>
+            <p className="text-xs text-[hsl(var(--text-secondary))]">
               Retrieval knobs moved to the Search tab. Use Settings &rarr; Search &rarr; Advanced
               Retrieval Tuning for reranker, shortlist, overlap, and support-ratio controls.
             </p>
           </section>
 
           {/* Router Layer */}
-          <section className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
-            <div className="text-sm font-medium text-[var(--text-primary)]">Router Layer</div>
+          <section className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
+            <div className="text-sm font-medium text-[hsl(var(--text-primary))]">Router Layer</div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <label className="inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                 <input
                   type="checkbox"
                   checked={routerDraft.enabled}
@@ -328,11 +328,11 @@ export function TuningTab() {
                     );
                     void saveRouterField('enabled', enabled);
                   }}
-                  className="h-4 w-4 rounded border-[var(--border-color)] bg-[var(--bg-tertiary)] text-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]"
+                  className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
                 />
                 Router Enabled
               </label>
-              <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <label className="inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                 <input
                   type="checkbox"
                   checked={routerDraft.preferLastDocument}
@@ -343,12 +343,12 @@ export function TuningTab() {
                     );
                     void saveRouterField('preferLastDocument', preferLastDocument);
                   }}
-                  className="h-4 w-4 rounded border-[var(--border-color)] bg-[var(--bg-tertiary)] text-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]"
+                  className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
                 />
                 Prefer Last Document
               </label>
               <div className="space-y-1.5 md:col-span-2">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Router Model
                 </label>
                 <input
@@ -364,7 +364,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Timeout (ms)
                 </label>
                 <input
@@ -395,7 +395,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Max Tokens
                 </label>
                 <input
@@ -426,7 +426,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Temperature
                 </label>
                 <input
@@ -449,7 +449,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Ambiguity Threshold
                 </label>
                 <input
@@ -483,7 +483,7 @@ export function TuningTab() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
+              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                 Router Prompt Template
               </label>
               <textarea
@@ -500,7 +500,7 @@ export function TuningTab() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
+              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                 Clarify Prompt Template
               </label>
               <textarea
@@ -522,13 +522,13 @@ export function TuningTab() {
           </section>
 
           {/* Tool Output Layer */}
-          <section className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
-            <div className="text-sm font-medium text-[var(--text-primary)]">
+          <section className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
+            <div className="text-sm font-medium text-[hsl(var(--text-primary))]">
               Tool Output Layer
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Max Chars
                 </label>
                 <input
@@ -557,7 +557,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Excerpt Chars
                 </label>
                 <input
@@ -588,7 +588,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Max Tool Results
                 </label>
                 <input
@@ -619,7 +619,7 @@ export function TuningTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Highlight Terms Max
                 </label>
                 <input
@@ -652,7 +652,7 @@ export function TuningTab() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
+              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                 Default Tool Template
               </label>
               <textarea
@@ -681,7 +681,7 @@ export function TuningTab() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
+              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                 Get Document Template
               </label>
               <textarea
@@ -710,7 +710,7 @@ export function TuningTab() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
+              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                 Semantic Search Template
               </label>
               <textarea

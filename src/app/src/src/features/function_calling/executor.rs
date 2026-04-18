@@ -38,11 +38,11 @@ use crate::application::ports::{
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::infrastructure::search::hybrid::{HybridSearchResult, SearchMode as HybridSearchMode};
 use crate::infrastructure::search::service::SearchResult as InfraSearchResult;
-use crate::infrastructure::services::traits::{
-    BM25SearchTrait, EmbeddingServiceTrait, FunctionExecutorTrait, FunctionRegistryTrait,
-    HybridSearchTrait, SearchServiceTrait, WebServiceTrait,
-};
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
+use crate::features::web::WebServiceTrait;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -1417,11 +1417,11 @@ mod tests {
     use crate::domain::value_objects::Checksum;
     use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
     use crate::features::function_calling::registry::FunctionRegistry;
-    use crate::infrastructure::services::mocks::{
-        MockBM25Search, MockEmbeddingService, MockFunctionRegistry, MockHybridSearch,
-        MockSearchService, MockWebService,
-    };
+    use crate::features::embedding::mocks::MockEmbeddingService;
+    use crate::features::function_calling::mocks::MockFunctionRegistry;
+    use crate::features::search::mocks::{MockBM25Search, MockHybridSearch, MockSearchService};
     use crate::features::tags::mocks::MockTagService;
+    use crate::features::web::mocks::MockWebService;
     use crate::RepositoryPort;
     use async_trait::async_trait;
     use std::path::{Path, PathBuf};

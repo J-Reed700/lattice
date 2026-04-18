@@ -55,27 +55,27 @@ function Toast({ id, message, variant = 'info', duration = 5000, onDismiss }: To
 
   const variantStyles = {
     success: {
-      container: 'bg-[var(--success-light)] border-[var(--success-light)]',
-      icon: 'text-[var(--success)]',
-      text: 'text-[var(--success)]',
+      container: 'bg-[hsl(var(--success-muted))] border-[hsl(var(--success-muted))]',
+      icon: 'text-[hsl(var(--success-fg))]',
+      text: 'text-[hsl(var(--success-fg))]',
       Icon: CheckCircle,
     },
     error: {
-      container: 'bg-[var(--error-light)] border-[var(--error-light)]',
-      icon: 'text-[var(--error)]',
-      text: 'text-[var(--error)]',
+      container: 'bg-[hsl(var(--danger-muted))] border-[hsl(var(--danger-muted))]',
+      icon: 'text-[hsl(var(--danger-fg))]',
+      text: 'text-[hsl(var(--danger-fg))]',
       Icon: AlertCircle,
     },
     warning: {
-      container: 'bg-[var(--warning-light)] border-[var(--warning-light)]',
-      icon: 'text-[var(--warning)]',
-      text: 'text-[var(--warning)]',
+      container: 'bg-[hsl(var(--warning-muted))] border-[hsl(var(--warning-muted))]',
+      icon: 'text-[hsl(var(--warning-fg))]',
+      text: 'text-[hsl(var(--warning-fg))]',
       Icon: AlertTriangle,
     },
     info: {
-      container: 'bg-[var(--accent-light)] border-[var(--accent-light)]',
-      icon: 'text-[var(--accent-primary)]',
-      text: 'text-[var(--accent-primary)]',
+      container: 'bg-[hsl(var(--accent-muted))] border-[hsl(var(--accent-muted))]',
+      icon: 'text-[hsl(var(--accent))]',
+      text: 'text-[hsl(var(--accent))]',
       Icon: Info,
     },
   };
@@ -89,20 +89,20 @@ function Toast({ id, message, variant = 'info', duration = 5000, onDismiss }: To
       aria-live="polite"
       aria-atomic="true"
       className={`
-        flex items-start gap-3 p-4 rounded-lg border shadow-lg
-        transition-all duration-200
+        flex items-start gap-3 p-4 rounded-md border shadow-md
+        transition-opacity duration-base
         ${style.container}
         ${isExiting ? 'opacity-0 translate-x-full' : 'opacity-100 translate-x-0'}
       `}
     >
-      <IconComponent className={`w-5 h-5 flex-shrink-0 ${style.icon}`} />
+      <IconComponent className={`w-4 h-4 flex-shrink-0 ${style.icon}`} strokeWidth={1.75} />
       <p className={`flex-1 text-sm font-medium ${style.text}`}>{message}</p>
       <button
         onClick={handleDismiss}
-        className={`flex-shrink-0 p-0.5 rounded hover:bg-black/5  transition-colors ${style.icon}`}
+        className={`flex-shrink-0 p-0.5 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast ${style.icon}`}
         aria-label="Dismiss notification"
       >
-        <X className="w-4 h-4" />
+        <X className="w-4 h-4" strokeWidth={1.75} />
       </button>
     </div>
   );

@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use crate::features::search::dto::{RecencySearchOptions, SearchResultDto};
 use crate::application::ports::EmbeddingPort;
-use crate::infrastructure::services::traits::HybridSearchTrait;
+use crate::features::search::HybridSearchTrait;
 use crate::shared::error::{AppError, Result};
 
 /// Recency search use case with time-aware ranking.

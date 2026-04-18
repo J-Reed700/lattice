@@ -5,7 +5,7 @@
 #[cfg(test)]
 use crate::features::function_calling::dto::UrlPreview;
 #[cfg(test)]
-use crate::infrastructure::services::traits::WebCaptureServiceTrait;
+use crate::features::web::WebCaptureServiceTrait;
 #[cfg(test)]
 use crate::shared::error::{AppError, Result};
 #[cfg(test)]

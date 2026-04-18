@@ -65,12 +65,12 @@ export function ModelDownloadProgress({
   // Otherwise, show progress for remaining files even if one file failed
   if (error && !hasActiveDownloads) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-[var(--surface-elevated)] rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+      <div className="fixed inset-0 bg-[hsl(var(--overlay))] flex items-center justify-center z-50">
+        <div className="bg-[hsl(var(--surface-raised))] rounded-lg p-6 max-w-md w-full mx-4 shadow-md">
           <div className="flex items-center mb-4">
-            <div className="w-12 h-12 bg-[var(--error-light)] rounded-full flex items-center justify-center mr-4">
+            <div className="w-12 h-12 bg-[hsl(var(--danger-muted))] rounded-full flex items-center justify-center mr-4">
               <svg
-                className="w-6 h-6 text-[var(--error)]"
+                className="w-6 h-6 text-[hsl(var(--danger-fg))]"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -78,17 +78,17 @@ export function ModelDownloadProgress({
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={2}
+                  strokeWidth={1.75}
                   d="M6 18L18 6M6 6l12 12"
                 />
               </svg>
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-[var(--text-primary)]">Download Failed</h2>
+              <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Download didn't complete</h2>
             </div>
           </div>
-          <div className="bg-[var(--error-light)] border border-[var(--error-light)] rounded p-3 mb-4">
-            <p className="text-sm text-[var(--error)]">{error}</p>
+          <div className="bg-[hsl(var(--danger-muted))] border border-[hsl(var(--danger-muted))] rounded p-3 mb-4">
+            <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
           </div>
           <div className="flex justify-end space-x-3">
             <button
@@ -96,7 +96,7 @@ export function ModelDownloadProgress({
                 setManuallyDismissed(true);
                 onError?.(error);
               }}
-              className="px-4 py-2 bg-[var(--surface-elevated)] text-[var(--text-primary)] border border-[var(--border-color)] rounded hover:bg-[var(--bg-secondary)]"
+              className="px-4 py-2 bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] border border-[hsl(var(--border-subtle))] rounded hover:bg-[hsl(var(--surface))]"
             >
               Close
             </button>
@@ -109,13 +109,13 @@ export function ModelDownloadProgress({
   // Show progress for active downloads
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-[var(--surface-elevated)] rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+    <div className="fixed inset-0 bg-[hsl(var(--overlay))] flex items-center justify-center z-50">
+      <div className="bg-[hsl(var(--surface-raised))] rounded-lg p-6 max-w-md w-full mx-4 shadow-md">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center">
-            <div className="w-12 h-12 bg-[var(--accent-light)] rounded-full flex items-center justify-center mr-4 animate-pulse">
+            <div className="w-12 h-12 bg-[hsl(var(--accent-muted))] rounded-full flex items-center justify-center mr-4 animate-pulse">
               <svg
-                className="w-6 h-6 text-[var(--accent-primary)]"
+                className="w-6 h-6 text-[hsl(var(--accent))]"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -123,25 +123,25 @@ export function ModelDownloadProgress({
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={2}
+                  strokeWidth={1.75}
                   d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
                 />
               </svg>
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-[var(--text-primary)]">Downloading Model</h2>
-              <p className="text-sm text-[var(--text-secondary)]">
+              <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Downloading model</h2>
+              <p className="text-sm text-[hsl(var(--text-secondary))]">
                 {activeDownloads.length} file{activeDownloads.length !== 1 ? 's' : ''} in progress...
               </p>
             </div>
           </div>
           <button
             onClick={() => setManuallyDismissed(true)}
-            className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+            className="text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors"
             aria-label="Close"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
@@ -149,13 +149,13 @@ export function ModelDownloadProgress({
         {hasActiveDownloads && (
           <>
             <div className="mb-2">
-              <div className="flex justify-between text-sm text-[var(--text-secondary)] mb-1">
+              <div className="flex justify-between text-sm text-[hsl(var(--text-secondary))] mb-1">
                 <span className="font-medium">Overall Progress</span>
                 <span className="font-semibold">{percentage.toFixed(1)}%</span>
               </div>
-              <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-2.5 overflow-hidden">
+              <div className="w-full bg-[hsl(var(--surface-raised))] rounded-full h-2.5 overflow-hidden">
                 <div
-                  className="bg-[var(--accent-primary)] h-2.5 rounded-full transition-all duration-300 ease-out"
+                  className="bg-[hsl(var(--accent))] h-2.5 rounded-full transition-[width] duration-base ease-out"
                   style={{ width: `${percentage}%` }}
                 />
               </div>
@@ -163,26 +163,26 @@ export function ModelDownloadProgress({
 
             <div className="grid grid-cols-2 gap-4 mt-4">
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Downloaded</p>
-                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Downloaded</p>
+                <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                   {formatBytes(downloadedBytes)} / {formatBytes(totalBytes)}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Speed</p>
-                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Speed</p>
+                <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                   {formatBytes(averageSpeed)}/s
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Time Remaining</p>
-                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Time Remaining</p>
+                <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                   {etaSeconds !== null ? formatTime(etaSeconds) : 'Calculating...'}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Status</p>
-                <p className="text-sm font-semibold text-[var(--success)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Status</p>
+                <p className="text-sm font-semibold text-[hsl(var(--success-fg))]">
                   Downloading...
                 </p>
               </div>
@@ -190,12 +190,12 @@ export function ModelDownloadProgress({
 
             {/* Show individual file progress if multiple files */}
             {activeDownloads.length > 1 && (
-              <div className="mt-4 pt-4 border-t border-[var(--border-color)]">
-                <p className="text-xs text-[var(--text-tertiary)] mb-2">Active Downloads:</p>
+              <div className="mt-4 pt-4 border-t border-[hsl(var(--border-subtle))]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-2">Active Downloads:</p>
                 <div className="space-y-2 max-h-32 overflow-y-auto">
                   {activeDownloads.map(download => (
                     <div key={download.id} className="text-xs">
-                      <div className="flex justify-between text-[var(--text-secondary)]">
+                      <div className="flex justify-between text-[hsl(var(--text-secondary))]">
                         <span className="truncate">{download.url.split('/').pop()}</span>
                         <span>{download.percentage !== null ? `${download.percentage.toFixed(0)}%` : 'Pending'}</span>
                       </div>
@@ -209,13 +209,13 @@ export function ModelDownloadProgress({
 
         {!hasActiveDownloads && (
           <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-primary)]" />
-            <span className="ml-3 text-[var(--text-secondary)]">Initializing download...</span>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--accent))]" />
+            <span className="ml-3 text-[hsl(var(--text-secondary))]">Initializing download...</span>
           </div>
         )}
 
-        <div className="mt-6 pt-4 border-t border-[var(--border-color)]">
-          <p className="text-xs text-[var(--text-tertiary)] text-center">
+        <div className="mt-6 pt-4 border-t border-[hsl(var(--border-subtle))]">
+          <p className="text-xs text-[hsl(var(--text-tertiary))] text-center">
             Downloading embedding model from HuggingFace (~90MB)
             <br />
             This only happens once on first launch

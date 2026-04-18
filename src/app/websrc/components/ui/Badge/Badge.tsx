@@ -8,10 +8,10 @@ interface BadgeProps {
 
 export function Badge({ children, variant = 'default', className = '' }: BadgeProps) {
   const variantClasses = {
-    default: 'bg-[var(--accent-primary)] text-white',
-    secondary: 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]',
-    outline: 'border border-[var(--border-color)] text-[var(--text-secondary)]',
-    destructive: 'bg-[var(--error)] text-white',
+    default: 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))]',
+    secondary: 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))]',
+    outline: 'border border-[hsl(var(--border-subtle))] text-[hsl(var(--text-secondary))]',
+    destructive: 'bg-[hsl(var(--danger))] text-[hsl(var(--accent-fg))]',
   };
 
   return (

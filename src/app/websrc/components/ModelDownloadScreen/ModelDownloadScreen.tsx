@@ -107,7 +107,7 @@ export function ModelDownloadScreen({
               }
 
               case 'error': {
-                const errorMessage = 'Download failed'; // StateSnapshot doesn't include error message
+                const errorMessage = "Download didn't complete"; // StateSnapshot doesn't include error message
                 setError(errorMessage);
                 setStatus('error');
                 onError?.(errorMessage);
@@ -178,7 +178,7 @@ export function ModelDownloadScreen({
       case 'complete':
         return 'Download complete!';
       case 'error':
-        return 'Download failed';
+        return "Download didn't complete";
       default:
         return 'Initializing...';
     }
@@ -200,32 +200,32 @@ export function ModelDownloadScreen({
   const getStatusColor = () => {
     switch (status) {
       case 'downloading':
-        return 'text-[var(--accent-primary)] bg-[var(--accent-light)]';
+        return 'text-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]';
       case 'complete':
-        return 'text-[var(--success)] bg-[var(--success-light)]';
+        return 'text-[hsl(var(--success-fg))] bg-[hsl(var(--success-muted))]';
       case 'error':
-        return 'text-[var(--error)] bg-[var(--error-light)]';
+        return 'text-[hsl(var(--danger-fg))] bg-[hsl(var(--danger-muted))]';
       default:
-        return 'text-[var(--text-secondary)] bg-[var(--bg-secondary)]';
+        return 'text-[hsl(var(--text-secondary))] bg-[hsl(var(--surface))]';
     }
   };
 
   if (isBackgrounded) {
     return (
       <div className="fixed bottom-4 right-4 z-50">
-        <div className="bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg shadow-lg p-4 w-80">
+        <div className="bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg shadow-lg p-4 w-80">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getStatusColor()}`}>
               {getStatusIcon()}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+              <p className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">
                 {getStatusMessage()}
               </p>
               {progress && (
-                <div className="w-full bg-[var(--bg-secondary)] rounded-full h-1.5 mt-1">
+                <div className="w-full bg-[hsl(var(--surface))] rounded-full h-1.5 mt-1">
                   <div
-                    className="bg-[var(--accent-primary)] h-1.5 rounded-full transition-all duration-300"
+                    className="bg-[hsl(var(--accent))] h-1.5 rounded-full transition-[width] duration-base"
                     style={{ width: `${progress.percentage}%` }}
                   />
                 </div>
@@ -238,21 +238,21 @@ export function ModelDownloadScreen({
   }
 
   const content = (
-    <div className={embedded ? '' : 'bg-[var(--surface-elevated)] rounded-lg p-8 max-w-lg w-full shadow-xl'}>
+    <div className={embedded ? '' : 'bg-[hsl(var(--surface-raised))] rounded-lg p-8 max-w-lg w-full shadow-md'}>
       <div className="text-center mb-6">
         <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${getStatusColor()} ${status === 'downloading' ? 'animate-pulse' : ''}`}>
           {getStatusIcon()}
         </div>
-        <h2 className="text-2xl font-semibold text-[var(--text-primary)] mb-2">
-          {status === 'error' ? 'Download Failed' : 'Downloading AI Models'}
+        <h2 className="text-2xl font-semibold text-[hsl(var(--text-primary))] mb-2">
+          {status === 'error' ? "Download didn't complete" : 'Downloading AI models'}
         </h2>
-        <p className="text-sm text-[var(--text-secondary)]">{getStatusMessage()}</p>
+        <p className="text-sm text-[hsl(var(--text-secondary))]">{getStatusMessage()}</p>
       </div>
 
       {status === 'error' && error && (
-        <div className="bg-[var(--error-light)] border border-[var(--error)] rounded-lg p-4 mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
-          <p className="text-sm text-[var(--error)] font-medium mb-2">Error Details:</p>
-          <p className="text-sm text-[var(--error)]">{error}</p>
+        <div className="bg-[hsl(var(--danger-muted))] border border-[hsl(var(--danger-fg))] rounded-lg p-4 mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
+          <p className="text-sm text-[hsl(var(--danger-fg))] font-medium mb-2">Error Details:</p>
+          <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
         </div>
       )}
 
@@ -260,47 +260,47 @@ export function ModelDownloadScreen({
         <div className="space-y-4">
           <div>
             <div className="flex justify-between items-baseline mb-2">
-              <span className="text-sm font-medium text-[var(--text-secondary)]">
+              <span className="text-sm font-medium text-[hsl(var(--text-secondary))]">
                 {progress.current_file}
               </span>
-              <span className="text-lg font-bold text-[var(--accent-primary)]">
+              <span className="text-lg font-bold text-[hsl(var(--accent))]">
                 {progress.percentage.toFixed(1)}%
               </span>
             </div>
-            <div className="w-full bg-[var(--bg-secondary)] rounded-full h-3 overflow-hidden">
+            <div className="w-full bg-[hsl(var(--surface))] rounded-full h-3 overflow-hidden">
               <div
-                className="gradient-brand h-3 rounded-full transition-all duration-300 ease-out"
+                className="bg-[hsl(var(--accent))] h-3 rounded-full transition-[width] duration-base ease-out"
                 style={{ width: `${progress.percentage}%` }}
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-[var(--border-color)]">
+          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-[hsl(var(--border-subtle))]">
             <div>
-              <p className="text-xs text-[var(--text-tertiary)] mb-1">Downloaded</p>
-              <p className="text-sm font-semibold text-[var(--text-primary)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Downloaded</p>
+              <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                 {formatBytes(progress.bytes_downloaded)}
-                <span className="text-[var(--text-tertiary)] font-normal">
+                <span className="text-[hsl(var(--text-tertiary))] font-normal">
                   {' '}
                   / {formatBytes(progress.total_bytes)}
                 </span>
               </p>
             </div>
             <div>
-              <p className="text-xs text-[var(--text-tertiary)] mb-1">Speed</p>
-              <p className="text-sm font-semibold text-[var(--text-primary)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Speed</p>
+              <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                 {progress.speed_mbps.toFixed(2)} MB/s
               </p>
             </div>
             <div>
-              <p className="text-xs text-[var(--text-tertiary)] mb-1">Time Remaining</p>
-              <p className="text-sm font-semibold text-[var(--text-primary)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Time Remaining</p>
+              <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                 {formatTime(progress.eta_seconds)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[var(--text-tertiary)] mb-1">Status</p>
-              <p className="text-sm font-semibold text-[var(--success)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Status</p>
+              <p className="text-sm font-semibold text-[hsl(var(--success-fg))]">
                 {status === 'complete' ? 'Complete' : 'In Progress'}
               </p>
             </div>
@@ -310,27 +310,27 @@ export function ModelDownloadScreen({
 
       {!progress && status === 'initializing' && (
         <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[var(--accent-primary)]" />
-          <span className="ml-3 text-[var(--text-secondary)]">Initializing download...</span>
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[hsl(var(--accent))]" />
+          <span className="ml-3 text-[hsl(var(--text-secondary))]">Initializing download...</span>
         </div>
       )}
 
       {status === 'complete' && (
         <div className="text-center py-8 animate-in fade-in zoom-in-95 duration-300">
-          <CheckCircle2 className="w-16 h-16 text-[var(--success)] mx-auto mb-3" />
-          <p className="text-lg font-semibold text-[var(--text-primary)]">Models ready!</p>
-          <p className="text-sm text-[var(--text-secondary)] mt-1">
+          <CheckCircle2 className="w-16 h-16 text-[hsl(var(--success-fg))] mx-auto mb-3" />
+          <p className="text-lg font-semibold text-[hsl(var(--text-primary))]">Models ready</p>
+          <p className="text-sm text-[hsl(var(--text-secondary))] mt-1">
             Proceeding to next step...
           </p>
         </div>
       )}
 
-      <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
+      <div className="mt-6 pt-6 border-t border-[hsl(var(--border-subtle))]">
         {status === 'error' ? (
           <div className="flex gap-3">
             <button
               onClick={handleRetry}
-              className="flex-1 px-4 py-3 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] transition-colors font-medium flex items-center justify-center gap-2"
+              className="flex-1 px-4 py-3 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] transition-colors font-medium flex items-center justify-center gap-2"
               aria-label="Retry download"
             >
               <RefreshCw className="w-4 h-4" />
@@ -342,14 +342,14 @@ export function ModelDownloadScreen({
             {allowBackground && status === 'downloading' && (
               <button
                 onClick={handleBackground}
-                className="w-full px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex items-center justify-center gap-2"
+                className="w-full px-4 py-2 text-sm text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors flex items-center justify-center gap-2"
                 aria-label="Continue in background"
               >
                 <Minimize2 className="w-4 h-4" />
                 Continue in Background
               </button>
             )}
-            <p className="text-xs text-[var(--text-tertiary)] text-center mt-3">
+            <p className="text-xs text-[hsl(var(--text-tertiary))] text-center mt-3">
               Downloading embedding model from HuggingFace (~90MB)
               <br />
               This only happens once on first launch
@@ -365,7 +365,7 @@ export function ModelDownloadScreen({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-[hsl(var(--overlay))] flex items-center justify-center z-50 p-4">
       {content}
     </div>
   );

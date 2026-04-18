@@ -117,9 +117,9 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center max-w-md p-8">
-          <div className="w-16 h-16 bg-[var(--error-light)]/30 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-[hsl(var(--danger-muted))]/30 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg
-              className="w-8 h-8 text-[var(--error)]"
+              className="w-8 h-8 text-[hsl(var(--danger-fg))]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -132,43 +132,43 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
               />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
             PDF Load Error
           </h3>
-          <p className="text-[var(--text-secondary)]">{error}</p>
+          <p className="text-[hsl(var(--text-secondary))]">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-[var(--bg-primary)]">
+    <div className="h-full flex flex-col bg-[hsl(var(--bg))]">
       {/* Controls */}
-      <div className="bg-[var(--surface-elevated)] border-b border-[var(--border-color)] px-4 py-3 flex items-center justify-between shadow-sm">
+      <div className="bg-[hsl(var(--surface-raised))] border-b border-[hsl(var(--border-subtle))] px-4 py-3 flex items-center justify-between shadow-sm">
         {/* Page Navigation */}
         <div className="flex items-center gap-2">
           <button
             onClick={goToPreviousPage}
             disabled={pageNumber <= 1}
-            className="p-2 rounded-lg hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
             aria-label="Previous page"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
 
           <div className="flex items-center gap-2 min-w-[100px] justify-center">
-            <span className="text-sm font-medium text-[var(--text-primary)]">
+            <span className="text-sm font-medium text-[hsl(var(--text-primary))]">
               Page {pageNumber}
             </span>
             {numPages > 0 && (
-              <span className="text-sm text-[var(--text-secondary)]">of {numPages}</span>
+              <span className="text-sm text-[hsl(var(--text-secondary))]">of {numPages}</span>
             )}
           </div>
 
           <button
             onClick={goToNextPage}
             disabled={pageNumber >= numPages}
-            className="p-2 rounded-lg hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
             aria-label="Next page"
           >
             <ChevronRight className="w-5 h-5" />
@@ -179,29 +179,29 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={zoomOut}
-            className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
             aria-label="Zoom out"
           >
             <ZoomOut className="w-5 h-5" />
           </button>
 
-          <span className="text-sm font-medium text-[var(--text-primary)] min-w-[60px] text-center">
+          <span className="text-sm font-medium text-[hsl(var(--text-primary))] min-w-[60px] text-center">
             {Math.round(scale * 100)}%
           </span>
 
           <button
             onClick={zoomIn}
-            className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
             aria-label="Zoom in"
           >
             <ZoomIn className="w-5 h-5" />
           </button>
 
-          <div className="w-px h-6 bg-[var(--border-color)] mx-2" aria-hidden="true" />
+          <div className="w-px h-6 bg-[hsl(var(--border-subtle))] mx-2" aria-hidden="true" />
 
           <button
             onClick={rotate}
-            className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
             aria-label="Rotate 90 degrees"
           >
             <RotateCw className="w-5 h-5" />
@@ -211,7 +211,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
 
       {/* PDF Document */}
       <div className="flex-1 overflow-auto flex justify-center items-start p-8">
-        <div className="shadow-2xl">
+        <div className="shadow-md">
           {fileSource ? (
             <Document
               file={fileSource}
@@ -220,8 +220,8 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
               loading={
                 <div className="flex items-center justify-center p-12">
                   <div className="flex flex-col items-center gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-[var(--accent-primary)] border-t-transparent" />
-                    <p className="text-[var(--text-secondary)] font-medium">Loading PDF...</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-[hsl(var(--accent))] border-t-transparent" />
+                    <p className="text-[hsl(var(--text-secondary))] font-medium">Loading PDF...</p>
                   </div>
                 </div>
               }
@@ -233,8 +233,8 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
                 renderTextLayer
                 renderAnnotationLayer
                 loading={
-                  <div className="flex items-center justify-center p-12 bg-[var(--surface-elevated)]">
-                    <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--accent-primary)] border-t-transparent" />
+                  <div className="flex items-center justify-center p-12 bg-[hsl(var(--surface-raised))]">
+                    <div className="animate-spin rounded-full h-8 w-8 border-4 border-[hsl(var(--accent))] border-t-transparent" />
                   </div>
                 }
               />
@@ -242,8 +242,8 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
           ) : (
             <div className="flex items-center justify-center p-12">
               <div className="flex flex-col items-center gap-4">
-                <div className="animate-spin rounded-full h-12 w-12 border-4 border-[var(--accent-primary)] border-t-transparent" />
-                <p className="text-[var(--text-secondary)] font-medium">Loading PDF...</p>
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-[hsl(var(--accent))] border-t-transparent" />
+                <p className="text-[hsl(var(--text-secondary))] font-medium">Loading PDF...</p>
               </div>
             </div>
           )}

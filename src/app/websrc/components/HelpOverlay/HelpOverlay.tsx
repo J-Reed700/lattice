@@ -143,67 +143,67 @@ export function HelpOverlay({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 animate-in fade-in duration-200"
+        className="fixed inset-0 bg-[hsl(var(--overlay))] z-50 animate-in fade-in duration-base"
         onClick={onClose}
         aria-hidden="true"
       />
 
       {/* Dialog */}
       <div
-        className="fixed right-0 top-0 bottom-0 w-full max-w-2xl z-50 animate-in slide-in-from-right duration-300"
+        className="fixed right-0 top-0 bottom-0 w-full max-w-2xl z-50 animate-in slide-in-from-right duration-slow"
         role="dialog"
         aria-modal="true"
         aria-labelledby="help-overlay-title"
       >
-        <div className="h-full bg-[var(--surface-elevated)] shadow-2xl flex flex-col">
+        <div className="h-full bg-[hsl(var(--surface-raised))] shadow-md flex flex-col border-l border-[hsl(var(--border-subtle))]">
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)]">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(var(--border-subtle))]">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--accent-light)]/30 flex items-center justify-center">
-                <Keyboard className="w-5 h-5 text-[var(--accent-primary)]" />
+              <div className="w-10 h-10 rounded-md bg-[hsl(var(--accent-muted))] flex items-center justify-center">
+                <Keyboard className="w-4 h-4 text-[hsl(var(--accent))]" strokeWidth={1.75} />
               </div>
               <div>
                 <h2
                   id="help-overlay-title"
-                  className="text-lg font-semibold text-[var(--text-primary)]"
+                  className="text-lg font-semibold text-[hsl(var(--text-primary))]"
                 >
                   Help & Shortcuts
                 </h2>
-                <p className="text-sm text-[var(--text-secondary)]">
-                  Press <kbd className="px-1.5 py-0.5 text-xs font-mono bg-[var(--bg-tertiary)] rounded">?</kbd> to toggle
+                <p className="text-sm text-[hsl(var(--text-secondary))]">
+                  Press <kbd className="px-1.5 py-0.5 text-xs font-mono bg-[hsl(var(--surface))] rounded border border-[hsl(var(--border-subtle))]">?</kbd> to toggle
                 </p>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+              className="p-2 rounded-md text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface))] transition-colors duration-fast"
               aria-label="Close help"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" strokeWidth={1.75} />
             </button>
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-4 px-6 py-3 border-b border-[var(--border-color)]">
+          <div className="flex gap-4 px-6 py-3 border-b border-[hsl(var(--border-subtle))]">
             <button
               onClick={() => setActiveTab('shortcuts')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-fast ${
                 activeTab === 'shortcuts'
-                  ? 'bg-[var(--accent-light)]/30 text-[var(--accent-primary)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+                  ? 'bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]'
+                  : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface))]'
               }`}
             >
-              Keyboard Shortcuts
+              Keyboard shortcuts
             </button>
             <button
               onClick={() => setActiveTab('tips')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-fast ${
                 activeTab === 'tips'
-                  ? 'bg-[var(--accent-light)]/30 text-[var(--accent-primary)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+                  ? 'bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]'
+                  : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface))]'
               }`}
             >
-              Quick Tips
+              Quick tips
             </button>
           </div>
 
@@ -213,13 +213,13 @@ export function HelpOverlay({
               <div className="p-6">
                 {/* Search */}
                 <div className="relative mb-6">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--text-tertiary)]" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-tertiary))]" strokeWidth={1.75} />
                   <input
                     type="text"
                     placeholder="Search shortcuts..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--surface-elevated)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 ring-[var(--accent-primary)]"
+                    className="w-full pl-10 pr-4 py-2 border border-[hsl(var(--border-default))] rounded-md bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                   />
                 </div>
 
@@ -230,19 +230,19 @@ export function HelpOverlay({
 
                     return (
                       <div key={category}>
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)] mb-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[hsl(var(--text-secondary))] mb-3">
                           {category}
                         </h3>
                         <div className="space-y-2">
                           {shortcuts.map((shortcut, index) => (
                             <div
                               key={index}
-                              className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-[var(--surface-hover)]/50 transition-colors"
+                              className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-[hsl(var(--surface))] transition-colors duration-fast"
                             >
-                              <span className="text-sm text-[var(--text-primary)]">
+                              <span className="text-sm text-[hsl(var(--text-primary))]">
                                 {shortcut.description}
                               </span>
-                              <kbd className="px-2 py-1 text-xs font-mono bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded border border-[var(--border-color)]">
+                              <kbd className="px-2 py-1 text-xs font-mono bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))] rounded border border-[hsl(var(--border-subtle))]">
                                 {shortcut.keys}
                               </kbd>
                             </div>
@@ -254,7 +254,7 @@ export function HelpOverlay({
                 </div>
 
                 {filteredShortcuts.length === 0 && (
-                  <p className="text-center text-sm text-[var(--text-secondary)] py-8">
+                  <p className="text-center text-sm text-[hsl(var(--text-secondary))] py-8">
                     No shortcuts found matching "{searchQuery}"
                   </p>
                 )}
@@ -263,11 +263,11 @@ export function HelpOverlay({
               <div className="p-6 space-y-6">
                 {/* Quick Tips */}
                 <QuickTip
-                  title="Organize with Tags"
+                  title="Organize with tags"
                   description="Use #tags in your notes to create automatic collections. Click any tag to see related documents."
                 />
                 <QuickTip
-                  title="Link Your Thoughts"
+                  title="Link your thoughts"
                   description="Use [[wiki-style links]] or @mentions to connect notes and build a knowledge graph."
                 />
                 <QuickTip
@@ -275,34 +275,34 @@ export function HelpOverlay({
                   description="Capture entries, synthesize threads, and keep highlights and sources in one notebook flow."
                 />
                 <QuickTip
-                  title="Semantic Search"
+                  title="Semantic search"
                   description="Search finds conceptually similar content, not just exact matches. Ask questions in natural language."
                 />
                 <QuickTip
-                  title="Quick Capture"
+                  title="Quick capture"
                   description="Press ⌘D from anywhere to quickly capture a note without interrupting your flow."
                 />
                 <QuickTip
-                  title="Command Palette"
+                  title="Command palette"
                   description="Press ⌘K to open the command palette and quickly access any feature."
                 />
 
                 {/* Documentation Link */}
-                <div className="mt-8 p-4 bg-[var(--accent-light)]/20 rounded-lg border border-[var(--accent-light)]">
-                  <h4 className="text-sm font-semibold text-[var(--accent-primary)] mb-2">
+                <div className="mt-8 p-4 bg-[hsl(var(--accent-muted))] rounded-md border border-[hsl(var(--accent-muted))]">
+                  <h4 className="text-sm font-semibold text-[hsl(var(--accent))] mb-2">
                     Need more help?
                   </h4>
-                  <p className="text-sm text-[var(--accent-primary)] mb-3">
+                  <p className="text-sm text-[hsl(var(--accent))] mb-3">
                     Check out our comprehensive documentation for detailed guides and tutorials.
                   </p>
                   <a
                     href="https://docs.recall.dev"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary)]"
+                    className="inline-flex items-center gap-2 text-sm font-medium text-[hsl(var(--accent))] hover:text-[hsl(var(--accent-hover))]"
                   >
-                    View Documentation
-                    <ExternalLink className="w-4 h-4" />
+                    View documentation
+                    <ExternalLink className="w-4 h-4" strokeWidth={1.75} />
                   </a>
                 </div>
               </div>
@@ -316,11 +316,11 @@ export function HelpOverlay({
 
 function QuickTip({ title, description }: { title: string; description: string }) {
   return (
-    <div className="p-4 bg-[var(--bg-secondary)]/50 rounded-lg">
-      <h4 className="text-sm font-semibold text-[var(--text-primary)] mb-1">
+    <div className="p-4 bg-[hsl(var(--surface))] rounded-md">
+      <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))] mb-1">
         {title}
       </h4>
-      <p className="text-sm text-[var(--text-secondary)]">{description}</p>
+      <p className="text-sm text-[hsl(var(--text-secondary))]">{description}</p>
     </div>
   );
 }

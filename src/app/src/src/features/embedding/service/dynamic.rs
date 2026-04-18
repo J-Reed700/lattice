@@ -3,7 +3,7 @@
 //! Wraps the embedding cache (EmbeddingPort) and exposes EmbeddingServiceTrait.
 
 use crate::application::ports::{EmbeddingPort, MockEmbeddingPort};
-use crate::infrastructure::services::traits::EmbeddingServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use std::sync::{Arc, RwLock};

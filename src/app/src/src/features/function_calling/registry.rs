@@ -35,7 +35,7 @@
 //! ```
 
 use crate::features::function_calling::domain::{RegistryStats, ToolDefinition};
-use crate::infrastructure::services::traits::FunctionRegistryTrait;
+use crate::features::function_calling::FunctionRegistryTrait;
 use crate::shared::error::{AppError, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;

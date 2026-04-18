@@ -283,7 +283,7 @@ struct SpaceDocumentScope {
 
 pub(super) async fn run_retrieval_pipeline(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
@@ -322,7 +322,7 @@ fn elapsed_ms(start: Instant) -> u64 {
 
 async fn run_kb_retrieval(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
@@ -414,7 +414,7 @@ fn apply_hard_space_scope_filter(
 }
 
 async fn build_hyde_context_window_for_conversation(
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
 ) -> Option<String> {
     build_hyde_context_window_for_conversation_impl(conv_service, conversation_id).await
@@ -481,7 +481,7 @@ fn apply_rag_post_filters(
 }
 
 async fn persist_document_references(
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     results: &[crate::features::search::dto::SearchResultDto],
 ) -> Result<()> {
@@ -489,7 +489,7 @@ async fn persist_document_references(
 }
 
 pub(super) async fn record_tool_document_references(
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     tool_name: &str,
     result: &crate::features::function_calling::domain::FunctionResult,
@@ -641,7 +641,7 @@ pub(super) fn extract_acronym_context_terms(
 }
 async fn build_followup_context(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     document_context: &[crate::domain::conversation::DocumentReference],
     highlight_terms: &[String],
@@ -670,7 +670,7 @@ fn extract_turn_anchor_terms(
 }
 
 async fn load_followup_turn_anchor_terms(
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
 ) -> std::collections::HashSet<String> {
     load_followup_turn_anchor_terms_impl(conv_service, conversation_id).await

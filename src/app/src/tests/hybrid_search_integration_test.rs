@@ -18,9 +18,7 @@ use vault::infrastructure::search::bm25::BM25Search;
 use vault::infrastructure::search::hybrid::{HybridSearchService, SearchMode};
 use vault::infrastructure::search::vector_search::USearchVectorIndex;
 use vault::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
-use vault::infrastructure::services::traits::{
-    BM25SearchTrait, HybridSearchTrait, SearchServiceTrait,
-};
+use vault::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 
 /// Setup test database with schema
 async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {

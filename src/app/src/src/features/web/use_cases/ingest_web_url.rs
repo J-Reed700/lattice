@@ -30,7 +30,7 @@
 use std::sync::Arc;
 
 use crate::features::web::dto::{IngestWebUrlRequestDto, IngestWebUrlResponseDto};
-use crate::infrastructure::services::traits::WebIngestionServiceTrait;
+use crate::features::web::WebIngestionServiceTrait;
 use crate::shared::error::{AppError, Result};
 
 /// Ingest web URL use case.
@@ -156,7 +156,7 @@ impl IngestWebUrlUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::traits::WebIngestionResult;
+    use crate::features::web::WebIngestionResult;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Mutex;

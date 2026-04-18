@@ -1080,10 +1080,10 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
     return (
       <div key={collection.id}>
         <div
-          className={`group rounded-xl border px-2 py-1.5 transition-colors ${
+          className={`group rounded-xl border px-2 py-1.5 transition-colors duration-fast ${
             isActive
-              ? 'border-[var(--accent-primary)]/35 bg-[var(--accent-light)]/45'
-              : 'border-transparent hover:border-[var(--border-color)] hover:bg-[var(--surface-hover)]'
+              ? 'border-[hsl(var(--accent))]/35 bg-[hsl(var(--accent-muted))]/45'
+              : 'border-transparent hover:border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface-raised))]'
           }`}
           style={{ marginLeft: `${depth * 14}px` }}
         >
@@ -1110,7 +1110,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                     event.stopPropagation();
                     toggleCollectionCollapsed(collection.id);
                   }}
-                  className="inline-flex h-4 w-4 items-center justify-center rounded text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                  className="inline-flex h-4 w-4 items-center justify-center rounded text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
                 >
                   {isExpanded ? (
                     <ChevronDown className="h-3.5 w-3.5" />
@@ -1121,20 +1121,20 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               ) : (
                 <span className="inline-block h-4 w-4 shrink-0" />
               )}
-              <CollectionIcon className="h-4 w-4 shrink-0 text-[var(--accent-primary)]" />
+              <CollectionIcon className="h-4 w-4 shrink-0 text-[hsl(var(--accent))]" />
               {isRenaming ? (
                 <input
                   type="text"
                   value={renameValue}
                   onChange={(event) => setRenameValue(event.target.value)}
-                  className="h-7 w-full rounded border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                  className="h-7 w-full rounded border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                   onClick={(event) => event.stopPropagation()}
                 />
               ) : (
                 <span className="inline-flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-sm font-medium text-[var(--text-primary)]">{collection.name}</span>
+                  <span className="truncate text-sm font-medium text-[hsl(var(--text-primary))]">{collection.name}</span>
                   {isSnapshot && (
-                    <span className="rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+                    <span className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                       Frozen
                     </span>
                   )}
@@ -1142,7 +1142,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               )}
             </div>
 
-            <span className="rounded-full bg-[var(--surface-elevated)] px-2 py-0.5 text-xs font-semibold text-[var(--text-secondary)]">
+            <span className="rounded-full bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-xs font-semibold text-[hsl(var(--text-secondary))]">
               {filteredCount}
             </span>
 
@@ -1152,7 +1152,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   <button
                     type="button"
                     onClick={() => handleCommitRename(collection.id)}
-                    className="rounded p-1 text-[var(--accent-primary)] hover:bg-[var(--surface-hover)]"
+                    className="rounded p-1 text-[hsl(var(--accent))] hover:bg-[hsl(var(--surface-raised))]"
                     aria-label="Save rename"
                     title="Save"
                   >
@@ -1164,7 +1164,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                       setRenamingCollectionId(null);
                       setRenameValue('');
                     }}
-                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
                     aria-label="Cancel rename"
                     title="Cancel"
                   >
@@ -1176,7 +1176,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   <button
                     type="button"
                     onClick={() => handleCreateSubcollection(collection)}
-                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
                     aria-label="Create subfolder"
                     title="Create subfolder"
                     disabled={isSnapshot}
@@ -1186,7 +1186,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   <button
                     type="button"
                     onClick={() => handleStartRename(collection)}
-                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
                     aria-label="Rename collection"
                     title="Rename"
                   >
@@ -1195,7 +1195,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   <button
                     type="button"
                     onClick={() => handleDeleteCustomCollection(collection.id)}
-                    className="rounded p-1 text-[var(--error)] hover:bg-[var(--surface-hover)]"
+                    className="rounded p-1 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--surface-raised))]"
                     aria-label="Delete collection"
                     title="Delete"
                   >
@@ -1235,7 +1235,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
   if (error) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <div className="text-center text-[var(--error)]">
+        <div className="text-center text-[hsl(var(--danger-fg))]">
           <p className="mb-1 font-semibold">Error loading files</p>
           <p className="text-sm">{error}</p>
         </div>
@@ -1246,7 +1246,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
   if (allDocuments.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <div className="text-center text-[var(--text-secondary)]">
+        <div className="text-center text-[hsl(var(--text-secondary))]">
           <p className="mb-1 font-semibold">No documents found</p>
           <p className="text-sm">Add files to start indexing</p>
         </div>
@@ -1257,7 +1257,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
   if (filteredDocuments.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <div className="max-w-md px-6 text-center text-[var(--text-secondary)]">
+        <div className="max-w-md px-6 text-center text-[hsl(var(--text-secondary))]">
           <p className="mb-1 font-semibold">No matches found</p>
           <p className="text-sm">
             {searchQuery.trim()
@@ -1271,42 +1271,42 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col border-b border-[var(--border-color)] bg-[linear-gradient(180deg,rgba(14,165,233,0.08),rgba(15,23,42,0.02))] lg:border-b-0 lg:border-r">
-        <div className="border-b border-[var(--border-color)] bg-[var(--surface-elevated)]/80 px-4 py-3 backdrop-blur">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+      <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--border-subtle))] bg-[linear-gradient(180deg,rgba(14,165,233,0.08),rgba(15,23,42,0.02))] lg:border-b-0 lg:border-r">
+        <div className="border-b border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]/80 px-4 py-3 backdrop-blur">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-[hsl(var(--text-tertiary))]">
             Collections & Presets
           </h3>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          <p className="mt-1 text-sm text-[hsl(var(--text-secondary))]">
             Organize files with collections, then apply reusable presets.
           </p>
 
-          <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-1">
+          <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-1">
             <button
               onClick={() => setLeftMode('collections')}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-fast ${
                 leftMode === 'collections'
-                  ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                  ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+                  : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
               }`}
             >
               Collections
             </button>
             <button
               onClick={() => setLeftMode('presets')}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-fast ${
                 leftMode === 'presets'
-                  ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                  ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+                  : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
               }`}
             >
               Presets
             </button>
             <button
               onClick={() => setLeftMode('sources')}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-fast ${
                 leftMode === 'sources'
-                  ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                  ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+                  : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
               }`}
             >
               Sources
@@ -1317,16 +1317,16 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
         {leftMode === 'collections' ? (
           <div className="min-h-0 flex-1 overflow-auto p-3">
             <div className="space-y-3">
-              <section className="rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-                <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+              <section className="rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+                <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                   Switch Collections
                 </h4>
-                <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2">
+                <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2">
                     <div className="flex items-center gap-2">
                       <select
                         value={switcherSelectedCollectionId}
                         onChange={(event) => setSelectedCollectionId(event.target.value)}
-                        className="h-9 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm font-medium text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-9 w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm font-medium text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       >
                         <option value={COLLECTION_ALL}>
                           All Documents ({collections.find((collection) => collection.id === COLLECTION_ALL)?.docIds.size ?? filteredDocuments.length})
@@ -1353,7 +1353,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                       <button
                         type="button"
                         onClick={() => handleCycleCollection('prev')}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[hsl(var(--border-subtle))] text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                         title="Previous collection"
                         aria-label="Previous collection"
                       >
@@ -1362,34 +1362,34 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                       <button
                         type="button"
                         onClick={() => handleCycleCollection('next')}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[hsl(var(--border-subtle))] text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                         title="Next collection"
                         aria-label="Next collection"
                       >
                         <ArrowDown className="h-4 w-4" />
                       </button>
                     </div>
-                    <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                    <p className="mt-2 text-[11px] text-[hsl(var(--text-secondary))]">
                       {activeCollection?.description ?? 'Pick a collection to focus the document panel.'}
                     </p>
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-                <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+              <section className="rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+                <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                   Custom Collections
                 </h4>
-                <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2">
+                <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                       Browse
                     </span>
-                    <span className="rounded-full border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                    <span className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--text-secondary))]">
                       {customCollections.length}
                     </span>
                   </div>
                   {customCollections.length === 0 ? (
-                    <p className="px-1 py-2 text-xs text-[var(--text-secondary)]">No collections yet.</p>
+                    <p className="px-1 py-2 text-xs text-[hsl(var(--text-secondary))]">No collections yet.</p>
                   ) : (
                     <div className="space-y-1">
                       {(customCollectionsByParentId.get(null) ?? []).map((collection) =>
@@ -1400,18 +1400,18 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-                <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+              <section className="rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+                <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                   Collection Builder
                 </h4>
-                <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2">
+                <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2">
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={newCollectionName}
                         onChange={(event) => setNewCollectionName(event.target.value)}
                         placeholder="New collection name..."
-                        className="h-8 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       />
                       <button
                         type="button"
@@ -1420,7 +1420,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             activeCustomCollection?.kind === 'manual' ? activeCustomCollection.id : null
                           )
                         }
-                        className="inline-flex h-8 items-center justify-center rounded-lg border border-[var(--border-color)] px-2 text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                        className="inline-flex h-8 items-center justify-center rounded-lg border border-[hsl(var(--border-subtle))] px-2 text-xs font-semibold text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                         aria-label="Create collection"
                         title="Create collection"
                       >
@@ -1434,7 +1434,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             activeCustomCollection?.kind === 'manual' ? activeCustomCollection.id : null
                           )
                         }
-                        className="inline-flex h-8 items-center justify-center rounded-lg border border-[var(--border-color)] px-2 text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                        className="inline-flex h-8 items-center justify-center rounded-lg border border-[hsl(var(--border-subtle))] px-2 text-xs font-semibold text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                         aria-label="Freeze selected files into a collection"
                         title="Freeze selected files into a collection"
                       >
@@ -1442,17 +1442,17 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                         Freeze
                       </button>
                     </div>
-                    <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                    <p className="mt-2 text-[11px] text-[hsl(var(--text-secondary))]">
                       Create manual folders. Use Freeze to capture selected files as a locked collection.
                     </p>
 
                   {activeCustomCollection && (
-                    <div className="mt-3 rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)]/70 p-2">
+                    <div className="mt-3 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]/70 p-2">
                       <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                           Edit Collection
                         </span>
-                        <span className="rounded-full border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                        <span className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--text-secondary))]">
                           {activeCustomCollection.kind === 'snapshot' ? 'frozen' : 'manual'}
                         </span>
                       </div>
@@ -1462,13 +1462,13 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                           type="text"
                           value={collectionEditorName}
                           onChange={(event) => setCollectionEditorName(event.target.value)}
-                          className="h-8 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                          className="h-8 w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                           placeholder="Collection name"
                         />
                         <select
                           value={collectionEditorParentId ?? ''}
                           onChange={(event) => setCollectionEditorParentId(event.target.value || null)}
-                          className="h-8 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                          className="h-8 w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                         >
                           <option value="">No parent (top level)</option>
                           {collectionEditorParentOptions.map((collection) => (
@@ -1483,7 +1483,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                         <button
                           type="button"
                           onClick={handleSaveCollectionEditor}
-                          className="inline-flex items-center justify-center rounded-lg border border-[var(--accent-primary)]/35 bg-[var(--accent-light)]/45 px-2 py-1.5 text-xs font-semibold text-[var(--accent-primary)] transition-colors hover:bg-[var(--accent-light)]/65"
+                          className="inline-flex items-center justify-center rounded-lg border border-[hsl(var(--accent))]/35 bg-[hsl(var(--accent-muted))]/45 px-2 py-1.5 text-xs font-semibold text-[hsl(var(--accent))] transition-colors duration-fast hover:bg-[hsl(var(--accent-muted))]/65"
                         >
                           <Check className="mr-1 h-3.5 w-3.5" />
                           Save
@@ -1491,7 +1491,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                         <button
                           type="button"
                           onClick={() => handleDeleteCustomCollection(activeCustomCollection.id)}
-                          className="inline-flex items-center justify-center rounded-lg border border-[var(--error)]/35 px-2 py-1.5 text-xs font-semibold text-[var(--error)] transition-colors hover:bg-[var(--error)]/10"
+                          className="inline-flex items-center justify-center rounded-lg border border-[hsl(var(--danger-fg))]/35 px-2 py-1.5 text-xs font-semibold text-[hsl(var(--danger-fg))] transition-colors duration-fast hover:bg-[hsl(var(--danger-fg))]/10"
                         >
                           <Trash2 className="mr-1 h-3.5 w-3.5" />
                           Delete
@@ -1505,34 +1505,34 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
           </div>
         ) : leftMode === 'presets' ? (
           <div className="min-h-0 flex-1 overflow-auto p-3">
-            <section className="rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-              <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
+            <section className="rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+              <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[hsl(var(--text-tertiary))]">
                   Preset Guide
                 </p>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                <p className="mt-1 text-xs text-[hsl(var(--text-secondary))]">
                   Search presets save what to find. View presets save how results are displayed.
                 </p>
               </div>
             </section>
 
-            <section className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-              <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+            <section className="mt-3 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+              <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                 Search Presets
               </h4>
-              <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2">
+              <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2">
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
                     value={newSearchName}
                     onChange={(event) => setNewSearchName(event.target.value)}
                     placeholder="New search name..."
-                    className="h-8 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                    className="h-8 w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                   />
                   <button
                     type="button"
                     onClick={handleCreateSavedSearch}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[hsl(var(--border-subtle))] text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                     aria-label="Create saved search"
                     title="Save current search + source/type filters"
                   >
@@ -1541,7 +1541,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                 </div>
 
                 {savedSearches.length === 0 ? (
-                  <p className="px-1 py-2 text-xs text-[var(--text-secondary)]">
+                  <p className="px-1 py-2 text-xs text-[hsl(var(--text-secondary))]">
                     No saved searches yet.
                   </p>
                 ) : (
@@ -1557,8 +1557,8 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                           key={search.id}
                           className={`rounded-lg border px-2 py-1.5 ${
                             isActive
-                              ? 'border-[var(--accent-primary)]/35 bg-[var(--accent-light)]/35'
-                              : 'border-[var(--border-color)] bg-[var(--bg-secondary)]'
+                              ? 'border-[hsl(var(--accent))]/35 bg-[hsl(var(--accent-muted))]/35'
+                              : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -1567,14 +1567,14 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                 type="text"
                                 value={renameSearchValue}
                                 onChange={(event) => setRenameSearchValue(event.target.value)}
-                                className="h-7 min-w-0 flex-1 rounded border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                                className="h-7 min-w-0 flex-1 rounded border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                                 onClick={(event) => event.stopPropagation()}
                               />
                             ) : (
                               <button
                                 type="button"
                                 onClick={() => applySavedSearch(search.id)}
-                                className="min-w-0 flex-1 truncate text-left text-sm font-medium text-[var(--text-primary)]"
+                                className="min-w-0 flex-1 truncate text-left text-sm font-medium text-[hsl(var(--text-primary))]"
                               >
                                 {search.name}
                               </button>
@@ -1585,7 +1585,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   <button
                                     type="button"
                                     onClick={() => handleCommitRenameSavedSearch(search.id)}
-                                    className="rounded p-1 text-[var(--accent-primary)] hover:bg-[var(--surface-hover)]"
+                                    className="rounded p-1 text-[hsl(var(--accent))] hover:bg-[hsl(var(--surface-raised))]"
                                     aria-label="Save search rename"
                                     title="Save"
                                   >
@@ -1597,7 +1597,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                       setRenamingSearchId(null);
                                       setRenameSearchValue('');
                                     }}
-                                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+                                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
                                     aria-label="Cancel search rename"
                                     title="Cancel"
                                   >
@@ -1609,7 +1609,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   <button
                                     type="button"
                                     onClick={() => handleMoveSavedSearch(search.id, 'up')}
-                                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
                                     aria-label="Move search up"
                                     title="Move up"
                                     disabled={isFirst}
@@ -1619,7 +1619,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   <button
                                     type="button"
                                     onClick={() => handleMoveSavedSearch(search.id, 'down')}
-                                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
                                     aria-label="Move search down"
                                     title="Move down"
                                     disabled={isLast}
@@ -1629,7 +1629,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   <button
                                     type="button"
                                     onClick={() => handleStartRenameSavedSearch(search.id, search.name)}
-                                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                                     aria-label="Rename saved search"
                                     title="Rename saved search"
                                   >
@@ -1638,7 +1638,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   <button
                                     type="button"
                                     onClick={() => handleDuplicateSavedSearch(search.id)}
-                                    className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                    className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                                     aria-label="Duplicate saved search"
                                     title="Duplicate saved search"
                                   >
@@ -1649,7 +1649,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               <button
                                 type="button"
                                 onClick={() => handleTogglePinnedSearch(search.id, search.pinned)}
-                                className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                                 aria-label={search.pinned ? 'Unpin search' : 'Pin search'}
                                 title={search.pinned ? 'Unpin search' : 'Pin search'}
                               >
@@ -1662,7 +1662,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               <button
                                 type="button"
                                 onClick={() => deleteSavedSearch(search.id)}
-                                className="rounded p-1 text-[var(--error)] hover:bg-[var(--surface-hover)]"
+                                className="rounded p-1 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--surface-raised))]"
                                 aria-label="Delete saved search"
                                 title="Delete saved search"
                               >
@@ -1670,7 +1670,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               </button>
                             </div>
                           </div>
-                          <p className="mt-1 truncate text-[11px] text-[var(--text-secondary)]">
+                          <p className="mt-1 truncate text-[11px] text-[hsl(var(--text-secondary))]">
                             {search.query.trim() ? search.query : 'No keyword query'} • {search.filterBySource} source
                             {search.filterByType ? ` • type: ${search.filterByType}` : ''}
                           </p>
@@ -1682,23 +1682,23 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               </div>
             </section>
 
-            <section className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-              <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+            <section className="mt-3 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+              <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                 View Presets
               </h4>
-              <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2">
+              <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2">
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
                     value={newViewName}
                     onChange={(event) => setNewViewName(event.target.value)}
                     placeholder="New view name..."
-                    className="h-8 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                    className="h-8 w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-sm text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                   />
                   <button
                     type="button"
                     onClick={handleCreateSavedView}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[hsl(var(--border-subtle))] text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                     aria-label="Create view"
                     title="Create view from current controls"
                   >
@@ -1707,7 +1707,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                 </div>
 
                 {savedViews.length === 0 ? (
-                  <p className="px-1 py-2 text-xs text-[var(--text-secondary)]">
+                  <p className="px-1 py-2 text-xs text-[hsl(var(--text-secondary))]">
                     No view presets yet. Save one from your current filters and sort settings.
                   </p>
                 ) : (
@@ -1721,8 +1721,8 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                           key={view.id}
                           className={`rounded-lg border px-2 py-1.5 ${
                             isSelected
-                              ? 'border-[var(--accent-primary)]/35 bg-[var(--accent-light)]/35'
-                              : 'border-[var(--border-color)] bg-[var(--bg-secondary)]'
+                              ? 'border-[hsl(var(--accent))]/35 bg-[hsl(var(--accent-muted))]/35'
+                              : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -1731,11 +1731,11 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               onClick={() => setSelectedViewId(view.id)}
                               className="flex min-w-0 flex-1 items-center gap-2 text-left"
                             >
-                              <span className="truncate text-sm font-medium text-[var(--text-primary)]">
+                              <span className="truncate text-sm font-medium text-[hsl(var(--text-primary))]">
                                 {view.name}
                               </span>
                               {isApplied && (
-                                <span className="rounded-full bg-[var(--accent-light)]/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--accent-primary)]">
+                                <span className="rounded-full bg-[hsl(var(--accent-muted))]/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--accent))]">
                                   Active
                                 </span>
                               )}
@@ -1745,7 +1745,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               <button
                                 type="button"
                                 onClick={() => handleApplySavedView(view.id)}
-                                className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                                 title="Apply view"
                                 aria-label="Apply view"
                               >
@@ -1754,7 +1754,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               <button
                                 type="button"
                                 onClick={() => handleCaptureSavedView(view.id)}
-                                className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                                className="rounded p-1 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                                 title="Refresh from current controls"
                                 aria-label="Refresh from current controls"
                               >
@@ -1763,7 +1763,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               <button
                                 type="button"
                                 onClick={() => handleDeleteSavedView(view.id)}
-                                className="rounded p-1 text-[var(--error)] hover:bg-[var(--surface-hover)]"
+                                className="rounded p-1 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--surface-raised))]"
                                 title="Delete view"
                                 aria-label="Delete view"
                               >
@@ -1771,7 +1771,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                               </button>
                             </div>
                           </div>
-                          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                          <p className="mt-1 text-[11px] text-[hsl(var(--text-secondary))]">
                             {view.viewMode} • {view.sortField} ({view.sortOrder}) • {view.filterBySource} source
                             {view.baseCollectionId &&
                               ` • scoped: ${customCollectionsById.get(view.baseCollectionId)?.name ?? 'collection'}`}
@@ -1784,13 +1784,13 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               </div>
             </section>
 
-            <section className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-              <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+            <section className="mt-3 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+              <h4 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                 Preset Editor
               </h4>
-              <div className="space-y-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-3">
+              <div className="space-y-2 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-3">
                 {!selectedSavedView || !viewDraft ? (
-                  <p className="text-xs text-[var(--text-secondary)]">
+                  <p className="text-xs text-[hsl(var(--text-secondary))]">
                     Select a view preset to customize it.
                   </p>
                 ) : (
@@ -1802,7 +1802,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                         setViewDraft((current) => (current ? { ...current, name: event.target.value } : current))
                       }
                       placeholder="View name"
-                      className="h-8 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                      className="h-8 w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                     />
                     <select
                       value={viewDraft.baseCollectionId ?? ''}
@@ -1816,7 +1816,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             : current
                         )
                       }
-                      className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                      className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                     >
                       <option value="">Scope: All documents</option>
                       {customCollections.map((collection) => (
@@ -1833,7 +1833,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             current ? { ...current, viewMode: event.target.value as ViewMode } : current
                           )
                         }
-                        className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       >
                         <option value="tree">Tree</option>
                         <option value="list">List</option>
@@ -1846,7 +1846,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             current ? { ...current, density: event.target.value as Density } : current
                           )
                         }
-                        className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       >
                         <option value="compact">Compact</option>
                         <option value="comfortable">Comfortable</option>
@@ -1861,7 +1861,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             current ? { ...current, sortField: event.target.value as SortField } : current
                           )
                         }
-                        className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       >
                         <option value="name">Sort: Name</option>
                         <option value="modified">Sort: Modified</option>
@@ -1875,7 +1875,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             current ? { ...current, sortOrder: event.target.value as SortOrder } : current
                           )
                         }
-                        className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       >
                         <option value="asc">Asc</option>
                         <option value="desc">Desc</option>
@@ -1889,7 +1889,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             current ? { ...current, filterBySource: event.target.value as SourceFilter } : current
                           )
                         }
-                        className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       >
                         <option value="all">All sources</option>
                         <option value="local">Local only</option>
@@ -1904,7 +1904,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                           )
                         }
                         placeholder="Type filter (optional)"
-                        className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                        className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                       />
                     </div>
                     <input
@@ -1916,14 +1916,14 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                         )
                       }
                       placeholder="Saved search query (optional)"
-                      className="h-8 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                      className="h-8 w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                     />
                     {viewDraft.viewMode === 'list' && (
-                      <div className="rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-2">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+                      <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 py-2">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                           List Columns
                         </p>
-                        <div className="flex flex-wrap gap-3 text-xs text-[var(--text-secondary)]">
+                        <div className="flex flex-wrap gap-3 text-xs text-[hsl(var(--text-secondary))]">
                           <label className="inline-flex items-center gap-1.5">
                             <input
                               type="checkbox"
@@ -1941,7 +1941,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                     : current
                                 )
                               }
-                              className="h-3.5 w-3.5 rounded border-[var(--border-color)] bg-[var(--bg-secondary)]"
+                              className="h-3.5 w-3.5 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]"
                             />
                             Words
                           </label>
@@ -1962,7 +1962,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                     : current
                                 )
                               }
-                              className="h-3.5 w-3.5 rounded border-[var(--border-color)] bg-[var(--bg-secondary)]"
+                              className="h-3.5 w-3.5 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]"
                             />
                             Modified
                           </label>
@@ -1983,14 +1983,14 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                     : current
                                 )
                               }
-                              className="h-3.5 w-3.5 rounded border-[var(--border-color)] bg-[var(--bg-secondary)]"
+                              className="h-3.5 w-3.5 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]"
                             />
                             Type
                           </label>
                         </div>
                       </div>
                     )}
-                    <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <label className="inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                       <input
                         type="checkbox"
                         checked={viewDraft.groupByDate}
@@ -1999,7 +1999,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                             current ? { ...current, groupByDate: event.target.checked } : current
                           )
                         }
-                        className="h-3.5 w-3.5 rounded border-[var(--border-color)] bg-[var(--bg-secondary)]"
+                        className="h-3.5 w-3.5 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]"
                       />
                       Group by date
                     </label>
@@ -2007,14 +2007,14 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                       <button
                         type="button"
                         onClick={handleLoadCurrentControlsIntoDraft}
-                        className="inline-flex h-8 items-center justify-center rounded-md border border-[var(--border-color)] text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                        className="inline-flex h-8 items-center justify-center rounded-md border border-[hsl(var(--border-subtle))] text-xs font-semibold text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                       >
                         Use Current Controls
                       </button>
                       <button
                         type="button"
                         onClick={handleSaveViewDraft}
-                        className="inline-flex h-8 items-center justify-center rounded-md border border-[var(--border-color)] text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                        className="inline-flex h-8 items-center justify-center rounded-md border border-[hsl(var(--border-subtle))] text-xs font-semibold text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                       >
                         Save Changes
                       </button>
@@ -2026,7 +2026,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto p-3">
-            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
               <SourceCard
                 title="Local"
                 count={sources.local}
@@ -2041,15 +2041,15 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               />
             </div>
 
-            <div className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
-              <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-3">
-                <p className="text-sm font-medium text-[var(--text-primary)]">Cloud Sync Ready</p>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            <div className="mt-3 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
+              <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-3">
+                <p className="text-sm font-medium text-[hsl(var(--text-primary))]">Cloud Sync Ready</p>
+                <p className="mt-1 text-xs text-[hsl(var(--text-secondary))]">
                   Sources are separated from collections so cloud providers can plug into the same model.
                 </p>
                 <button
                   type="button"
-                  className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[var(--accent-primary)]"
+                  className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[hsl(var(--accent))]"
                 >
                   Explore sync architecture
                   <ExternalLink className="h-3.5 w-3.5" />
@@ -2057,9 +2057,9 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               </div>
             </div>
 
-            <div className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
+            <div className="mt-3 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
               <div className="mb-2 flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+                <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                   Source Connections
                 </h4>
                 <button
@@ -2067,15 +2067,15 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   onClick={() => {
                     void syncLocalSources();
                   }}
-                  className="inline-flex items-center gap-1 rounded-md border border-[var(--border-color)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                  className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-[11px] font-medium text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                 >
                   {isSyncingSources ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                   Sync
                 </button>
               </div>
 
-              <div className="mb-2 space-y-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+              <div className="mb-2 space-y-2 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                   Add Cloud Source
                 </p>
                 <input
@@ -2083,13 +2083,13 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   value={newSourceName}
                   onChange={(event) => setNewSourceName(event.target.value)}
                   placeholder="e.g. Product Docs Drive"
-                  className="h-8 w-full rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                  className="h-8 w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <select
                     value={newSourceProvider}
                     onChange={(event) => setNewSourceProvider(event.target.value as SourceProvider)}
-                    className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                    className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                   >
                     <option value="dropbox">Dropbox</option>
                     <option value="google_drive">Google Drive</option>
@@ -2100,7 +2100,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                   <select
                     value={newSourceMode}
                     onChange={(event) => setNewSourceMode(event.target.value as SourceConnection['mode'])}
-                    className="h-8 rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+                    className="h-8 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-2 text-xs text-[hsl(var(--text-primary))] outline-none focus:border-[hsl(var(--accent))]"
                   >
                     <option value="referenced">Referenced</option>
                     <option value="managed">Managed</option>
@@ -2109,7 +2109,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                 <button
                   type="button"
                   onClick={handleCreateCloudSource}
-                  className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md border border-[var(--border-color)] text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                  className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md border border-[hsl(var(--border-subtle))] text-xs font-semibold text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add Source
@@ -2117,7 +2117,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               </div>
 
               {sourceConnections.length === 0 ? (
-                <div className="rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
                   No source connections yet.
                 </div>
               ) : (
@@ -2140,30 +2140,30 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
               )}
             </div>
 
-            <div className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-2 shadow-[var(--shadow-sm)]">
+            <div className="mt-3 rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-2 shadow-[var(--shadow-sm)]">
               <FolderList className="min-h-[320px]" />
             </div>
           </div>
         )}
       </aside>
 
-      <section className="flex min-h-0 flex-col bg-[linear-gradient(180deg,var(--surface-elevated),var(--bg-secondary))]">
-        <header className="border-b border-[var(--border-color)] bg-[var(--surface-elevated)]/85 px-5 py-3 backdrop-blur">
+      <section className="flex min-h-0 flex-col bg-[linear-gradient(180deg,hsl(var(--surface-raised)),hsl(var(--surface)))]">
+        <header className="border-b border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]/85 px-5 py-3 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[hsl(var(--text-tertiary))]">
                 Collection Focus
               </p>
-              <h3 className="text-lg font-semibold text-[var(--text-primary)]">
+              <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))]">
                 {activeCollection?.name ?? 'Library'}
               </h3>
-              <p className="text-xs text-[var(--text-secondary)]">
+              <p className="text-xs text-[hsl(var(--text-secondary))]">
                 {activeCollection?.description ?? 'Organized document view'}
               </p>
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)]">
+              <span className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-1.5 text-xs font-semibold text-[hsl(var(--text-secondary))]">
                 {visibleDocuments.length} file{visibleDocuments.length === 1 ? '' : 's'}
               </span>
               {activeCustomCollection && (
@@ -2172,7 +2172,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                     type="button"
                     onClick={handleAddSelectedToActiveCollection}
                     disabled={selectedIds.length === 0 || activeCustomCollection.kind === 'snapshot'}
-                    className="rounded-lg border border-[var(--border-color)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-lg border border-[hsl(var(--border-subtle))] px-2.5 py-1.5 text-xs font-semibold text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Add selected
                   </button>
@@ -2180,12 +2180,12 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                     type="button"
                     onClick={handleRemoveSelectedFromActiveCollection}
                     disabled={selectedIdsInActiveCustomCollection.length === 0 || activeCustomCollection.kind === 'snapshot'}
-                    className="rounded-lg border border-[var(--border-color)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-lg border border-[hsl(var(--border-subtle))] px-2.5 py-1.5 text-xs font-semibold text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Remove selected
                   </button>
                   {activeCustomCollection.kind === 'snapshot' && (
-                    <span className="rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+                    <span className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                       Frozen
                     </span>
                   )}
@@ -2203,11 +2203,11 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
 
         <div ref={documentsPanelRef} className="flex-1 overflow-auto p-3">
           {visibleDocuments.length === 0 ? (
-            <div className="flex h-full items-center justify-center rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] text-sm text-[var(--text-secondary)]">
+            <div className="flex h-full items-center justify-center rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-sm text-[hsl(var(--text-secondary))]">
               No files in this collection.
             </div>
           ) : (
-            <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-sm)]">
+            <div className="rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-1 shadow-[var(--shadow-sm)]">
               <div
                 style={{
                   height: `${documentVirtualizer.getTotalSize()}px`,
@@ -2232,10 +2232,10 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                       className="px-2"
                     >
                       <div
-                        className={`group flex h-full items-center gap-3 rounded-xl border px-3 py-2 transition-all ${
+                        className={`group flex h-full items-center gap-3 rounded-xl border px-3 py-2 transition-colors duration-fast ${
                           isSelected
-                            ? 'border-[var(--accent-primary)]/35 bg-[var(--accent-light)]/30'
-                            : 'border-transparent hover:border-[var(--border-color)] hover:bg-[var(--surface-hover)]/70'
+                            ? 'border-[hsl(var(--accent))]/35 bg-[hsl(var(--accent-muted))]/30'
+                            : 'border-transparent hover:border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface-raised))]/70'
                         }`}
                         onClick={(event) => handleDocumentClick(doc, virtualRow.index, event)}
                         onDoubleClick={() => onFileOpen?.(doc)}
@@ -2255,14 +2255,14 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <FileIcon file={doc} size={18} />
-                            <span className="truncate text-sm font-medium text-[var(--text-primary)]">{doc.fileName}</span>
+                            <span className="truncate text-sm font-medium text-[hsl(var(--text-primary))]">{doc.fileName}</span>
                             {isWebDocument(doc) ? (
-                              <Globe2 className="h-3.5 w-3.5 shrink-0 text-[var(--accent-primary)]" />
+                              <Globe2 className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--accent))]" />
                             ) : (
-                              <Link className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
+                              <Link className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--text-tertiary))]" />
                             )}
                           </div>
-                          <div className="mt-0.5 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                          <div className="mt-0.5 flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                             <span>{doc.wordCount ? `${doc.wordCount} words` : '-'}</span>
                             <span>•</span>
                             <span>{formatRelativeTime(doc.modifiedAt)}</span>
@@ -2279,7 +2279,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   event.stopPropagation();
                                   onRename(doc);
                                 }}
-                                className="rounded-lg p-1.5 text-[var(--text-secondary)] hover:bg-[var(--surface-elevated)] hover:text-[var(--text-primary)]"
+                                className="rounded-lg p-1.5 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                                 aria-label="Rename"
                                 title="Rename"
                               >
@@ -2293,7 +2293,7 @@ export const TreeView = ({ onFileOpen, onContextMenu, onRename, onDelete }: Tree
                                   event.stopPropagation();
                                   onDelete(doc);
                                 }}
-                                className="rounded-lg p-1.5 text-[var(--error)] hover:bg-[var(--surface-elevated)]"
+                                className="rounded-lg p-1.5 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--surface-raised))]"
                                 aria-label="Delete"
                                 title="Delete"
                               >
@@ -2327,14 +2327,14 @@ function SourceCard({ title, count, icon, onClick }: SourceCardProps) {
     <button
       type="button"
       onClick={onClick}
-      className="rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--accent-primary)]/30 hover:shadow-[var(--shadow-md)]"
+      className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-left transition-colors duration-fast hover:-translate-y-0.5 hover:border-[hsl(var(--accent))]/30 hover:shadow-[var(--shadow-md)]"
     >
-      <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+      <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
         {icon}
         {title}
       </span>
-      <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{count}</p>
-      <p className="text-xs text-[var(--text-secondary)]">indexed items</p>
+      <p className="mt-1 text-lg font-semibold text-[hsl(var(--text-primary))]">{count}</p>
+      <p className="text-xs text-[hsl(var(--text-secondary))]">indexed items</p>
     </button>
   );
 }
@@ -2364,10 +2364,10 @@ function SourceConnectionCard({
 
   return (
     <div
-      className={`rounded-xl border bg-[var(--surface-elevated)] px-3 py-2 transition-colors ${
+      className={`rounded-xl border bg-[hsl(var(--surface-raised))] px-3 py-2 transition-colors duration-fast ${
         isActive
-          ? 'border-[var(--accent-primary)]/40'
-          : 'border-[var(--border-color)]'
+          ? 'border-[hsl(var(--accent))]/40'
+          : 'border-[hsl(var(--border-subtle))]'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -2377,19 +2377,19 @@ function SourceConnectionCard({
             onClick={onFocus}
             className="flex items-center gap-2 text-left"
           >
-            <p className="truncate text-sm font-medium text-[var(--text-primary)]">{source.name}</p>
-            <span className="rounded-full border border-[var(--border-color)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+            <p className="truncate text-sm font-medium text-[hsl(var(--text-primary))]">{source.name}</p>
+            <span className="rounded-full border border-[hsl(var(--border-subtle))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
               {providerLabel}
             </span>
           </button>
-          <p className="truncate text-[11px] text-[var(--text-tertiary)]">
+          <p className="truncate text-[11px] text-[hsl(var(--text-tertiary))]">
             {source.path ?? source.provider} • {indexedCount} indexed
           </p>
         </div>
         <button
           type="button"
           onClick={onRemove}
-          className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] hover:text-[var(--error)]"
+          className="rounded p-1 text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--danger-fg))]"
           title="Remove source entry"
           aria-label="Remove source entry"
         >
@@ -2403,8 +2403,8 @@ function SourceConnectionCard({
           onClick={() => onToggleMode('referenced')}
           className={`rounded-md px-2 py-1 text-[11px] font-semibold ${
             source.mode === 'referenced'
-              ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-              : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+              ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+              : 'bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]'
           }`}
         >
           Referenced
@@ -2414,8 +2414,8 @@ function SourceConnectionCard({
           onClick={() => onToggleMode('managed')}
           className={`rounded-md px-2 py-1 text-[11px] font-semibold ${
             source.mode === 'managed'
-              ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-              : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+              ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+              : 'bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]'
           }`}
         >
           Managed
@@ -2426,15 +2426,15 @@ function SourceConnectionCard({
           onClick={() => onToggleEnabled(!source.enabled)}
           className={`ml-auto rounded-md px-2 py-1 text-[11px] font-semibold ${
             source.enabled
-              ? 'bg-[var(--success)]/15 text-[var(--success)]'
-              : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)]'
+              ? 'bg-[hsl(var(--success-fg))]/15 text-[hsl(var(--success-fg))]'
+              : 'bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))]'
           }`}
         >
           {source.enabled ? 'Enabled' : 'Paused'}
         </button>
       </div>
 
-      <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">
+      <p className="mt-1 text-[11px] text-[hsl(var(--text-tertiary))]">
         Last sync: {source.lastSyncedAt ? formatRelativeTime(source.lastSyncedAt) : 'Never'} • Health: {source.health}
       </p>
     </div>

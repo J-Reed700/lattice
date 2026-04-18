@@ -148,8 +148,8 @@ pub async fn start_batch_file_import(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::traits::BatchFileImportServiceTrait;
-    use crate::infrastructure::services::traits::MockBatchFileImportService;
+    use crate::features::batch::BatchFileImportServiceTrait;
+    use crate::features::batch::services::file_import_trait::MockBatchFileImportService;
     use std::sync::Arc;
 
     // Note: Full integration tests require Container setup.

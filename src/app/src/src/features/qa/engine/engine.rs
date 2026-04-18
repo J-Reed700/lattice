@@ -7,7 +7,7 @@ use crate::infrastructure::services::context_manager::LLMContext;
 ///
 /// A complete RAG (Retrieval-Augmented Generation) implementation that combines
 /// semantic search with LLM generation to answer questions using your knowledge base.
-use crate::infrastructure::services::traits::QAEngineTrait;
+use crate::features::qa::QAEngineTrait;
 use crate::llm::traits::{ChatMessage, LLMClient};
 use async_trait::async_trait;
 use std::pin::Pin;

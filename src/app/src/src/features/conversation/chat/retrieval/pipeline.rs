@@ -30,7 +30,7 @@ fn dominant_result_terms(
 
 pub(super) async fn run_retrieval_pipeline(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,

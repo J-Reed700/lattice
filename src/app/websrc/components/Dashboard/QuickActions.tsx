@@ -99,20 +99,20 @@ export const QuickActions = ({ onNavigate, variant = 'normal' }: QuickActionsPro
               <button
                 key={index}
                 onClick={action.onClick}
-                className="flex flex-col items-center justify-center p-4 md:p-6 min-h-[120px] bg-[var(--surface-elevated)] rounded-lg border-2 border-[var(--border-color)] hover:border-[var(--accent-primary)] hover:shadow-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2"
+                className="flex flex-col items-center justify-center p-4 md:p-6 min-h-[120px] bg-[hsl(var(--surface-raised))] rounded-lg border-2 border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))] hover:shadow-md transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] focus-visible:ring-offset-2"
                 aria-label={action.label}
               >
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-[var(--accent-light)]/20 rounded-full flex items-center justify-center mb-2 md:mb-3">
-                  <Icon className="w-5 h-5 md:w-6 md:h-6 text-[var(--accent-primary)]" />
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-[hsl(var(--accent-muted))]/20 rounded-full flex items-center justify-center mb-2 md:mb-3">
+                  <Icon className="w-5 h-5 md:w-6 md:h-6 text-[hsl(var(--accent))]" />
                 </div>
-                <span className="text-base md:text-lg font-semibold text-[var(--text-primary)] mb-1">
+                <span className="text-base md:text-lg font-semibold text-[hsl(var(--text-primary))] mb-1">
                   {action.label}
                 </span>
-                <span className="text-xs md:text-sm text-[var(--text-secondary)] text-center">
+                <span className="text-xs md:text-sm text-[hsl(var(--text-secondary))] text-center">
                   {action.description}
                 </span>
                 {action.shortcut && (
-                  <span className="mt-2 text-xs text-[var(--text-tertiary)] font-mono bg-[var(--bg-primary)] px-2 py-1 rounded">
+                  <span className="mt-2 text-xs text-[hsl(var(--text-tertiary))] font-mono bg-[hsl(var(--bg))] px-2 py-1 rounded">
                     {action.shortcut}
                   </span>
                 )}
@@ -132,8 +132,8 @@ export const QuickActions = ({ onNavigate, variant = 'normal' }: QuickActionsPro
 
   return (
     <>
-      <div className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-3 md:p-4">
-        <h3 className="text-xs md:text-sm font-semibold text-[var(--text-primary)] mb-2 md:mb-3">Quick Actions</h3>
+      <div className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-3 md:p-4">
+        <h3 className="text-xs md:text-sm font-semibold text-[hsl(var(--text-primary))] mb-2 md:mb-3">Quick Actions</h3>
         <div className="flex flex-wrap gap-2 md:gap-3">
           {actions.map((action, index) => {
             const Icon = action.icon;

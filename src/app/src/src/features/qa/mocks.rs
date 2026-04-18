@@ -5,7 +5,9 @@
 #[cfg(test)]
 use crate::infrastructure::search::service::SearchResult;
 #[cfg(test)]
-use crate::infrastructure::services::traits::*;
+use super::traits::{ConversationalQAServiceTrait, QAEngineTrait};
+#[cfg(test)]
+use crate::features::conversation::ConversationServiceTrait;
 #[cfg(test)]
 use crate::shared::error::Result;
 #[cfg(test)]

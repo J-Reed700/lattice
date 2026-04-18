@@ -3,7 +3,7 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::infrastructure::services::traits::*;
+use super::trait_def::ConversationServiceTrait;
 #[cfg(test)]
 use crate::shared::error::Result;
 #[cfg(test)]

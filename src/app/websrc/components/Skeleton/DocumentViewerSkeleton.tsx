@@ -31,7 +31,7 @@ export const DocumentViewerSkeleton: React.FC<DocumentViewerSkeletonProps> = mem
   className = '',
 }) => (
     <div
-      className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex flex-col ${className}`}
+      className={`fixed inset-0 bg-[hsl(var(--overlay))] z-50 flex flex-col ${className}`}
       role="status"
       aria-label="Loading document"
     >
@@ -59,7 +59,7 @@ DocumentViewerSkeleton.displayName = 'DocumentViewerSkeleton';
  * Header bar skeleton
  */
 const DocumentViewerHeaderSkeleton: React.FC = memo(() => (
-    <div className="bg-[var(--surface-elevated)] border-b border-[var(--border-color)] px-6 py-4">
+    <div className="bg-[hsl(var(--surface-raised))] border-b border-[hsl(var(--border-subtle))] px-6 py-4">
       <div className="flex items-center justify-between">
         {/* Left: File name */}
         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -84,8 +84,8 @@ DocumentViewerHeaderSkeleton.displayName = 'DocumentViewerHeaderSkeleton';
  * Main document content skeleton
  */
 const DocumentContentSkeleton: React.FC = memo(() => (
-    <div className="h-full bg-[var(--bg-secondary)] p-8 overflow-auto">
-      <div className="max-w-4xl mx-auto bg-[var(--surface-elevated)] rounded-lg shadow-lg p-8">
+    <div className="h-full bg-[hsl(var(--surface))] p-8 overflow-auto">
+      <div className="max-w-4xl mx-auto bg-[hsl(var(--surface-raised))] rounded-lg shadow-lg p-8">
         {/* Document title area */}
         <div className="mb-8 space-y-3">
           <Skeleton height="2rem" width="80%" />
@@ -118,7 +118,7 @@ const DocumentContentSkeleton: React.FC = memo(() => (
           </div>
 
           {/* Code block placeholder */}
-          <div className="bg-[var(--bg-primary)] rounded-lg p-4 space-y-2">
+          <div className="bg-[hsl(var(--bg))] rounded-lg p-4 space-y-2">
             <Skeleton height="1rem" width="60%" />
             <Skeleton height="1rem" width="80%" />
             <Skeleton height="1rem" width="50%" />
@@ -140,7 +140,7 @@ DocumentContentSkeleton.displayName = 'DocumentContentSkeleton';
  * Sidebar skeleton
  */
 const DocumentSidebarSkeleton: React.FC = memo(() => (
-    <div className="w-96 bg-[var(--surface-elevated)] border-l border-[var(--border-color)] p-6 overflow-auto flex-shrink-0">
+    <div className="w-96 bg-[hsl(var(--surface-raised))] border-l border-[hsl(var(--border-subtle))] p-6 overflow-auto flex-shrink-0">
       {/* File info section */}
       <div className="mb-6">
         <Skeleton height="1.25rem" width="120px" className="mb-4" />
@@ -153,7 +153,7 @@ const DocumentSidebarSkeleton: React.FC = memo(() => (
         </div>
       </div>
 
-      <div className="border-t border-[var(--border-color)] pt-6 mb-6">
+      <div className="border-t border-[hsl(var(--border-subtle))] pt-6 mb-6">
         <Skeleton height="1.25rem" width="100px" className="mb-4" />
         <div className="space-y-3">
           <InfoRowSkeleton />
@@ -162,7 +162,7 @@ const DocumentSidebarSkeleton: React.FC = memo(() => (
       </div>
 
       {/* Actions section */}
-      <div className="border-t border-[var(--border-color)] pt-6">
+      <div className="border-t border-[hsl(var(--border-subtle))] pt-6">
         <Skeleton height="1.25rem" width="80px" className="mb-4" />
         <div className="space-y-2">
           <Skeleton height="40px" width="100%" className="rounded-lg" />
@@ -189,9 +189,9 @@ const InfoRowSkeleton: React.FC = () => (
  * Minimal document viewer skeleton (without modal overlay)
  */
 export const DocumentViewerSkeletonMinimal: React.FC = memo(() => (
-    <div className="flex flex-col h-full bg-[var(--surface-elevated)]" role="status">
+    <div className="flex flex-col h-full bg-[hsl(var(--surface-raised))]" role="status">
       {/* Header */}
-      <div className="border-b border-[var(--border-color)] px-6 py-4">
+      <div className="border-b border-[hsl(var(--border-subtle))] px-6 py-4">
         <div className="flex items-center gap-3">
           <Skeleton width={32} height={32} />
           <Skeleton height="1.5rem" width="250px" />

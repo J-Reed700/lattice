@@ -111,28 +111,28 @@ export function DatePicker({
           px-3
           py-2
           text-sm
-          bg-[var(--surface-primary)]
+          bg-[hsl(var(--surface))]
           border
-          border-[var(--border-color)]
-          rounded-lg
-          shadow-sm
-          hover:bg-[var(--surface-hover)]
+          border-[hsl(var(--border-default))]
+          rounded-md
+          hover:bg-[hsl(var(--surface-raised))]
           focus:outline-none
           focus-visible:ring-2
-          focus-visible:ring-[var(--accent-primary)]
-          focus-visible:ring-offset-1
+          focus-visible:ring-[hsl(var(--ring))]
+          focus-visible:ring-offset-2
+          focus-visible:ring-offset-[hsl(var(--bg))]
           disabled:opacity-50
           disabled:cursor-not-allowed
           transition-colors
-          duration-150
+          duration-fast
         "
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-label="Choose date"
       >
         <span className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-[var(--text-secondary)]" />
-          <span className={selected ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}>
+          <Calendar className="h-4 w-4 text-[hsl(var(--text-secondary))]" strokeWidth={1.75} />
+          <span className={selected ? 'text-[hsl(var(--text-primary))]' : 'text-[hsl(var(--text-secondary))]'}>
             {displayValue}
           </span>
         </span>
@@ -142,17 +142,18 @@ export function DatePicker({
             onClick={handleClear}
             className="
               ml-2
-              text-[var(--text-tertiary)]
-              hover:text-[var(--text-secondary)]
+              text-[hsl(var(--text-tertiary))]
+              hover:text-[hsl(var(--text-secondary))]
               transition-colors
+              duration-fast
               focus:outline-none
               focus-visible:ring-2
-              focus-visible:ring-[var(--accent-primary)]
+              focus-visible:ring-[hsl(var(--ring))]
               rounded
             "
             aria-label="Clear date"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" strokeWidth={1.75} />
           </button>
         )}
       </button>
@@ -164,11 +165,11 @@ export function DatePicker({
             absolute
             z-50
             mt-2
-            bg-[var(--surface-primary)]
+            bg-[hsl(var(--surface-raised))]
             border
-            border-[var(--border-color)]
+            border-[hsl(var(--border-subtle))]
             rounded-lg
-            shadow-lg
+            shadow-md
             p-3
             animate-in
             fade-in-0
@@ -190,27 +191,27 @@ export function DatePicker({
               months: 'flex flex-col space-y-4',
               month: 'space-y-4',
               caption: 'flex justify-center pt-1 relative items-center',
-              caption_label: 'text-sm font-medium text-[var(--text-primary)]',
+              caption_label: 'text-sm font-medium text-[hsl(var(--text-primary))]',
               nav: 'space-x-1 flex items-center',
-              nav_button: 'h-7 w-7 bg-transparent p-0 hover:bg-[var(--surface-hover)] rounded-md transition-colors',
+              nav_button: 'h-7 w-7 bg-transparent p-0 hover:bg-[hsl(var(--surface))] rounded-md transition-colors duration-fast',
               nav_button_previous: 'absolute left-1',
               nav_button_next: 'absolute right-1',
               table: 'w-full border-collapse space-y-1',
               head_row: 'flex',
-              head_cell: 'text-[var(--text-secondary)] rounded-md w-9 font-normal text-[0.8rem]',
+              head_cell: 'text-[hsl(var(--text-secondary))] rounded-md w-9 font-normal text-[0.8rem]',
               row: 'flex w-full mt-2',
-              cell: 'text-center text-sm p-0 relative [&:has([aria-selected])]:bg-[var(--accent-light)] first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20',
-              day: 'h-9 w-9 p-0 font-normal hover:bg-[var(--surface-hover)] rounded-md transition-colors aria-selected:bg-[var(--accent-primary)] aria-selected:text-white aria-selected:hover:bg-[var(--accent-hover)] aria-selected:focus:bg-[var(--accent-primary)]',
-              day_selected: 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)] focus:bg-[var(--accent-primary)]',
-              day_today: 'bg-[var(--bg-tertiary)] font-semibold',
-              day_outside: 'text-[var(--text-tertiary)] opacity-50',
-              day_disabled: 'text-[var(--text-tertiary)] opacity-50 cursor-not-allowed',
+              cell: 'text-center text-sm p-0 relative [&:has([aria-selected])]:bg-[hsl(var(--accent-muted))] first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20',
+              day: 'h-9 w-9 p-0 font-normal hover:bg-[hsl(var(--surface))] rounded-md transition-colors duration-fast aria-selected:bg-[hsl(var(--accent))] aria-selected:text-[hsl(var(--accent-fg))] aria-selected:hover:bg-[hsl(var(--accent-hover))] aria-selected:focus:bg-[hsl(var(--accent))]',
+              day_selected: 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] focus:bg-[hsl(var(--accent))]',
+              day_today: 'bg-[hsl(var(--surface))] font-semibold',
+              day_outside: 'text-[hsl(var(--text-tertiary))] opacity-50',
+              day_disabled: 'text-[hsl(var(--text-tertiary))] opacity-50 cursor-not-allowed',
               day_hidden: 'invisible',
             }}
           />
 
           {/* Quick action buttons */}
-          <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border-color)]">
+          <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[hsl(var(--border-subtle))]">
             <button
               type="button"
               onClick={handleToday}
@@ -219,14 +220,15 @@ export function DatePicker({
                 py-1.5
                 text-xs
                 font-medium
-                text-[var(--accent-primary)]
-                hover:text-[var(--accent-primary)]
-                hover:bg-[var(--accent-light)]
+                text-[hsl(var(--accent))]
+                hover:text-[hsl(var(--accent-hover))]
+                hover:bg-[hsl(var(--accent-muted))]
                 rounded
                 transition-colors
+                duration-fast
                 focus:outline-none
                 focus-visible:ring-2
-                focus-visible:ring-[var(--accent-primary)]
+                focus-visible:ring-[hsl(var(--ring))]
               "
             >
               Today
@@ -239,14 +241,15 @@ export function DatePicker({
                 py-1.5
                 text-xs
                 font-medium
-                text-[var(--text-secondary)]
-                hover:text-[var(--text-primary)]
-                hover:bg-[var(--surface-hover)]
+                text-[hsl(var(--text-secondary))]
+                hover:text-[hsl(var(--text-primary))]
+                hover:bg-[hsl(var(--surface))]
                 rounded
                 transition-colors
+                duration-fast
                 focus:outline-none
                 focus-visible:ring-2
-                focus-visible:ring-[var(--text-secondary)]
+                focus-visible:ring-[hsl(var(--ring))]
               "
             >
               Close

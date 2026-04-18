@@ -19,11 +19,11 @@ function getCurrentDate(): string {
 export function DashboardHeader() {
   return (
     <header className="space-y-2">
-      <h1 className="text-3xl font-bold gradient-text-brand flex items-center gap-3">
-        <Home className="w-8 h-8 text-[var(--accent-primary)] drop-shadow-lg" />
+      <h1 className="text-3xl font-bold flex items-center gap-3">
+        <Home className="w-8 h-8 text-[hsl(var(--accent))] drop-shadow-md" />
         {getGreeting()}
       </h1>
-      <p className="text-[var(--text-secondary)]">{getCurrentDate()}</p>
+      <p className="text-[hsl(var(--text-secondary))]">{getCurrentDate()}</p>
     </header>
   );
 }

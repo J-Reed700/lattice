@@ -7,7 +7,7 @@ use crate::features::qa::dto::SourceDto;
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
 use crate::domain::entities::document::Document;
-use crate::infrastructure::services::traits::ConversationServiceTrait;
+use crate::features::conversation::ConversationServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::{build_excerpt, safe_truncate};
 

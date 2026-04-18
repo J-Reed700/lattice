@@ -4,7 +4,7 @@ use crate::features::conversation::dto::{
     GetConversationRequestDto, GetConversationResponseDto,
 };
 use crate::features::conversation::mapper::ConversationMapper;
-use crate::infrastructure::services::traits::ConversationServiceTrait;
+use crate::features::conversation::ConversationServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ impl GetConversationUseCase {
 mod tests {
     use super::*;
     use crate::domain::{Conversation, ConversationAggregate};
-    use crate::infrastructure::services::traits::ConversationServiceTrait;
+    use crate::features::conversation::ConversationServiceTrait;
     use crate::shared::domain_types::ConversationId;
     use crate::shared::error::AppError;
     use async_trait::async_trait;

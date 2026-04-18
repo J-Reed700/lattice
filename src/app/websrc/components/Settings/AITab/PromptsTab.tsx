@@ -70,39 +70,39 @@ export function PromptsTab() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-        <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-          <FileText className="w-5 h-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+          <FileText className="w-5 h-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Prompts</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Prompts</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             System prompts, templates, verification, and retrieval behavior
           </p>
         </div>
       </div>
 
       {isLoading || !llmSettings ? (
-        <div className="text-xs text-[var(--text-tertiary)]">Loading prompt settings...</div>
+        <div className="text-xs text-[hsl(var(--text-tertiary))]">Loading prompt settings...</div>
       ) : (
         <>
           {/* Verification */}
           <section className="space-y-4">
-            <div className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
+            <div className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-medium text-[var(--text-primary)]">
+                  <div className="text-sm font-medium text-[hsl(var(--text-primary))]">
                     Response Verification
                   </div>
-                  <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                  <p className="mt-0.5 text-xs text-[hsl(var(--text-secondary))]">
                     Show verified and unverified claims in assistant messages.
                   </p>
                 </div>
                 <span
-                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] ${
+                  className={`inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[11px] ${
                     verificationEnabled
-                      ? 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
-                      : 'border-white/20 bg-white/5 text-white/70'
+                      ? 'border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]'
+                      : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-muted))]'
                   }`}
                 >
                   {verificationEnabled ? (
@@ -120,8 +120,8 @@ export function PromptsTab() {
                   onClick={() => void handleVerificationToggle(true)}
                   className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                     verificationEnabled
-                      ? 'border-[var(--accent-primary)] bg-[var(--accent-light)] text-[var(--text-primary)]'
-                      : 'border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+                      ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))] text-[hsl(var(--text-primary))]'
+                      : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-default))]'
                   }`}
                 >
                   Turn On
@@ -131,8 +131,8 @@ export function PromptsTab() {
                   onClick={() => void handleVerificationToggle(false)}
                   className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                     !verificationEnabled
-                      ? 'border-[var(--accent-primary)] bg-[var(--accent-light)] text-[var(--text-primary)]'
-                      : 'border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+                      ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))] text-[hsl(var(--text-primary))]'
+                      : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-default))]'
                   }`}
                 >
                   Turn Off
@@ -142,7 +142,7 @@ export function PromptsTab() {
               <button
                 type="button"
                 onClick={() => setIsVerificationHelpExpanded((previous) => !previous)}
-                className="inline-flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                className="inline-flex items-center gap-1 text-xs text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))]"
               >
                 {isVerificationHelpExpanded ? (
                   <ChevronDown className="w-3.5 h-3.5" />
@@ -153,7 +153,7 @@ export function PromptsTab() {
               </button>
 
               {isVerificationHelpExpanded && (
-                <ul className="space-y-1 text-xs text-[var(--text-tertiary)]">
+                <ul className="space-y-1 text-xs text-[hsl(var(--text-tertiary))]">
                   <li>Chat messages won&apos;t include verification summaries.</li>
                   <li>Badges and verified/unverified claim details are hidden.</li>
                   <li>Turn it back on any time from this panel.</li>
@@ -164,25 +164,25 @@ export function PromptsTab() {
 
           {/* Agentic RAG */}
           <section className="space-y-4">
-            <div className="p-4 bg-[var(--bg-secondary)] rounded-lg">
+            <div className="p-4 bg-[hsl(var(--surface))] rounded-lg">
               <div className="flex items-start gap-3">
                 <input
                   id="enableAgenticRAG"
                   type="checkbox"
                   checked={aiSettings.enableAgenticRAG}
                   onChange={(e) => updateAI({ enableAgenticRAG: e.target.checked })}
-                  className="mt-0.5 w-4 h-4 text-[var(--accent-primary)] bg-[var(--bg-tertiary)] border-[var(--border-color)] rounded focus:ring-2 focus:ring-[var(--accent-primary)]"
+                  className="mt-0.5 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
                 />
                 <label htmlFor="enableAgenticRAG" className="flex-1 cursor-pointer">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-[var(--text-primary)]">
+                    <span className="text-sm font-medium text-[hsl(var(--text-primary))]">
                       Agentic RAG
                     </span>
-                    <span className="text-xs bg-[var(--warning-light)] text-[var(--warning)] px-1.5 py-0.5 rounded">
+                    <span className="text-xs bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))] px-1.5 py-0.5 rounded">
                       Experimental
                     </span>
                   </div>
-                  <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  <p className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
                     AI agents autonomously refine searches and gather information. May increase
                     processing time.
                   </p>
@@ -193,9 +193,9 @@ export function PromptsTab() {
 
           {/* Prompt Templates */}
           <section className="space-y-4">
-            <div className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
+            <div className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   System Prompt
                 </label>
                 <textarea
@@ -208,7 +208,7 @@ export function PromptsTab() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Greeting Prompt Template
                 </label>
                 <textarea
@@ -221,7 +221,7 @@ export function PromptsTab() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   RAG Prompt Template
                 </label>
                 <textarea
@@ -234,7 +234,7 @@ export function PromptsTab() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   No-Context Prompt Template
                 </label>
                 <textarea
@@ -249,7 +249,7 @@ export function PromptsTab() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--text-secondary)]">
+                <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                   Tool Follow-up Prompt Template
                 </label>
                 <textarea

@@ -74,31 +74,31 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
                 className={`
                   flex items-center justify-center
                   w-5 h-5 rounded border-2
-                  transition-all duration-150
+                  transition-colors duration-fast
                   cursor-pointer
-                  peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent-primary)] peer-focus-visible:ring-offset-2
+                  peer-focus-visible:ring-2 peer-focus-visible:ring-[hsl(var(--ring))] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[hsl(var(--bg))]
                   ${
                     hasError
-                      ? 'border-[var(--error)]'
-                      : 'border-[var(--border-color)]'
+                      ? 'border-[hsl(var(--danger-fg))]'
+                      : 'border-[hsl(var(--border-default))]'
                   }
                   ${
                     checked || indeterminate
-                      ? 'bg-[var(--accent-primary)] border-[var(--accent-primary)] '
-                      : 'bg-[var(--surface-elevated)]'
+                      ? 'bg-[hsl(var(--accent))] border-[hsl(var(--accent))] '
+                      : 'bg-[hsl(var(--surface))]'
                   }
                   ${
                     disabled
                       ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:border-[var(--accent-primary)]'
+                      : 'hover:border-[hsl(var(--accent))]'
                   }
                 `}
               >
                 {checked && !indeterminate && (
-                  <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />
+                  <Check className="w-3.5 h-3.5 text-[hsl(var(--accent-fg))]" strokeWidth={3} />
                 )}
                 {indeterminate && (
-                  <div className="w-2.5 h-0.5 bg-[var(--surface-elevated)] rounded-full" />
+                  <div className="w-2.5 h-0.5 bg-[hsl(var(--accent-fg))] rounded-full" />
                 )}
               </label>
             </div>
@@ -109,7 +109,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
               {label && (
                 <label
                   htmlFor={checkboxId}
-                  className="block text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                  className="block text-sm font-medium text-[hsl(var(--text-primary))] cursor-pointer"
                 >
                   {label}
                 </label>
@@ -117,7 +117,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
               {description && (
                 <p
                   id={descriptionId}
-                  className="text-sm text-[var(--text-secondary)] mt-0.5"
+                  className="text-sm text-[hsl(var(--text-secondary))] mt-0.5"
                 >
                   {description}
                 </p>
@@ -129,7 +129,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
         {error && (
           <p
             id={errorId}
-            className="mt-1.5 ml-8 text-sm text-[var(--error)] flex items-start gap-1"
+            className="mt-1.5 ml-8 text-sm text-[hsl(var(--danger-fg))] flex items-start gap-1"
             role="alert"
           >
             <svg

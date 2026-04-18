@@ -159,7 +159,7 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
     <div className="fixed inset-0 z-50">
       {/* Backdrop with spotlight effect */}
       <div
-        className={`absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 bg-[hsl(var(--overlay))] transition-opacity duration-base ${isVisible ? 'opacity-100' : 'opacity-0'}`}
         style={{
           background: 'radial-gradient(circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%), transparent 200px, rgba(0,0,0,0.8) 400px)',
         }}
@@ -169,7 +169,7 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
       {currentStep !== 'intro' && currentStep !== 'complete' && (
         <div
           key={currentStep}
-          className={`absolute border-4 border-[var(--accent-primary)] rounded-lg pointer-events-none shadow-2xl transition-all duration-300 ${isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-90'}`}
+          className={`absolute border-2 border-[hsl(var(--accent))] rounded-md pointer-events-none shadow-md transition-opacity duration-base ${isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-90'}`}
           style={{
             top: tooltip.spotlightPosition.top,
             left: tooltip.spotlightPosition.left,
@@ -185,7 +185,7 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
       {/* Tooltip card */}
       <div
         key={currentStep}
-        className={`absolute max-w-md w-full mx-4 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-xl shadow-2xl overflow-hidden transition-all duration-300 ${isVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-5 scale-95'}`}
+        className={`absolute max-w-md w-full mx-4 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg shadow-md overflow-hidden transition-opacity duration-base ${isVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-5 scale-95'}`}
         style={{
           top: currentStep === 'intro' || currentStep === 'complete' ? '50%' : tooltip.position.top,
           left: currentStep === 'intro' || currentStep === 'complete' ? '50%' : tooltip.position.left,
@@ -198,21 +198,21 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
         }}
       >
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-[var(--border-color)]">
+          <div className="flex items-center justify-between p-6 border-b border-[hsl(var(--border-subtle))]">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 gradient-brand rounded-lg flex items-center justify-center text-white">
+              <div className="w-12 h-12 bg-[hsl(var(--accent))] rounded-lg flex items-center justify-center text-[hsl(var(--accent-fg))]">
                 {tooltip.icon}
               </div>
               <div>
-                <h3 className="text-xl font-bold text-[var(--text-primary)]">{tooltip.title}</h3>
-                <p className="text-xs text-[var(--text-tertiary)]">
+                <h3 className="text-xl font-bold text-[hsl(var(--text-primary))]">{tooltip.title}</h3>
+                <p className="text-xs text-[hsl(var(--text-tertiary))]">
                   Step {currentIndex + 1} of {tourSequence.length}
                 </p>
               </div>
             </div>
             <button
               onClick={handleSkip}
-              className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+              className="text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors"
               aria-label="Skip tour"
             >
               <X className="w-5 h-5" />
@@ -221,13 +221,13 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
 
           {/* Content */}
           <div className="p-6">
-            <p className="text-[var(--text-secondary)] mb-6 leading-relaxed">
+            <p className="text-[hsl(var(--text-secondary))] mb-6 leading-relaxed">
               {tooltip.description}
             </p>
 
             {tooltip.action && (
-              <div className="mb-6 p-3 bg-[var(--accent-light)] border border-[var(--accent-primary)] rounded-lg">
-                <p className="text-sm font-medium text-[var(--accent-primary)] flex items-center gap-2">
+              <div className="mb-6 p-3 bg-[hsl(var(--accent-muted))] border border-[hsl(var(--accent))] rounded-lg">
+                <p className="text-sm font-medium text-[hsl(var(--accent))] flex items-center gap-2">
                   <Zap className="w-4 h-4" />
                   {tooltip.action}
                 </p>
@@ -236,21 +236,21 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
 
             {currentStep === 'complete' && (
               <div className="flex justify-center mb-6 animate-in zoom-in duration-300" style={{ animationDelay: '200ms' }}>
-                <CheckCircle2 className="w-16 h-16 text-[var(--success)]" />
+                <CheckCircle2 className="w-16 h-16 text-[hsl(var(--success-fg))]" />
               </div>
             )}
 
             {/* Progress bar */}
             <div className="mb-6">
-              <div className="flex justify-between text-xs text-[var(--text-tertiary)] mb-2">
+              <div className="flex justify-between text-xs text-[hsl(var(--text-tertiary))] mb-2">
                 <span>Progress</span>
                 <span>
                   {currentIndex + 1}/{tourSequence.length}
                 </span>
               </div>
-              <div className="w-full bg-[var(--bg-secondary)] rounded-full h-2">
+              <div className="w-full bg-[hsl(var(--surface))] rounded-full h-2">
                 <div
-                  className="gradient-brand h-2 rounded-full transition-all duration-300 ease-out"
+                  className="bg-[hsl(var(--accent))] h-2 rounded-full transition-all duration-300 ease-out"
                   style={{ width: `${((currentIndex + 1) / tourSequence.length) * 100}%` }}
                 />
               </div>
@@ -260,21 +260,21 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
             <div className="flex gap-3">
               {currentStep !== 'complete' && (
                 <>
-                  <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer flex-1">
+                  <label className="flex items-center gap-2 text-sm text-[hsl(var(--text-secondary))] cursor-pointer flex-1">
                     <input
                       type="checkbox"
                       checked={dontShowAgain}
                       onChange={(e) => setDontShowAgain(e.target.checked)}
-                      className="rounded border-[var(--border-color)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+                      className="rounded border-[hsl(var(--border-subtle))] text-[hsl(var(--accent))] focus:ring-[hsl(var(--accent))]"
                     />
                     Don't show again
                   </label>
                   <button
                     onClick={handleNext}
-                    className="px-6 py-3 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] transition-colors font-medium shadow-md hover:shadow-lg flex items-center gap-2"
+                    className="px-6 py-3 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast font-medium shadow-sm flex items-center gap-2"
                   >
                     {isLastStep ? 'Finish' : 'Next'}
-                    <ArrowRight className="w-4 h-4" />
+                    <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
                   </button>
                 </>
               )}
@@ -286,10 +286,10 @@ export function QuickTour({ onComplete, onSkip }: QuickTourProps) {
       {currentStep !== 'complete' && (
         <button
           onClick={handleSkip}
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 px-6 py-3 bg-[var(--surface-elevated)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-lg hover:border-[var(--accent-primary)] transition-colors shadow-lg animate-in fade-in slide-in-from-bottom-5 duration-300"
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 px-6 py-3 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] text-[hsl(var(--text-primary))] rounded-md hover:border-[hsl(var(--accent))] transition-colors duration-fast shadow-sm animate-in fade-in slide-in-from-bottom-5 duration-base"
           style={{ animationDelay: '500ms', animationFillMode: 'backwards' }}
         >
-          Skip Tour
+          Skip tour
         </button>
       )}
     </div>

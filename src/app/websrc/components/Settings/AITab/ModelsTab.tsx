@@ -108,44 +108,44 @@ export function ModelsTab() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-        <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-          <Download className="w-5 h-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+          <Download className="w-5 h-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Models</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Models</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Model storage, external folders, and catalog browser
           </p>
         </div>
       </div>
 
       <section className="space-y-4" ref={downloadSectionRef}>
-        <div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4 space-y-2">
-          <div className="text-xs font-medium text-[var(--text-secondary)]">Model Storage</div>
+        <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-2">
+          <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">Model Storage</div>
           {isLoadingModelDownloadPath ? (
-            <p className="text-xs text-[var(--text-tertiary)]">Loading model folder...</p>
+            <p className="text-xs text-[hsl(var(--text-tertiary))]">Loading model folder...</p>
           ) : modelDownloadPath ? (
-            <code className="block rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-xs text-[var(--text-primary)]">
+            <code className="block rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-xs text-[hsl(var(--text-primary))]">
               {modelDownloadPath}
             </code>
           ) : (
-            <p className="text-xs text-[var(--text-tertiary)]">
+            <p className="text-xs text-[hsl(var(--text-tertiary))]">
               Unable to read local model folder path right now.
             </p>
           )}
-          <p className="text-xs text-[var(--text-tertiary)]">
+          <p className="text-xs text-[hsl(var(--text-tertiary))]">
             This location is always available, even if your current chat provider is Ollama.
           </p>
         </div>
 
-        <div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4 space-y-3">
+        <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+              <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                 External Model Folders
               </h4>
-              <p className="text-xs text-[var(--text-secondary)] mt-1">
+              <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
                 Reuse models from LM Studio or other local directories.
               </p>
             </div>
@@ -153,7 +153,7 @@ export function ModelsTab() {
               type="button"
               onClick={handleAddExternalDirectory}
               disabled={isAddingExternalDirectory}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity whitespace-nowrap"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity whitespace-nowrap"
             >
               <FolderPlus className="w-3.5 h-3.5" />
               {isAddingExternalDirectory ? 'Adding...' : 'Add Folder'}
@@ -161,7 +161,7 @@ export function ModelsTab() {
           </div>
 
           {externalModelDirectories.length === 0 ? (
-            <p className="text-xs text-[var(--text-tertiary)]">
+            <p className="text-xs text-[hsl(var(--text-tertiary))]">
               No external model folders configured.
             </p>
           ) : (
@@ -169,13 +169,13 @@ export function ModelsTab() {
               {externalModelDirectories.map((directory) => (
                 <div
                   key={directory}
-                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)]"
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]"
                 >
-                  <code className="text-xs text-[var(--text-primary)] truncate">{directory}</code>
+                  <code className="text-xs text-[hsl(var(--text-primary))] truncate">{directory}</code>
                   <button
                     type="button"
                     onClick={() => handleRemoveExternalDirectory(directory)}
-                    className="p-1 text-[var(--text-secondary)] hover:text-[var(--error)] transition-colors"
+                    className="p-1 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--danger-fg))] transition-colors"
                     aria-label={`Remove external folder ${directory}`}
                     title="Remove folder"
                   >
@@ -186,27 +186,27 @@ export function ModelsTab() {
             </div>
           )}
 
-          <p className="text-xs text-[var(--text-tertiary)]">
+          <p className="text-xs text-[hsl(var(--text-tertiary))]">
             Scans these folders for `.gguf` and `.onnx` files. Removing an external model entry
             from Recall does not delete the original file.
           </p>
         </div>
 
         {(provider === 'auto' || provider === 'local') ? (
-          <div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4 space-y-3">
+          <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                   Browse Model Catalog
                 </h4>
-                <p className="text-xs text-[var(--text-secondary)] mt-1">
+                <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
                   Browse public Hugging Face models. Expand only when needed.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsModelCatalogExpanded((previous) => !previous)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
               >
                 {isModelCatalogExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                 {isModelCatalogExpanded ? 'Collapse' : 'Expand'}
@@ -227,14 +227,14 @@ export function ModelsTab() {
                 }}
               />
             ) : (
-              <p className="text-xs text-[var(--text-tertiary)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))]">
                 Catalog hidden to keep this page compact. Expand when you want to search or download models.
               </p>
             )}
           </div>
         ) : (
-          <div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4 space-y-2">
-            <p className="text-xs text-[var(--text-secondary)]">
+          <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-2">
+            <p className="text-xs text-[hsl(var(--text-secondary))]">
               You are currently using Ollama. Switch to <strong>Auto</strong> or <strong>Local Only</strong> to browse and download local models.
             </p>
           </div>

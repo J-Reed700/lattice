@@ -6,7 +6,7 @@
  * Features:
  * - Multiple preset variants (text, rect, circle)
  * - Customizable dimensions
- * - Smooth shimmer animation
+ * - Smooth pulse animation
  * - Dark mode support
  * - Respects prefers-reduced-motion
  *
@@ -35,7 +35,7 @@ export function Skeleton({
 }: SkeletonProps) {
   const variantStyles = {
     text: 'rounded',
-    rect: 'rounded-lg',
+    rect: 'rounded-md',
     circle: 'rounded-full',
   };
 
@@ -58,7 +58,7 @@ export function Skeleton({
   return (
     <div
       className={`
-        bg-[var(--bg-tertiary)]
+        bg-[hsl(var(--surface-raised))]
         ${variantStyles[variant]}
         ${animate ? 'animate-pulse' : ''}
         ${className}
@@ -113,7 +113,7 @@ interface SkeletonCardProps {
 export function SkeletonCard({ showAvatar = false, showActions = false, className = '' }: SkeletonCardProps) {
   return (
     <div
-      className={`bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg p-4 ${className}`}
+      className={`bg-[hsl(var(--surface))] border border-[hsl(var(--border-subtle))] rounded-md p-4 ${className}`}
     >
       <div className="flex items-start gap-3">
         {showAvatar && <Skeleton variant="circle" width={40} height={40} />}
@@ -169,7 +169,7 @@ export function SkeletonTable({ rows = 5, columns = 4, className = '' }: Skeleto
   return (
     <div className={`space-y-2 ${className}`}>
       {/* Header */}
-      <div className="flex gap-4 pb-2 border-b border-[var(--border-color)]">
+      <div className="flex gap-4 pb-2 border-b border-[hsl(var(--border-subtle))]">
         {Array.from({ length: columns }, (_, i) => (
           <Skeleton key={`header-${i}`} variant="text" width={`${100 / columns}%`} height="1rem" />
         ))}

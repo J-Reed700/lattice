@@ -7,7 +7,7 @@ use crate::features::settings::dto::CustomToolSettingsDto;
 #[cfg(test)]
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, RegistryStats, ToolDefinition};
 #[cfg(test)]
-use crate::infrastructure::services::traits::*;
+use super::trait_def::{FunctionExecutorTrait, FunctionRegistryTrait};
 #[cfg(test)]
 use crate::shared::error::Result;
 #[cfg(test)]

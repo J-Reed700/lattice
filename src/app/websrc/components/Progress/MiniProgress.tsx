@@ -30,11 +30,11 @@ export const MiniProgress = memo<MiniProgressProps>(({ onClick, className = '' }
       onClick={onClick}
       className={`
         inline-flex items-center gap-2 px-3 py-1.5
-        bg-[var(--accent-light)]/20
-        border border-[var(--accent-light)]
+        bg-[hsl(var(--accent-muted))]/20
+        border border-[hsl(var(--accent-muted))]
         rounded-full
-        text-sm font-medium text-[var(--accent-primary)]
-        hover:bg-[var(--accent-light)]
+        text-sm font-medium text-[hsl(var(--accent))]
+        hover:bg-[hsl(var(--accent-muted))]
         transition-all duration-200
         cursor-pointer
         ${className}

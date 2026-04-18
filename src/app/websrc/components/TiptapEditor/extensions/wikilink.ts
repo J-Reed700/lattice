@@ -34,7 +34,7 @@ export const Wikilink = Mark.create<WikilinkOptions>({
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         'data-wikilink': '',
         class:
-          'text-[var(--accent-primary)] cursor-pointer hover:underline font-medium',
+          'text-[hsl(var(--accent))] cursor-pointer hover:underline font-medium',
       }),
       0,
     ];
@@ -77,7 +77,7 @@ export const Wikilink = Mark.create<WikilinkOptions>({
                 decorations.push(
                   Decoration.inline(from, to, {
                     class:
-                      'text-[var(--accent-primary)] cursor-pointer hover:underline font-medium',
+                      'text-[hsl(var(--accent))] cursor-pointer hover:underline font-medium',
                     'data-wikilink-decoration': match[1],
                   }),
                 );

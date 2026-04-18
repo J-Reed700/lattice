@@ -1,7 +1,7 @@
 import { Skeleton } from '@/components/ui/skeleton';
 
 export const DashboardSkeleton = () => (
-    <div className="h-full overflow-auto bg-bg-primary">
+    <div className="h-full overflow-auto bg-[hsl(var(--bg))]">
       <div className="container mx-auto p-6 space-y-8">
         <div className="space-y-2">
           <Skeleton className="h-12 w-64" />

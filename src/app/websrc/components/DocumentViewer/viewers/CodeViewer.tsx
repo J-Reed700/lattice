@@ -87,9 +87,9 @@ export function CodeViewer({ content, language, fileName }: CodeViewerProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center max-w-md p-8">
-          <div className="w-16 h-16 bg-[var(--bg-tertiary)] rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-[hsl(var(--surface-raised))] rounded-full flex items-center justify-center mx-auto mb-4">
             <svg
-              className="w-8 h-8 text-[var(--text-tertiary)]"
+              className="w-8 h-8 text-[hsl(var(--text-tertiary))]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -102,22 +102,22 @@ export function CodeViewer({ content, language, fileName }: CodeViewerProps) {
               />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
             Empty File
           </h3>
-          <p className="text-[var(--text-secondary)]">This file has no content to display.</p>
+          <p className="text-[hsl(var(--text-secondary))]">This file has no content to display.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-[var(--bg-secondary)]">
+    <div className="h-full flex flex-col bg-[hsl(var(--surface))]">
       {/* File header with copy button */}
-      <div className="bg-[var(--surface-elevated)] text-white px-6 py-3 flex items-center justify-between border-b border-[var(--border-color)]">
+      <div className="bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] px-6 py-3 flex items-center justify-between border-b border-[hsl(var(--border-subtle))]">
         <div className="flex items-center gap-3">
           <svg
-            className="w-5 h-5 text-[var(--text-tertiary)]"
+            className="w-5 h-5 text-[hsl(var(--text-tertiary))]"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -130,18 +130,18 @@ export function CodeViewer({ content, language, fileName }: CodeViewerProps) {
             />
           </svg>
           <span className="text-sm font-mono font-medium">{sanitizeFileName(fileName)}</span>
-          <span className="text-xs text-[var(--text-tertiary)] uppercase">{language}</span>
+          <span className="text-xs text-[hsl(var(--text-tertiary))] uppercase">{language}</span>
         </div>
 
         <button
           onClick={handleCopy}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm bg-[var(--surface-elevated)] hover:bg-[var(--text-secondary)] rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm bg-[hsl(var(--surface-raised))] hover:bg-[hsl(var(--text-secondary))] rounded-lg transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
           aria-label={copied ? 'Copied!' : 'Copy code'}
         >
           {copied ? (
             <>
-              <Check className="w-4 h-4 text-[var(--success)]" />
-              <span className="text-[var(--success)]">Copied!</span>
+              <Check className="w-4 h-4 text-[hsl(var(--success-fg))]" />
+              <span className="text-[hsl(var(--success-fg))]">Copied!</span>
             </>
           ) : (
             <>

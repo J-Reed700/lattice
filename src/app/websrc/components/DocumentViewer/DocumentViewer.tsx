@@ -203,18 +203,18 @@ export const DocumentViewer = memo(({
   // Error state
   if (error || !fileData) {
     return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-        <div className="bg-[var(--surface-elevated)] rounded-xl p-8 max-w-md shadow-2xl">
-          <div className="flex items-center gap-3 text-[var(--error)] mb-4">
+      <div className="fixed inset-0 bg-[hsl(var(--overlay))]/60 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="bg-[hsl(var(--surface-raised))] rounded-xl p-8 max-w-md shadow-md">
+          <div className="flex items-center gap-3 text-[hsl(var(--danger-fg))] mb-4">
             <X className="w-6 h-6" />
             <h2 className="text-xl font-bold">Error Loading Document</h2>
           </div>
-          <p className="text-[var(--text-secondary)] mb-6">
+          <p className="text-[hsl(var(--text-secondary))] mb-6">
             {error || 'Document could not be loaded'}
           </p>
           <button
             onClick={onClose}
-            className="w-full px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="w-full px-4 py-2 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-lg hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
           >
             Close
           </button>
@@ -224,7 +224,7 @@ export const DocumentViewer = memo(({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex flex-col">
+    <div className="fixed inset-0 bg-[hsl(var(--overlay))]/60 backdrop-blur-sm z-50 flex flex-col">
       {/* Header */}
       <ViewerHeader
         fileName={fileData.fileName}
@@ -243,30 +243,30 @@ export const DocumentViewer = memo(({
             <button
               onClick={handlePrevious}
               disabled={currentIndex === 0}
-              className="p-3 bg-[var(--surface-elevated)] rounded-full shadow-lg hover:shadow-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[var(--bg-secondary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="p-3 bg-[hsl(var(--surface-raised))] rounded-full shadow-md hover:shadow-md transition-colors duration-fast disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[hsl(var(--surface))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
               title="Previous document (Left Arrow)"
               aria-label="Previous document"
             >
-              <ChevronLeft className="w-6 h-6 text-[var(--text-secondary)]" />
+              <ChevronLeft className="w-6 h-6 text-[hsl(var(--text-secondary))]" />
             </button>
-            <div className="text-xs text-center font-medium text-white bg-black/70 px-3 py-2 rounded-full backdrop-blur-sm">
+            <div className="text-xs text-center font-medium text-[hsl(var(--text-primary))] bg-[hsl(var(--overlay))]/70 px-3 py-2 rounded-full backdrop-blur-sm">
               {currentIndex + 1} / {searchResults.length}
             </div>
             <button
               onClick={handleNext}
               disabled={currentIndex === searchResults.length - 1}
-              className="p-3 bg-[var(--surface-elevated)] rounded-full shadow-lg hover:shadow-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[var(--bg-secondary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="p-3 bg-[hsl(var(--surface-raised))] rounded-full shadow-md hover:shadow-md transition-colors duration-fast disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[hsl(var(--surface))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
               title="Next document (Right Arrow)"
               aria-label="Next document"
             >
-              <ChevronRight className="w-6 h-6 text-[var(--text-secondary)]" />
+              <ChevronRight className="w-6 h-6 text-[hsl(var(--text-secondary))]" />
             </button>
           </div>
         )}
 
         {/* Document Content */}
         <div
-          className={`flex-1 overflow-hidden transition-all duration-300 ${
+          className={`flex-1 overflow-hidden transition-colors duration-300 ${
             showSidebar ? 'mr-96' : ''
           }`}
         >

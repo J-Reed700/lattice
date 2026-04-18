@@ -5,7 +5,7 @@
 #[cfg(test)]
 use crate::infrastructure::search::service::SearchResult;
 #[cfg(test)]
-use crate::infrastructure::services::traits::*;
+use super::trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 #[cfg(test)]
 use crate::shared::error::{AppError, Result};
 #[cfg(test)]
@@ -383,8 +383,20 @@ impl HybridSearchTrait for MockHybridSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::conversation::ConversationServiceTrait;
+    use crate::features::conversation::mocks::MockConversationService;
+    use crate::features::embedding::EmbeddingServiceTrait;
+    use crate::features::embedding::mocks::MockEmbeddingService;
     use crate::features::tags::TagServiceTrait;
     use crate::features::tags::mocks::MockTagService;
+    use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
+    use crate::features::web::mocks::MockWebIngestionService;
+    use crate::infrastructure::services::traits::{
+        FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
+    };
+    use crate::infrastructure::services::mocks::{
+        MockFileStorageService, MockModelManager, MockSearchEnrichmentService,
+    };
 
     #[tokio::test]
     async fn test_mock_embedding_service() {
@@ -657,7 +669,7 @@ mod tests {
         let service = MockWebIngestionService::new();
 
         // Configure custom result
-        let custom_result = crate::infrastructure::services::traits::WebIngestionResult {
+        let custom_result = WebIngestionResult {
             document_id: "custom-id".to_string(),
             url: "https://test.com".to_string(),
             title: "Custom Title".to_string(),
@@ -701,7 +713,7 @@ mod tests {
         let service = MockWebIngestionService::new();
 
         // Configure and ingest
-        let result = crate::infrastructure::services::traits::WebIngestionResult {
+        let result = WebIngestionResult {
             document_id: "test-id".to_string(),
             url: "https://test.com".to_string(),
             title: "Test".to_string(),
@@ -730,7 +742,7 @@ mod tests {
         let service = MockWebIngestionService::new();
 
         // Configure specific result
-        let configured = crate::infrastructure::services::traits::WebIngestionResult {
+        let configured = WebIngestionResult {
             document_id: "fixed-id".to_string(),
             url: "https://example.com".to_string(),
             title: "Fixed Title".to_string(),

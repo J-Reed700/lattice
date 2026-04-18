@@ -550,18 +550,18 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
+        <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
           <div className="mb-2 flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
+              <p className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 Optional Space Scope
               </p>
-              <p className="mt-1 truncate text-sm font-medium text-[var(--text-primary)]">
+              <p className="mt-1 truncate text-sm font-medium text-[hsl(var(--text-primary))]">
                 {selectedSpace
                   ? `${selectedSpace.icon ? `${selectedSpace.icon} ` : ''}${selectedSpace.name}`
                   : (isLoadingSpaces ? 'Loading spaces...' : 'All Spaces')}
               </p>
-              <p className="mt-0.5 truncate text-[11px] text-[var(--text-secondary)]">
+              <p className="mt-0.5 truncate text-[11px] text-[hsl(var(--text-secondary))]">
                 {selectedSpace?.description || 'Applies this import to one conversation space'}
               </p>
             </div>
@@ -574,12 +574,12 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
                     setSelectedSpaceId('');
                   }}
                   disabled={isImporting}
-                  className="rounded-md border border-[var(--border-color)] px-2 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Clear
                 </button>
               )}
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))]">
                 <Layers3 className="h-4 w-4" />
               </span>
             </div>
@@ -595,11 +595,11 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
             <SelectTrigger
               id="batch-file-space-select"
               aria-label="Optional Space Scope"
-              className="h-10 border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-primary)] data-[placeholder]:text-[var(--text-secondary)]"
+              className="h-10 border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] data-[placeholder]:text-[hsl(var(--text-secondary))]"
             >
               <SelectValue placeholder={isLoadingSpaces ? 'Loading spaces...' : 'All Spaces'} />
             </SelectTrigger>
-            <SelectContent className="border-[var(--border-color)] bg-[var(--surface-elevated)] text-[var(--text-primary)]">
+            <SelectContent className="border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))]">
               <SelectItem value={ALL_SPACES_OPTION}>All Spaces (No scope)</SelectItem>
               {spaces.map((space) => (
                 <SelectItem key={space.id} value={space.id}>
@@ -610,16 +610,16 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           </Select>
         </div>
 
-        <div className="rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 shadow-[var(--shadow-sm)]">
+        <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
           <div className="mb-2 flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
+              <p className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 Optional Collection
               </p>
-              <p className="mt-1 truncate text-sm font-medium text-[var(--text-primary)]">
+              <p className="mt-1 truncate text-sm font-medium text-[hsl(var(--text-primary))]">
                 {selectedCollection?.label ?? (manualCollections.length === 0 ? 'No collections available' : 'No Collection')}
               </p>
-              <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+              <p className="mt-0.5 text-[11px] text-[hsl(var(--text-secondary))]">
                 Auto-add imported docs to a curated collection
               </p>
             </div>
@@ -629,12 +629,12 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
                   type="button"
                   onClick={() => setSelectedCollectionId('')}
                   disabled={isImporting}
-                  className="rounded-md border border-[var(--border-color)] px-2 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Clear
                 </button>
               )}
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))]">
                 <FolderTree className="h-4 w-4" />
               </span>
             </div>
@@ -649,13 +649,13 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
             <SelectTrigger
               id="batch-file-collection-select"
               aria-label="Optional Collection"
-              className="h-10 border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-primary)] data-[placeholder]:text-[var(--text-secondary)]"
+              className="h-10 border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] data-[placeholder]:text-[hsl(var(--text-secondary))]"
             >
               <SelectValue
                 placeholder={manualCollections.length === 0 ? 'No collections available' : 'No Collection'}
               />
             </SelectTrigger>
-            <SelectContent className="border-[var(--border-color)] bg-[var(--surface-elevated)] text-[var(--text-primary)]">
+            <SelectContent className="border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))]">
               <SelectItem value={NO_COLLECTION_OPTION}>
                 {manualCollections.length === 0 ? 'No collections available' : 'No Collection'}
               </SelectItem>
@@ -745,7 +745,7 @@ const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled }) => {
     pending: 'text-muted-foreground',
     importing: 'text-blue-500',
     success: 'text-green-500',
-    error: 'text-[var(--error)]',
+    error: 'text-[hsl(var(--danger-fg))]',
   }[file.status];
 
   return (
@@ -760,7 +760,7 @@ const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled }) => {
       <div className="flex-1 min-w-0">
         <p className="font-medium truncate">{file.name}</p>
         {file.errorMessage && (
-          <p className="text-sm text-[var(--error)]">{file.errorMessage}</p>
+          <p className="text-sm text-[hsl(var(--danger-fg))]">{file.errorMessage}</p>
         )}
       </div>
       {!disabled && (file.status === 'pending' || file.status === 'error') && (

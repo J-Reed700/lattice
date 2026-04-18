@@ -13,11 +13,9 @@
 //! - `crate::features::mentions::repository::MentionRepository`
 //! - `crate::features::mentions::commands` — Tauri command handlers
 //! - `crate::features::mentions::plugin::init()` — Tauri plugin
+//! - `crate::features::mentions::mocks::MockMentionRepository` — test mock
 //!
-//! `trait_def` (MentionServiceTrait) and `mocks` (MockMentionRepository)
-//! remain loaded via the shared `infrastructure::services::{traits,mocks}`
-//! aggregators — consumers import through those aggregators.
-//!
+//! Legacy trait has been migrated to DDD port (`MentionRepositoryPort`).
 //! `MentionRepositoryPort` stays in `application/ports/`.
 
 pub mod commands;
@@ -27,3 +25,6 @@ pub mod mapper;
 pub mod plugin;
 pub mod repository;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;

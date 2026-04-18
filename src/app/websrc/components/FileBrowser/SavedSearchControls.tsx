@@ -35,11 +35,11 @@ export function SavedSearchQuickControls({
   return (
     <>
       {savedSearches.length > 0 && (
-        <div className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-0.5">
+        <div className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-0.5">
           <select
             value={activeSavedSearchId ?? ''}
             onChange={(event) => onSavedSearchChange(event.target.value)}
-            className="h-8 max-w-[170px] rounded-full bg-transparent px-2 text-xs font-medium text-[var(--text-secondary)] outline-none"
+            className="h-8 max-w-[170px] rounded-full bg-transparent px-2 text-xs font-medium text-[hsl(var(--text-secondary))] outline-none"
             aria-label="Toggle saved search"
             title="Toggle saved search"
           >
@@ -54,7 +54,7 @@ export function SavedSearchQuickControls({
             <button
               type="button"
               onClick={onClearActiveSavedSearch}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
               aria-label="Clear active search"
               title="Clear active search"
             >
@@ -64,11 +64,11 @@ export function SavedSearchQuickControls({
         </div>
       )}
       {activeSavedSearch && (
-        <div className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-0.5">
+        <div className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-0.5">
           <button
             type="button"
             onClick={onRenameActiveSearch}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
             aria-label="Rename active saved search"
             title="Rename saved search"
           >
@@ -77,7 +77,7 @@ export function SavedSearchQuickControls({
           <button
             type="button"
             onClick={onDuplicateActiveSearch}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
             aria-label="Duplicate active saved search"
             title="Duplicate saved search"
           >
@@ -86,7 +86,7 @@ export function SavedSearchQuickControls({
           <button
             type="button"
             onClick={onTogglePinActiveSearch}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
             aria-label={activeSavedSearch.pinned ? 'Unpin active saved search' : 'Pin active saved search'}
             title={activeSavedSearch.pinned ? 'Unpin saved search' : 'Pin saved search'}
           >
@@ -99,7 +99,7 @@ export function SavedSearchQuickControls({
           <button
             type="button"
             onClick={onDeleteActiveSearch}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--error)] transition-colors hover:bg-[var(--surface-hover)]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[hsl(var(--danger-fg))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))]"
             aria-label="Delete active saved search"
             title="Delete saved search"
           >
@@ -112,7 +112,7 @@ export function SavedSearchQuickControls({
         size="sm"
         onClick={onSaveSearch}
         disabled={saveSearchDisabled}
-        className="h-9 rounded-full border border-[var(--border-color)] px-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+        className="h-9 rounded-full border border-[hsl(var(--border-subtle))] px-3 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
       >
         <BookmarkPlus className="mr-2 h-4 w-4" />
         Save Search
@@ -149,7 +149,7 @@ export function PinnedSavedSearchRail({
   return (
     <div className="flex max-w-full items-center gap-2 overflow-x-auto pb-0.5">
       <span
-        className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]"
+        className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--text-tertiary))]"
         title="Drag to reorder or use Alt+Left / Alt+Right while focused"
       >
         Pinned
@@ -188,10 +188,10 @@ export function PinnedSavedSearchRail({
             }}
             onDoubleClick={() => onRenamePinnedSearch(search.id, search.name)}
             onClick={() => onApplySavedSearch(search.id)}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors duration-fast ${
               isActive
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]/50 text-[var(--accent-primary)]'
-                : 'border-[var(--border-color)] bg-[var(--surface-elevated)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]/50 text-[hsl(var(--accent))]'
+                : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
             }`}
           >
             <Pin className="h-3 w-3" />

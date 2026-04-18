@@ -157,10 +157,10 @@ function ModelCard({
         <div className="flex flex-col h-full">
           <div className="flex items-start justify-between gap-2 mb-3">
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-sm text-[var(--text-primary)] truncate">
+              <h3 className="font-semibold text-sm text-[hsl(var(--text-primary))] truncate">
                 {model.model_name}
               </h3>
-              <p className="text-xs text-[var(--text-tertiary)] mt-0.5 truncate">
+              <p className="text-xs text-[hsl(var(--text-tertiary))] mt-0.5 truncate">
                 {model.model_id}
               </p>
             </div>
@@ -208,26 +208,26 @@ function ModelCard({
           </div>
 
           <div className="flex-1 space-y-2 mb-3">
-            <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
               <HardDrive className="w-3 h-3" />
               <span>{formatFileSize(model.file_size_bytes)}</span>
             </div>
-            <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
               <Calendar className="w-3 h-3" />
               <span>Downloaded {formatDate(model.downloaded_at)}</span>
             </div>
             {model.last_used_at && (
-              <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                 <TrendingUp className="w-3 h-3" />
                 <span>Last used {formatDate(model.last_used_at)}</span>
               </div>
             )}
-            <div className="text-xs text-[var(--text-tertiary)]">
+            <div className="text-xs text-[hsl(var(--text-tertiary))]">
               Used {model.use_count} {model.use_count === 1 ? 'time' : 'times'}
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 pt-3 border-t border-[var(--border-color)]">
+          <div className="flex flex-col gap-2 pt-3 border-t border-[hsl(var(--border-subtle))]">
             {/* Activation/Deactivation Buttons Row */}
             {(() => {
               const isLanguageModel = model.model_type === 'language_model';
@@ -321,7 +321,7 @@ function ModelCard({
                 variant="ghost"
                 size="sm"
                 onClick={() => onViewDetails(model)}
-                className="flex-1 hover:bg-[var(--bg-tertiary)]"
+                className="flex-1 hover:bg-[hsl(var(--surface-raised))]"
               >
                 <Info className="w-3.5 h-3.5 mr-1.5" />
                 <span>Details</span>
@@ -369,15 +369,15 @@ interface ModelDetailsModalProps {
 
 function ModelDetailsModal({ model, onClose }: ModelDetailsModalProps) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[var(--surface-elevated)] rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6 border border-[var(--border-color)]">
+    <div className="fixed inset-0 bg-[hsl(var(--overlay))] flex items-center justify-center z-50 p-4">
+      <div className="bg-[hsl(var(--surface-raised))] rounded-xl shadow-md max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6 border border-[hsl(var(--border-subtle))]">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-[var(--text-primary)]">
+          <h2 className="text-2xl font-bold text-[hsl(var(--text-primary))]">
             {model.model_name}
           </h2>
           <button
             onClick={onClose}
-            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            className="text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
           >
             ✕
           </button>
@@ -385,43 +385,43 @@ function ModelDetailsModal({ model, onClose }: ModelDetailsModalProps) {
 
         <div className="space-y-4">
           <div>
-            <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">Model ID</div>
-            <div className="text-sm text-[var(--text-primary)]">{model.model_id}</div>
+            <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">Model ID</div>
+            <div className="text-sm text-[hsl(var(--text-primary))]">{model.model_id}</div>
           </div>
 
           <div>
-            <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">File Path</div>
-            <div className="text-sm text-[var(--text-primary)] font-mono break-all bg-[var(--bg-tertiary)] p-2 rounded">
+            <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">File Path</div>
+            <div className="text-sm text-[hsl(var(--text-primary))] font-mono break-all bg-[hsl(var(--surface-raised))] p-2 rounded">
               {model.file_path}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">File Size</div>
-              <div className="text-sm text-[var(--text-primary)]">{formatFileSize(model.file_size_bytes)}</div>
+              <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">File Size</div>
+              <div className="text-sm text-[hsl(var(--text-primary))]">{formatFileSize(model.file_size_bytes)}</div>
             </div>
             <div>
-              <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">Use Count</div>
-              <div className="text-sm text-[var(--text-primary)]">{model.use_count}</div>
+              <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">Use Count</div>
+              <div className="text-sm text-[hsl(var(--text-primary))]">{model.use_count}</div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">Downloaded</div>
-              <div className="text-sm text-[var(--text-primary)]">{formatDate(model.downloaded_at)}</div>
+              <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">Downloaded</div>
+              <div className="text-sm text-[hsl(var(--text-primary))]">{formatDate(model.downloaded_at)}</div>
             </div>
             <div>
-              <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">Last Used</div>
-              <div className="text-sm text-[var(--text-primary)]">{formatDate(model.last_used_at)}</div>
+              <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">Last Used</div>
+              <div className="text-sm text-[hsl(var(--text-primary))]">{formatDate(model.last_used_at)}</div>
             </div>
           </div>
 
           {model.metadata && Object.keys(model.metadata).length > 0 && (
             <div>
-              <div className="text-xs font-medium text-[var(--text-secondary)] mb-2">Metadata</div>
-              <div className="text-sm text-[var(--text-primary)] font-mono bg-[var(--bg-tertiary)] p-3 rounded max-h-60 overflow-y-auto">
+              <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-2">Metadata</div>
+              <div className="text-sm text-[hsl(var(--text-primary))] font-mono bg-[hsl(var(--surface-raised))] p-3 rounded max-h-60 overflow-y-auto">
                 <pre>{JSON.stringify(model.metadata, null, 2)}</pre>
               </div>
             </div>
@@ -512,8 +512,8 @@ function DownloadedModelsTabContent() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="flex items-center gap-3 text-[var(--text-secondary)]">
-          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[var(--accent-primary)]" />
+        <div className="flex items-center gap-3 text-[hsl(var(--text-secondary))]">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[hsl(var(--accent))]" />
           <span>Loading downloaded models...</span>
         </div>
       </div>
@@ -523,7 +523,7 @@ function DownloadedModelsTabContent() {
   if (error) {
     return (
       <div className="p-4">
-        <div className="text-sm text-[var(--error)] bg-[var(--error-light)] p-4 rounded-lg flex items-center gap-3">
+        <div className="text-sm text-[hsl(var(--danger-fg))] bg-[hsl(var(--danger-muted))] p-4 rounded-lg flex items-center gap-3">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
           <div>
             <div className="font-medium mb-1">Failed to load models</div>
@@ -537,13 +537,13 @@ function DownloadedModelsTabContent() {
   if (downloadedModels.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <div className="p-4 bg-[var(--bg-tertiary)] rounded-full mb-4">
-          <HardDrive className="w-8 h-8 text-[var(--text-quaternary)]" />
+        <div className="p-4 bg-[hsl(var(--surface-raised))] rounded-full mb-4">
+          <HardDrive className="w-8 h-8 text-[hsl(var(--text-muted))]" />
         </div>
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
           No Downloaded Models
         </h3>
-        <p className="text-sm text-[var(--text-secondary)] max-w-md mb-4">
+        <p className="text-sm text-[hsl(var(--text-secondary))] max-w-md mb-4">
           You haven't downloaded any models yet. You can browse the Model Catalog or use Ollama
           as your chat provider.
         </p>
@@ -561,7 +561,7 @@ function DownloadedModelsTabContent() {
         </Button>
 
         {/* Quick Guide Steps */}
-        <div className="flex items-center justify-center gap-2 text-sm text-[var(--text-tertiary)]">
+        <div className="flex items-center justify-center gap-2 text-sm text-[hsl(var(--text-tertiary))]">
           <span className="flex items-center gap-1.5">
             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100 text-xs font-bold">
               1
@@ -593,13 +593,13 @@ function DownloadedModelsTabContent() {
 
   return (
     <div className="space-y-6">
-    <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-      <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-        <PackageOpen className="w-5 h-5 text-[var(--accent-primary)]" />
+    <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+      <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+        <PackageOpen className="w-5 h-5 text-[hsl(var(--accent))]" />
       </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Downloaded Models</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Downloaded Models</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Manage your locally downloaded AI models
           </p>
         </div>
@@ -607,12 +607,12 @@ function DownloadedModelsTabContent() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 mb-6">
         <Card padding="md">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-              <HardDrive className="w-5 h-5 text-[var(--accent-primary)]" />
+            <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+              <HardDrive className="w-5 h-5 text-[hsl(var(--accent))]" />
             </div>
             <div>
-              <div className="text-xs text-[var(--text-secondary)]">Total Models</div>
-              <div className="text-xl font-bold text-[var(--text-primary)]">
+              <div className="text-xs text-[hsl(var(--text-secondary))]">Total Models</div>
+              <div className="text-xl font-bold text-[hsl(var(--text-primary))]">
                 {downloadedModels.length}
               </div>
             </div>
@@ -621,12 +621,12 @@ function DownloadedModelsTabContent() {
 
         <Card padding="md">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-              <HardDrive className="w-5 h-5 text-[var(--accent-primary)]" />
+            <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+              <HardDrive className="w-5 h-5 text-[hsl(var(--accent))]" />
             </div>
             <div>
-              <div className="text-xs text-[var(--text-secondary)]">Total Size</div>
-              <div className="text-xl font-bold text-[var(--text-primary)]">
+              <div className="text-xs text-[hsl(var(--text-secondary))]">Total Size</div>
+              <div className="text-xl font-bold text-[hsl(var(--text-primary))]">
                 {formatFileSize(totalSize)}
               </div>
             </div>
@@ -639,8 +639,8 @@ function DownloadedModelsTabContent() {
               <Check className="w-5 h-5 text-green-800 dark:text-green-100" />
             </div>
             <div>
-              <div className="text-xs text-[var(--text-secondary)]">Active Model</div>
-              <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
+              <div className="text-xs text-[hsl(var(--text-secondary))]">Active Model</div>
+              <div className="text-sm font-semibold text-[hsl(var(--text-primary))] truncate">
                 {activeModel ? activeModel.model_name : 'None'}
               </div>
             </div>
@@ -656,8 +656,8 @@ function DownloadedModelsTabContent() {
                   <Sparkles className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                 </div>
                 <div>
-                  <div className="text-xs text-[var(--text-secondary)]">Active Embedding</div>
-                  <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                  <div className="text-xs text-[hsl(var(--text-secondary))]">Active Embedding</div>
+                  <div className="text-sm font-semibold text-[hsl(var(--text-primary))] truncate">
                     {activeEmbeddingModel?.model_name || 'None'}
                   </div>
                 </div>
@@ -672,18 +672,18 @@ function DownloadedModelsTabContent() {
 
       {/* Search bar */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-tertiary)]" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-tertiary))]" />
         <input
           type="text"
           placeholder="Filter models..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-primary)] placeholder:text-[var(--text-quaternary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)] focus:border-[var(--accent-primary)]"
+          className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--accent))] focus:border-[hsl(var(--accent))]"
         />
         {searchQuery && (
           <button
             onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))]"
           >
             <X className="w-4 h-4" />
           </button>
@@ -691,7 +691,7 @@ function DownloadedModelsTabContent() {
       </div>
 
       {filteredModels.length === 0 ? (
-        <div className="text-center py-8 text-sm text-[var(--text-tertiary)]">
+        <div className="text-center py-8 text-sm text-[hsl(var(--text-tertiary))]">
           No models matching "{searchQuery}"
         </div>
       ) : (

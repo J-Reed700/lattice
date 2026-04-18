@@ -330,7 +330,7 @@ export function SearchTab() {
 
     return (
       <div key={field.key} className="space-y-1.5">
-        <label htmlFor={inputId} className="text-xs font-medium text-[var(--text-secondary)]">
+        <label htmlFor={inputId} className="text-xs font-medium text-[hsl(var(--text-secondary))]">
           {field.label}
         </label>
         <input
@@ -350,7 +350,7 @@ export function SearchTab() {
             updateDraftTuningField(field.key, normalized);
             void saveTuningField(field.key, normalized);
           }}
-          className="w-full rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
+          className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
         />
       </div>
     );
@@ -359,15 +359,15 @@ export function SearchTab() {
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="h-7 w-56 animate-pulse rounded bg-[var(--surface-elevated)]" />
-        <div className="h-24 animate-pulse rounded bg-[var(--surface-elevated)]" />
+        <div className="h-7 w-56 animate-pulse rounded bg-[hsl(var(--surface-raised))]" />
+        <div className="h-24 animate-pulse rounded bg-[hsl(var(--surface-raised))]" />
       </div>
     );
   }
 
   if (!searchSettings) {
     return (
-      <div className="rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] p-4 text-sm text-[var(--text-secondary)]">
+      <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-4 text-sm text-[hsl(var(--text-secondary))]">
         Search settings are unavailable right now.
       </div>
     );
@@ -375,32 +375,32 @@ export function SearchTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3 border-b border-[var(--border-color)] pb-4">
-        <div className="rounded-lg bg-[var(--accent-light)] p-2">
-          <Search className="h-5 w-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 border-b border-[hsl(var(--border-subtle))] pb-4">
+        <div className="rounded-lg bg-[hsl(var(--accent-muted))] p-2">
+          <Search className="h-5 w-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Search Settings</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Search Settings</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Configure retrieval behavior, reranking, and pipeline tuning
           </p>
         </div>
       </div>
 
-      <div className="space-y-4 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
-        <div className="text-sm font-semibold text-[var(--text-primary)]">Core Retrieval</div>
-        <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+      <div className="space-y-4 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
+        <div className="text-sm font-semibold text-[hsl(var(--text-primary))]">Core Retrieval</div>
+        <label className="inline-flex items-center gap-2 text-sm text-[hsl(var(--text-secondary))]">
           <input
             type="checkbox"
             checked={searchSettings.enableReranking}
             onChange={(event) => void saveSearchUpdates({ enableReranking: event.target.checked })}
-            className="h-4 w-4 rounded border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]"
+            className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
           />
           Enable reranking
         </label>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[var(--text-secondary)]">Max Results</label>
+            <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">Max Results</label>
             <input
               type="number"
               min={1}
@@ -417,11 +417,11 @@ export function SearchTab() {
               onBlur={() =>
                 void saveSearchUpdates({ maxResults: Math.round(clamp(searchSettings.maxResults, 1, 128)) })
               }
-              className="w-full rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
+              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[var(--text-secondary)]">
+            <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
               Similarity Threshold
             </label>
             <input
@@ -448,11 +448,11 @@ export function SearchTab() {
                   similarityThreshold: clamp(searchSettings.similarityThreshold, 0, 1),
                 })
               }
-              className="w-full rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
+              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[var(--text-secondary)]">
+            <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
               Hybrid Search Alpha
             </label>
             <input
@@ -476,44 +476,44 @@ export function SearchTab() {
                   hybridSearchAlpha: clamp(searchSettings.hybridSearchAlpha, 0, 1),
                 })
               }
-              className="w-full rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
+              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
             />
           </div>
         </div>
       </div>
 
-      <div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)]">
+      <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]">
         <button
           type="button"
           onClick={() => setShowAdvancedTuning((previous) => !previous)}
           className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
           <div>
-            <div className="text-sm font-semibold text-[var(--text-primary)]">
+            <div className="text-sm font-semibold text-[hsl(var(--text-primary))]">
               Advanced Retrieval Tuning
             </div>
-            <div className="text-xs text-[var(--text-secondary)]">
+            <div className="text-xs text-[hsl(var(--text-secondary))]">
               Pipeline knobs for shortlist, external search shaping, overlap, and support filters
             </div>
           </div>
           {showAdvancedTuning ? (
-            <ChevronDown className="h-4 w-4 text-[var(--text-secondary)]" />
+            <ChevronDown className="h-4 w-4 text-[hsl(var(--text-secondary))]" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" />
+            <ChevronRight className="h-4 w-4 text-[hsl(var(--text-secondary))]" />
           )}
         </button>
 
         {showAdvancedTuning && (
-          <div className="space-y-5 border-t border-[var(--border-color)] px-4 py-4">
+          <div className="space-y-5 border-t border-[hsl(var(--border-subtle))] px-4 py-4">
             <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 Candidate + Shortlist
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{CANDIDATE_FIELDS.map(renderTuningField)}</div>
             </div>
 
             <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 External Sources
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -522,7 +522,7 @@ export function SearchTab() {
             </div>
 
             <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 Deep Research
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -531,14 +531,14 @@ export function SearchTab() {
             </div>
 
             <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 Rerank + Overlap
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{RERANK_FIELDS.map(renderTuningField)}</div>
             </div>
 
             <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
                 Document Support Ratios
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

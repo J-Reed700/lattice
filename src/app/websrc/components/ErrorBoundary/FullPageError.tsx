@@ -69,26 +69,26 @@ ${error.name}
   const displayMessage = isDevelopment ? error.message : sanitizeErrorMessage(error.message);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)] p-4">
+    <div className="min-h-screen flex items-center justify-center bg-[hsl(var(--bg))] p-4">
       <div className="max-w-2xl w-full">
         {/* Error Card */}
-        <div className="bg-[var(--surface-elevated)] rounded-xl shadow-2xl border border-[var(--border-color)] overflow-hidden">
+        <div className="bg-[hsl(var(--surface))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] overflow-hidden">
           {/* Header */}
-          <div className="gradient-error border-b border-[var(--border-color)] p-8">
+          <div className="bg-[hsl(var(--danger-muted))] border-b border-[hsl(var(--border-subtle))] p-8">
             <div className="flex items-start gap-4">
               {/* Icon */}
               <div className="flex-shrink-0">
-                <div className="w-16 h-16 bg-[var(--error)]/20 rounded-full flex items-center justify-center animate-pulse">
-                  <AlertTriangle className="w-8 h-8 text-[var(--error)]" />
+                <div className="w-16 h-16 bg-[hsl(var(--danger-muted))] rounded-full flex items-center justify-center">
+                  <AlertTriangle className="w-8 h-8 text-[hsl(var(--danger-fg))]" strokeWidth={1.75} />
                 </div>
               </div>
 
               {/* Title and Description */}
               <div className="flex-1 min-w-0">
-                <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-2">
+                <h1 className="text-2xl font-semibold text-[hsl(var(--text-primary))] mb-2">
                   Something went wrong
                 </h1>
-                <p className="text-[var(--text-secondary)] text-sm leading-relaxed">
+                <p className="text-[hsl(var(--text-secondary))] text-sm leading-relaxed">
                   {userFriendlyMessage}
                 </p>
               </div>
@@ -100,25 +100,25 @@ ${error.name}
             {/* Error Message */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+                <h2 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                   Error Details
                 </h2>
                 <button
                   onClick={handleCopyError}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--surface-base)] hover:bg-[var(--surface-hover)] rounded-lg border border-[var(--border-color)] transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] bg-[hsl(var(--surface))] hover:bg-[hsl(var(--surface-raised))] rounded-md border border-[hsl(var(--border-subtle))] transition-colors duration-fast"
                   title="Copy error details"
                 >
-                  <Copy className="w-3.5 h-3.5" />
-                  {copied ? 'Copied!' : 'Copy'}
+                  <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <div className="bg-[var(--surface-base)] rounded-lg p-4 border border-[var(--border-color)]">
+              <div className="bg-[hsl(var(--surface))] rounded-md p-4 border border-[hsl(var(--border-subtle))]">
                 <div className="flex items-start gap-2">
-                  <span className="text-xs font-semibold text-[var(--error)] uppercase tracking-wide">
+                  <span className="text-xs font-semibold text-[hsl(var(--danger-fg))] uppercase tracking-wide">
                     {error.name}
                   </span>
                 </div>
-                <p className="text-sm font-mono text-[var(--text-primary)] mt-2 break-words">
+                <p className="text-sm font-mono text-[hsl(var(--text-primary))] mt-2 break-words">
                   {displayMessage}
                 </p>
               </div>
@@ -129,18 +129,18 @@ ${error.name}
               <div>
                 <button
                   onClick={() => setShowDetails(!showDetails)}
-                  className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)] hover:text-[var(--accent-primary)] transition-colors mb-2"
+                  className="flex items-center gap-2 text-sm font-semibold text-[hsl(var(--text-primary))] hover:text-[hsl(var(--accent))] transition-colors duration-fast mb-2"
                 >
                   {showDetails ? (
-                    <ChevronUp className="w-4 h-4" />
+                    <ChevronUp className="w-4 h-4" strokeWidth={1.75} />
                   ) : (
-                    <ChevronDown className="w-4 h-4" />
+                    <ChevronDown className="w-4 h-4" strokeWidth={1.75} />
                   )}
                   Stack Trace
                 </button>
                 {showDetails && (
-                  <div className="bg-[var(--surface-base)] rounded-lg p-4 border border-[var(--border-color)] overflow-x-auto">
-                    <pre className="text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap">
+                  <div className="bg-[hsl(var(--surface))] rounded-md p-4 border border-[hsl(var(--border-subtle))] overflow-x-auto">
+                    <pre className="text-xs font-mono text-[hsl(var(--text-secondary))] whitespace-pre-wrap">
                       {error.stack}
                     </pre>
                   </div>
@@ -153,13 +153,13 @@ ${error.name}
               <div>
                 <button
                   onClick={() => setShowDetails(!showDetails)}
-                  className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)] hover:text-[var(--accent-primary)] transition-colors mb-2"
+                  className="flex items-center gap-2 text-sm font-semibold text-[hsl(var(--text-primary))] hover:text-[hsl(var(--accent))] transition-colors duration-fast mb-2"
                 >
                   Component Stack
                 </button>
                 {showDetails && (
-                  <div className="bg-[var(--surface-base)] rounded-lg p-4 border border-[var(--border-color)] overflow-x-auto">
-                    <pre className="text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap">
+                  <div className="bg-[hsl(var(--surface))] rounded-md p-4 border border-[hsl(var(--border-subtle))] overflow-x-auto">
+                    <pre className="text-xs font-mono text-[hsl(var(--text-secondary))] whitespace-pre-wrap">
                       {errorInfo.componentStack}
                     </pre>
                   </div>
@@ -171,58 +171,58 @@ ${error.name}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4">
               <button
                 onClick={handleReloadApp}
-                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg font-medium transition-all duration-150 shadow-sm hover:shadow-md"
+                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-hover))] text-[hsl(var(--accent-fg))] rounded-md font-medium transition-colors duration-fast"
               >
-                <RefreshCw className="w-4 h-4" />
-                Reload App
+                <RefreshCw className="w-4 h-4" strokeWidth={1.75} />
+                Reload app
               </button>
               <button
                 onClick={resetError}
-                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[var(--surface-base)] hover:bg-[var(--surface-hover)] text-[var(--text-primary)] rounded-lg font-medium border border-[var(--border-color)] transition-all duration-150"
+                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[hsl(var(--surface))] hover:bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] rounded-md font-medium border border-[hsl(var(--border-subtle))] transition-colors duration-fast"
               >
-                <Home className="w-4 h-4" />
-                Try Again
+                <Home className="w-4 h-4" strokeWidth={1.75} />
+                Try again
               </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={handleReportBug}
-                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[var(--surface-base)] hover:bg-[var(--surface-hover)] text-[var(--text-primary)] rounded-lg font-medium border border-[var(--border-color)] transition-all duration-150"
+                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[hsl(var(--surface))] hover:bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] rounded-md font-medium border border-[hsl(var(--border-subtle))] transition-colors duration-fast"
               >
-                <Bug className="w-4 h-4" />
-                Report Issue
+                <Bug className="w-4 h-4" strokeWidth={1.75} />
+                Report issue
               </button>
               {isDevelopment && (
                 <button
                   onClick={downloadErrorLog}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[var(--surface-base)] hover:bg-[var(--surface-hover)] text-[var(--text-primary)] rounded-lg font-medium border border-[var(--border-color)] transition-all duration-150"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[hsl(var(--surface))] hover:bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] rounded-md font-medium border border-[hsl(var(--border-subtle))] transition-colors duration-fast"
                 >
-                  <Copy className="w-4 h-4" />
-                  Download Log
+                  <Copy className="w-4 h-4" strokeWidth={1.75} />
+                  Download log
                 </button>
               )}
             </div>
           </div>
 
           {/* Footer */}
-          <div className="bg-[var(--surface-base)] border-t border-[var(--border-color)] p-6">
+          <div className="bg-[hsl(var(--surface))] border-t border-[hsl(var(--border-subtle))] p-6">
             <div className="flex items-start gap-3">
               <div className="flex-shrink-0">
-                <div className="w-8 h-8 bg-[var(--accent-primary)]/20 rounded-full flex items-center justify-center">
-                  <span className="text-[var(--accent-primary)] text-sm font-semibold">i</span>
+                <div className="w-8 h-8 bg-[hsl(var(--accent-muted))] rounded-full flex items-center justify-center">
+                  <span className="text-[hsl(var(--accent))] text-sm font-semibold">i</span>
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-                  <strong className="text-[var(--text-primary)]">Need help?</strong>
+                <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed">
+                  <strong className="text-[hsl(var(--text-primary))]">Need help?</strong>
                   {' '}If this error persists, try reloading the app or clearing your cache.
                   You can also check the{' '}
                   <a
                     href="https://github.com/your-repo/recall/issues"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[var(--accent-primary)] hover:underline"
+                    className="text-[hsl(var(--accent))] hover:underline"
                   >
                     issue tracker
                   </a>
@@ -236,7 +236,7 @@ ${error.name}
         {/* Development Info */}
         {isDevelopment && (
           <div className="mt-4 text-center">
-            <p className="text-xs text-[var(--text-secondary)]">
+            <p className="text-xs text-[hsl(var(--text-secondary))]">
               Development Mode - Full error details are shown
             </p>
           </div>

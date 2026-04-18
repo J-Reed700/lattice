@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::features::function_calling::dto::CleanArticle;
-use crate::infrastructure::services::traits::WebArchiveServiceTrait;
+use crate::features::web::WebArchiveServiceTrait;
 use crate::shared::error::{AppError, Result};
 
 /// Mock implementation of WebArchiveServiceTrait for testing

@@ -108,10 +108,10 @@ export const CUSTOM_TOOL_PRESETS: CustomToolPreset[] = [
 ];
 
 export const INPUT_CLASS =
-  'w-full px-3 py-2 text-sm bg-[var(--bg-secondary)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] focus:border-transparent';
+  'w-full px-3 py-2 text-sm bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] border border-[hsl(var(--border-subtle))] rounded-lg focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:border-transparent';
 
 export const TEXTAREA_CLASS =
-  'w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] focus:border-transparent';
+  'w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-3 py-2 text-xs text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:border-transparent';
 
 export const toFinite = (value: string, fallback: number) => {
   const parsed = Number(value);

@@ -533,7 +533,7 @@ impl ConversationService {
 // ============================================================================
 
 #[async_trait::async_trait]
-impl crate::infrastructure::services::traits::ConversationServiceTrait for ConversationService {
+impl crate::features::conversation::ConversationServiceTrait for ConversationService {
     async fn create_conversation(
         &self,
         title: String,

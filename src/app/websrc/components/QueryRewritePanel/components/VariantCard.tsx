@@ -26,7 +26,7 @@ export function VariantCard({
       return (
         <span
           key={idx}
-          className={isNew ? 'bg-[var(--accent-light)]/40 px-1 rounded' : ''}
+          className={isNew ? 'bg-[hsl(var(--accent-muted))]/40 px-1 rounded' : ''}
         >
           {word}
           {idx < variantWords.length - 1 ? ' ' : ''}
@@ -37,19 +37,19 @@ export function VariantCard({
 
   return (
     <Card
-      className="cursor-pointer hover:shadow-md hover:border-[var(--accent-light)] transition-all"
+      className="cursor-pointer hover:shadow-md hover:border-[hsl(var(--accent-muted))] transition-all"
       onClick={onSelect}
     >
       <div className="flex items-start gap-3 p-4">
         <div className="flex-shrink-0">
-          <div className="w-8 h-8 bg-[var(--accent-light)]/40 rounded-full flex items-center justify-center">
-            <span className="text-sm font-bold text-[var(--accent-primary)]">{index}</span>
+          <div className="w-8 h-8 bg-[hsl(var(--accent-muted))]/40 rounded-full flex items-center justify-center">
+            <span className="text-sm font-bold text-[hsl(var(--accent))]">{index}</span>
           </div>
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <svg
-              className="w-4 h-4 text-[var(--accent-primary)]"
+              className="w-4 h-4 text-[hsl(var(--accent))]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -61,16 +61,16 @@ export function VariantCard({
                 d="M13 10V3L4 14h7v7l9-11h-7z"
               />
             </svg>
-            <span className="text-xs font-semibold text-[var(--accent-primary)] uppercase tracking-wide">
+            <span className="text-xs font-semibold text-[hsl(var(--accent))] uppercase tracking-wide">
               Variant {index}
             </span>
           </div>
-          <p className="text-base font-medium text-[var(--text-primary)] mb-2">
+          <p className="text-base font-medium text-[hsl(var(--text-primary))] mb-2">
             {highlightDifferences(originalQuery, variant.query)}
           </p>
           <div className="flex items-start gap-2">
             <svg
-              className="w-4 h-4 text-[var(--text-tertiary)] flex-shrink-0 mt-0.5"
+              className="w-4 h-4 text-[hsl(var(--text-tertiary))] flex-shrink-0 mt-0.5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -82,16 +82,16 @@ export function VariantCard({
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
-            <p className="text-sm text-[var(--text-secondary)] flex-1">{variant.reasoning}</p>
+            <p className="text-sm text-[hsl(var(--text-secondary))] flex-1">{variant.reasoning}</p>
           </div>
-          <div className="mt-2 text-xs text-[var(--text-secondary)]">
+          <div className="mt-2 text-xs text-[hsl(var(--text-secondary))]">
             Press {index} to search with this query
           </div>
         </div>
         {isGenerating && (
           <div className="flex-shrink-0">
             <svg
-              className="animate-pulse h-5 w-5 text-[var(--accent-primary)]"
+              className="animate-pulse h-5 w-5 text-[hsl(var(--accent))]"
               fill="currentColor"
               viewBox="0 0 24 24"
             >

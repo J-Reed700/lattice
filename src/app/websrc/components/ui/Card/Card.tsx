@@ -6,11 +6,9 @@ import { type HTMLAttributes, type MouseEventHandler, forwardRef } from 'react';
  * Purpose: Container component for grouping related content
  *
  * Features:
- * - Clickable variant with hover effects and micro-interactions
- * - Glassmorphism variant for floating UI
+ * - Clickable variant with hover effects
  * - Dark mode support
  * - Flexible padding options
- * - Elevation system for depth hierarchy
  *
  * Use Cases:
  * - Search results
@@ -20,11 +18,10 @@ import { type HTMLAttributes, type MouseEventHandler, forwardRef } from 'react';
  *
  * States: default, hover (if clickable), focus (if clickable)
  * Accessibility: Semantic HTML, keyboard navigation (if clickable)
- * Micro-interactions: Scale and lift with CSS transitions
  */
 
 interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onClick'> {
-  variant?: 'default' | 'clickable' | 'glass' | 'bento';
+  variant?: 'default' | 'clickable';
   padding?: 'none' | 'sm' | 'md' | 'lg';
   asChild?: boolean;
   onClick?: MouseEventHandler<HTMLDivElement | HTMLButtonElement>;
@@ -42,13 +39,11 @@ const Card = forwardRef<HTMLDivElement, CardProps>(
     },
     ref
   ) => {
-    const baseStyles = 'rounded-lg transition-all duration-200 ease-out motion-reduce:transition-none';
+    const baseStyles = 'rounded-lg transition-colors duration-fast ease-out motion-reduce:transition-none';
 
     const variantStyles = {
-      default: 'bg-[var(--surface-elevated)] border border-[var(--border-color)] elevation-1',
-      clickable: 'bg-[var(--surface-elevated)] border border-[var(--border-color)] elevation-1 hover:elevation-2 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2 hover:scale-[1.01] hover:-translate-y-0.5 active:scale-[0.99] active:translate-y-0',
-      glass: 'glass elevation-2 border-accent-top',
-      bento: 'bento-card',
+      default: 'bg-[hsl(var(--surface))] border border-[hsl(var(--border-subtle))]',
+      clickable: 'bg-[hsl(var(--surface))] border border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface-raised))] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]',
     };
 
     const paddingStyles = {
@@ -113,7 +108,7 @@ export const CardTitle = forwardRef<HTMLHeadingElement, CardTitleProps>(
   ({ className = '', children, ...props }, ref) => (
       <h3
         ref={ref}
-        className={`text-lg font-semibold leading-none tracking-tight ${className}`}
+        className={`text-lg font-semibold leading-none tracking-tight text-[hsl(var(--text-primary))] ${className}`}
         {...props}
       >
         {children}
@@ -129,7 +124,7 @@ export const CardDescription = forwardRef<HTMLParagraphElement, CardDescriptionP
   ({ className = '', children, ...props }, ref) => (
       <p
         ref={ref}
-        className={`text-sm text-[var(--text-secondary)] ${className}`}
+        className={`text-sm text-[hsl(var(--text-secondary))] ${className}`}
         {...props}
       >
         {children}

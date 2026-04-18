@@ -42,10 +42,10 @@ export const ViewerHeader = memo(({
   const sanitizedFileName = sanitizeFileName(fileName);
   
   return (
-    <div className="bg-[var(--surface-elevated)] border-b border-[var(--border-color)] px-6 py-4 flex items-center justify-between shadow-sm">
+    <div className="bg-[hsl(var(--surface-raised))] border-b border-[hsl(var(--border-subtle))] px-6 py-4 flex items-center justify-between shadow-sm">
       {/* Filename */}
       <div className="flex-1 min-w-0 mr-4">
-        <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate" title={sanitizedFileName}>
+        <h2 className="text-lg font-semibold text-[hsl(var(--text-primary))] truncate" title={sanitizedFileName}>
           {sanitizedFileName}
         </h2>
       </div>
@@ -56,7 +56,7 @@ export const ViewerHeader = memo(({
           <TooltipTrigger asChild>
             <button
               onClick={onDownload}
-              className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="p-2 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
               aria-label="Show in folder"
             >
               <Download className="w-5 h-5" />
@@ -69,7 +69,7 @@ export const ViewerHeader = memo(({
           <TooltipTrigger asChild>
             <button
               onClick={onOpenExternal}
-              className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="p-2 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
               aria-label="Open in external application"
             >
               <ExternalLink className="w-5 h-5" />
@@ -82,7 +82,7 @@ export const ViewerHeader = memo(({
           <TooltipTrigger asChild>
             <button
               onClick={onToggleSidebar}
-              className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="p-2 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
               aria-label={showSidebar ? 'Hide info sidebar' : 'Show info sidebar'}
             >
               {showSidebar ? (
@@ -97,13 +97,13 @@ export const ViewerHeader = memo(({
           </TooltipContent>
         </Tooltip>
 
-        <div className="w-px h-6 bg-[var(--border-color)] mx-2" aria-hidden="true" />
+        <div className="w-px h-6 bg-[hsl(var(--border-subtle))] mx-2" aria-hidden="true" />
 
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               onClick={onClose}
-              className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="p-2 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
               aria-label="Close viewer"
             >
               <X className="w-5 h-5" />

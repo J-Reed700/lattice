@@ -353,15 +353,15 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
         <>
           {/* Backdrop */}
           <div
-            className="command-palette-backdrop animate-in fade-in duration-150"
+            className="command-palette-backdrop animate-in fade-in duration-fast"
             onClick={close}
           />
 
           {/* Command Palette */}
-          <div className="command-palette-container animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-200">
-            <Command className="command-palette glass-strong elevation-4" label="Command palette" shouldFilter={searchQuery.length < 2}>
+          <div className="command-palette-container animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-base">
+            <Command className="command-palette" label="Command palette" shouldFilter={searchQuery.length < 2}>
               <div className="command-input-wrapper">
-                <Search className="command-input-icon" />
+                <Search className="command-input-icon" strokeWidth={1.75} />
                 <Command.Input
                   placeholder={searchMode ? "Search documents..." : "Type a command or search..."}
                   className="command-input"
@@ -371,7 +371,7 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
                 />
                 {isSearching && (
                   <div className="command-input-loading">
-                    <div className="w-4 h-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-[hsl(var(--accent))] border-t-transparent rounded-full animate-spin" />
                   </div>
                 )}
               </div>
@@ -380,8 +380,8 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
                 <Command.Empty className="command-empty">
                   {searchError ? (
                     <div className="command-empty-error">
-                      <span className="text-[var(--error)]">Search failed</span>
-                      <p className="text-xs mt-1 text-[var(--text-tertiary)]">{searchError}</p>
+                      <span className="text-[hsl(var(--danger-fg))]">Search failed</span>
+                      <p className="text-xs mt-1 text-[hsl(var(--text-tertiary))]">{searchError}</p>
                     </div>
                   ) : (
                     'No results found.'
@@ -399,34 +399,34 @@ export function CommandPalette({ onNavigate }: CommandPaletteProps) {
                         className="command-item search-result-item"
                       >
                         <div className="flex items-start gap-3 px-4 py-3">
-                          <FileText className="w-4 h-4 mt-0.5 text-[var(--accent-primary)] flex-shrink-0" />
+                          <FileText className="w-4 h-4 mt-0.5 text-[hsl(var(--accent))] flex-shrink-0" strokeWidth={1.75} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-sm font-medium text-[var(--text-primary)] truncate">
+                              <span className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">
                                 {result.metadata.filename}
                               </span>
                               {result.metadata.file_type && (
-                                <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] uppercase font-mono">
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))] uppercase font-mono">
                                   {result.metadata.file_type}
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-[var(--text-secondary)] line-clamp-2 mb-1">
+                            <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-2 mb-1">
                               {result.content}
                             </p>
-                            <div className="flex items-center gap-3 text-xs text-[var(--text-tertiary)]">
+                            <div className="flex items-center gap-3 text-xs text-[hsl(var(--text-tertiary))]">
                               {result.metadata.file_size && (
                                 <span>{formatFileSize(result.metadata.file_size)}</span>
                               )}
                               {result.vectorScore && (
                                 <span className="flex items-center gap-1">
-                                  <Sparkles className="w-3 h-3" />
+                                  <Sparkles className="w-3 h-3" strokeWidth={1.75} />
                                   {formatScore(result.vectorScore)}%
                                 </span>
                               )}
                               {result.bm25Score && (
                                 <span className="flex items-center gap-1">
-                                  <Search className="w-3 h-3" />
+                                  <Search className="w-3 h-3" strokeWidth={1.75} />
                                   {formatScore(result.bm25Score)}%
                                 </span>
                               )}

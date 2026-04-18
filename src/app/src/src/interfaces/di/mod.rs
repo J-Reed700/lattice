@@ -93,9 +93,11 @@ pub use modules::{
 // Legacy exports (for backward compatibility)
 use crate::infrastructure::persistence::repositories::mocks::*;
 #[cfg(test)]
-use crate::infrastructure::services::mocks::{
-    MockEmbeddingService, MockMentionRepository, MockSearchService,
-};
+use crate::features::embedding::mocks::MockEmbeddingService;
+#[cfg(test)]
+use crate::features::mentions::mocks::MockMentionRepository;
+#[cfg(test)]
+use crate::features::search::mocks::MockSearchService;
 #[cfg(test)]
 use crate::features::tags::mocks::MockTagRepository;
 use crate::shared::error::{AppError, Result};
@@ -119,6 +121,8 @@ use crate::infrastructure::persistence::repositories::{
 use crate::features::embedding::service::EmbeddingService;
 use crate::features::tags::TagRepositoryTrait;
 use crate::infrastructure::services::traits::*;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::search::SearchServiceTrait;
 
 // ============================================================================
 // Production Container

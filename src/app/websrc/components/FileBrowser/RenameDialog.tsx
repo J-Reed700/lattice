@@ -128,7 +128,7 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/50 z-50"
+        className="fixed inset-0 bg-[hsl(var(--overlay))]/50 z-50"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -140,15 +140,15 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
         aria-labelledby="rename-dialog-title"
         aria-modal="true"
       >
-        <div className="bg-[var(--surface-elevated)] rounded-lg shadow-xl border border-[var(--border-color)] overflow-hidden">
+        <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)]">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(var(--border-subtle))]">
             <h2 id="rename-dialog-title" className="text-lg font-semibold">
               Rename Document
             </h2>
             <button
               onClick={onClose}
-              className="p-1 rounded hover:bg-[var(--surface-hover)] transition-colors"
+              className="p-1 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast"
               aria-label="Close dialog"
               disabled={isSaving}
             >
@@ -174,23 +174,23 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
                   onChange={handleInputChange}
                   placeholder="Enter document name"
                   disabled={isSaving}
-                  className={error ? 'border-[var(--error)]' : ''}
+                  className={error ? 'border-[hsl(var(--danger-fg))]' : ''}
                   autoComplete="off"
                 />
                 {error && (
-                  <p className="mt-2 text-sm text-[var(--error)]" role="alert">
+                  <p className="mt-2 text-sm text-[hsl(var(--danger-fg))]" role="alert">
                     {error}
                   </p>
                 )}
               </div>
 
-              <div className="text-sm text-[var(--text-secondary)]">
+              <div className="text-sm text-[hsl(var(--text-secondary))]">
                 <p>Current name: {document.fileName}</p>
               </div>
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[var(--bg-secondary)] border-t border-[var(--border-color)]">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[hsl(var(--surface))] border-t border-[hsl(var(--border-subtle))]">
               <Button
                 type="button"
                 variant="ghost"

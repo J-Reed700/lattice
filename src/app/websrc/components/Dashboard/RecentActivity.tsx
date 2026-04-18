@@ -47,15 +47,15 @@ export const RecentActivity = ({ activities, loading = false }: RecentActivityPr
     switch (status.toLowerCase()) {
       case 'success':
       case 'completed':
-        return 'text-[var(--success)]';
+        return 'text-[hsl(var(--success-fg))]';
       case 'error':
       case 'failed':
-        return 'text-[var(--error)]';
+        return 'text-[hsl(var(--danger-fg))]';
       case 'pending':
       case 'processing':
-        return 'text-[var(--warning)]';
+        return 'text-[hsl(var(--warning-fg))]';
       default:
-        return 'text-[var(--text-secondary)]';
+        return 'text-[hsl(var(--text-secondary))]';
     }
   };
 
@@ -102,10 +102,10 @@ export const RecentActivity = ({ activities, loading = false }: RecentActivityPr
         <CardContent className="mt-4 space-y-3">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="animate-pulse flex items-start gap-3">
-              <div className="w-8 h-8 bg-[var(--bg-tertiary)] rounded-full" />
+              <div className="w-8 h-8 bg-[hsl(var(--surface-raised))] rounded-full" />
               <div className="flex-1 space-y-2">
-                <div className="h-4 bg-[var(--bg-tertiary)] rounded w-3/4" />
-                <div className="h-3 bg-[var(--bg-tertiary)] rounded w-1/2" />
+                <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-3/4" />
+                <div className="h-3 bg-[hsl(var(--surface-raised))] rounded w-1/2" />
               </div>
             </div>
           ))}
@@ -117,8 +117,8 @@ export const RecentActivity = ({ activities, loading = false }: RecentActivityPr
   return (
     <Card padding="md" className="h-full flex flex-col">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-[var(--text-primary)]">
-          <Activity className="w-5 h-5 text-[var(--accent-primary)]" />
+        <CardTitle className="flex items-center gap-2 text-[hsl(var(--text-primary))]">
+          <Activity className="w-5 h-5 text-[hsl(var(--accent))]" />
           Recent Activity
         </CardTitle>
       </CardHeader>
@@ -126,11 +126,11 @@ export const RecentActivity = ({ activities, loading = false }: RecentActivityPr
       <CardContent className="mt-4 flex-1 overflow-auto">
         {activities.length === 0 ? (
           <div className="text-center py-8">
-            <Clock className="w-12 h-12 text-[var(--text-tertiary)] mx-auto mb-3" />
-            <p className="text-[var(--text-secondary)] text-sm">
+            <Clock className="w-12 h-12 text-[hsl(var(--text-tertiary))] mx-auto mb-3" />
+            <p className="text-[hsl(var(--text-secondary))] text-sm">
               No recent activity
             </p>
-            <p className="text-[var(--text-tertiary)] text-xs mt-1">
+            <p className="text-[hsl(var(--text-tertiary))] text-xs mt-1">
               Activity will appear here as you index documents
             </p>
           </div>
@@ -143,42 +143,42 @@ export const RecentActivity = ({ activities, loading = false }: RecentActivityPr
               return (
                 <div
                   key={activity.id}
-                  className="flex items-start gap-3 pb-3 border-b border-[var(--border-color)] last:border-0"
+                  className="flex items-start gap-3 pb-3 border-b border-[hsl(var(--border-subtle))] last:border-0"
                 >
-                  <div className={`p-2 rounded-lg bg-[var(--surface-elevated)] ${statusColor}`}>
+                  <div className={`p-2 rounded-lg bg-[hsl(var(--surface-raised))] ${statusColor}`}>
                     <ActionIcon className="w-4 h-4" />
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-[var(--text-primary)] capitalize">
+                      <span className="text-sm font-medium text-[hsl(var(--text-primary))] capitalize">
                         {activity.action}
                       </span>
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
                         activity.status.toLowerCase() === 'success'
-                          ? 'bg-[var(--success-light)]/20 text-[var(--success)]'
+                          ? 'bg-[hsl(var(--success-muted))]/20 text-[hsl(var(--success-fg))]'
                           : activity.status.toLowerCase() === 'error'
-                          ? 'bg-[var(--error-light)]/20 text-[var(--error)]'
-                          : 'bg-[var(--bg-primary)] text-[var(--text-secondary)]'
+                          ? 'bg-[hsl(var(--danger-muted))]/20 text-[hsl(var(--danger-fg))]'
+                          : 'bg-[hsl(var(--bg))] text-[hsl(var(--text-secondary))]'
                       }`}>
                         {activity.status}
                       </span>
                     </div>
 
                     <p
-                      className="text-xs text-[var(--text-secondary)] mt-1 truncate"
+                      className="text-xs text-[hsl(var(--text-secondary))] mt-1 truncate"
                       title={activity.file_path}
                     >
                       {truncatePath(activity.file_path)}
                     </p>
 
                     {activity.details && (
-                      <p className="text-xs text-[var(--text-tertiary)] mt-1">
+                      <p className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
                         {activity.details}
                       </p>
                     )}
 
-                    <p className="text-xs text-[var(--text-tertiary)] mt-1">
+                    <p className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
                       {getRelativeTime(activity.timestamp)}
                     </p>
                   </div>

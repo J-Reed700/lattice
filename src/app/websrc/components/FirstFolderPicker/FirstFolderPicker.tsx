@@ -177,10 +177,10 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
   ];
 
   const fileTypes = [
-    { ext: 'pdf', label: 'PDF', color: 'text-[var(--error)]' },
-    { ext: 'docx', label: 'Word', color: 'text-[var(--accent-primary)]' },
-    { ext: 'txt', label: 'Text', color: 'text-[var(--text-secondary)]' },
-    { ext: 'md', label: 'Markdown', color: 'text-[var(--accent-primary)]' },
+    { ext: 'pdf', label: 'PDF', color: 'text-[hsl(var(--danger-fg))]' },
+    { ext: 'docx', label: 'Word', color: 'text-[hsl(var(--accent))]' },
+    { ext: 'txt', label: 'Text', color: 'text-[hsl(var(--text-secondary))]' },
+    { ext: 'md', label: 'Markdown', color: 'text-[hsl(var(--accent))]' },
   ];
 
   const handleSuggestionClick = async (suggestion: FolderSuggestion) => {
@@ -232,41 +232,41 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
   return (
     <div className="max-w-2xl mx-auto">
       <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold text-[var(--text-primary)] mb-3">
+        <h2 className="text-3xl font-bold text-[hsl(var(--text-primary))] mb-3">
           Index Your First Folder
         </h2>
-        <p className="text-[var(--text-secondary)]">
+        <p className="text-[hsl(var(--text-secondary))]">
           Choose a folder to make its documents searchable. You can add more folders later.
         </p>
       </div>
 
       {status === 'selecting' && (
-        <div className={`space-y-4 transition-all duration-300 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'}`}>
+        <div className={`space-y-4 transition-colors duration-300 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'}`}>
           {suggestions.map((suggestion, index) => (
             <button
               key={suggestion.name}
               onClick={() => handleSuggestionClick(suggestion)}
-              className="w-full p-6 bg-[var(--surface-elevated)] border-2 border-[var(--border-color)] rounded-lg hover:border-[var(--accent-primary)] hover:shadow-lg transition-all text-left group animate-in fade-in slide-in-from-left-5"
+              className="w-full p-6 bg-[hsl(var(--surface-raised))] border-2 border-[hsl(var(--border-subtle))] rounded-lg hover:border-[hsl(var(--accent))] hover:shadow-md transition-colors duration-fast text-left group animate-in fade-in slide-in-from-left-5"
               style={{ animationDelay: `${index * 100}ms`, animationFillMode: 'backwards' }}
             >
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-[var(--accent-light)] rounded-lg flex items-center justify-center text-[var(--accent-primary)] group-hover:scale-110 transition-transform">
+                <div className="w-12 h-12 bg-[hsl(var(--accent-muted))] rounded-lg flex items-center justify-center text-[hsl(var(--accent))] group-hover:scale-110 transition-transform">
                   {suggestion.icon}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
+                  <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-1">
                     {suggestion.name}
                   </h3>
-                  <p className="text-sm text-[var(--text-secondary)]">{suggestion.description}</p>
+                  <p className="text-sm text-[hsl(var(--text-secondary))]">{suggestion.description}</p>
                 </div>
-                <ArrowRight className="w-5 h-5 text-[var(--text-tertiary)] group-hover:text-[var(--accent-primary)] group-hover:translate-x-1 transition-all" />
+                <ArrowRight className="w-5 h-5 text-[hsl(var(--text-tertiary))] group-hover:text-[hsl(var(--accent))] group-hover:translate-x-1 transition-colors duration-fast" />
               </div>
             </button>
           ))}
 
           <button
             onClick={onSkip}
-            className="w-full py-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex items-center justify-center gap-2 animate-in fade-in slide-in-from-bottom-5"
+            className="w-full py-3 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast flex items-center justify-center gap-2 animate-in fade-in slide-in-from-bottom-5"
             style={{ animationDelay: '300ms', animationFillMode: 'backwards' }}
           >
             <SkipForward className="w-4 h-4" />
@@ -277,9 +277,9 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
 
       {status === 'scanning' && (
         <div className="text-center py-16 animate-in fade-in duration-300">
-          <Loader2 className="w-12 h-12 text-[var(--accent-primary)] animate-spin mx-auto mb-4" />
-          <p className="text-lg font-medium text-[var(--text-primary)]">Scanning folder...</p>
-          <p className="text-sm text-[var(--text-secondary)] mt-2">
+          <Loader2 className="w-12 h-12 text-[hsl(var(--accent))] animate-spin mx-auto mb-4" />
+          <p className="text-lg font-medium text-[hsl(var(--text-primary))]">Scanning folder...</p>
+          <p className="text-sm text-[hsl(var(--text-secondary))] mt-2">
             Counting documents in {selectedPath}
           </p>
         </div>
@@ -287,35 +287,35 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
 
       {status === 'ready' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="p-6 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg">
+          <div className="p-6 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg">
             <div className="flex items-start gap-4 mb-6">
-              <div className="w-12 h-12 bg-[var(--success-light)] rounded-lg flex items-center justify-center">
-                <FolderOpen className="w-6 h-6 text-[var(--success)]" />
+              <div className="w-12 h-12 bg-[hsl(var(--success-muted))] rounded-lg flex items-center justify-center">
+                <FolderOpen className="w-6 h-6 text-[hsl(var(--success-fg))]" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
+                <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-1">
                   Ready to Index
                 </h3>
-                <p className="text-sm text-[var(--text-secondary)] break-all">{selectedPath}</p>
+                <p className="text-sm text-[hsl(var(--text-secondary))] break-all">{selectedPath}</p>
               </div>
             </div>
 
-            <div className="bg-[var(--bg-secondary)] rounded-lg p-4 mb-6">
+            <div className="bg-[hsl(var(--surface))] rounded-lg p-4 mb-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-[var(--text-secondary)]">
+                <span className="text-sm font-medium text-[hsl(var(--text-secondary))]">
                   Documents Found
                 </span>
-                <span className="text-2xl font-bold text-[var(--accent-primary)]">
+                <span className="text-2xl font-bold text-[hsl(var(--accent))]">
                   {fileCount}
                 </span>
               </div>
-              <p className="text-xs text-[var(--text-tertiary)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))]">
                 Based on selected file types below
               </p>
             </div>
 
             <div>
-              <p className="text-sm font-medium text-[var(--text-primary)] mb-3">
+              <p className="text-sm font-medium text-[hsl(var(--text-primary))] mb-3">
                 File Types to Index
               </p>
               <div className="flex flex-wrap gap-2">
@@ -323,10 +323,10 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
                   <button
                     key={type.ext}
                     onClick={() => toggleFileType(type.ext)}
-                    className={`px-4 py-2 rounded-lg border-2 transition-all ${
+                    className={`px-4 py-2 rounded-lg border-2 transition-colors duration-fast ${
                       selectedTypes.has(type.ext)
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-light)] text-[var(--accent-primary)]'
-                        : 'border-[var(--border-color)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+                        ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]'
+                        : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--bg))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-default))]'
                     }`}
                   >
                     <span className="font-medium">{type.label}</span>
@@ -346,14 +346,14 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
                 setFileCount(null);
                 setStatus('selecting');
               }}
-              className="px-6 py-3 border-2 border-[var(--border-color)] text-[var(--text-primary)] rounded-lg hover:border-[var(--border-hover)] transition-colors font-medium"
+              className="px-6 py-3 border-2 border-[hsl(var(--border-subtle))] text-[hsl(var(--text-primary))] rounded-lg hover:border-[hsl(var(--border-default))] transition-colors duration-fast font-medium"
             >
               Choose Different Folder
             </button>
             <button
               onClick={handleStartIndexing}
               disabled={selectedTypes.size === 0}
-              className="flex-1 px-6 py-3 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+              className="flex-1 px-6 py-3 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-lg hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-fast font-medium shadow-md hover:shadow-md flex items-center justify-center gap-2"
             >
               Index {fileCount} Documents
               <ArrowRight className="w-5 h-5" />
@@ -365,49 +365,49 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
       {status === 'indexing' && indexProgress && (
         <div className="space-y-6 animate-in fade-in duration-300">
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-[var(--accent-light)] rounded-full flex items-center justify-center mx-auto mb-4">
-              <Loader2 className="w-8 h-8 text-[var(--accent-primary)] animate-spin" />
+            <div className="w-16 h-16 bg-[hsl(var(--accent-muted))] rounded-full flex items-center justify-center mx-auto mb-4">
+              <Loader2 className="w-8 h-8 text-[hsl(var(--accent))] animate-spin" />
             </div>
-            <h3 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
+            <h3 className="text-xl font-semibold text-[hsl(var(--text-primary))] mb-2">
               Indexing Your Documents
             </h3>
-            <p className="text-sm text-[var(--text-secondary)]">
+            <p className="text-sm text-[hsl(var(--text-secondary))]">
               {indexProgress.status === 'complete'
                 ? 'Complete!'
                 : `Processing ${indexProgress.currentFile || ''}...`}
             </p>
           </div>
 
-          <div className="p-6 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg">
+          <div className="p-6 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg">
             <div className="flex justify-between items-baseline mb-2">
-              <span className="text-sm font-medium text-[var(--text-secondary)]">Progress</span>
-              <span className="text-2xl font-bold text-[var(--accent-primary)]">
+              <span className="text-sm font-medium text-[hsl(var(--text-secondary))]">Progress</span>
+              <span className="text-2xl font-bold text-[hsl(var(--accent))]">
                 {indexProgress.percentage.toFixed(0)}%
               </span>
             </div>
-            <div className="w-full bg-[var(--bg-secondary)] rounded-full h-3 mb-4">
+            <div className="w-full bg-[hsl(var(--surface))] rounded-full h-3 mb-4">
               <div
-                className="gradient-brand h-3 rounded-full transition-all duration-300 ease-out"
+                className="h-3 rounded-full transition-colors duration-300 ease-out"
                 style={{ width: `${indexProgress.percentage}%` }}
               />
             </div>
 
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Total</p>
-                <p className="text-lg font-semibold text-[var(--text-primary)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Total</p>
+                <p className="text-lg font-semibold text-[hsl(var(--text-primary))]">
                   {indexProgress.totalFiles}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Processed</p>
-                <p className="text-lg font-semibold text-[var(--success)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Processed</p>
+                <p className="text-lg font-semibold text-[hsl(var(--success-fg))]">
                   {indexProgress.processed}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-[var(--text-tertiary)] mb-1">Failed</p>
-                <p className="text-lg font-semibold text-[var(--error)]">
+                <p className="text-xs text-[hsl(var(--text-tertiary))] mb-1">Failed</p>
+                <p className="text-lg font-semibold text-[hsl(var(--danger-fg))]">
                   {indexProgress.failed}
                 </p>
               </div>
@@ -416,11 +416,11 @@ export function FirstFolderPicker({ onComplete, onSkip }: FirstFolderPickerProps
 
           {indexProgress.status === 'complete' && (
             <div className="text-center py-8 animate-in fade-in zoom-in-95 duration-300">
-              <CheckCircle2 className="w-16 h-16 text-[var(--success)] mx-auto mb-3" />
-              <p className="text-lg font-semibold text-[var(--text-primary)]">
+              <CheckCircle2 className="w-16 h-16 text-[hsl(var(--success-fg))] mx-auto mb-3" />
+              <p className="text-lg font-semibold text-[hsl(var(--text-primary))]">
                 Indexing Complete!
               </p>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">
+              <p className="text-sm text-[hsl(var(--text-secondary))] mt-1">
                 Your documents are now searchable
               </p>
             </div>

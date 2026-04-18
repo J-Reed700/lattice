@@ -125,13 +125,13 @@ export const FavoritesPanel = memo(({
   return (
     <div className={`flex flex-col ${className}`}>
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--border-color)]">
+      <div className="px-4 py-3 border-b border-[hsl(var(--border-subtle))]">
         <div className="flex items-center gap-2">
-          <Star className="w-5 h-5 text-[var(--warning)] fill-[var(--warning)]" />
-          <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+          <Star className="w-5 h-5 text-[hsl(var(--warning-fg))] fill-[hsl(var(--warning-fg))]" />
+          <h2 className="text-lg font-semibold text-[hsl(var(--text-primary))]">
             Favorites
           </h2>
-          <span className="text-sm text-[var(--text-secondary)]">
+          <span className="text-sm text-[hsl(var(--text-secondary))]">
             ({favoriteDocuments.length})
           </span>
         </div>
@@ -143,21 +143,21 @@ export const FavoritesPanel = memo(({
           {favoriteDocuments.map((doc) => (
             <div
               key={doc.id}
-              className="group px-4 py-3 hover:bg-[var(--bg-secondary)] cursor-pointer transition-colors"
+              className="group px-4 py-3 hover:bg-[hsl(var(--surface))] cursor-pointer transition-colors duration-fast"
               onClick={() => handleDocumentClick(doc)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   {/* Document name */}
                   <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-sm font-medium text-[var(--text-primary)] truncate">
+                    <h3 className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">
                       {doc.document_name}
                     </h3>
-                    <ExternalLink className="w-3.5 h-3.5 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <ExternalLink className="w-3.5 h-3.5 text-[hsl(var(--text-tertiary))] opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
 
                   {/* File type and date */}
-                  <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                  <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                     {doc.file_type && (
                       <span className="uppercase font-mono">{doc.file_type}</span>
                     )}
@@ -166,7 +166,7 @@ export const FavoritesPanel = memo(({
                   </div>
 
                   {/* Path (truncated) */}
-                  <div className="mt-1 text-xs text-[var(--text-tertiary)] truncate">
+                  <div className="mt-1 text-xs text-[hsl(var(--text-tertiary))] truncate">
                     {doc.document_path}
                   </div>
                 </div>
@@ -175,19 +175,19 @@ export const FavoritesPanel = memo(({
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={(e) => handleShowInFolder(e, doc.document_path)}
-                    className="p-1.5 rounded hover:bg-[var(--surface-hover)] transition-colors"
+                    className="p-1.5 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast"
                     title="Show in folder"
                     aria-label="Show in folder"
                   >
-                    <FolderOpen className="w-4 h-4 text-[var(--text-secondary)]" />
+                    <FolderOpen className="w-4 h-4 text-[hsl(var(--text-secondary))]" />
                   </button>
                   <button
                     onClick={(e) => handleRemoveFavorite(e, doc.document_id)}
-                    className="p-1.5 rounded hover:bg-[var(--error-light)] transition-colors"
+                    className="p-1.5 rounded hover:bg-[hsl(var(--danger-muted))] transition-colors duration-fast"
                     title="Remove from favorites"
                     aria-label="Remove from favorites"
                   >
-                    <Trash2 className="w-4 h-4 text-[var(--error)]" />
+                    <Trash2 className="w-4 h-4 text-[hsl(var(--danger-fg))]" />
                   </button>
                 </div>
               </div>

@@ -11,11 +11,13 @@ use crate::infrastructure::sagas::conversation_summary_saga::ConversationSummary
 use crate::features::download::manager::DownloadManager;
 use crate::features::download::saga::DownloadSaga;
 #[cfg(test)]
-use crate::infrastructure::services::mocks::MockSearchService;
+use crate::features::search::mocks::MockSearchService;
 use crate::infrastructure::services::traits::{
-    BM25SearchTrait, EmbeddingServiceTrait, FileStorageServiceTrait, HybridSearchTrait,
-    IndexStorageTrait, ModelManagerTrait, SearchEnrichmentServiceTrait, SearchServiceTrait,
+    FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
 };
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::indexing::IndexStorageTrait;
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
 use crate::interfaces::commands;
 // ChunkRepositoryTrait removed - migrated to DDD ports

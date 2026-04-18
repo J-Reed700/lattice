@@ -71,7 +71,7 @@ DashboardSkeleton.displayName = 'DashboardSkeleton';
  */
 const StatsCardSkeleton: React.FC = memo(() => (
     <div
-      className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-6 elevation-1"
+      className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 elevation-1"
       aria-hidden="true"
     >
       <div className="flex items-start justify-between mb-4">
@@ -90,7 +90,7 @@ StatsCardSkeleton.displayName = 'StatsCardSkeleton';
  */
 const RecentDocumentsSkeleton: React.FC = memo(() => (
     <div
-      className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-6 elevation-1"
+      className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 elevation-1"
       aria-hidden="true"
     >
       {/* Section Header */}
@@ -102,7 +102,7 @@ const RecentDocumentsSkeleton: React.FC = memo(() => (
       {/* Document List */}
       <div className="space-y-4">
         {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="flex items-center gap-4 p-3 rounded-lg hover:bg-[var(--surface-hover)]/50">
+          <div key={index} className="flex items-center gap-4 p-3 rounded-lg hover:bg-[hsl(var(--surface-raised))]/50">
             {/* File Icon */}
             <Skeleton width={40} height={40} className="rounded" />
 
@@ -127,7 +127,7 @@ RecentDocumentsSkeleton.displayName = 'RecentDocumentsSkeleton';
  */
 const RecentActivitySkeleton: React.FC = memo(() => (
     <div
-      className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-6 elevation-1"
+      className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 elevation-1"
       aria-hidden="true"
     >
       {/* Section Header */}
@@ -165,7 +165,7 @@ export const DashboardSkeletonCompact: React.FC = memo(() => (
         {Array.from({ length: 4 }).map((_, index) => (
           <div
             key={index}
-            className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-4"
+            className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-4"
             aria-hidden="true"
           >
             <Skeleton circle width={32} height={32} className="mb-3" />

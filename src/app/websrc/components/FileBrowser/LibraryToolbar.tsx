@@ -141,12 +141,12 @@ export function LibraryToolbar({
   ];
 
   return (
-    <div className="border-b border-[var(--border-color)] bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_45%),linear-gradient(180deg,var(--surface-elevated),var(--bg-secondary))]">
+    <div className="border-b border-[hsl(var(--border-subtle))] bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_45%),linear-gradient(180deg,hsl(var(--surface-raised)),hsl(var(--surface)))]">
       <div className="space-y-3 px-5 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-[220px]">
-            <h2 className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">Library</h2>
-            <p className="text-sm text-[var(--text-secondary)]">
+            <h2 className="text-xl font-semibold tracking-tight text-[hsl(var(--text-primary))]">Library</h2>
+            <p className="text-sm text-[hsl(var(--text-secondary))]">
               Search by file name or matching file content.
             </p>
           </div>
@@ -156,11 +156,11 @@ export function LibraryToolbar({
             <StatChip label="Total" value={totalCount} />
             <StatChip label="Selected" value={selectedCount} />
             {savedViews.length > 0 && (
-              <div className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-0.5">
+              <div className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-0.5">
                 <select
                   value={activeSavedViewId ?? ''}
                   onChange={(event) => onSavedViewChange(event.target.value)}
-                  className="h-8 max-w-[170px] rounded-full bg-transparent px-2 text-xs font-medium text-[var(--text-secondary)] outline-none"
+                  className="h-8 max-w-[170px] rounded-full bg-transparent px-2 text-xs font-medium text-[hsl(var(--text-secondary))] outline-none"
                   aria-label="Toggle view preset"
                   title="Toggle view preset"
                 >
@@ -175,7 +175,7 @@ export function LibraryToolbar({
                   <button
                     type="button"
                     onClick={onClearActiveSavedView}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                     aria-label="Clear active view"
                     title="Clear active view"
                   >
@@ -201,7 +201,7 @@ export function LibraryToolbar({
               size="sm"
               onClick={onSaveResultsAsCollection}
               disabled={saveResultsDisabled}
-              className="h-9 rounded-full border border-[var(--border-color)] px-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+              className="h-9 rounded-full border border-[hsl(var(--border-subtle))] px-3 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
             >
               <FolderTree className="mr-2 h-4 w-4" />
               Freeze Results
@@ -211,22 +211,22 @@ export function LibraryToolbar({
 
         <div className="flex flex-wrap items-center gap-2 xl:gap-3">
           <div className="relative min-w-[260px] flex-1 xl:max-w-xl">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--text-tertiary))]" />
             <Input
               type="text"
               placeholder="Search files and content..."
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.target.value)}
-              className="h-11 w-full rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] pl-10 pr-16 text-sm shadow-sm transition-colors focus-visible:border-[var(--accent-primary)] focus-visible:ring-[var(--accent-primary)]"
+              className="h-11 w-full rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] pl-10 pr-16 text-sm shadow-sm transition-colors duration-fast focus-visible:border-[hsl(var(--accent))] focus-visible:ring-[hsl(var(--accent))]"
             />
             {isContentSearchLoading && hasNormalizedSearchQuery && (
-              <Loader2 className="pointer-events-none absolute right-10 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[var(--text-tertiary)]" />
+              <Loader2 className="pointer-events-none absolute right-10 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[hsl(var(--text-tertiary))]" />
             )}
             {searchQuery.trim().length > 0 && (
               <button
                 type="button"
                 onClick={onClearSearch}
-                className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]"
                 aria-label="Clear search"
               >
                 <X className="h-4 w-4" />
@@ -234,7 +234,7 @@ export function LibraryToolbar({
             )}
           </div>
 
-          <div className="flex items-center gap-1 rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-1 shadow-sm">
+          <div className="flex items-center gap-1 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-1 shadow-sm">
             {sourceFilterOptions.map((option) => {
               const isActive = filterBySource === option.key;
               return (
@@ -242,16 +242,16 @@ export function LibraryToolbar({
                   key={option.key}
                   type="button"
                   onClick={() => onFilterBySourceChange(option.key)}
-                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors duration-fast ${
                     isActive
-                      ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                      ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+                      : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
                   }`}
                   aria-pressed={isActive}
                 >
                   {option.icon}
                   <span>{option.label}</span>
-                  <span className="rounded-full bg-[var(--surface-elevated)] px-1.5 py-0.5 text-[10px]">
+                  <span className="rounded-full bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[10px]">
                     {option.count}
                   </span>
                 </button>
@@ -261,10 +261,10 @@ export function LibraryToolbar({
 
           <button
             onClick={onToggleGroupByDate}
-            className={`h-11 rounded-xl border px-3 text-sm font-medium transition-colors ${
+            className={`h-11 rounded-xl border px-3 text-sm font-medium transition-colors duration-fast ${
               groupByDate
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]/40 text-[var(--accent-primary)]'
-                : 'border-[var(--border-color)] bg-[var(--surface-elevated)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+                ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]/40 text-[hsl(var(--accent))]'
+                : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-default))]'
             }`}
             aria-pressed={groupByDate}
             title="Toggle date groups"
@@ -272,7 +272,7 @@ export function LibraryToolbar({
             Group by Date
           </button>
 
-          <div className="flex items-center gap-1 rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-1 shadow-sm">
+          <div className="flex items-center gap-1 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-1 shadow-sm">
             <ViewModeButton
               mode="tree"
               currentMode={viewMode}
@@ -297,7 +297,7 @@ export function LibraryToolbar({
           </div>
 
           {viewMode === 'list' && (
-            <div className="flex items-center gap-1 rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] p-1 shadow-sm">
+            <div className="flex items-center gap-1 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-1 shadow-sm">
               <DensityButton
                 density="compact"
                 currentDensity={density}
@@ -327,37 +327,37 @@ export function LibraryToolbar({
             size="sm"
             onClick={onRefresh}
             aria-label="Refresh documents"
-            className="h-11 rounded-xl border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+            className="h-11 rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
           >
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
 
         {(normalizedSearchQuery || activeFilter || filterBySource !== 'all' || activeSavedViewId || activeSavedSearchId || pinnedSearches.length > 0) && (
-          <div className="space-y-2 text-xs text-[var(--text-secondary)]">
+          <div className="space-y-2 text-xs text-[hsl(var(--text-secondary))]">
             <div className="flex flex-wrap items-center gap-2">
               {activeSavedViewId && (
-                <span className="rounded-full bg-[var(--accent-light)]/40 px-2.5 py-1 text-[var(--accent-primary)]">
+                <span className="rounded-full bg-[hsl(var(--accent-muted))]/40 px-2.5 py-1 text-[hsl(var(--accent))]">
                   View: {activeSavedViewName ?? 'Saved'}
                 </span>
               )}
               {activeSavedSearchId && (
-                <span className="rounded-full bg-[var(--accent-light)]/40 px-2.5 py-1 text-[var(--accent-primary)]">
+                <span className="rounded-full bg-[hsl(var(--accent-muted))]/40 px-2.5 py-1 text-[hsl(var(--accent))]">
                   Search Preset: {activeSavedSearchName ?? 'Saved'}
                 </span>
               )}
               {normalizedSearchQuery && (
-                <span className="rounded-full bg-[var(--accent-light)]/40 px-2.5 py-1 text-[var(--accent-primary)]">
+                <span className="rounded-full bg-[hsl(var(--accent-muted))]/40 px-2.5 py-1 text-[hsl(var(--accent))]">
                   Search: “{searchQuery.trim()}”
                 </span>
               )}
               {activeFilter && (
-                <span className="rounded-full bg-[var(--surface-hover)] px-2.5 py-1">
+                <span className="rounded-full bg-[hsl(var(--surface-raised))] px-2.5 py-1">
                   Type: {activeFilter}
                 </span>
               )}
               {filterBySource !== 'all' && (
-                <span className="rounded-full bg-[var(--surface-hover)] px-2.5 py-1">
+                <span className="rounded-full bg-[hsl(var(--surface-raised))] px-2.5 py-1">
                   Source: {filterBySource}
                 </span>
               )}
@@ -395,10 +395,10 @@ function ViewModeButton({ mode, currentMode, onClick, icon, label }: ViewModeBut
   return (
     <button
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors duration-fast ${
         isActive
-          ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-          : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+          ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+          : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
       }`}
       aria-label={label}
       aria-pressed={isActive}
@@ -423,10 +423,10 @@ function DensityButton({ density, currentDensity, onClick, icon, label }: Densit
   return (
     <button
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors duration-fast ${
         isActive
-          ? 'bg-[var(--accent-light)]/60 text-[var(--accent-primary)]'
-          : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+          ? 'bg-[hsl(var(--accent-muted))]/60 text-[hsl(var(--accent))]'
+          : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
       }`}
       aria-label={label}
       aria-pressed={isActive}
@@ -444,9 +444,9 @@ interface StatChipProps {
 
 function StatChip({ label, value }: StatChipProps) {
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-1.5 shadow-sm">
-      <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]">{label}</span>
-      <span className="text-sm font-semibold text-[var(--text-primary)]">{value}</span>
+    <div className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-1.5 shadow-sm">
+      <span className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">{label}</span>
+      <span className="text-sm font-semibold text-[hsl(var(--text-primary))]">{value}</span>
     </div>
   );
 }

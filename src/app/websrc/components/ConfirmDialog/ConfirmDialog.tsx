@@ -138,25 +138,25 @@ export function ConfirmDialog({
 
   const variantStyles = {
     danger: {
-      icon: <AlertTriangle className="w-6 h-6" />,
-      iconBg: 'bg-[var(--error-light)]/30',
-      iconColor: 'text-[var(--error)]',
-      buttonBg: 'bg-[var(--error)] hover:bg-[var(--error)] hover:opacity-90',
-      buttonText: 'text-white',
+      icon: <AlertTriangle className="w-6 h-6" strokeWidth={1.75} />,
+      iconBg: 'bg-[hsl(var(--danger-muted))]',
+      iconColor: 'text-[hsl(var(--danger-fg))]',
+      buttonBg: 'bg-[hsl(var(--danger))] hover:opacity-90',
+      buttonText: 'text-[hsl(var(--accent-fg))]',
     },
     warning: {
-      icon: <AlertCircle className="w-6 h-6" />,
-      iconBg: 'bg-[var(--warning-light)]/30',
-      iconColor: 'text-[var(--warning)]',
-      buttonBg: 'bg-[var(--warning)] hover:bg-[var(--warning)]',
-      buttonText: 'text-white',
+      icon: <AlertCircle className="w-6 h-6" strokeWidth={1.75} />,
+      iconBg: 'bg-[hsl(var(--warning-muted))]',
+      iconColor: 'text-[hsl(var(--warning-fg))]',
+      buttonBg: 'bg-[hsl(var(--warning))] hover:opacity-90',
+      buttonText: 'text-[hsl(var(--accent-fg))]',
     },
     info: {
-      icon: <Info className="w-6 h-6" />,
-      iconBg: 'bg-[var(--accent-light)]/30',
-      iconColor: 'text-[var(--accent-primary)]',
-      buttonBg: 'bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)]',
-      buttonText: 'text-white',
+      icon: <Info className="w-6 h-6" strokeWidth={1.75} />,
+      iconBg: 'bg-[hsl(var(--accent-muted))]',
+      iconColor: 'text-[hsl(var(--accent))]',
+      buttonBg: 'bg-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-hover))]',
+      buttonText: 'text-[hsl(var(--accent-fg))]',
     },
   };
 
@@ -166,20 +166,20 @@ export function ConfirmDialog({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 animate-in fade-in duration-200"
+        className="fixed inset-0 bg-[hsl(var(--overlay))] z-50 animate-in fade-in duration-base"
         onClick={onCancel}
         aria-hidden="true"
       />
 
       {/* Dialog */}
       <div
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md animate-in zoom-in-95 duration-200"
+        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md animate-in zoom-in-95 duration-base"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-description"
       >
-        <div className="bg-[var(--surface-elevated)] rounded-lg shadow-xl border border-[var(--border-color)] p-6">
+        <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] p-6">
           {/* Icon and Title */}
           <div className="flex items-start gap-4 mb-4">
             <div
@@ -190,7 +190,7 @@ export function ConfirmDialog({
             <div className="flex-1 pt-1">
               <h2
                 id="confirm-dialog-title"
-                className="text-lg font-semibold text-[var(--text-primary)]"
+                className="text-lg font-semibold text-[hsl(var(--text-primary))]"
               >
                 {title}
               </h2>
@@ -201,14 +201,14 @@ export function ConfirmDialog({
           <div className="mb-6 pl-16">
             <p
               id="confirm-dialog-description"
-              className="text-sm text-[var(--text-secondary)] mb-2"
+              className="text-sm text-[hsl(var(--text-secondary))] mb-2"
             >
               {message}
             </p>
 
             {/* Details */}
             {details && (
-              <p className="text-xs text-[var(--text-tertiary)] mt-2">
+              <p className="text-xs text-[hsl(var(--text-tertiary))] mt-2">
                 {details}
               </p>
             )}
@@ -218,7 +218,7 @@ export function ConfirmDialog({
               <div className="mt-4">
                 <label
                   htmlFor="confirm-text"
-                  className="block text-xs font-medium text-[var(--text-secondary)] mb-2"
+                  className="block text-xs font-medium text-[hsl(var(--text-secondary))] mb-2"
                 >
                   Type <span className="font-mono font-bold">{requireConfirmation}</span> to
                   confirm:
@@ -228,7 +228,7 @@ export function ConfirmDialog({
                   type="text"
                   value={confirmText}
                   onChange={(e) => setConfirmText(e.target.value)}
-                  className="w-full px-3 py-2 border border-[var(--border-color)] rounded-lg bg-[var(--surface-elevated)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 ring-[var(--accent-primary)]"
+                  className="w-full px-3 py-2 border border-[hsl(var(--border-default))] rounded-md bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                   placeholder={requireConfirmation}
                   disabled={isLoading}
                   autoComplete="off"
@@ -243,7 +243,7 @@ export function ConfirmDialog({
               ref={cancelButtonRef}
               onClick={onCancel}
               disabled={isLoading}
-              className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg hover:bg-[var(--bg-secondary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-sm font-medium text-[hsl(var(--text-secondary))] bg-[hsl(var(--surface))] border border-[hsl(var(--border-subtle))] rounded-md hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {cancelLabel}
             </button>
@@ -251,7 +251,7 @@ export function ConfirmDialog({
               ref={confirmButtonRef}
               onClick={handleConfirm}
               disabled={!canConfirm}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${styles.buttonBg} ${styles.buttonText}`}
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors duration-fast disabled:opacity-50 disabled:cursor-not-allowed ${styles.buttonBg} ${styles.buttonText}`}
             >
               {isLoading ? (
                 <ButtonLoading>{confirmLabel}</ButtonLoading>

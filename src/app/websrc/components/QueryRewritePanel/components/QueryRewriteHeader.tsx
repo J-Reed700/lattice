@@ -13,7 +13,7 @@ export function QueryRewriteHeader({
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
         <svg
-          className="w-5 h-5 text-[var(--accent-primary)]"
+          className="w-5 h-5 text-[hsl(var(--accent))]"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -25,7 +25,7 @@ export function QueryRewriteHeader({
             d="M13 10V3L4 14h7v7l9-11h-7z"
           />
         </svg>
-        <h3 className="text-lg font-semibold text-[var(--text-primary)]">
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))]">
           Query Suggestions
         </h3>
       </div>
@@ -34,7 +34,7 @@ export function QueryRewriteHeader({
         {!isGenerating && (
           <button
             onClick={onRegenerate}
-            className="px-3 py-1.5 text-sm font-medium text-[var(--accent-primary)] hover:bg-[var(--accent-light)] rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            className="px-3 py-1.5 text-sm font-medium text-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-muted))] rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
             aria-label="Regenerate suggestions"
           >
             Regenerate
@@ -42,7 +42,7 @@ export function QueryRewriteHeader({
         )}
         <button
           onClick={onClose}
-          className="p-1.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--text-secondary)]"
+          className="p-1.5 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--text-secondary))]"
           aria-label="Close suggestions panel"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -92,40 +92,40 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full p-8 bg-[var(--bg-secondary)]">
+      <div className="flex items-center justify-center h-full p-8 bg-[hsl(var(--surface))]">
         <div className="text-center space-y-2">
-          <AlertCircle className="w-12 h-12 text-[var(--error)] mx-auto" />
-          <p className="text-[var(--error)] font-medium">Failed to load PDF</p>
-          <p className="text-sm text-[var(--text-secondary)]">{error}</p>
+          <AlertCircle className="w-12 h-12 text-[hsl(var(--danger-fg))] mx-auto" />
+          <p className="text-[hsl(var(--danger-fg))] font-medium">Failed to load PDF</p>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-[var(--bg-secondary)]">
+    <div className="h-full flex flex-col bg-[hsl(var(--surface))]">
       {/* Modern toolbar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-[var(--bg-primary)] border-b shadow-sm">
+      <div className="flex items-center justify-between px-6 py-3 bg-[hsl(var(--bg))] border-b shadow-sm">
         {/* Page navigation */}
         <div className="flex items-center gap-3">
           <button
             onClick={goToPrevPage}
             disabled={pageNumber <= 1}
-            className="p-2 rounded-md hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="p-2 rounded-md hover:bg-[hsl(var(--surface-raised))] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-fast"
             aria-label="Previous page"
           >
-            <ChevronLeft className="w-5 h-5 text-[var(--text-primary)]" />
+            <ChevronLeft className="w-5 h-5 text-[hsl(var(--text-primary))]" />
           </button>
-          <span className="text-sm font-medium text-[var(--text-primary)] min-w-[100px] text-center">
+          <span className="text-sm font-medium text-[hsl(var(--text-primary))] min-w-[100px] text-center">
             Page {pageNumber} of {numPages || '...'}
           </span>
           <button
             onClick={goToNextPage}
             disabled={pageNumber >= numPages}
-            className="p-2 rounded-md hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="p-2 rounded-md hover:bg-[hsl(var(--surface-raised))] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-fast"
             aria-label="Next page"
           >
-            <ChevronRight className="w-5 h-5 text-[var(--text-primary)]" />
+            <ChevronRight className="w-5 h-5 text-[hsl(var(--text-primary))]" />
           </button>
         </div>
 
@@ -133,20 +133,20 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
         <div className="flex items-center gap-3">
           <button
             onClick={zoomOut}
-            className="p-2 rounded-md hover:bg-[var(--surface-hover)] transition-colors"
+            className="p-2 rounded-md hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast"
             aria-label="Zoom out"
           >
-            <ZoomOut className="w-5 h-5 text-[var(--text-primary)]" />
+            <ZoomOut className="w-5 h-5 text-[hsl(var(--text-primary))]" />
           </button>
-          <span className="text-sm font-medium text-[var(--text-primary)] min-w-[60px] text-center">
+          <span className="text-sm font-medium text-[hsl(var(--text-primary))] min-w-[60px] text-center">
             {Math.round(scale * 100)}%
           </span>
           <button
             onClick={zoomIn}
-            className="p-2 rounded-md hover:bg-[var(--surface-hover)] transition-colors"
+            className="p-2 rounded-md hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast"
             aria-label="Zoom in"
           >
-            <ZoomIn className="w-5 h-5 text-[var(--text-primary)]" />
+            <ZoomIn className="w-5 h-5 text-[hsl(var(--text-primary))]" />
           </button>
         </div>
       </div>
@@ -154,19 +154,19 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
       {/* PDF content area */}
       <div className="flex-1 overflow-auto flex items-start justify-center p-8 relative">
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[var(--bg-secondary)]/70">
-            <Loader2 className="w-8 h-8 animate-spin text-[var(--accent-primary)]" />
+          <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--surface))]/70">
+            <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--accent))]" />
           </div>
         )}
         {pdfSource ? (
-          <div className="shadow-2xl rounded-lg overflow-hidden">
+          <div className="shadow-md rounded-lg overflow-hidden">
             <Document
               file={pdfSource}
               onLoadSuccess={onDocumentLoadSuccess}
               onLoadError={onDocumentLoadError}
               loading={
-                <div className="flex items-center justify-center p-12 bg-[var(--bg-primary)]">
-                  <Loader2 className="w-8 h-8 animate-spin text-[var(--accent-primary)]" />
+                <div className="flex items-center justify-center p-12 bg-[hsl(var(--bg))]">
+                  <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--accent))]" />
                 </div>
               }
             >
@@ -179,8 +179,8 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
             </Document>
           </div>
         ) : (
-          <div className="flex items-center justify-center p-12 bg-[var(--bg-primary)] rounded-lg shadow-2xl">
-            <Loader2 className="w-8 h-8 animate-spin text-[var(--accent-primary)]" />
+          <div className="flex items-center justify-center p-12 bg-[hsl(var(--bg))] rounded-lg shadow-md">
+            <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--accent))]" />
           </div>
         )}
       </div>

@@ -76,10 +76,10 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
               setCurrentJob(updated);
 
               if (updated.status === 'completed') {
-                success('Export completed successfully!');
+                success('Export completed successfully');
                 clearInterval(intervalId);
               } else if (updated.status === 'failed') {
-              showError(`Export failed: ${updated.error_message}`);
+              showError(`Export didn't finish: ${updated.error_message}`);
               clearInterval(intervalId);
             }
           }
@@ -135,9 +135,9 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
       const job = await response.json();
       setCurrentJob(job);
       setStep('progress');
-      success('Export started!');
+      success('Export started');
     } catch (err) {
-      showError(`Failed to start export: ${  String(err)}`);
+      showError(`Couldn't start export: ${  String(err)}`);
     } finally {
       setIsExporting(false);
     }
@@ -165,9 +165,9 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      success('Export downloaded successfully!');
+      success('Export downloaded successfully');
     } catch (err) {
-      showError(`Failed to download export: ${  String(err)}`);
+      showError(`Couldn't download export: ${  String(err)}`);
     }
   };
 
@@ -186,7 +186,7 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
         resetDialog();
       }
     } catch (err) {
-      showError(`Failed to cancel export: ${  String(err)}`);
+      showError(`Couldn't cancel export: ${  String(err)}`);
     }
   };
 
@@ -262,15 +262,15 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {step === 'config' ? 'Export Knowledge Base' : 'Export Progress'}
+            {step === 'config' ? 'Export knowledge base' : 'Export progress'}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-6">
         {step === 'config' && (
           <>
             <div>
-              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-3">
-                Export Format
+              <label className="block text-sm font-medium text-[hsl(var(--text-secondary))] mb-3">
+                Export format
               </label>
               <div className="grid grid-cols-2 gap-3">
                 {formatOptions.map((option) => {
@@ -282,33 +282,34 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
                       key={option.value}
                       onClick={() => setFormat(option.value as ExportFormat)}
                       className={`
-                        p-4 rounded-lg border-2 text-left transition-all
+                        p-4 rounded-md border-2 text-left transition-colors duration-fast
                         ${
                           isSelected
-                            ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]/20'
-                            : 'border-[var(--border-color)] hover:border-[var(--border-color)]'
+                            ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]'
+                            : 'border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--border-default))]'
                         }
                       `}
                     >
                       <div className="flex items-start gap-3">
                         <Icon
-                          className={`w-5 h-5 flex-shrink-0 ${
+                          className={`w-4 h-4 flex-shrink-0 ${
                             isSelected
-                              ? 'text-[var(--accent-primary)]'
-                              : 'text-[var(--text-tertiary)]'
+                              ? 'text-[hsl(var(--accent))]'
+                              : 'text-[hsl(var(--text-tertiary))]'
                           }`}
+                          strokeWidth={1.75}
                         />
                         <div className="flex-1 min-w-0">
                           <div
                             className={`font-medium ${
                               isSelected
-                                ? 'text-[var(--accent-primary)]'
-                                : 'text-[var(--text-primary)]'
+                                ? 'text-[hsl(var(--accent))]'
+                                : 'text-[hsl(var(--text-primary))]'
                             }`}
                           >
                             {option.label}
                           </div>
-                          <div className="text-xs text-[var(--text-secondary)] mt-1">
+                          <div className="text-xs text-[hsl(var(--text-secondary))] mt-1">
                             {option.description}
                           </div>
                         </div>
@@ -320,43 +321,43 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                Export Scope
+              <label className="block text-sm font-medium text-[hsl(var(--text-secondary))] mb-2">
+                Export scope
               </label>
               <Select
                 value={scope}
                 onValueChange={(value) => setScope(value as ExportScope)}
               >
-                <option value="full">Full Export - All files in knowledge base</option>
-                <option value="filtered">Filtered Export - Apply filters below</option>
+                <option value="full">Full export - all files in knowledge base</option>
+                <option value="filtered">Filtered export - apply filters below</option>
               </Select>
             </div>
 
             {scope === 'filtered' && (
-              <div className="space-y-4 p-4 bg-[var(--bg-secondary)]/50 rounded-lg border border-[var(--border-color)]">
-                <h3 className="text-sm font-medium text-[var(--text-primary)] flex items-center gap-2">
-                  <Filter className="w-4 h-4" />
+              <div className="space-y-4 p-4 bg-[hsl(var(--surface))] rounded-md border border-[hsl(var(--border-subtle))]">
+                <h3 className="text-sm font-medium text-[hsl(var(--text-primary))] flex items-center gap-2">
+                  <Filter className="w-4 h-4" strokeWidth={1.75} />
                   Filters
                 </h3>
 
                 <div className="grid grid-cols-2 gap-4">
                   <Input
                     type="date"
-                    label="Date From"
+                    label="Date from"
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
                   />
                   <Input
                     type="date"
-                    label="Date To"
+                    label="Date to"
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    File Types (select multiple)
+                  <label className="block text-sm font-medium text-[hsl(var(--text-secondary))] mb-2">
+                    File types (select multiple)
                   </label>
                   <div className="space-y-2">
                     {['pdf', 'docx', 'txt', 'md'].map((type) => (
@@ -385,8 +386,8 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
               </div>
             )}
 
-            <div className="space-y-3 p-4 bg-[var(--bg-secondary)]/50 rounded-lg border border-[var(--border-color)]">
-              <h3 className="text-sm font-medium text-[var(--text-primary)]">Options</h3>
+            <div className="space-y-3 p-4 bg-[hsl(var(--surface))] rounded-md border border-[hsl(var(--border-subtle))]">
+              <h3 className="text-sm font-medium text-[hsl(var(--text-primary))]">Options</h3>
 
               <Checkbox
                 label="Include vector embeddings"
@@ -412,7 +413,7 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
               />
             </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border-color)]">
+            <div className="flex justify-end gap-3 pt-4 border-t border-[hsl(var(--border-subtle))]">
               <Button variant="secondary" onClick={onClose}>
                 Cancel
               </Button>
@@ -427,8 +428,8 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
                   </>
                 ) : (
                   <>
-                    <Download className="w-4 h-4 mr-2" />
-                    Start Export
+                    <Download className="w-4 h-4 mr-2" strokeWidth={1.75} />
+                    Start export
                   </>
                 )}
               </Button>
@@ -442,21 +443,21 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {currentJob.status === 'completed' ? (
-                    <CheckCircle className="w-6 h-6 text-[var(--success)]" />
+                    <CheckCircle className="w-5 h-5 text-[hsl(var(--success-fg))]" strokeWidth={1.75} />
                   ) : currentJob.status === 'failed' ? (
-                    <XCircle className="w-6 h-6 text-[var(--error)]" />
+                    <XCircle className="w-5 h-5 text-[hsl(var(--danger-fg))]" strokeWidth={1.75} />
                   ) : (
-                    <Loader2 className="w-6 h-6 text-[var(--accent-primary)] animate-spin" />
+                    <Loader2 className="w-5 h-5 text-[hsl(var(--accent))] animate-spin" />
                   )}
                   <div>
-                    <h3 className="font-medium text-[var(--text-primary)]">
+                    <h3 className="font-medium text-[hsl(var(--text-primary))]">
                       {currentJob.status === 'completed'
-                        ? 'Export Completed'
+                        ? 'Export complete'
                         : currentJob.status === 'failed'
-                        ? 'Export Failed'
+                        ? "Export didn't finish"
                         : 'Exporting...'}
                     </h3>
-                    <p className="text-sm text-[var(--text-secondary)]">
+                    <p className="text-sm text-[hsl(var(--text-secondary))]">
                       {currentJob.format.toUpperCase()} • {currentJob.scope}
                     </p>
                   </div>
@@ -464,55 +465,55 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
                 <span
                   className={`px-3 py-1 text-sm font-medium rounded-full ${
                     currentJob.status === 'completed'
-                      ? 'bg-[var(--success-light)] text-[var(--success)]'
+                      ? 'bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]'
                       : currentJob.status === 'failed'
-                      ? 'bg-[var(--error-light)] text-[var(--error)]'
-                      : 'bg-[var(--accent-light)] text-[var(--accent-primary)]'
+                      ? 'bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))]'
+                      : 'bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]'
                   }`}
                 >
                   {Math.round(currentJob.progress_percent)}%
                 </span>
               </div>
 
-              <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-2 overflow-hidden">
+              <div className="w-full bg-[hsl(var(--surface-raised))] rounded-full h-2 overflow-hidden">
                 <div
-                  className={`h-full transition-all duration-300 ${
+                  className={`h-full transition-[width] duration-base ease-out ${
                     currentJob.status === 'completed'
-                      ? 'bg-[var(--success)]'
+                      ? 'bg-[hsl(var(--success-fg))]'
                       : currentJob.status === 'failed'
-                      ? 'bg-[var(--error)]'
-                      : 'bg-[var(--accent-primary)]'
+                      ? 'bg-[hsl(var(--danger-fg))]'
+                      : 'bg-[hsl(var(--accent))]'
                   }`}
                   style={{ width: `${currentJob.progress_percent}%` }}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--bg-secondary)]/50 rounded-lg">
+              <div className="grid grid-cols-2 gap-4 p-4 bg-[hsl(var(--surface))] rounded-md">
                 <div>
-                  <div className="text-sm text-[var(--text-secondary)]">Files</div>
-                  <div className="text-lg font-semibold text-[var(--text-primary)]">
+                  <div className="text-sm text-[hsl(var(--text-secondary))]">Files</div>
+                  <div className="text-lg font-semibold text-[hsl(var(--text-primary))]">
                     {currentJob.file_count.toLocaleString()}
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-[var(--text-secondary)]">Size</div>
-                  <div className="text-lg font-semibold text-[var(--text-primary)]">
+                  <div className="text-sm text-[hsl(var(--text-secondary))]">Size</div>
+                  <div className="text-lg font-semibold text-[hsl(var(--text-primary))]">
                     {formatBytes(currentJob.total_size_bytes)}
                   </div>
                 </div>
               </div>
 
               {currentJob.error_message && (
-                <div className="p-4 bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded-lg">
-                  <p className="text-sm text-[var(--error)]">{currentJob.error_message}</p>
+                <div className="p-4 bg-[hsl(var(--danger-muted))] border border-[hsl(var(--danger-muted))] rounded-md">
+                  <p className="text-sm text-[hsl(var(--danger-fg))]">{currentJob.error_message}</p>
                 </div>
               )}
             </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border-color)]">
+            <div className="flex justify-end gap-3 pt-4 border-t border-[hsl(var(--border-subtle))]">
               {currentJob.status === 'in_progress' && (
                 <Button variant="secondary" onClick={handleAsyncEvent(handleCancel)}>
-                  Cancel Export
+                  Cancel export
                 </Button>
               )}
               {currentJob.status === 'completed' && (
@@ -521,8 +522,8 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
                     Close
                   </Button>
                   <Button onClick={handleAsyncEvent(handleDownload)}>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download Export
+                    <Download className="w-4 h-4 mr-2" strokeWidth={1.75} />
+                    Download export
                   </Button>
                 </>
               )}

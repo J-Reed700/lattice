@@ -1,7 +1,4 @@
 pub mod file_import;
+pub mod file_import_trait;
 pub mod url_import;
-
-// `file_import_trait.rs` and `url_import_trait.rs` are NOT declared
-// here. They are loaded via Strangler Fig redirects in
-// `infrastructure::services::traits` and consumed through that
-// aggregator.
+pub mod url_import_trait;

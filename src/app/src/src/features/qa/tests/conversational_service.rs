@@ -29,10 +29,12 @@ mod tests {
     use crate::domain::conversation::MessageRole;
     use crate::infrastructure::observability::Metrics;
     use crate::features::qa::conversational_service::ConversationalQAService;
-    use crate::infrastructure::services::traits::{
-        ContextManagerTrait, ConversationServiceTrait, MockContextManager, MockConversationService,
-        MockQAEngine, QAEngineTrait,
-    };
+    use crate::infrastructure::services::traits::ContextManagerTrait;
+    use crate::infrastructure::services::mocks::MockContextManager;
+    use crate::features::conversation::ConversationServiceTrait;
+    use crate::features::conversation::mocks::MockConversationService;
+    use crate::features::qa::QAEngineTrait;
+    use crate::features::qa::mocks::MockQAEngine;
     use crate::shared::error::{AppError, Result};
 
     // ========================================================================

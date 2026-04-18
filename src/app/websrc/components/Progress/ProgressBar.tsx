@@ -39,10 +39,10 @@ export const ProgressBar = memo<ProgressBarProps>(
 
     // Color variants
     const variantColors = {
-      default: 'bg-[var(--accent-primary)]',
-      success: 'bg-[var(--success)]',
-      error: 'bg-[var(--error)]',
-      indeterminate: 'bg-[var(--accent-primary)]',
+      default: 'bg-[hsl(var(--accent))]',
+      success: 'bg-[hsl(var(--success-fg))]',
+      error: 'bg-[hsl(var(--danger-fg))]',
+      indeterminate: 'bg-[hsl(var(--accent))]',
     };
 
     const bgColor = variantColors[variant];
@@ -55,7 +55,7 @@ export const ProgressBar = memo<ProgressBarProps>(
           aria-valuenow={isIndeterminate ? undefined : clampedProgress}
           aria-valuemin={0}
           aria-valuemax={100}
-          className="relative w-full bg-[var(--bg-tertiary)] rounded-full overflow-hidden"
+          className="relative w-full bg-[hsl(var(--surface-raised))] rounded-full overflow-hidden"
           style={{ height }}
         >
           {isIndeterminate ? (
@@ -76,7 +76,7 @@ export const ProgressBar = memo<ProgressBarProps>(
         </div>
 
         {showLabel && !isIndeterminate && (
-          <div className="mt-1 text-xs text-[var(--text-secondary)] text-right">
+          <div className="mt-1 text-xs text-[hsl(var(--text-secondary))] text-right">
             {Math.round(clampedProgress)}%
           </div>
         )}

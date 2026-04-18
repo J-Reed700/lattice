@@ -91,10 +91,10 @@ export const RecentDocuments = ({ documents, loading = false }: RecentDocumentsP
         <CardContent className="mt-4 space-y-3">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="animate-pulse flex items-start gap-3">
-              <div className="w-10 h-10 bg-[var(--bg-tertiary)] rounded" />
+              <div className="w-10 h-10 bg-[hsl(var(--surface-raised))] rounded" />
               <div className="flex-1 space-y-2">
-                <div className="h-4 bg-[var(--bg-tertiary)] rounded w-3/4" />
-                <div className="h-3 bg-[var(--bg-tertiary)] rounded w-1/2" />
+                <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-3/4" />
+                <div className="h-3 bg-[hsl(var(--surface-raised))] rounded w-1/2" />
               </div>
             </div>
           ))}
@@ -106,8 +106,8 @@ export const RecentDocuments = ({ documents, loading = false }: RecentDocumentsP
   return (
     <Card padding="md" className="h-full flex flex-col">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-[var(--text-primary)]">
-          <FileText className="w-5 h-5 text-[var(--accent-primary)]" />
+        <CardTitle className="flex items-center gap-2 text-[hsl(var(--text-primary))]">
+          <FileText className="w-5 h-5 text-[hsl(var(--accent))]" />
           Recent Documents
         </CardTitle>
       </CardHeader>
@@ -115,11 +115,11 @@ export const RecentDocuments = ({ documents, loading = false }: RecentDocumentsP
       <CardContent className="mt-4 flex-1 overflow-auto">
         {documents.length === 0 ? (
           <div className="text-center py-8">
-            <Clock className="w-12 h-12 text-[var(--text-tertiary)] mx-auto mb-3" />
-            <p className="text-[var(--text-secondary)] text-sm">
+            <Clock className="w-12 h-12 text-[hsl(var(--text-tertiary))] mx-auto mb-3" />
+            <p className="text-[hsl(var(--text-secondary))] text-sm">
               No documents yet
             </p>
-            <p className="text-[var(--text-tertiary)] text-xs mt-1">
+            <p className="text-[hsl(var(--text-tertiary))] text-xs mt-1">
               Index a folder to get started
             </p>
           </div>
@@ -132,24 +132,24 @@ export const RecentDocuments = ({ documents, loading = false }: RecentDocumentsP
                 <button
                   key={doc.id}
                   onClick={() => handleOpenDocument(doc.filePath)}
-                  className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2 group"
+                  className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] focus-visible:ring-offset-2 group"
                   aria-label={`Open ${sanitizeFileName(doc.fileName)}`}
                 >
                   {/* File Icon */}
-                  <div className="flex-shrink-0 w-10 h-10 bg-[var(--surface-elevated)] rounded flex items-center justify-center group-hover:bg-[var(--accent-light)] transition-colors">
-                    <FileIcon className="w-5 h-5 text-[var(--text-secondary)] group-hover:text-[var(--accent-primary)]" />
+                  <div className="flex-shrink-0 w-10 h-10 bg-[hsl(var(--surface-raised))] rounded flex items-center justify-center group-hover:bg-[hsl(var(--accent-muted))] transition-colors duration-fast">
+                    <FileIcon className="w-5 h-5 text-[hsl(var(--text-secondary))] group-hover:text-[hsl(var(--accent))]" />
                   </div>
 
                   {/* File Info */}
                   <div className="flex-1 min-w-0 text-left">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+                      <p className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">
                         {sanitizeFileName(doc.fileName)}
                       </p>
-                      <ExternalLink className="w-3 h-3 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                      <ExternalLink className="w-3 h-3 text-[hsl(var(--text-tertiary))] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                     </div>
 
-                    <div className="flex items-center gap-3 mt-1 text-xs text-[var(--text-secondary)]">
+                    <div className="flex items-center gap-3 mt-1 text-xs text-[hsl(var(--text-secondary))]">
                       <span>{formatFileSize(doc.sizeBytes)}</span>
                       <span>•</span>
                       <span>{getRelativeTime(doc.indexedAt)}</span>
@@ -162,7 +162,7 @@ export const RecentDocuments = ({ documents, loading = false }: RecentDocumentsP
                     </div>
 
                     <p
-                      className="text-xs text-[var(--text-tertiary)] mt-1 truncate"
+                      className="text-xs text-[hsl(var(--text-tertiary))] mt-1 truncate"
                       title={doc.filePath}
                     >
                       {doc.filePath}

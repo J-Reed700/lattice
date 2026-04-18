@@ -30,7 +30,7 @@
 //! ```
 
 use crate::features::function_calling::dto::UrlPreview;
-use crate::infrastructure::services::traits::WebCaptureServiceTrait;
+use crate::features::web::WebCaptureServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::stealth;

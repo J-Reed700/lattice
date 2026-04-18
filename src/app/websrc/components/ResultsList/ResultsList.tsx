@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback } from 'react';
 
-import { sanitizeFileName, sanitizeFilePath } from '@/utils/sanitize';
+import { sanitizeFileName } from '@/utils/sanitize';
 
 import { SearchResultSkeleton } from '../Skeleton';
 import Card from '../ui/Card/Card';
@@ -67,9 +67,9 @@ export const ResultsList = memo(({
         role="alert"
         aria-live="polite"
       >
-        <div className="w-16 h-16 bg-[var(--error-light)]/30 rounded-full flex items-center justify-center mb-4">
+        <div className="w-16 h-16 bg-[hsl(var(--danger-muted))]/30 rounded-full flex items-center justify-center mb-4">
           <svg
-            className="w-8 h-8 text-[var(--error)]"
+            className="w-8 h-8 text-[hsl(var(--danger-fg))]"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -82,10 +82,10 @@ export const ResultsList = memo(({
             />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
           Search Error
         </h3>
-        <p className="text-sm text-[var(--text-secondary)] text-center max-w-md">
+        <p className="text-sm text-[hsl(var(--text-secondary))] text-center max-w-md">
           {error}
         </p>
       </div>
@@ -100,9 +100,9 @@ export const ResultsList = memo(({
         role="status"
         aria-live="polite"
       >
-        <div className="w-16 h-16 bg-[var(--bg-primary)] rounded-full flex items-center justify-center mb-4">
+        <div className="w-16 h-16 bg-[hsl(var(--bg))] rounded-full flex items-center justify-center mb-4">
           <svg
-            className="w-8 h-8 text-[var(--text-tertiary)]"
+            className="w-8 h-8 text-[hsl(var(--text-tertiary))]"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -115,10 +115,10 @@ export const ResultsList = memo(({
             />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
           {emptyMessage}
         </h3>
-        <p className="text-sm text-[var(--text-secondary)] text-center max-w-md">
+        <p className="text-sm text-[hsl(var(--text-secondary))] text-center max-w-md">
           Try a different search term or check your search mode
         </p>
       </div>
@@ -161,21 +161,8 @@ const ResultItem = memo(({ result, index, onClick }: ResultItemProps) => {
   // Use direct fields FIRST (from Rust SearchResultDto), fallback to metadata if needed
   const fileName = sanitizeFileName(result.title || getMetadataString(result.metadata, 'filename') || result.id);
   const filePath = result.path || getMetadataString(result.metadata, 'path');
-  const sanitizedFilePath = filePath ? sanitizeFilePath(filePath) : undefined;
   const fileType = getMetadataString(result.metadata, 'file_type')?.toUpperCase() || 'FILE';
   const modifiedAt = getMetadataString(result.metadata, 'updated_at');
-
-  // Debug logging to verify data flow
-  console.log('[ResultsList] Rendering result:', {
-    id: result.id,
-    title: result.title,         // Should now exist as direct field
-    path: result.path,           // Should now exist as direct field
-    fileName,
-    filePath: sanitizedFilePath,
-    score: result.score,
-    vectorScore: result.vectorScore,
-    bm25Score: result.bm25Score,
-  });
 
   const handleClick = useCallback(() => {
     onClick(result);
@@ -191,11 +178,11 @@ const ResultItem = memo(({ result, index, onClick }: ResultItemProps) => {
       {/* Header: File name and score */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1 truncate">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-1 truncate">
             {fileName}
           </h3>
           {filePath && (
-            <p className="text-xs text-[var(--text-secondary)] truncate" title={filePath}>
+            <p className="text-xs text-[hsl(var(--text-secondary))] truncate" title={filePath}>
               {filePath}
             </p>
           )}
@@ -203,7 +190,7 @@ const ResultItem = memo(({ result, index, onClick }: ResultItemProps) => {
 
         <div className="ml-4 flex flex-col items-end flex-shrink-0">
           <ScoreBadge score={result.score} />
-          <span className="text-xs text-[var(--text-secondary)] mt-1">
+          <span className="text-xs text-[hsl(var(--text-secondary))] mt-1">
             {fileType}
           </span>
         </div>
@@ -212,7 +199,7 @@ const ResultItem = memo(({ result, index, onClick }: ResultItemProps) => {
       {/* Content snippet */}
       {result.content && (
         <div className="mb-3">
-          <p className="text-sm text-[var(--text-secondary)] line-clamp-3">
+          <p className="text-sm text-[hsl(var(--text-secondary))] line-clamp-3">
             {result.content}
           </p>
         </div>
@@ -307,9 +294,9 @@ interface MetadataBadgeProps {
 
 const MetadataBadge = memo(({ icon, color, label, badge }: MetadataBadgeProps) => {
   const colorStyles = {
-    blue: 'bg-[var(--accent-light)]/30 text-[var(--accent-primary)]',
-    green: 'bg-[var(--success-light)]/30 text-[var(--success)]',
-    gray: 'bg-[var(--bg-primary)] text-[var(--text-secondary)]',
+    blue: 'bg-[hsl(var(--accent-muted))]/30 text-[hsl(var(--accent))]',
+    green: 'bg-[hsl(var(--success-muted))]/30 text-[hsl(var(--success-fg))]',
+    gray: 'bg-[hsl(var(--bg))] text-[hsl(var(--text-secondary))]',
   };
 
   return (
@@ -317,7 +304,7 @@ const MetadataBadge = memo(({ icon, color, label, badge }: MetadataBadgeProps) =
       {icon}
       <span>{label}</span>
       {badge && (
-        <span className="text-[var(--text-tertiary)] font-medium">{badge}</span>
+        <span className="text-[hsl(var(--text-tertiary))] font-medium">{badge}</span>
       )}
     </div>
   );
@@ -331,7 +318,7 @@ function formatScore(score: number): string {
 }
 
 function getScoreColor(score: number): string {
-  if (score >= 0.8) return 'text-[var(--success)]';
-  if (score >= 0.6) return 'text-[var(--warning)]';
-  return 'text-[var(--text-secondary)]';
+  if (score >= 0.8) return 'text-[hsl(var(--success-fg))]';
+  if (score >= 0.6) return 'text-[hsl(var(--warning-fg))]';
+  return 'text-[hsl(var(--text-secondary))]';
 }

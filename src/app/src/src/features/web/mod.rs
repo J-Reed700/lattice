@@ -13,23 +13,31 @@
 //!   WebArchiveService, WebIngestionService
 //! - `crate::features::web::commands` — Tauri command handlers
 //! - `crate::features::web::plugin::init()` — Tauri plugin
+//! - `crate::features::web::{WebServiceTrait, WebIngestionServiceTrait,
+//!   WebArchiveServiceTrait, WebCaptureServiceTrait}` — service traits
 //!
-//! ## Kept as shared (redirects retained)
+//! ## Kept as shared
 //!
 //! - `crate::infrastructure::web` (entry point + article_detector/
 //!   content_extractor/metadata/web_fetcher stubs) — registered via
 //!   `infrastructure/mod.rs` #[path] redirect so consumers can still
 //!   use `crate::infrastructure::web::article_detector::*` etc.
-//! - `trait_def` (traits.rs per-trait files) and `mocks` remain loaded
-//!   via shared `infrastructure::services::{traits,mocks}` aggregators.
 //!
 //! No application-level `WebPort` — web operations flow through
-//! the service traits (`WebServiceTrait`, `WebArchiveServiceTrait`,
-//! `WebCaptureServiceTrait`) which live in `services/traits/`.
+//! the service traits.
 
 pub mod commands;
 pub mod domain;
 pub mod dto;
 pub mod plugin;
 pub mod services;
+pub mod traits;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use traits::{
+    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionResult, WebIngestionServiceTrait,
+    WebServiceTrait,
+};

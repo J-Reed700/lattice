@@ -33,24 +33,24 @@ const NotificationItem = memo<{
   const config = {
     success: {
       icon: <CheckCircle2 className="w-5 h-5" />,
-      bgColor: 'bg-[var(--success-light)]/20',
-      borderColor: 'border-[var(--success-light)]',
-      textColor: 'text-[var(--success)]',
-      iconColor: 'text-[var(--success)]',
+      bgColor: 'bg-[hsl(var(--success-muted))]/20',
+      borderColor: 'border-[hsl(var(--success-muted))]',
+      textColor: 'text-[hsl(var(--success-fg))]',
+      iconColor: 'text-[hsl(var(--success-fg))]',
     },
     error: {
       icon: <XCircle className="w-5 h-5" />,
-      bgColor: 'bg-[var(--error-light)]/20',
-      borderColor: 'border-[var(--error-light)]',
-      textColor: 'text-[var(--error)]',
-      iconColor: 'text-[var(--error)]',
+      bgColor: 'bg-[hsl(var(--danger-muted))]/20',
+      borderColor: 'border-[hsl(var(--danger-muted))]',
+      textColor: 'text-[hsl(var(--danger-fg))]',
+      iconColor: 'text-[hsl(var(--danger-fg))]',
     },
     info: {
       icon: <Info className="w-5 h-5" />,
-      bgColor: 'bg-[var(--accent-light)]/20',
-      borderColor: 'border-[var(--accent-light)]',
-      textColor: 'text-[var(--accent-primary)]',
-      iconColor: 'text-[var(--accent-primary)]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]/20',
+      borderColor: 'border-[hsl(var(--accent-muted))]',
+      textColor: 'text-[hsl(var(--accent))]',
+      iconColor: 'text-[hsl(var(--accent))]',
     },
   };
 
@@ -95,12 +95,12 @@ const NotificationItem = memo<{
           onClick={() => onDismiss(notification.id)}
           className={`
             flex-shrink-0 p-1 rounded
-            hover:bg-[var(--surface-hover)]
+            hover:bg-[hsl(var(--surface-raised))]
             transition-colors
           `}
           aria-label="Dismiss notification"
         >
-          <X className="w-4 h-4 text-[var(--text-tertiary)]" />
+          <X className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
         </button>
       </div>
     </div>

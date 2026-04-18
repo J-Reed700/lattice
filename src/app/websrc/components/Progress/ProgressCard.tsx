@@ -72,38 +72,38 @@ export const ProgressCard = memo<ProgressCardProps>(
         case 'running':
           return {
             icon: <Loader2 className="w-4 h-4 animate-spin" />,
-            color: 'text-[var(--accent-primary)]',
-            bgColor: 'bg-[var(--accent-light)]/20',
-            borderColor: 'border-[var(--accent-light)]',
+            color: 'text-[hsl(var(--accent))]',
+            bgColor: 'bg-[hsl(var(--accent-muted))]/20',
+            borderColor: 'border-[hsl(var(--accent-muted))]',
           };
         case 'completed':
           return {
             icon: <CheckCircle2 className="w-4 h-4" />,
-            color: 'text-[var(--success)]',
-            bgColor: 'bg-[var(--success-light)]/20',
-            borderColor: 'border-[var(--success-light)]',
+            color: 'text-[hsl(var(--success-fg))]',
+            bgColor: 'bg-[hsl(var(--success-muted))]/20',
+            borderColor: 'border-[hsl(var(--success-muted))]',
           };
         case 'failed':
           return {
             icon: <XCircle className="w-4 h-4" />,
-            color: 'text-[var(--error)]',
-            bgColor: 'bg-[var(--error-light)]/20',
-            borderColor: 'border-[var(--error-light)]',
+            color: 'text-[hsl(var(--danger-fg))]',
+            bgColor: 'bg-[hsl(var(--danger-muted))]/20',
+            borderColor: 'border-[hsl(var(--danger-muted))]',
           };
         case 'cancelled':
           return {
             icon: <AlertCircle className="w-4 h-4" />,
-            color: 'text-[var(--text-secondary)]',
-            bgColor: 'bg-[var(--bg-secondary)]/20',
-            borderColor: 'border-[var(--border-color)]',
+            color: 'text-[hsl(var(--text-secondary))]',
+            bgColor: 'bg-[hsl(var(--surface))]/20',
+            borderColor: 'border-[hsl(var(--border-subtle))]',
           };
         case 'pending':
         default:
           return {
             icon: <Loader2 className="w-4 h-4" />,
-            color: 'text-[var(--text-secondary)]',
-            bgColor: 'bg-[var(--bg-secondary)]/20',
-            borderColor: 'border-[var(--border-color)]',
+            color: 'text-[hsl(var(--text-secondary))]',
+            bgColor: 'bg-[hsl(var(--surface))]/20',
+            borderColor: 'border-[hsl(var(--border-subtle))]',
           };
       }
     }, [operation.status]);
@@ -140,13 +140,13 @@ export const ProgressCard = memo<ProgressCardProps>(
             <div className={statusConfig.color}>{operationIcons[operation.type]}</div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-[var(--text-primary)] capitalize">
+                <span className="text-sm font-medium text-[hsl(var(--text-primary))] capitalize">
                   {operation.type}
                 </span>
                 <div className={statusConfig.color}>{statusConfig.icon}</div>
               </div>
               {operation.total > 0 && (
-                <div className="text-xs text-[var(--text-secondary)]">
+                <div className="text-xs text-[hsl(var(--text-secondary))]">
                   {operation.current} / {operation.total}
                 </div>
               )}
@@ -157,28 +157,28 @@ export const ProgressCard = memo<ProgressCardProps>(
             {isActive && operation.cancellable && (
               <button
                 onClick={handleCancel}
-                className="p-1 hover:bg-[var(--surface-elevated)] rounded transition-colors"
+                className="p-1 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors"
                 aria-label="Cancel operation"
                 title="Cancel"
               >
-                <X className="w-4 h-4 text-[var(--text-tertiary)]" />
+                <X className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
               </button>
             )}
             {isDone && (
               <button
                 onClick={handleRemove}
-                className="p-1 hover:bg-[var(--surface-elevated)] rounded transition-colors"
+                className="p-1 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors"
                 aria-label="Remove operation"
                 title="Remove"
               >
-                <X className="w-4 h-4 text-[var(--text-tertiary)]" />
+                <X className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
               </button>
             )}
           </div>
         </div>
 
         {/* Message */}
-        <p className="text-sm text-[var(--text-secondary)] mb-2 truncate" title={operation.message}>
+        <p className="text-sm text-[hsl(var(--text-secondary))] mb-2 truncate" title={operation.message}>
           {operation.message}
         </p>
 
@@ -193,7 +193,7 @@ export const ProgressCard = memo<ProgressCardProps>(
         )}
 
         {/* Footer Info */}
-        <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+        <div className="flex items-center justify-between text-xs text-[hsl(var(--text-secondary))]">
           <div className="flex items-center gap-3">
             {operation.progress > 0 && operation.progress < 100 && (
               <span>{Math.round(operation.progress)}%</span>
@@ -206,21 +206,21 @@ export const ProgressCard = memo<ProgressCardProps>(
             )}
           </div>
           {detailed && operation.errors && operation.errors.length > 0 && (
-            <span className="text-[var(--error)]">{operation.errors.length} errors</span>
+            <span className="text-[hsl(var(--danger-fg))]">{operation.errors.length} errors</span>
           )}
         </div>
 
         {/* Errors (detailed view only) */}
         {detailed && operation.errors && operation.errors.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-[var(--border-color)]">
-            <div className="text-xs text-[var(--error)] space-y-1">
+          <div className="mt-2 pt-2 border-t border-[hsl(var(--border-subtle))]">
+            <div className="text-xs text-[hsl(var(--danger-fg))] space-y-1">
               {operation.errors.slice(0, 3).map((error, idx) => (
                 <div key={idx} className="truncate" title={error}>
                   {error}
                 </div>
               ))}
               {operation.errors.length > 3 && (
-                <div className="text-[var(--text-tertiary)]">+{operation.errors.length - 3} more</div>
+                <div className="text-[hsl(var(--text-tertiary))]">+{operation.errors.length - 3} more</div>
               )}
             </div>
           </div>

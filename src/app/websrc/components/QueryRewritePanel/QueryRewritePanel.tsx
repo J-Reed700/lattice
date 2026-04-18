@@ -51,7 +51,7 @@ export function QueryRewritePanel({
   if (!isVisible) return null;
 
   return (
-    <div className="w-full space-y-4 p-4 bg-[var(--bg-secondary)]/50 rounded-lg border border-[var(--border-color)]">
+    <div className="w-full space-y-4 p-4 bg-[hsl(var(--surface))]/50 rounded-lg border border-[hsl(var(--border-subtle))]">
       <QueryRewriteHeader
         isGenerating={isGenerating}
         onRegenerate={generateRewrites}

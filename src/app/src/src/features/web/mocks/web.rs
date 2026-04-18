@@ -7,7 +7,9 @@ use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };
 #[cfg(test)]
-use crate::infrastructure::services::traits::*;
+use crate::features::web::traits::web::{
+    WebIngestionResult, WebIngestionServiceTrait, WebServiceTrait,
+};
 #[cfg(test)]
 use crate::shared::error::Result;
 #[cfg(test)]

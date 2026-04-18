@@ -197,21 +197,21 @@ use crate::features::cache::llm_cache::LlmCache;
 use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
 use crate::features::tags::service_impl::TagServiceImpl;
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
-use crate::infrastructure::services::traits::BatchFileImportServiceTrait;
-use crate::infrastructure::services::traits::BatchUrlImportServiceTrait;
+use crate::features::batch::BatchFileImportServiceTrait;
+use crate::features::batch::BatchUrlImportServiceTrait;
 use crate::infrastructure::services::traits::ContextManagerTrait;
-use crate::infrastructure::services::traits::ConversationServiceTrait;
-use crate::infrastructure::services::traits::ConversationalQAServiceTrait;
-use crate::infrastructure::services::traits::IndexingServiceTrait;
-use crate::infrastructure::services::traits::QAEngineTrait;
+use crate::features::conversation::ConversationServiceTrait;
+use crate::features::qa::ConversationalQAServiceTrait;
+use crate::features::indexing::IndexingServiceTrait;
+use crate::features::qa::QAEngineTrait;
 use crate::features::tags::TagServiceTrait;
-use crate::infrastructure::services::traits::WebArchiveServiceTrait;
-use crate::infrastructure::services::traits::WebCaptureServiceTrait;
-use crate::infrastructure::services::traits::WebIngestionServiceTrait;
-use crate::infrastructure::services::traits::{
-    BM25SearchTrait, EmbeddingServiceTrait, FunctionExecutorTrait, FunctionRegistryTrait,
-    HybridSearchTrait, SearchEnrichmentServiceTrait, SearchServiceTrait,
-};
+use crate::features::web::WebArchiveServiceTrait;
+use crate::features::web::WebCaptureServiceTrait;
+use crate::features::web::WebIngestionServiceTrait;
+use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::infrastructure::services::ArticleExtractorService;
 use crate::infrastructure::services::BatchFileImportService;
 use crate::infrastructure::services::BatchUrlImportService;

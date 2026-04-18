@@ -13,15 +13,17 @@
 //! - `crate::features::batch::commands` — Tauri command handlers
 //!   (file_import, url_import, history submodules)
 //! - `crate::features::batch::plugin::init()` — Tauri plugin
+//! - `crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait,
+//!   ProcessedFileInfo}` — service traits and shared types
 //!
-//! `BatchJobRepositoryPort` stays in `application/ports/`. The two
-//! service traits (`BatchFileImportServiceTrait`,
-//! `BatchUrlImportServiceTrait`) remain loaded via the shared
-//! `infrastructure::services::traits` aggregator; consumers import
-//! through that aggregator.
+//! `BatchJobRepositoryPort` stays in `application/ports/`.
 
 pub mod commands;
 pub mod dto;
 pub mod plugin;
 pub mod services;
 pub mod use_cases;
+
+// Re-export public traits at the feature root.
+pub use services::file_import_trait::{BatchFileImportServiceTrait, ProcessedFileInfo};
+pub use services::url_import_trait::BatchUrlImportServiceTrait;

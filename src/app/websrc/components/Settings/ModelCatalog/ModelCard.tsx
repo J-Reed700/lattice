@@ -70,11 +70,11 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
   const getTierIcon = () => {
     switch (metadata.performance_tier) {
       case 'Fast':
-        return <Zap className="w-3.5 h-3.5 text-[var(--success)]" />;
+        return <Zap className="w-3.5 h-3.5 text-[hsl(var(--success-fg))]" />;
       case 'Balanced':
-        return <Brain className="w-3.5 h-3.5 text-[var(--accent-primary)]" />;
+        return <Brain className="w-3.5 h-3.5 text-[hsl(var(--accent))]" />;
       case 'Accurate':
-        return <Brain className="w-3.5 h-3.5 text-[var(--accent-primary)]" />;
+        return <Brain className="w-3.5 h-3.5 text-[hsl(var(--accent))]" />;
     }
   };
 
@@ -85,21 +85,21 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
       onClick={onClick}
       className={`
         h-full min-h-[230px] text-left overflow-hidden transition-all
-        ${isSelected ? 'ring-2 ring-[var(--accent-primary)] ring-offset-2 shadow-[0_0_0_1px_var(--accent-primary)]' : ''}
+        ${isSelected ? 'ring-2 ring-[hsl(var(--accent))] ring-offset-2 shadow-[0_0_0_1px_hsl(var(--accent))]' : ''}
       `}
     >
       {/* Header with compatibility badge */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-[15px] leading-snug text-[var(--text-primary)] line-clamp-2 break-words">
+          <h3 className="font-semibold text-[15px] leading-snug text-[hsl(var(--text-primary))] line-clamp-2 break-words">
             {metadata.name}
           </h3>
           <div className="flex items-center gap-1.5 mt-1">
-            <p className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)]">
+            <p className="text-[11px] uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
               {metadata.category}
             </p>
             {metadata.category === 'Embedding' && metadata.embedding_dimensions && (
-              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))]">
                 {metadata.embedding_dimensions}d
               </span>
             )}
@@ -112,12 +112,12 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
       </div>
 
       {/* Description */}
-      <p className="text-xs leading-relaxed text-[var(--text-secondary)] line-clamp-3 mb-3">
+      <p className="text-xs leading-relaxed text-[hsl(var(--text-secondary))] line-clamp-3 mb-3">
         {metadata.description}
       </p>
 
       {/* Metadata row */}
-      <div className="grid grid-cols-3 gap-2 text-xs text-[var(--text-tertiary)]">
+      <div className="grid grid-cols-3 gap-2 text-xs text-[hsl(var(--text-tertiary))]">
         <div className="min-w-0 flex items-center gap-1">
           <HardDrive className="w-3 h-3" />
           <span className="truncate tabular-nums">{metadata.size_gb > 0 ? `${metadata.size_gb.toFixed(1)} GB` : 'Unknown'}</span>
@@ -132,7 +132,7 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
         </div>
       </div>
 
-      <div className="mt-2 flex items-center gap-3 text-[11px] text-[var(--text-tertiary)]">
+      <div className="mt-2 flex items-center gap-3 text-[11px] text-[hsl(var(--text-tertiary))]">
         <span className="inline-flex items-center gap-1.5">
           <Download className="w-3 h-3" />
           {formattedDownloads ? `${formattedDownloads} downloads` : 'Downloads unavailable'}
@@ -149,13 +149,13 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
           {metadata.capabilities.slice(0, 3).map((capability) => (
             <span
               key={capability}
-              className="max-w-full text-xs px-2 py-0.5 bg-[var(--bg-tertiary)] text-[var(--text-secondary)] rounded-md truncate"
+              className="max-w-full text-xs px-2 py-0.5 bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] rounded-md truncate"
             >
               {capability}
             </span>
           ))}
           {metadata.capabilities.length > 3 && (
-            <span className="text-xs px-2 py-0.5 text-[var(--text-tertiary)]">
+            <span className="text-xs px-2 py-0.5 text-[hsl(var(--text-tertiary))]">
               +{metadata.capabilities.length - 3}
             </span>
           )}
@@ -164,8 +164,8 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
 
       {/* Blockers if any */}
       {compatibility.blockers.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-[var(--border-color)]">
-          <p className="text-xs text-[var(--error)] font-medium">
+        <div className="mt-3 pt-3 border-t border-[hsl(var(--border-subtle))]">
+          <p className="text-xs text-[hsl(var(--danger-fg))] font-medium">
             ⚠️ {compatibility.blockers[0]}
           </p>
         </div>

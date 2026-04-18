@@ -5,7 +5,7 @@
 
 use crate::application::ports::EmbeddingPort;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
-use crate::infrastructure::services::traits::EmbeddingServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::constants::ONNX_INFERENCE_TIMEOUT;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;

@@ -150,7 +150,7 @@ FileBrowserListSkeleton.displayName = 'FileBrowserListSkeleton';
  */
 const ListItemSkeleton: React.FC = memo(() => (
     <div
-      className="flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-hover)]/50 rounded-lg transition-colors"
+      className="flex items-center gap-3 px-4 py-3 hover:bg-[hsl(var(--surface-raised))]/50 rounded-lg transition-colors"
       aria-hidden="true"
     >
       {/* Icon */}
@@ -198,7 +198,7 @@ FileBrowserGridSkeleton.displayName = 'FileBrowserGridSkeleton';
  */
 const GridItemSkeleton: React.FC = memo(() => (
     <div
-      className="flex flex-col items-center p-4 rounded-lg border border-[var(--border-color)] hover:bg-[var(--surface-hover)]/50 transition-colors"
+      className="flex flex-col items-center p-4 rounded-lg border border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface-raised))]/50 transition-colors"
       aria-hidden="true"
     >
       {/* File icon/thumbnail */}

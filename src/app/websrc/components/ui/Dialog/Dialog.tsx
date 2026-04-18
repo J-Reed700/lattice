@@ -14,13 +14,11 @@ import { Button } from '../button';
  * - Backdrop click to close (optional)
  * - ESC key to close
  * - Smooth enter/exit animations with CSS
- * - Glassmorphism design
  * - Customizable actions
  * - Dark mode support
  *
  * States: open, closed
  * Accessibility: WCAG AA, focus management, keyboard navigation, ARIA attributes
- * Micro-interactions: Scale and fade animations
  */
 
 interface DialogProps {
@@ -124,7 +122,7 @@ export default function Dialog({
     <>
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm transition-opacity duration-200 ${
+        className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-[hsl(var(--overlay))] transition-opacity duration-base ${
           isAnimating ? 'opacity-100' : 'opacity-0'
         }`}
         onClick={handleBackdropClick}
@@ -137,7 +135,7 @@ export default function Dialog({
         <div
           ref={dialogRef}
           tabIndex={-1}
-          className={`relative w-full max-w-md glass elevation-4 rounded-lg focus:outline-none motion-reduce:transition-none transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+          className={`relative w-full max-w-md bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] shadow-md rounded-lg focus:outline-none motion-reduce:transition-none transition-opacity duration-base ease-out ${
             isAnimating
               ? 'opacity-100 scale-100 translate-y-0'
               : 'opacity-0 scale-95 translate-y-5'
@@ -149,14 +147,14 @@ export default function Dialog({
             <div className="flex-1">
               <h2
                 id="dialog-title"
-                className="text-lg font-semibold text-[var(--text-primary)]"
+                className="text-lg font-semibold text-[hsl(var(--text-primary))]"
               >
                 {title}
               </h2>
               {description && (
                 <p
                   id="dialog-description"
-                  className="mt-1.5 text-sm text-[var(--text-secondary)]"
+                  className="mt-1.5 text-sm text-[hsl(var(--text-secondary))]"
                 >
                   {description}
                 </p>
@@ -166,10 +164,10 @@ export default function Dialog({
             {showClose && (
               <button
                 onClick={() => onOpenChange(false)}
-                className="ml-4 -mr-2 -mt-2 p-2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] rounded-lg hover:bg-[var(--surface-hover)] transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] hover:scale-110 hover:rotate-90 active:scale-90"
+                className="ml-4 -mr-2 -mt-2 p-2 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] rounded-md hover:bg-[hsl(var(--surface))] transition-colors duration-fast ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
                 aria-label="Close dialog"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" strokeWidth={1.75} />
               </button>
             )}
           </div>
@@ -183,7 +181,7 @@ export default function Dialog({
 
           {/* Actions */}
           {(primaryAction || secondaryAction) && (
-            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[var(--bg-secondary)] rounded-b-lg border-t border-[var(--border-color)]">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[hsl(var(--surface))] rounded-b-lg border-t border-[hsl(var(--border-subtle))]">
               {secondaryAction && (
                 <Button
                   variant="ghost"

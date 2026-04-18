@@ -120,8 +120,8 @@ export function RecentDocuments({
 
   if (error) {
     return (
-      <div className={`p-4 bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded-lg ${className}`}>
-        <p className="text-sm text-[var(--error)]">{error}</p>
+      <div className={`p-4 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg ${className}`}>
+        <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
       </div>
     );
   }
@@ -139,14 +139,14 @@ export function RecentDocuments({
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Clock className="w-4 h-4 text-[var(--text-tertiary)]" />
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+          <Clock className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
             Recent Documents
           </h3>
         </div>
         <button
           onClick={handleClearAll}
-          className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-secondary)] transition-colors"
+          className="text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-secondary))] transition-colors"
         >
           Clear all
         </button>
@@ -205,17 +205,17 @@ function DocumentItem({ document, onClick, compact }: DocumentItemProps) {
     return (
       <button
         onClick={onClick}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors group"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors group"
       >
-        <div className="text-[var(--text-tertiary)] group-hover:text-[var(--text-secondary)]">
+        <div className="text-[hsl(var(--text-tertiary))] group-hover:text-[hsl(var(--text-secondary))]">
           {getDocumentIcon(document.type)}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+          <p className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">
             {document.title}
           </p>
         </div>
-        <span className="text-xs text-[var(--text-secondary)] whitespace-nowrap">
+        <span className="text-xs text-[hsl(var(--text-secondary))] whitespace-nowrap">
           {formatRelativeTime(document.lastAccessed)}
         </span>
       </button>
@@ -225,21 +225,21 @@ function DocumentItem({ document, onClick, compact }: DocumentItemProps) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-start gap-3 p-3 text-left bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg hover:border-[var(--border-color)] hover:shadow-sm transition-all group"
+      className="w-full flex items-start gap-3 p-3 text-left bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg hover:border-[hsl(var(--border-subtle))] hover:shadow-sm transition-all group"
     >
-      <div className="mt-1 text-[var(--text-tertiary)] group-hover:text-[var(--text-secondary)]">
+      <div className="mt-1 text-[hsl(var(--text-tertiary))] group-hover:text-[hsl(var(--text-secondary))]">
         {getDocumentIcon(document.type)}
       </div>
       <div className="flex-1 min-w-0">
-        <h4 className="text-sm font-medium text-[var(--text-primary)] truncate mb-1">
+        <h4 className="text-sm font-medium text-[hsl(var(--text-primary))] truncate mb-1">
           {document.title}
         </h4>
         {document.excerpt && (
-          <p className="text-xs text-[var(--text-secondary)] line-clamp-2 mb-2">
+          <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-2 mb-2">
             {document.excerpt}
           </p>
         )}
-        <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+        <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
           <span>{formatRelativeTime(document.lastAccessed)}</span>
           <span>•</span>
           <span className="truncate">{document.path}</span>

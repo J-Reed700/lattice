@@ -21,19 +21,19 @@ interface ErrorToastProps {
 
 const severityStyles = {
   error: {
-    bg: 'bg-[var(--error-light)]/20 border-[var(--error-light)]',
-    icon: 'text-[var(--error)]',
-    text: 'text-[var(--error)]',
+    bg: 'bg-[hsl(var(--danger-muted))] border-[hsl(var(--danger-muted))]',
+    icon: 'text-[hsl(var(--danger-fg))]',
+    text: 'text-[hsl(var(--danger-fg))]',
   },
   warning: {
-    bg: 'bg-[var(--warning-light)]/20 border-[var(--warning-light)]',
-    icon: 'text-[var(--warning)]',
-    text: 'text-[var(--warning)]',
+    bg: 'bg-[hsl(var(--warning-muted))] border-[hsl(var(--warning-muted))]',
+    icon: 'text-[hsl(var(--warning-fg))]',
+    text: 'text-[hsl(var(--warning-fg))]',
   },
   info: {
-    bg: 'bg-[var(--accent-light)]/20 border-[var(--accent-light)]',
-    icon: 'text-[var(--accent-primary)]',
-    text: 'text-[var(--accent-primary)]',
+    bg: 'bg-[hsl(var(--accent-muted))] border-[hsl(var(--accent-muted))]',
+    icon: 'text-[hsl(var(--accent))]',
+    text: 'text-[hsl(var(--accent))]',
   },
 };
 
@@ -42,7 +42,7 @@ const severityIcons = {
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
-      strokeWidth={2}
+      strokeWidth={1.75}
       d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
     />
   ),
@@ -50,7 +50,7 @@ const severityIcons = {
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
-      strokeWidth={2}
+      strokeWidth={1.75}
       d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
     />
   ),
@@ -58,7 +58,7 @@ const severityIcons = {
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
-      strokeWidth={2}
+      strokeWidth={1.75}
       d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
     />
   ),
@@ -94,7 +94,7 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
 
   return (
     <div
-      className={`max-w-md w-full border rounded-lg shadow-lg overflow-hidden transition-all duration-200 ease-out ${styles.bg} ${
+      className={`max-w-md w-full border rounded-md shadow-md overflow-hidden transition-opacity duration-base ease-out ${styles.bg} ${
         isVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-5 scale-95'
       }`}
     >
@@ -102,7 +102,7 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0">
             <svg
-              className={`w-5 h-5 ${styles.icon}`}
+              className={`w-4 h-4 ${styles.icon}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -129,13 +129,13 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
 
           <button
             onClick={() => onDismiss(error.id)}
-            className={`flex-shrink-0 ${styles.icon} hover:opacity-70 transition-opacity`}
+            className={`flex-shrink-0 ${styles.icon} hover:opacity-70 transition-opacity duration-fast`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={2}
+                strokeWidth={1.75}
                 d="M6 18L18 6M6 6l12 12"
               />
             </svg>
@@ -144,14 +144,14 @@ export function ErrorToast({ error, onDismiss }: ErrorToastProps) {
       </div>
 
       {duration > 0 && (
-        <div className="h-1 bg-[var(--bg-tertiary)]">
+        <div className="h-1 bg-[hsl(var(--surface-raised))]">
           <div
-            className={`h-full transition-all duration-50 ease-linear ${
+            className={`h-full transition-all ease-linear ${
               error.severity === 'error'
-                ? 'bg-[var(--error)]'
+                ? 'bg-[hsl(var(--danger-fg))]'
                 : error.severity === 'warning'
-                ? 'bg-[var(--warning)]'
-                : 'bg-[var(--accent-primary)]'
+                ? 'bg-[hsl(var(--warning-fg))]'
+                : 'bg-[hsl(var(--accent))]'
             }`}
             style={{ width: `${progress}%` }}
           />

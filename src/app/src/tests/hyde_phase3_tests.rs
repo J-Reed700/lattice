@@ -40,7 +40,8 @@ use std::time::Instant;
 use vault::domain::qa::hyde::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
 use vault::infrastructure::search::service::SearchResult;
 use vault::infrastructure::services::hyde::DocumentRetriever;
-use vault::infrastructure::services::traits::{EmbeddingServiceTrait, SearchServiceTrait};
+use vault::features::embedding::EmbeddingServiceTrait;
+use vault::features::search::SearchServiceTrait;
 use vault::shared::error::Result;
 
 // ============================================================================

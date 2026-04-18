@@ -63,9 +63,9 @@ export function ImageViewer({ filePath, fileName }: ImageViewerProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center max-w-md p-8">
-          <div className="w-16 h-16 bg-[var(--error-light)]/30 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-[hsl(var(--danger-muted))]/30 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg
-              className="w-8 h-8 text-[var(--error)]"
+              className="w-8 h-8 text-[hsl(var(--danger-fg))]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -78,44 +78,44 @@ export function ImageViewer({ filePath, fileName }: ImageViewerProps) {
               />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
             Image Load Error
           </h3>
-          <p className="text-[var(--text-secondary)]">Failed to load image file.</p>
+          <p className="text-[hsl(var(--text-secondary))]">Failed to load image file.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-[var(--bg-primary)]">
+    <div className="h-full flex flex-col bg-[hsl(var(--bg))]">
       {/* Controls */}
-      <div className="bg-[var(--surface-elevated)] border-b border-[var(--border-color)] px-4 py-3 flex items-center justify-center gap-4 shadow-sm">
+      <div className="bg-[hsl(var(--surface-raised))] border-b border-[hsl(var(--border-subtle))] px-4 py-3 flex items-center justify-center gap-4 shadow-sm">
         <button
           onClick={zoomOut}
-          className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+          className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
           aria-label="Zoom out"
         >
           <ZoomOut className="w-5 h-5" />
         </button>
 
-        <span className="text-sm font-medium text-[var(--text-primary)] min-w-[60px] text-center">
+        <span className="text-sm font-medium text-[hsl(var(--text-primary))] min-w-[60px] text-center">
           {Math.round(zoom * 100)}%
         </span>
 
         <button
           onClick={zoomIn}
-          className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+          className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
           aria-label="Zoom in"
         >
           <ZoomIn className="w-5 h-5" />
         </button>
 
-        <div className="w-px h-6 bg-[var(--border-color)]" aria-hidden="true" />
+        <div className="w-px h-6 bg-[hsl(var(--border-subtle))]" aria-hidden="true" />
 
         <button
           onClick={rotate}
-          className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+          className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
           aria-label="Rotate 90 degrees"
         >
           <RotateCw className="w-5 h-5" />
@@ -123,21 +123,21 @@ export function ImageViewer({ filePath, fileName }: ImageViewerProps) {
 
         <button
           onClick={toggleFit}
-          className={`p-2 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] ${
+          className={`p-2 rounded-lg transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] ${
             fitToScreen
-              ? 'bg-[var(--accent-light)]/30 text-[var(--accent-primary)]'
-              : 'hover:bg-[var(--surface-hover)]'
+              ? 'bg-[hsl(var(--accent-muted))]/30 text-[hsl(var(--accent))]'
+              : 'hover:bg-[hsl(var(--surface-raised))]'
           }`}
           aria-label={fitToScreen ? 'Show actual size' : 'Fit to screen'}
         >
           {fitToScreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
         </button>
 
-        <div className="w-px h-6 bg-[var(--border-color)]" aria-hidden="true" />
+        <div className="w-px h-6 bg-[hsl(var(--border-subtle))]" aria-hidden="true" />
 
         <button
           onClick={resetView}
-          className="px-3 py-2 text-sm rounded-lg hover:bg-[var(--surface-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+          className="px-3 py-2 text-sm rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))]"
           aria-label="Reset view"
         >
           Reset

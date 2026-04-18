@@ -6,11 +6,11 @@ interface ErrorStateProps {
 
 export function ErrorState({ error }: ErrorStateProps) {
   return (
-    <Card className="border-[var(--error-light)] bg-[var(--error-light)]/20">
+    <Card className="border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))]/20">
       <div className="p-4">
         <div className="flex items-start gap-3">
           <svg
-            className="w-5 h-5 text-[var(--error)] flex-shrink-0 mt-0.5"
+            className="w-5 h-5 text-[hsl(var(--danger-fg))] flex-shrink-0 mt-0.5"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -23,11 +23,11 @@ export function ErrorState({ error }: ErrorStateProps) {
             />
           </svg>
           <div className="flex-1">
-            <h4 className="text-sm font-semibold text-[var(--error)] mb-1">
+            <h4 className="text-sm font-semibold text-[hsl(var(--danger-fg))] mb-1">
               Failed to generate suggestions
             </h4>
-            <p className="text-sm text-[var(--error)]">{error}</p>
-            <p className="text-xs text-[var(--error)] mt-2">
+            <p className="text-sm text-[hsl(var(--danger-fg))]">{error}</p>
+            <p className="text-xs text-[hsl(var(--danger-fg))] mt-2">
               Make sure Ollama is running and a model is loaded.
             </p>
           </div>

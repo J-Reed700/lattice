@@ -13,7 +13,7 @@ use crate::infrastructure::indexing::transaction::FileIndexTransaction;
 use crate::features::embedding::service::EmbeddingService;
 use crate::infrastructure::services::file_storage::FileStorageService;
 use crate::infrastructure::services::file_type_detector::FileTypeDetector;
-use crate::infrastructure::services::traits::EmbeddingServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::utils::patterns::observer::Observable;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -600,7 +600,7 @@ impl IndexingService {
 }
 
 // Implement IndexingServiceTrait for IndexingService
-use crate::infrastructure::services::traits::IndexingServiceTrait;
+use crate::features::indexing::IndexingServiceTrait;
 use async_trait::async_trait;
 
 #[async_trait]

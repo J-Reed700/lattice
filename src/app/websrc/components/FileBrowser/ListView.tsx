@@ -177,7 +177,7 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-center text-[var(--error)]">
+        <div className="text-center text-[hsl(var(--danger-fg))]">
           <p className="font-semibold mb-1">Error loading files</p>
           <p className="text-sm">{error}</p>
         </div>
@@ -188,7 +188,7 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
   if (documents.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-center text-[var(--text-secondary)]">
+        <div className="text-center text-[hsl(var(--text-secondary))]">
           <p className="font-semibold mb-1">No documents found</p>
           <p className="text-sm">Add files to start indexing</p>
         </div>
@@ -199,7 +199,7 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
   if (items.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-center text-[var(--text-secondary)] max-w-md px-6">
+        <div className="text-center text-[hsl(var(--text-secondary))] max-w-md px-6">
           <p className="font-semibold mb-1">No matches found</p>
           <p className="text-sm">
             {searchQuery.trim()
@@ -214,10 +214,10 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
   const renderDocumentRow = (doc: DocumentMetadata, key: string | number) => (
     <tr
       key={key}
-      className={`group border-b border-[var(--border-color)] cursor-pointer transition-colors ${
+      className={`group border-b border-[hsl(var(--border-subtle))] cursor-pointer transition-colors duration-fast ${
         selectedDocumentIds.has(doc.id)
-          ? 'bg-[var(--accent-light)]/35'
-          : 'hover:bg-[var(--surface-hover)]/90'
+          ? 'bg-[hsl(var(--accent-muted))]/35'
+          : 'hover:bg-[hsl(var(--surface-raised))]/90'
       }`}
       onClick={(e) => handleRowClick(doc, 0, e)}
       onDoubleClick={() => handleRowDoubleClick(doc)}
@@ -238,18 +238,18 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
           <FileIcon file={doc} size={20} />
           <span className="text-sm font-medium truncate">{doc.fileName}</span>
           <span
-            className="flex-shrink-0 w-2 h-2 rounded-full bg-[var(--success-light)]"
+            className="flex-shrink-0 w-2 h-2 rounded-full bg-[hsl(var(--success-muted))]"
             title="Indexed"
           />
         </div>
       </td>
       {listColumns.words && (
-        <td className="w-32 px-4 py-3 text-sm text-[var(--text-secondary)]">
+        <td className="w-32 px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
           {doc.wordCount ? `${doc.wordCount} words` : '-'}
         </td>
       )}
       {listColumns.modified && (
-        <td className="w-40 px-4 py-3 text-sm text-[var(--text-secondary)]">
+        <td className="w-40 px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
           <span title={new Date(doc.modifiedAt).toLocaleString()}>
             {formatRelativeTime(doc.modifiedAt)}
           </span>
@@ -268,7 +268,7 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
                 e.stopPropagation();
                 onRename(doc);
               }}
-              className="p-1.5 hover:bg-[var(--surface-elevated)] rounded-lg transition-colors"
+              className="p-1.5 hover:bg-[hsl(var(--surface-raised))] rounded-lg transition-colors duration-fast"
               aria-label="Rename"
               title="Rename"
             >
@@ -281,7 +281,7 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
                 e.stopPropagation();
                 onDelete(doc);
               }}
-              className="p-1.5 hover:bg-[var(--surface-elevated)] rounded-lg transition-colors text-[var(--error)]"
+              className="p-1.5 hover:bg-[hsl(var(--surface-raised))] rounded-lg transition-colors duration-fast text-[hsl(var(--danger-fg))]"
               aria-label="Delete"
               title="Delete"
             >
@@ -294,9 +294,9 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
   );
 
   return (
-    <div ref={parentRef} className="overflow-auto h-full bg-[linear-gradient(180deg,var(--surface-elevated),var(--bg-secondary))]">
+    <div ref={parentRef} className="overflow-auto h-full bg-[linear-gradient(180deg,hsl(var(--surface-raised)),hsl(var(--surface)))]">
       <table className="w-full border-collapse">
-        <thead className="sticky top-0 z-20 border-b border-[var(--border-color)] bg-[var(--surface-elevated)]/95 backdrop-blur-sm">
+        <thead className="sticky top-0 z-20 border-b border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]/95 backdrop-blur-sm">
           <tr>
             <th className="w-12 px-4 py-3 text-left">
               <Checkbox
@@ -344,7 +344,7 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
               />
             )}
             <th className="w-24 px-4 py-3 text-left">
-              <span className="text-sm font-semibold text-[var(--text-secondary)]">Actions</span>
+              <span className="text-sm font-semibold text-[hsl(var(--text-secondary))]">Actions</span>
             </th>
           </tr>
         </thead>
@@ -368,9 +368,9 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
                             height: `${virtualRow.size}px`,
                             transform: `translateY(${virtualRow.start}px)`,
                           }}
-                          className="z-10 border-b border-[var(--border-color)] bg-[var(--accent-light)]/20 px-4 py-1.5"
+                          className="z-10 border-b border-[hsl(var(--border-subtle))] bg-[hsl(var(--accent-muted))]/20 px-4 py-1.5"
                         >
-                          <h3 className="text-[11px] font-semibold uppercase tracking-widest text-[var(--accent-primary)]">
+                          <h3 className="text-[11px] font-semibold uppercase tracking-widest text-[hsl(var(--accent))]">
                             {item.label}
                           </h3>
                         </div>
@@ -403,10 +403,10 @@ export const ListView = memo(({ onFileOpen, onContextMenu, onRename, onDelete }:
               item.type === 'header' ? (
                 <tr
                   key={`header-${item.label}-${index}`}
-                  className="border-b border-[var(--border-color)] bg-[var(--accent-light)]/20"
+                  className="border-b border-[hsl(var(--border-subtle))] bg-[hsl(var(--accent-muted))]/20"
                 >
                   <td colSpan={tableColumnCount} className="px-4 py-1.5">
-                    <h3 className="text-[11px] font-semibold uppercase tracking-widest text-[var(--accent-primary)]">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-widest text-[hsl(var(--accent))]">
                       {item.label}
                     </h3>
                   </td>
@@ -445,7 +445,7 @@ function ColumnHeader({
     <th className={`px-4 py-3 text-left ${className}`}>
       <button
         onClick={() => onClick(field)}
-        className="flex items-center gap-2 text-sm font-semibold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+        className="flex items-center gap-2 text-sm font-semibold text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
       >
         {label}
         {isActive && (

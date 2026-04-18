@@ -85,11 +85,11 @@ export const ViewerContent = memo(({ fileData }: ViewerContentProps) => {
 
     // Unsupported format
     return (
-      <div className="flex items-center justify-center h-full bg-[var(--bg-secondary)]">
+      <div className="flex items-center justify-center h-full bg-[hsl(var(--surface))]">
         <div className="text-center max-w-md p-8">
-          <div className="w-16 h-16 bg-[var(--bg-tertiary)] rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-[hsl(var(--surface-raised))] rounded-full flex items-center justify-center mx-auto mb-4">
             <svg
-              className="w-8 h-8 text-[var(--text-tertiary)]"
+              className="w-8 h-8 text-[hsl(var(--text-tertiary))]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -102,14 +102,14 @@ export const ViewerContent = memo(({ fileData }: ViewerContentProps) => {
               />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
             Preview Not Available
           </h3>
-          <p className="text-[var(--text-secondary)] mb-4">
+          <p className="text-[hsl(var(--text-secondary))] mb-4">
             This file type cannot be previewed in the app. You can open it in an external
             application using the button in the header.
           </p>
-          <div className="text-sm text-[var(--text-tertiary)] space-y-1">
+          <div className="text-sm text-[hsl(var(--text-tertiary))] space-y-1">
             <p>File type: {fileData.fileType.toUpperCase()}</p>
             <p>MIME type: {fileData.mimeType}</p>
           </div>
@@ -119,13 +119,13 @@ export const ViewerContent = memo(({ fileData }: ViewerContentProps) => {
   };
 
   return (
-    <div className="h-full bg-[var(--bg-secondary)] overflow-auto">
+    <div className="h-full bg-[hsl(var(--surface))] overflow-auto">
       <Suspense
         fallback={
           <div className="flex items-center justify-center h-full">
             <div className="flex flex-col items-center gap-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-4 border-[var(--accent-primary)] border-t-transparent" />
-              <p className="text-[var(--text-secondary)] font-medium">Loading viewer...</p>
+              <div className="animate-spin rounded-full h-12 w-12 border-4 border-[hsl(var(--accent))] border-t-transparent" />
+              <p className="text-[hsl(var(--text-secondary))] font-medium">Loading viewer...</p>
             </div>
           </div>
         }

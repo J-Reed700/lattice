@@ -86,20 +86,20 @@ export const ProgressManager = memo<ProgressManagerProps>(({ className = '' }) =
       role="region"
       aria-label="Progress indicator"
     >
-        <div className="bg-[var(--surface-elevated)] rounded-lg shadow-2xl border border-[var(--border-color)] overflow-hidden">
+        <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between p-3 bg-[var(--bg-secondary)]/50 border-b border-[var(--border-color)]">
+          <div className="flex items-center justify-between p-3 bg-[hsl(var(--surface))]/50 border-b border-[hsl(var(--border-subtle))]">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+              <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                 Operations
               </h3>
               {hasActive && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-[var(--accent-light)]/30 text-[var(--accent-primary)] rounded-full">
+                <span className="px-2 py-0.5 text-xs font-medium bg-[hsl(var(--accent-muted))]/30 text-[hsl(var(--accent))] rounded-full">
                   {activeOperations.length} active
                 </span>
               )}
               {hasCompleted && !hasActive && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-[var(--success-light)]/30 text-[var(--success)] rounded-full">
+                <span className="px-2 py-0.5 text-xs font-medium bg-[hsl(var(--success-muted))]/30 text-[hsl(var(--success-fg))] rounded-full">
                   {completedOperations.length} completed
                 </span>
               )}
@@ -109,23 +109,23 @@ export const ProgressManager = memo<ProgressManagerProps>(({ className = '' }) =
               {hasCompleted && !hasActive && (
                 <button
                   onClick={clearCompleted}
-                  className="p-1.5 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+                  className="p-1.5 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors"
                   aria-label="Clear completed"
                   title="Clear completed"
                 >
-                  <CheckCircle2 className="w-4 h-4 text-[var(--text-tertiary)]" />
+                  <CheckCircle2 className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
                 </button>
               )}
               <button
                 onClick={toggleCollapsed}
-                className="p-1.5 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+                className="p-1.5 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors"
                 aria-label={isCollapsed ? 'Expand' : 'Collapse'}
                 title={isCollapsed ? 'Expand' : 'Collapse'}
               >
                 {isCollapsed ? (
-                  <ChevronUp className="w-4 h-4 text-[var(--text-tertiary)]" />
+                  <ChevronUp className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
                 ) : (
-                  <ChevronDown className="w-4 h-4 text-[var(--text-tertiary)]" />
+                  <ChevronDown className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
                 )}
               </button>
             </div>
@@ -145,7 +145,7 @@ export const ProgressManager = memo<ProgressManagerProps>(({ className = '' }) =
                     <>
                       {hasActive && (
                         <div className="pt-2 pb-1">
-                          <div className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">
+                          <div className="text-xs font-medium text-[hsl(var(--text-secondary))] uppercase tracking-wide">
                             Recent
                           </div>
                         </div>
@@ -162,7 +162,7 @@ export const ProgressManager = memo<ProgressManagerProps>(({ className = '' }) =
           {/* Collapsed Summary */}
           {isCollapsed && (
             <div className="p-3">
-              <div className="text-sm text-[var(--text-secondary)]">
+              <div className="text-sm text-[hsl(var(--text-secondary))]">
                 {hasActive
                   ? `${activeOperations.length} operation${
                       activeOperations.length > 1 ? 's' : ''
@@ -176,13 +176,13 @@ export const ProgressManager = memo<ProgressManagerProps>(({ className = '' }) =
                   {activeOperations.slice(0, 2).map((op) => (
                     <div
                       key={op.id}
-                      className="text-xs text-[var(--text-secondary)] truncate"
+                      className="text-xs text-[hsl(var(--text-secondary))] truncate"
                     >
                       {op.type}: {Math.round(op.progress)}%
                     </div>
                   ))}
                   {activeOperations.length > 2 && (
-                    <div className="text-xs text-[var(--text-tertiary)]">
+                    <div className="text-xs text-[hsl(var(--text-tertiary))]">
                       +{activeOperations.length - 2} more
                     </div>
                   )}

@@ -11,7 +11,7 @@ use crate::shared::text_utils::safe_truncate;
 
 pub(super) async fn run_kb_retrieval(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,

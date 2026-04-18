@@ -86,7 +86,7 @@ export function ImageViewer({ filePath, title }: ImageViewerProps) {
       </div>
 
       {/* Image Content */}
-      <div className="flex-1 overflow-auto flex items-center justify-center p-8 bg-[var(--bg-secondary)]">
+      <div className="flex-1 overflow-auto flex items-center justify-center p-8 bg-[hsl(var(--surface))]">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -97,7 +97,7 @@ export function ImageViewer({ filePath, title }: ImageViewerProps) {
           alt={title || 'Image'}
           onLoad={handleLoad}
           onError={handleError}
-          className="max-w-full max-h-full object-contain shadow-lg transition-transform"
+          className="max-w-full max-h-full object-contain shadow-md transition-transform"
           style={{
             transform: `scale(${scale}) rotate(${rotation}deg)`,
           }}

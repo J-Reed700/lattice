@@ -22,9 +22,9 @@ export function TextViewer({ content }: TextViewerProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center max-w-md p-8">
-          <div className="w-16 h-16 bg-[var(--bg-tertiary)] rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-[hsl(var(--surface-raised))] rounded-full flex items-center justify-center mx-auto mb-4">
             <svg
-              className="w-8 h-8 text-[var(--text-tertiary)]"
+              className="w-8 h-8 text-[hsl(var(--text-tertiary))]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -37,18 +37,18 @@ export function TextViewer({ content }: TextViewerProps) {
               />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
             Empty File
           </h3>
-          <p className="text-[var(--text-secondary)]">This file has no content to display.</p>
+          <p className="text-[hsl(var(--text-secondary))]">This file has no content to display.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-auto bg-[var(--surface-elevated)]">
-      <pre className="p-8 whitespace-pre-wrap font-mono text-sm text-[var(--text-primary)] leading-relaxed">
+    <div className="h-full overflow-auto bg-[hsl(var(--surface-raised))]">
+      <pre className="p-8 whitespace-pre-wrap font-mono text-sm text-[hsl(var(--text-primary))] leading-relaxed">
         {content}
       </pre>
     </div>

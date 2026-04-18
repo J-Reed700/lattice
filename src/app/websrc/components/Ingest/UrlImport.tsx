@@ -169,8 +169,8 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
             exit={{ opacity: 0, y: -10 }}
             className={cn(
               "border rounded-lg p-4",
-              "border-[var(--border-color)]",
-              "bg-[var(--surface-elevated)]"
+              "border-[hsl(var(--border-subtle))]",
+              "bg-[hsl(var(--surface-raised))]"
             )}
           >
             <div className="flex gap-4">
@@ -186,21 +186,21 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
               )}
 
               <div className="flex-1 min-w-0">
-                <h4 className="font-semibold text-lg truncate text-[var(--text-primary)]">
+                <h4 className="font-semibold text-lg truncate text-[hsl(var(--text-primary))]">
                   {preview.title}
                 </h4>
                 {preview.author && (
-                  <p className="text-sm text-[var(--text-secondary)]">
+                  <p className="text-sm text-[hsl(var(--text-secondary))]">
                     by {preview.author}
                   </p>
                 )}
                 {preview.description && (
-                  <p className="text-sm text-[var(--text-secondary)] mt-2 line-clamp-2">
+                  <p className="text-sm text-[hsl(var(--text-secondary))] mt-2 line-clamp-2">
                     {preview.description}
                   </p>
                 )}
 
-                <div className="flex gap-4 mt-3 text-xs text-[var(--text-secondary)]">
+                <div className="flex gap-4 mt-3 text-xs text-[hsl(var(--text-secondary))]">
                   {preview.siteName && (
                     <span className="flex items-center gap-1">
                       <Globe className="w-3 h-3" />

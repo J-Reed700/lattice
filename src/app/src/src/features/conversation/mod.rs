@@ -18,8 +18,9 @@
 //! - `crate::features::conversation::chat` + `chat/` — chat controller
 //!   pipeline (with submodule `retrieval/` — 15-file RAG pipeline)
 //! - `crate::features::conversation::plugin::init()` — Tauri plugin
+//! - `crate::features::conversation::ConversationServiceTrait` — service trait
 //!
-//! ## Kept as shared (redirects retained)
+//! ## Kept as shared
 //!
 //! - `crate::domain::conversation` and `crate::domain::conversation_summary`
 //!   — consumed through the domain namespace
@@ -29,7 +30,6 @@
 //!   (persistence mapper)
 //! - `crate::infrastructure::events::conversation_events`
 //! - `crate::infrastructure::services::conversation_service`
-//! - `trait_def` + `mocks` via shared services aggregators
 //!
 //! `ConversationRepositoryPort` stays in `application/ports/`.
 
@@ -42,4 +42,10 @@ pub mod plugin;
 pub mod plugin_impl;
 pub mod space_dto;
 pub mod summarizer;
+pub mod trait_def;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use trait_def::ConversationServiceTrait;

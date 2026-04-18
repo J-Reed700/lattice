@@ -21,11 +21,10 @@
 //! - `crate::features::embedding::service` — EmbeddingService
 //! - `crate::features::embedding::commands` — Tauri command handlers
 //! - `crate::features::embedding::plugin::init()` — Tauri plugin
+//! - `crate::features::embedding::EmbeddingServiceTrait` — service trait
 //!
 //! Ports (EmbeddingPort, EmbeddingRepositoryPort, MockEmbeddingPort)
-//! stay in `application/ports/`. `trait_def` and `mocks` remain loaded
-//! via the shared `infrastructure::services::{traits,mocks}` aggregators
-//! — consumers import through those aggregators.
+//! stay in `application/ports/`.
 
 pub mod commands;
 pub mod dto;
@@ -38,5 +37,11 @@ pub mod remote_service;
 pub mod repository;
 pub mod repository_tx;
 pub mod service;
+pub mod trait_def;
 pub mod use_cases;
 pub mod validator;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use trait_def::EmbeddingServiceTrait;

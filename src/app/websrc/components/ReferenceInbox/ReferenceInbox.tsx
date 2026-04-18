@@ -496,9 +496,9 @@ export function ReferenceInbox() {
   }, [payloadCache, selectedBookmark]);
 
   return (
-    <div className="h-full overflow-hidden bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.14),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(34,211,238,0.12),transparent_46%),var(--bg-primary)] text-[var(--text-primary)]">
+    <div className="h-full overflow-hidden bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.14),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(34,211,238,0.12),transparent_46%),hsl(var(--bg))] text-[hsl(var(--text-primary))]">
       <div className="h-full flex flex-col">
-        <header className="border-b border-white/10 bg-black/20 px-4 py-3 backdrop-blur-sm md:px-5">
+        <header className="border-b border-white/10 bg-[hsl(var(--overlay))] px-4 py-3 md:px-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[11px] uppercase tracking-[0.16em] text-emerald-100/70">
@@ -579,7 +579,7 @@ export function ReferenceInbox() {
 
         <div className="flex-1 min-h-0 p-4 md:p-5">
           <div className="grid h-full grid-cols-1 gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
-            <section className="min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black/20">
+            <section className="min-h-0 overflow-hidden rounded-xl border border-white/10 bg-[hsl(var(--overlay))]">
               <div className="border-b border-white/10 px-3 py-2 text-xs uppercase tracking-wide text-white/55">
                 References
               </div>
@@ -636,7 +636,7 @@ export function ReferenceInbox() {
               </div>
             </section>
 
-            <section className="min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black/20">
+            <section className="min-h-0 overflow-hidden rounded-xl border border-white/10 bg-[hsl(var(--overlay))]">
               <div className="border-b border-white/10 px-3 py-2 text-xs uppercase tracking-wide text-white/55">
                 Detail
               </div>
@@ -773,7 +773,7 @@ export function ReferenceInbox() {
                         </p>
                         {isResolvingPreview && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/45" />}
                       </div>
-                      <div className="max-h-[28rem] overflow-y-auto rounded-md border border-white/10 bg-black/20 p-2.5">
+                      <div className="max-h-[28rem] overflow-y-auto rounded-md border border-white/10 bg-[hsl(var(--overlay))] p-2.5">
                         <div className="max-w-none break-words [overflow-wrap:anywhere]">
                           <TiptapViewer content={selectedPreview} />
                         </div>

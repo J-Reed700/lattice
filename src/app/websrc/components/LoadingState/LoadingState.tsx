@@ -55,7 +55,7 @@ export function LoadingState({
       {type === 'dots' && <DotsLoader size={size} />}
 
       {message && (
-        <p className="mt-4 text-sm text-[var(--text-secondary)]">
+        <p className="mt-4 text-sm text-[hsl(var(--text-secondary))]">
           {message}
         </p>
       )}
@@ -78,7 +78,7 @@ function Spinner({ size }: { size: 'sm' | 'md' | 'lg' }) {
 
   return (
     <div
-      className={`${sizeClasses[size]} rounded-full border-[var(--border-color)] border-t-[var(--accent-primary)] animate-spin`}
+      className={`${sizeClasses[size]} rounded-full border-[hsl(var(--border-subtle))] border-t-[hsl(var(--accent))] animate-spin`}
       aria-hidden="true"
     />
   );
@@ -103,15 +103,15 @@ function DotsLoader({ size }: { size: 'sm' | 'md' | 'lg' }) {
   return (
     <div className={`flex ${gapSizes[size]}`} aria-hidden="true">
       <div
-        className={`${dotSizes[size]} rounded-full bg-[var(--accent-primary)] animate-pulse`}
+        className={`${dotSizes[size]} rounded-full bg-[hsl(var(--accent))] animate-pulse`}
         style={{ animationDelay: '0ms' }}
       />
       <div
-        className={`${dotSizes[size]} rounded-full bg-[var(--accent-primary)] animate-pulse`}
+        className={`${dotSizes[size]} rounded-full bg-[hsl(var(--accent))] animate-pulse`}
         style={{ animationDelay: '150ms' }}
       />
       <div
-        className={`${dotSizes[size]} rounded-full bg-[var(--accent-primary)] animate-pulse`}
+        className={`${dotSizes[size]} rounded-full bg-[hsl(var(--accent))] animate-pulse`}
         style={{ animationDelay: '300ms' }}
       />
     </div>
@@ -130,9 +130,9 @@ function SkeletonLoader({ size }: { size: 'sm' | 'md' | 'lg' }) {
 
   return (
     <div className="w-full space-y-3 animate-pulse" aria-hidden="true">
-      <div className={`${heights[size]} bg-[var(--bg-tertiary)] rounded w-3/4`} />
-      <div className={`${heights[size]} bg-[var(--bg-tertiary)] rounded w-full`} />
-      <div className={`${heights[size]} bg-[var(--bg-tertiary)] rounded w-5/6`} />
+      <div className={`${heights[size]} bg-[hsl(var(--surface-raised))] rounded w-3/4`} />
+      <div className={`${heights[size]} bg-[hsl(var(--surface-raised))] rounded w-full`} />
+      <div className={`${heights[size]} bg-[hsl(var(--surface-raised))] rounded w-5/6`} />
     </div>
   );
 }
@@ -143,7 +143,7 @@ function SkeletonLoader({ size }: { size: 'sm' | 'md' | 'lg' }) {
 export function InlineSpinner({ className = '' }: { className?: string }) {
   return (
     <span
-      className={`inline-block w-4 h-4 border-2 border-[var(--border-color)] border-t-[var(--accent-primary)] rounded-full animate-spin ${className}`}
+      className={`inline-block w-4 h-4 border-2 border-[hsl(var(--border-subtle))] border-t-[hsl(var(--accent))] rounded-full animate-spin ${className}`}
       role="status"
       aria-label="Loading"
     >
@@ -158,24 +158,24 @@ export function InlineSpinner({ className = '' }: { className?: string }) {
 export function SkeletonCard() {
   return (
     <div
-      className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-6 animate-pulse"
+      className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 animate-pulse"
       aria-hidden="true"
     >
       <div className="space-y-4">
         {/* Title */}
-        <div className="h-6 bg-[var(--bg-tertiary)] rounded w-3/4" />
+        <div className="h-6 bg-[hsl(var(--surface-raised))] rounded w-3/4" />
 
         {/* Content lines */}
         <div className="space-y-2">
-          <div className="h-4 bg-[var(--bg-tertiary)] rounded w-full" />
-          <div className="h-4 bg-[var(--bg-tertiary)] rounded w-5/6" />
-          <div className="h-4 bg-[var(--bg-tertiary)] rounded w-4/5" />
+          <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-full" />
+          <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-5/6" />
+          <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-4/5" />
         </div>
 
         {/* Footer */}
         <div className="flex gap-3 pt-2">
-          <div className="h-8 bg-[var(--bg-tertiary)] rounded w-20" />
-          <div className="h-8 bg-[var(--bg-tertiary)] rounded w-20" />
+          <div className="h-8 bg-[hsl(var(--surface-raised))] rounded w-20" />
+          <div className="h-8 bg-[hsl(var(--surface-raised))] rounded w-20" />
         </div>
       </div>
     </div>
@@ -191,15 +191,15 @@ export function SkeletonList({ count = 5 }: { count?: number }) {
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          className="flex items-center gap-4 p-4 bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] animate-pulse"
+          className="flex items-center gap-4 p-4 bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] animate-pulse"
         >
           {/* Icon */}
-          <div className="w-10 h-10 bg-[var(--bg-tertiary)] rounded" />
+          <div className="w-10 h-10 bg-[hsl(var(--surface-raised))] rounded" />
 
           {/* Content */}
           <div className="flex-1 space-y-2">
-            <div className="h-4 bg-[var(--bg-tertiary)] rounded w-3/4" />
-            <div className="h-3 bg-[var(--bg-tertiary)] rounded w-1/2" />
+            <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-3/4" />
+            <div className="h-3 bg-[hsl(var(--surface-raised))] rounded w-1/2" />
           </div>
         </div>
       ))}
@@ -216,7 +216,7 @@ export function FullPageLoading({
   message?: string;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[var(--bg-secondary)]">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[hsl(var(--surface))]">
       <LoadingState type="spinner" size="lg" message={message} />
     </div>
   );
@@ -234,7 +234,7 @@ export function SectionLoading({
 }) {
   if (overlay) {
     return (
-      <div className="absolute inset-0 flex items-center justify-center bg-white/80/80 backdrop-blur-sm z-10">
+      <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--overlay))] z-10">
         <LoadingState type="spinner" size="md" message={message} />
       </div>
     );

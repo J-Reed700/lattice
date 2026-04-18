@@ -199,7 +199,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         <div className="min-w-0">
           {!isLoading && !error && displayedModels.length > 0 && (
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-[var(--text-tertiary)]">
+              <span className="text-xs text-[hsl(var(--text-tertiary))]">
                 {displayedModels.length} model{displayedModels.length !== 1 ? 's' : ''}
               </span>
             </div>

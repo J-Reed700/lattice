@@ -92,28 +92,28 @@ const DEFAULT_ACCEPT: Accept = {
 
 const getFileTypeIcon = (acceptedTypes?: Accept): React.ReactNode => {
   if (!acceptedTypes || Object.keys(acceptedTypes).length === 0) {
-    return <Upload className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+    return <Upload className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
   }
 
   const types = Object.keys(acceptedTypes);
 
   if (types.some(t => MIME_TYPE_CATEGORIES.documents.includes(t))) {
-    return <FileText className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+    return <FileText className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.images.includes(t))) {
-    return <Image className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+    return <Image className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.audio.includes(t))) {
-    return <Music className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+    return <Music className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.video.includes(t))) {
-    return <Video className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+    return <Video className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
   }
   if (types.some(t => MIME_TYPE_CATEGORIES.archives.includes(t))) {
-    return <FileArchive className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+    return <FileArchive className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
   }
 
-  return <File className="w-16 h-16 mb-4 text-[var(--accent-primary)]" />;
+  return <File className="w-16 h-16 mb-4 text-[hsl(var(--accent))]" />;
 };
 
 const getSupportedFormats = (acceptedTypes?: Accept): string => {
@@ -213,11 +213,11 @@ export const DropZone: React.FC<DropZoneProps> = ({
       className={cn(
         'relative border-2 border-dashed rounded-xl transition-all duration-300',
         'min-h-[300px] flex flex-col items-center justify-center p-8',
-        'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2',
+        'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--accent))] focus-visible:ring-offset-2',
         isDragging
-          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5 shadow-lg shadow-[var(--accent-primary)]/20'
-          : 'border-[var(--border-color)] hover:border-[var(--accent-primary)]/50',
-        isDragReject && 'border-[var(--error)] bg-[var(--error)]/5',
+          ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent))]/5 shadow-lg shadow-[hsl(var(--accent))]/20'
+          : 'border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]/50',
+        isDragReject && 'border-[hsl(var(--danger-fg))] bg-[hsl(var(--danger-fg))]/5',
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
         className
       )}
@@ -250,7 +250,7 @@ export const DropZone: React.FC<DropZoneProps> = ({
       </motion.div>
 
       <motion.h3
-        className="text-xl font-semibold mb-2 text-[var(--text-primary)]"
+        className="text-xl font-semibold mb-2 text-[hsl(var(--text-primary))]"
         animate={{ scale: isDragging ? 1.05 : 1 }}
       >
         {isDragReject
@@ -261,7 +261,7 @@ export const DropZone: React.FC<DropZoneProps> = ({
         }
       </motion.h3>
 
-      <p className="text-sm text-[var(--text-secondary)] mb-6 max-w-md text-center">
+      <p className="text-sm text-[hsl(var(--text-secondary))] mb-6 max-w-md text-center">
         {getSupportedFormats(accept)} • Automatic format detection •
         {multiple ? ' Batch processing' : ' Single file upload'}
         {maxSize && ` • Max ${formatFileSize(maxSize)}`}
@@ -282,7 +282,7 @@ export const DropZone: React.FC<DropZoneProps> = ({
 
       {isDragging && !isDragReject && (
         <motion.div
-          className="absolute inset-0 bg-gradient-to-br from-[var(--accent-primary)]/10 to-transparent rounded-xl pointer-events-none"
+          className="absolute inset-0 bg-gradient-to-br from-[hsl(var(--accent))]/10 to-transparent rounded-xl pointer-events-none"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -292,7 +292,7 @@ export const DropZone: React.FC<DropZoneProps> = ({
 
       {isDragging && (
         <motion.div
-          className="absolute inset-0 rounded-xl border-2 border-[var(--accent-primary)] pointer-events-none"
+          className="absolute inset-0 rounded-xl border-2 border-[hsl(var(--accent))] pointer-events-none"
           animate={{
             opacity: [0.5, 1, 0.5],
             scale: [1, 1.01, 1],

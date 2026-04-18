@@ -209,7 +209,7 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
     <div className={`tag-manager ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-[var(--text-secondary)]">
+        <h3 className="text-sm font-semibold text-[hsl(var(--text-secondary))]">
           Tags
         </h3>
         <button
@@ -217,8 +217,8 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
           disabled={isGenerating || isOperationInProgress}
           className="
             px-3 py-1 text-xs font-medium rounded-md
-            bg-[var(--accent-primary)] text-white
-            hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed
+            bg-[hsl(var(--accent))] text-white
+            hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors
           "
         >
@@ -243,7 +243,7 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
 
       {/* Error message */}
       {error && (
-        <div className="mb-3 p-2 bg-[var(--error-light)]/20 text-[var(--error)] text-xs rounded">
+        <div className="mb-3 p-2 bg-[hsl(var(--danger-muted))]/20 text-[hsl(var(--danger-fg))] text-xs rounded">
           {error}
         </div>
       )}
@@ -251,7 +251,7 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
       {/* Tags display */}
       <div className="flex flex-wrap gap-2 mb-3 min-h-[32px]">
         {isLoading ? (
-          <div className="text-xs text-[var(--text-secondary)]">Loading tags...</div>
+          <div className="text-xs text-[hsl(var(--text-secondary))]">Loading tags...</div>
         ) : tags && tags.length > 0 ? (
           tags.map(tag => (
             <TagBadge
@@ -263,7 +263,7 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
             />
           ))
         ) : (
-          <div className="text-xs text-[var(--text-secondary)] italic">
+          <div className="text-xs text-[hsl(var(--text-secondary))] italic">
             No tags yet. Add tags manually or auto-generate them.
           </div>
         )}
@@ -281,11 +281,11 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
             placeholder="Add tag..."
             className="
               flex-1 px-3 py-1.5 text-sm rounded-md
-              bg-[var(--surface-elevated)]
-              border border-[var(--border-color)]
-              text-[var(--text-primary)]
-              placeholder-[var(--text-tertiary)]
-              focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]
+              bg-[hsl(var(--surface-raised))]
+              border border-[hsl(var(--border-subtle))]
+              text-[hsl(var(--text-primary))]
+              placeholder-[hsl(var(--text-tertiary))]
+              focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))]
             "
           />
           <button
@@ -293,8 +293,8 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
             disabled={!inputValue.trim()}
             className="
               px-3 py-1.5 text-sm font-medium rounded-md
-              bg-[var(--bg-tertiary)] text-[var(--text-secondary)]
-              hover:bg-[var(--surface-hover)]
+              bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))]
+              hover:bg-[hsl(var(--surface-raised))]
               disabled:opacity-50 disabled:cursor-not-allowed
               transition-colors
             "
@@ -307,8 +307,8 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
         {showAutocomplete && filteredSuggestions.length > 0 && (
           <div className="
             absolute z-10 mt-1 w-full
-            bg-[var(--surface-elevated)]
-            border border-[var(--border-color)]
+            bg-[hsl(var(--surface-raised))]
+            border border-[hsl(var(--border-subtle))]
             rounded-md shadow-lg
             max-h-40 overflow-y-auto
           ">
@@ -318,7 +318,7 @@ export function TagManager({ documentId, className = '' }: TagManagerProps) {
                 onClick={() => handleAutocompleteTagClick(tag.name)}
                 className="
                   w-full text-left px-3 py-2 text-sm
-                  hover:bg-[var(--surface-hover)]
+                  hover:bg-[hsl(var(--surface-raised))]
                   transition-colors
                 "
               >

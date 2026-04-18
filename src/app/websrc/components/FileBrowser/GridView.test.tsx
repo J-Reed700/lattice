@@ -434,7 +434,7 @@ describe('GridView', () => {
     render(<GridView />);
 
     const selectedCard = screen.getByText('document.pdf').closest('.group');
-    expect(selectedCard).toHaveClass('border-[var(--accent-primary)]');
-    expect(selectedCard).toHaveClass('bg-[var(--accent-light)]/30');
+    expect(selectedCard).toHaveClass('border-[hsl(var(--accent))]');
+    expect(selectedCard).toHaveClass('bg-[hsl(var(--accent-muted))]/30');
   });
 });

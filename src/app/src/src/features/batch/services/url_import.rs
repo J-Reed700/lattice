@@ -13,8 +13,8 @@ use crate::application::ports::batch_job_repository_port::{
     BatchJobRepositoryPort, BatchJobStatus,
 };
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::infrastructure::services::traits::BatchUrlImportServiceTrait;
-use crate::infrastructure::services::traits::WebIngestionServiceTrait;
+use crate::features::batch::BatchUrlImportServiceTrait;
+use crate::features::web::WebIngestionServiceTrait;
 use crate::shared::error::AppError;
 
 /// Service for batch URL import operations
@@ -321,7 +321,7 @@ impl BatchUrlImportServiceTrait for BatchUrlImportService {
 mod tests {
     use super::*;
     use crate::application::ports::DocumentRepositoryPort;
-    use crate::infrastructure::services::mocks::MockWebIngestionService;
+    use crate::features::web::mocks::MockWebIngestionService;
     use std::collections::HashMap;
     use std::sync::Mutex;
 

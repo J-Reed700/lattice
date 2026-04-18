@@ -79,7 +79,7 @@ export const GridView = memo(({ onFileOpen, onContextMenu }: GridViewProps) => {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-center text-[var(--error)]">
+        <div className="text-center text-[hsl(var(--danger-fg))]">
           <p className="font-semibold mb-1">Error loading files</p>
           <p className="text-sm">{error}</p>
         </div>
@@ -90,7 +90,7 @@ export const GridView = memo(({ onFileOpen, onContextMenu }: GridViewProps) => {
   if (allDocuments.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-center text-[var(--text-secondary)]">
+        <div className="text-center text-[hsl(var(--text-secondary))]">
           <p className="font-semibold mb-1">No documents found</p>
           <p className="text-sm">Add files to start indexing</p>
         </div>
@@ -101,7 +101,7 @@ export const GridView = memo(({ onFileOpen, onContextMenu }: GridViewProps) => {
   if (documents.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-center text-[var(--text-secondary)] max-w-md px-6">
+        <div className="text-center text-[hsl(var(--text-secondary))] max-w-md px-6">
           <p className="font-semibold mb-1">No matches found</p>
           <p className="text-sm">
             {searchQuery.trim()
@@ -114,7 +114,7 @@ export const GridView = memo(({ onFileOpen, onContextMenu }: GridViewProps) => {
   }
 
   return (
-    <div ref={parentRef} className="overflow-auto h-full p-4 bg-[linear-gradient(180deg,var(--surface-elevated),var(--bg-secondary))]">
+    <div ref={parentRef} className="overflow-auto h-full p-4 bg-[linear-gradient(180deg,hsl(var(--surface-raised)),hsl(var(--surface)))]">
       <div
         style={{
           height: `${rowVirtualizer.getTotalSize()}px`,
@@ -186,10 +186,10 @@ const FileCard = memo(({
 
   return (
     <div
-      className={`relative group cursor-pointer overflow-hidden rounded-xl border transition-all duration-200 ${
+      className={`relative group cursor-pointer overflow-hidden rounded-xl border transition-colors duration-200 ${
         isSelected
-          ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]/30 shadow-[var(--shadow-md)]'
-          : 'border-[var(--border-color)] bg-[var(--surface-elevated)] hover:-translate-y-0.5 hover:border-[var(--accent-primary)]/35 hover:shadow-[var(--shadow-lg)]'
+          ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]/30 shadow-[var(--shadow-md)]'
+          : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] hover:-translate-y-0.5 hover:border-[hsl(var(--accent))]/35 hover:shadow-[var(--shadow-md)]'
       }`}
       onClick={(e) => onClick(doc, e)}
       onDoubleClick={() => onDoubleClick(doc)}
@@ -197,13 +197,13 @@ const FileCard = memo(({
     >
       {/* Selection indicator */}
       {isSelected && (
-        <div className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent-primary)] shadow-sm">
-          <Check className="w-4 h-4 text-white" />
+        <div className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-[hsl(var(--accent))] shadow-sm">
+          <Check className="w-4 h-4 text-[hsl(var(--text-primary))]" />
         </div>
       )}
 
       {/* Thumbnail/Icon area */}
-      <div className="aspect-square flex items-center justify-center bg-gradient-to-br from-[var(--bg-secondary)] to-[var(--surface-hover)] p-4">
+      <div className="aspect-square flex items-center justify-center p-4">
         {isImage ? (
           <div className="w-full h-full flex items-center justify-center">
             <img
@@ -233,16 +233,16 @@ const FileCard = memo(({
       {/* File info */}
       <div className="space-y-1.5 p-3">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium truncate flex-1 text-[var(--text-primary)]" title={doc.fileName}>
+          <h3 className="text-sm font-medium truncate flex-1 text-[hsl(var(--text-primary))]" title={doc.fileName}>
             {doc.fileName}
           </h3>
           <span
-            className="flex-shrink-0 w-2 h-2 rounded-full bg-[var(--success)]"
+            className="flex-shrink-0 w-2 h-2 rounded-full bg-[hsl(var(--success-fg))]"
             title="Indexed"
           />
         </div>
 
-        <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+        <div className="flex items-center justify-between text-xs text-[hsl(var(--text-secondary))]">
           <span>{doc.wordCount ? `${doc.wordCount} words` : '-'}</span>
           <span>{formatFileDate(doc.modifiedAt)}</span>
         </div>

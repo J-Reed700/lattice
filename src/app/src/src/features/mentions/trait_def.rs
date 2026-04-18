@@ -142,7 +142,7 @@
 //! ## Using Mock Repository
 //!
 //! ```rust,ignore
-//! use crate::infrastructure::services::mocks::MockMentionRepository;
+//! use crate::features::mentions::mocks::MockMentionRepository;
 //! use crate::application::ports::mention_repository_port::MentionRepositoryPort;
 //!
 //! #[tokio::test]

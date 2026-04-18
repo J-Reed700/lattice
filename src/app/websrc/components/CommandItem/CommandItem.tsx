@@ -36,13 +36,13 @@ export function CommandItem({
       className="command-item"
     >
       <div className="flex items-center flex-1 gap-3 px-4 py-3">
-        <Icon className="w-4 h-4 text-[var(--text-tertiary)]" />
+        <Icon className="w-4 h-4 text-[hsl(var(--text-tertiary))]" strokeWidth={1.75} />
         <div className="flex-1">
-          <div className="text-sm font-medium text-[var(--text-primary)]">
+          <div className="text-sm font-medium text-[hsl(var(--text-primary))]">
             {label}
           </div>
           {description && (
-            <div className="text-xs text-[var(--text-secondary)] mt-0.5">
+            <div className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
               {description}
             </div>
           )}

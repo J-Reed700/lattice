@@ -172,11 +172,11 @@ export function SearchInterface() {
           return;
         }
 
-        setOpenError(byPath.error || byId.error || 'Failed to open result');
+        setOpenError(byPath.error || byId.error || "Couldn't open result");
         return;
       }
 
-      setOpenError(byId.error || 'Failed to open result');
+      setOpenError(byId.error || "Couldn't open result");
       return;
     }
 
@@ -184,20 +184,20 @@ export function SearchInterface() {
   }, []);
 
   return (
-    <div className="h-full min-h-0 flex flex-col p-6 bg-[var(--bg-primary)]">
+    <div className="h-full min-h-0 flex flex-col p-6 bg-[hsl(var(--bg))]">
       <div className="mb-6">
         <SearchInput value={query} onChange={handleQueryChange} isSearching={isSearching} />
         <SearchModeButtons mode={searchMode} onModeChange={setSearchMode} />
       </div>
 
       {error && (
-        <div className="mb-4 p-4 bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded-lg">
-          <p className="text-[var(--error)] text-sm">{error.message}</p>
+        <div className="mb-4 p-4 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg">
+          <p className="text-[hsl(var(--danger-fg))] text-sm">{error.message}</p>
         </div>
       )}
       {openError && (
-        <div className="mb-4 p-4 bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded-lg">
-          <p className="text-[var(--error)] text-sm">{openError}</p>
+        <div className="mb-4 p-4 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg">
+          <p className="text-[hsl(var(--danger-fg))] text-sm">{openError}</p>
         </div>
       )}
 

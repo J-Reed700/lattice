@@ -64,17 +64,17 @@ export function ModelFilterPanel() {
   ];
 
   return (
-    <div className="space-y-5 p-5 bg-[linear-gradient(165deg,var(--surface-elevated),var(--bg-secondary))] border border-[var(--border-color)] rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.14)]">
+    <div className="space-y-5 p-5 bg-[linear-gradient(165deg,hsl(var(--surface-raised)),hsl(var(--surface)))] border border-[hsl(var(--border-subtle))] rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.14)]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-[var(--accent-primary)]" />
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Filters</h3>
+          <Filter className="w-4 h-4 text-[hsl(var(--accent))]" />
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Filters</h3>
         </div>
         {hasActiveFilters && (
           <button
             onClick={clearFilters}
-            className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center gap-1 transition-colors"
+            className="text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] flex items-center gap-1 transition-colors"
           >
             <X className="w-3 h-3" />
             Clear
@@ -86,7 +86,7 @@ export function ModelFilterPanel() {
       <div className="space-y-2">
         <label
           htmlFor="model-sort-order"
-          className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]"
+          className="text-xs font-semibold tracking-wide uppercase text-[hsl(var(--text-secondary))]"
         >
           Sort By
         </label>
@@ -98,7 +98,7 @@ export function ModelFilterPanel() {
             console.log('[ModelFilterPanel] Sort changed to:', val);
             setSortBy(val);
           }}
-          className="w-full px-3 py-2 text-xs font-medium bg-[var(--bg-tertiary)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+          className="w-full px-3 py-2 text-xs font-medium bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] border border-[hsl(var(--border-subtle))] rounded-lg focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))]"
         >
           <option value="popularity">Downloads</option>
           <option value="recommended">Recommended</option>
@@ -111,7 +111,7 @@ export function ModelFilterPanel() {
 
       {/* Category Filter */}
       <div className="space-y-2">
-        <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">Category</label>
+        <label className="text-xs font-semibold tracking-wide uppercase text-[hsl(var(--text-secondary))]">Category</label>
         <div className="grid grid-cols-3 gap-2">
           {categories.map((cat) => (
             <button
@@ -125,8 +125,8 @@ export function ModelFilterPanel() {
                 px-2 py-2 text-[11px] font-semibold rounded-lg border transition-all truncate
                 ${
                   filters.category === cat.value
-                    ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
-                    : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-[var(--accent-primary)]'
+                    ? 'bg-[hsl(var(--accent))] text-white border-[hsl(var(--accent))]'
+                    : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                 }
               `}
             >
@@ -139,7 +139,7 @@ export function ModelFilterPanel() {
       {/* Embedding Dimensions Filter */}
       {showDimensionFilter && (
         <div className="space-y-2">
-          <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
+          <label className="text-xs font-semibold tracking-wide uppercase text-[hsl(var(--text-secondary))]">
             Embedding Dimensions
           </label>
           <div className="flex flex-wrap gap-1.5">
@@ -157,8 +157,8 @@ export function ModelFilterPanel() {
                     px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-all
                     ${
                       isActive
-                        ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
-                        : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-[var(--accent-primary)]'
+                        ? 'bg-[hsl(var(--accent))] text-white border-[hsl(var(--accent))]'
+                        : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                     }
                   `}
                 >
@@ -172,7 +172,7 @@ export function ModelFilterPanel() {
 
       {/* Size Filter */}
       <div className="space-y-2">
-        <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
+        <label className="text-xs font-semibold tracking-wide uppercase text-[hsl(var(--text-secondary))]">
           Max Size: {filters.max_size_gb ? `${filters.max_size_gb} GB` : 'Any'}
         </label>
         <input
@@ -186,9 +186,9 @@ export function ModelFilterPanel() {
               max_size_gb: parseInt(e.target.value) === 20 ? null : parseInt(e.target.value),
             })
           }
-          className="w-full h-2 bg-[var(--bg-tertiary)] rounded-lg appearance-none cursor-pointer accent-[var(--accent-primary)]"
+          className="w-full h-2 bg-[hsl(var(--surface-raised))] rounded-lg appearance-none cursor-pointer accent-[hsl(var(--accent))]"
         />
-        <div className="flex justify-between text-xs text-[var(--text-tertiary)]">
+        <div className="flex justify-between text-xs text-[hsl(var(--text-tertiary))]">
           <span>1 GB</span>
           <span>20 GB</span>
         </div>
@@ -196,7 +196,7 @@ export function ModelFilterPanel() {
 
       {/* Min Downloads Filter */}
       <div className="space-y-2">
-        <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
+        <label className="text-xs font-semibold tracking-wide uppercase text-[hsl(var(--text-secondary))]">
           Min Downloads
         </label>
         <div className="flex flex-wrap gap-1.5">
@@ -214,8 +214,8 @@ export function ModelFilterPanel() {
                   px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-all
                   ${
                     isActive
-                      ? 'bg-[var(--accent-primary)] text-white border-[var(--accent-primary)]'
-                      : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-[var(--accent-primary)]'
+                      ? 'bg-[hsl(var(--accent))] text-white border-[hsl(var(--accent))]'
+                      : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                   }
                 `}
               >
@@ -228,7 +228,7 @@ export function ModelFilterPanel() {
 
       {/* Performance Tier Filter */}
       <div className="space-y-2">
-        <label className="text-xs font-semibold tracking-wide uppercase text-[var(--text-secondary)]">
+        <label className="text-xs font-semibold tracking-wide uppercase text-[hsl(var(--text-secondary))]">
           Performance Tier
         </label>
         <div className="space-y-2">
@@ -249,22 +249,22 @@ export function ModelFilterPanel() {
                   w-full px-3 py-2 text-left rounded-lg border transition-all
                   ${
                     isActive
-                      ? 'bg-[var(--accent-light)] border-[var(--accent-primary)]'
-                      : 'bg-[var(--bg-tertiary)] border-[var(--border-color)] hover:border-[var(--accent-primary)]'
+                      ? 'bg-[hsl(var(--accent-muted))] border-[hsl(var(--accent))]'
+                      : 'bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--accent))]'
                   }
                 `}
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-xs font-medium text-[var(--text-primary)]">
+                    <div className="text-xs font-medium text-[hsl(var(--text-primary))]">
                       {tier.label}
                     </div>
-                    <div className="text-xs text-[var(--text-secondary)] mt-0.5">
+                    <div className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
                       {tier.desc}
                     </div>
                   </div>
                   {isActive && (
-                    <div className="w-4 h-4 rounded-full bg-[var(--accent-primary)] flex items-center justify-center">
+                    <div className="w-4 h-4 rounded-full bg-[hsl(var(--accent))] flex items-center justify-center">
                       <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                         <path
                           fillRule="evenodd"

@@ -45,7 +45,7 @@ SearchResultSkeleton.displayName = 'SearchResultSkeleton';
  */
 const SearchResultSkeletonItem: React.FC = memo(() => (
     <div
-      className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-6 transition-colors"
+      className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-6 transition-colors"
       aria-hidden="true"
     >
       {/* Header: File name and score */}
@@ -90,7 +90,7 @@ export const SearchResultSkeletonCompact: React.FC<{ count?: number }> = memo(({
       {Array.from({ length: count }).map((_, index) => (
         <div
           key={index}
-          className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] p-4"
+          className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] p-4"
           aria-hidden="true"
         >
           <div className="flex items-center gap-3">

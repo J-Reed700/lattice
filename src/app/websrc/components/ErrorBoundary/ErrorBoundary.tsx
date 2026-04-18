@@ -177,16 +177,16 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       // Default fallback with isolation option
       if (isolate) {
         return (
-          <div className="p-4 bg-[var(--error-light)]/20 border-l-4 border-[var(--error)] rounded">
-            <p className="text-sm font-semibold text-[var(--error)] mb-2">
+          <div className="p-4 bg-[hsl(var(--danger-muted))] border-l-4 border-[hsl(var(--danger-fg))] rounded">
+            <p className="text-sm font-semibold text-[hsl(var(--danger-fg))] mb-2">
               Error in {this.props.name || 'component'}
             </p>
-            <p className="text-xs text-[var(--error)] mb-3">
+            <p className="text-xs text-[hsl(var(--danger-fg))] mb-3">
               {fallbackError.message}
             </p>
             <button
               onClick={this.reset}
-              className="px-3 py-1 text-sm font-medium text-[var(--error)] bg-[var(--error-light)]/40 hover:bg-[var(--error-light)] rounded transition-colors"
+              className="px-3 py-1 text-sm font-medium text-[hsl(var(--danger-fg))] bg-[hsl(var(--danger-muted))] hover:opacity-90 rounded transition-opacity duration-fast"
             >
               Retry
             </button>

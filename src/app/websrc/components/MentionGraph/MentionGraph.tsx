@@ -285,17 +285,17 @@ export function MentionGraph({ focusDocumentId: _focusDocumentId, onNodeClick: _
 
   if (loading) {
     return (
-      <div className={`flex items-center justify-center h-full bg-[var(--bg-secondary)] ${className}`}>
+      <div className={`flex items-center justify-center h-full bg-[hsl(var(--surface))] ${className}`}>
         <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-[var(--accent-primary)] border-t-transparent mb-4" />
-          <p className="text-[var(--text-secondary)]">Loading graph...</p>
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-[hsl(var(--accent))] border-t-transparent mb-4" />
+          <p className="text-[hsl(var(--text-secondary))]">Loading graph...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className={`relative h-full bg-[var(--bg-secondary)] ${className}`}>
+    <div ref={containerRef} className={`relative h-full bg-[hsl(var(--surface))] ${className}`}>
       <canvas
         ref={canvasRef}
         onWheel={handleWheel}
@@ -337,23 +337,23 @@ export function MentionGraph({ focusDocumentId: _focusDocumentId, onNodeClick: _
         />
       </div>
 
-      <div className="absolute bottom-4 left-4 bg-[var(--surface-elevated)] p-3 rounded-lg shadow-lg border border-[var(--border-color)]">
-        <div className="text-sm font-semibold mb-2 text-[var(--text-primary)]">Legend</div>
+      <div className="absolute bottom-4 left-4 bg-[hsl(var(--surface-raised))] p-3 rounded-lg shadow-lg border border-[hsl(var(--border-subtle))]">
+        <div className="text-sm font-semibold mb-2 text-[hsl(var(--text-primary))]">Legend</div>
         <div className="space-y-1 text-xs">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[var(--accent-primary)]" />
-            <span className="text-[var(--text-secondary)]">Person</span>
+            <div className="w-3 h-3 rounded-full bg-[hsl(var(--accent))]" />
+            <span className="text-[hsl(var(--text-secondary))]">Person</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[var(--warning)]" />
-            <span className="text-[var(--text-secondary)]">Concept</span>
+            <div className="w-3 h-3 rounded-full bg-[hsl(var(--warning-fg))]" />
+            <span className="text-[hsl(var(--text-secondary))]">Concept</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[var(--success-light)]0" />
-            <span className="text-[var(--text-secondary)]">Wikilink</span>
+            <div className="w-3 h-3 rounded-full bg-[hsl(var(--success-muted))]0" />
+            <span className="text-[hsl(var(--text-secondary))]">Wikilink</span>
           </div>
         </div>
-        <div className="mt-3 pt-3 border-t border-[var(--border-color)] text-xs text-[var(--text-secondary)]">
+        <div className="mt-3 pt-3 border-t border-[hsl(var(--border-subtle))] text-xs text-[hsl(var(--text-secondary))]">
           <div>{nodes.length} nodes</div>
           <div>{edges.length} connections</div>
         </div>

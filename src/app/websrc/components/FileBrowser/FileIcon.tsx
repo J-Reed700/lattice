@@ -94,7 +94,7 @@ function getIconComponent(file: FileNode | DocumentMetadata): React.ComponentTyp
 function getIconColor(file: FileNode | DocumentMetadata): string {
   // Check if it's a directory
   if ('type' in file && file.type === 'directory') {
-    return 'text-[var(--accent-primary)]';
+    return 'text-[hsl(var(--accent))]';
   }
 
   // Get path from either FileNode or DocumentMetadata
@@ -102,7 +102,7 @@ function getIconColor(file: FileNode | DocumentMetadata): string {
 
   // Web archive files - blue globe theme
   if (path.includes('/.recall/web-archive/')) {
-    return 'text-blue-600';
+    return 'text-[hsl(var(--accent))]';
   }
 
   // Get name and extension
@@ -112,59 +112,59 @@ function getIconColor(file: FileNode | DocumentMetadata): string {
 
   // Documents
   if (['pdf', 'doc', 'docx'].includes(ext)) {
-    return 'text-[var(--error)]';
+    return 'text-[hsl(var(--danger-fg))]';
   }
 
   // Text
   if (['txt', 'md', 'markdown'].includes(ext)) {
-    return 'text-[var(--text-secondary)]';
+    return 'text-[hsl(var(--text-secondary))]';
   }
 
   // Images
   if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) {
-    return 'text-purple-500';
+    return 'text-[hsl(var(--accent))]';
   }
 
   // Code
   if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
-    return 'text-[var(--warning)]';
+    return 'text-[hsl(var(--warning-fg))]';
   }
 
   if (['py'].includes(ext)) {
-    return 'text-[var(--accent-primary)]';
+    return 'text-[hsl(var(--accent))]';
   }
 
   if (['rs'].includes(ext)) {
-    return 'text-orange-500';
+    return 'text-[hsl(var(--warning-fg))]';
   }
 
   if (['html', 'css'].includes(ext)) {
-    return 'text-pink-500';
+    return 'text-[hsl(var(--accent))]';
   }
 
   if (['json', 'xml', 'yml', 'yaml'].includes(ext)) {
-    return 'text-[var(--success)]';
+    return 'text-[hsl(var(--success-fg))]';
   }
 
   // Archives
   if (['zip', 'rar', 'tar', 'gz', '7z'].includes(ext)) {
-    return 'text-amber-500';
+    return 'text-[hsl(var(--warning-fg))]';
   }
 
   // Media
   if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
-    return 'text-indigo-500';
+    return 'text-[hsl(var(--accent))]';
   }
 
   if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
-    return 'text-cyan-500';
+    return 'text-[hsl(var(--accent))]';
   }
 
   // Spreadsheets
   if (['xlsx', 'xls', 'csv'].includes(ext)) {
-    return 'text-[var(--success)]';
+    return 'text-[hsl(var(--success-fg))]';
   }
 
   // Default
-  return 'text-[var(--text-secondary)]';
+  return 'text-[hsl(var(--text-secondary))]';
 }

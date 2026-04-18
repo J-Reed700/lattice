@@ -200,8 +200,8 @@ impl HybridSearchResult {
 /// ).await?;
 /// ```
 pub struct HybridSearchService {
-    vector_search: Arc<dyn crate::infrastructure::services::traits::SearchServiceTrait>,
-    bm25_search: Arc<dyn crate::infrastructure::services::traits::BM25SearchTrait>,
+    vector_search: Arc<dyn crate::features::search::SearchServiceTrait>,
+    bm25_search: Arc<dyn crate::features::search::BM25SearchTrait>,
     pool: SqlitePool,
     enrichment: Arc<dyn crate::infrastructure::services::traits::SearchEnrichmentServiceTrait>,
     config: SearchConfig,
@@ -219,8 +219,8 @@ impl HybridSearchService {
     /// * `enrichment` - Service for enriching results with metadata
     /// * `config` - Search configuration
     pub fn new(
-        vector_search: Arc<dyn crate::infrastructure::services::traits::SearchServiceTrait>,
-        bm25_search: Arc<dyn crate::infrastructure::services::traits::BM25SearchTrait>,
+        vector_search: Arc<dyn crate::features::search::SearchServiceTrait>,
+        bm25_search: Arc<dyn crate::features::search::BM25SearchTrait>,
         pool: SqlitePool,
         enrichment: Arc<dyn crate::infrastructure::services::traits::SearchEnrichmentServiceTrait>,
         config: SearchConfig,
@@ -237,8 +237,8 @@ impl HybridSearchService {
 
     /// Create a new hybrid search service with custom RRF k parameter
     pub fn with_rrf_k(
-        vector_search: Arc<dyn crate::infrastructure::services::traits::SearchServiceTrait>,
-        bm25_search: Arc<dyn crate::infrastructure::services::traits::BM25SearchTrait>,
+        vector_search: Arc<dyn crate::features::search::SearchServiceTrait>,
+        bm25_search: Arc<dyn crate::features::search::BM25SearchTrait>,
         pool: SqlitePool,
         enrichment: Arc<dyn crate::infrastructure::services::traits::SearchEnrichmentServiceTrait>,
         rrf_k: f32,
@@ -265,7 +265,7 @@ impl HybridSearchService {
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<HybridSearchResult>> {
         // Use empty embedding for legacy calls
         let empty_embedding = vec![];
-        <Self as crate::infrastructure::services::traits::HybridSearchTrait>::search(
+        <Self as crate::features::search::HybridSearchTrait>::search(
             self,
             query,
             &empty_embedding,
@@ -431,7 +431,7 @@ impl HybridSearchService {
 // HybridSearchTrait Implementation
 // ============================================================================
 
-use crate::infrastructure::services::traits::HybridSearchTrait;
+use crate::features::search::HybridSearchTrait;
 
 #[async_trait::async_trait]
 impl HybridSearchTrait for HybridSearchService {

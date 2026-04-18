@@ -24,10 +24,17 @@
 //! - `crate::infrastructure::persistence::repositories::search`
 //!   (tx-wrapper)
 //! - `crate::infrastructure::services::search_enrichment_service`
-//! - `trait_def` + `mocks` via shared services aggregators
+//!
+//! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, HybridSearchTrait}`.
 
 pub mod commands;
 pub mod dto;
 pub mod mapper;
 pub mod plugin;
+pub mod trait_def;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};

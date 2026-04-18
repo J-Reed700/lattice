@@ -180,7 +180,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--accent-primary)]" />
+        <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--accent))]" />
       </div>
     );
   }
@@ -192,13 +192,13 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col items-center justify-center py-12 text-center"
       >
-        <div className="w-16 h-16 rounded-full bg-[var(--surface-elevated)] flex items-center justify-center mb-4">
-          <History className="w-8 h-8 text-[var(--text-tertiary)]" />
+        <div className="w-16 h-16 rounded-full bg-[hsl(var(--surface-raised))] flex items-center justify-center mb-4">
+          <History className="w-8 h-8 text-[hsl(var(--text-tertiary))]" />
         </div>
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
           No import history yet
         </h3>
-        <p className="text-sm text-[var(--text-secondary)] max-w-md">
+        <p className="text-sm text-[hsl(var(--text-secondary))] max-w-md">
           Your batch import jobs will appear here. Start by importing URLs or files using the
           batch import features above.
         </p>
@@ -210,9 +210,9 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <History className="w-5 h-5 text-[var(--text-secondary)]" />
-          <h3 className="text-lg font-semibold text-[var(--text-primary)]">Import History</h3>
-          <span className="text-sm text-[var(--text-tertiary)]">
+          <History className="w-5 h-5 text-[hsl(var(--text-secondary))]" />
+          <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))]">Import History</h3>
+          <span className="text-sm text-[hsl(var(--text-tertiary))]">
             ({jobs.length} {jobs.length === 1 ? 'job' : 'jobs'})
           </span>
         </div>
@@ -221,7 +221,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
             onClick={handleAsyncEvent(handleClearAllHistory)}
             variant="ghost"
             size="sm"
-            className="text-[var(--error)] hover:text-[var(--error)] hover:bg-[var(--error)]/10"
+            className="text-[hsl(var(--danger-fg))] hover:text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-fg))]/10"
           >
             <Trash2 className="w-4 h-4 mr-2" />
             Clear All
@@ -280,10 +280,10 @@ const JobCard: FC<JobCardProps> = ({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -20 }}
       transition={{ delay: index * 0.05 }}
-      className="border rounded-lg overflow-hidden border-[var(--border-color)] bg-[var(--surface)]"
+      className="border rounded-lg overflow-hidden border-[hsl(var(--border-subtle))] bg-[var(--surface)]"
     >
       <div
-        className="p-4 cursor-pointer hover:bg-[var(--surface-elevated)] transition-colors"
+        className="p-4 cursor-pointer hover:bg-[hsl(var(--surface-raised))] transition-colors"
         onClick={onToggleExpand}
       >
         <div className="flex items-start justify-between">
@@ -292,10 +292,10 @@ const JobCard: FC<JobCardProps> = ({
               <JobStatusIcon status={job.status} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                  <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
                     {job.jobType}
                   </h4>
-                  <span className="text-xs text-[var(--text-tertiary)]">
+                  <span className="text-xs text-[hsl(var(--text-tertiary))]">
                     {new Date(job.createdAt).toLocaleString()}
                   </span>
                 </div>
@@ -303,16 +303,16 @@ const JobCard: FC<JobCardProps> = ({
             </div>
 
             <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-1 text-[var(--text-secondary)]">
+              <div className="flex items-center gap-1 text-[hsl(var(--text-secondary))]">
                 <span className="font-medium">{job.totalItems}</span>
                 <span>total</span>
               </div>
-              <div className="flex items-center gap-1 text-[var(--success)]">
+              <div className="flex items-center gap-1 text-[hsl(var(--success-fg))]">
                 <CheckCircle2 className="w-4 h-4" />
                 <span className="font-medium">{job.completedItems}</span>
               </div>
               {job.failedItems > 0 && (
-                <div className="flex items-center gap-1 text-[var(--error)]">
+                <div className="flex items-center gap-1 text-[hsl(var(--danger-fg))]">
                   <XCircle className="w-4 h-4" />
                   <span className="font-medium">{job.failedItems}</span>
                 </div>
@@ -321,15 +321,15 @@ const JobCard: FC<JobCardProps> = ({
 
             {job.status === 'running' && (
               <div className="mt-3">
-                <div className="h-1.5 bg-[var(--surface-elevated)] rounded-full overflow-hidden">
+                <div className="h-1.5 bg-[hsl(var(--surface-raised))] rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-secondary)] rounded-full"
+                    className="h-full bg-gradient-to-r from-[hsl(var(--accent))] to-[var(--accent-secondary)] rounded-full"
                     initial={{ width: 0 }}
                     animate={{ width: `${job.progress}%` }}
                     transition={{ duration: 0.3 }}
                   />
                 </div>
-                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
                   {Math.round(job.progress)}% complete
                 </div>
               </div>
@@ -345,7 +345,7 @@ const JobCard: FC<JobCardProps> = ({
                 }}
                 variant="ghost"
                 size="sm"
-                className="text-[var(--accent-primary)]"
+                className="text-[hsl(var(--accent))]"
               >
                 <RotateCcw className="w-4 h-4" />
               </Button>
@@ -357,7 +357,7 @@ const JobCard: FC<JobCardProps> = ({
               }}
               variant="ghost"
               size="sm"
-              className="text-[var(--text-tertiary)] hover:text-[var(--error)]"
+              className="text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--danger-fg))]"
             >
               <Trash2 className="w-4 h-4" />
             </Button>
@@ -365,7 +365,7 @@ const JobCard: FC<JobCardProps> = ({
               animate={{ rotate: isExpanded ? 180 : 0 }}
               transition={{ duration: 0.2 }}
             >
-              <ChevronDown className="w-5 h-5 text-[var(--text-tertiary)]" />
+              <ChevronDown className="w-5 h-5 text-[hsl(var(--text-tertiary))]" />
             </motion.div>
           </div>
         </div>
@@ -380,18 +380,18 @@ const JobCard: FC<JobCardProps> = ({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-4 pt-2 border-t border-[var(--border-color)] bg-[var(--surface-elevated)]">
+            <div className="px-4 pb-4 pt-2 border-t border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
               {expanded?.loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-[var(--accent-primary)]" />
+                  <Loader2 className="w-6 h-6 animate-spin text-[hsl(var(--accent))]" />
                 </div>
               ) : expanded?.details ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-[var(--text-secondary)] mb-3">
+                  <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-3">
                     Individual Items
                   </div>
                   {/* Note: BatchJobStatus doesn't have items field yet, showing summary */}
-                  <div className="text-sm text-[var(--text-secondary)]">
+                  <div className="text-sm text-[hsl(var(--text-secondary))]">
                     <p>Total: {expanded.details.totalItems}</p>
                     <p>Completed: {expanded.details.completedItems}</p>
                     <p>Failed: {expanded.details.failedItems}</p>
@@ -399,7 +399,7 @@ const JobCard: FC<JobCardProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-[var(--text-tertiary)] py-4 text-center">
+                <div className="text-sm text-[hsl(var(--text-tertiary))] py-4 text-center">
                   No details available
                 </div>
               )}
@@ -415,19 +415,19 @@ const JobStatusIcon: FC<{ status: BatchJobSummary['status'] }> = ({ status }) =>
   const variants = {
     pending: {
       icon: Clock,
-      className: 'text-[var(--text-tertiary)] bg-[var(--surface-elevated)]',
+      className: 'text-[hsl(var(--text-tertiary))] bg-[hsl(var(--surface-raised))]',
     },
     running: {
       icon: Loader2,
-      className: 'text-[var(--accent-primary)] bg-[var(--accent-primary)]/10 animate-spin',
+      className: 'text-[hsl(var(--accent))] bg-[hsl(var(--accent))]/10 animate-spin',
     },
     completed: {
       icon: CheckCircle2,
-      className: 'text-[var(--success)] bg-green-500/10',
+      className: 'text-[hsl(var(--success-fg))] bg-green-500/10',
     },
     failed: {
       icon: XCircle,
-      className: 'text-[var(--error)] bg-[var(--error)]/10',
+      className: 'text-[hsl(var(--danger-fg))] bg-[hsl(var(--danger-fg))]/10',
     },
     cancelled: {
       icon: AlertCircle,

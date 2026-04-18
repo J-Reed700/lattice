@@ -153,13 +153,16 @@ use crate::application::ports::{
 
 // Service Traits
 use crate::infrastructure::services::traits::{
-    ArticleExtractorServiceTrait, BM25SearchTrait, BatchFileImportServiceTrait,
-    BatchUrlImportServiceTrait, ConversationServiceTrait, ConversationalQAServiceTrait,
-    EmbeddingServiceTrait, HybridSearchTrait, IndexStorageTrait, IndexingServiceTrait,
-    ModelManagerTrait, SearchEnrichmentServiceTrait, SearchServiceTrait,
-    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
+    ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
 };
+use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
+use crate::features::conversation::ConversationServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::indexing::{IndexStorageTrait, IndexingServiceTrait};
+use crate::features::qa::ConversationalQAServiceTrait;
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
+use crate::features::web::{WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait};
 
 use crate::application::ports::LLMPort;
 use crate::infrastructure::llm::inference::InferenceEngine;
@@ -1262,7 +1265,8 @@ impl AIModule {
         use crate::infrastructure::qa::engine::QAEngine;
         use crate::infrastructure::services::context_manager::ContextManager;
         use crate::features::qa::conversational_service::ConversationalQAService;
-        use crate::infrastructure::services::traits::{ContextManagerTrait, QAEngineTrait};
+        use crate::infrastructure::services::traits::ContextManagerTrait;
+        use crate::features::qa::QAEngineTrait;
 
         // Create LLM client from cache (degraded mode if not loaded)
         use crate::infrastructure::llm::noop_client::NoOpLLMClient;

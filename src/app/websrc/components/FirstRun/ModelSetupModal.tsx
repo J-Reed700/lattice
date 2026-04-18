@@ -141,7 +141,7 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+            <Sparkles className="w-5 h-5 text-[hsl(var(--accent))] dark:text-[hsl(var(--accent))]" />
             Welcome to Recall
           </DialogTitle>
           <DialogDescription>
@@ -152,23 +152,23 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
         <div className="space-y-4">
           {loading && (
             <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600" />
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--accent))]" />
             </div>
           )}
 
           {!loading && !downloading && (
             <>
-              <div className="bg-purple-50 dark:bg-purple-950/20 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+              <div className="bg-[hsl(var(--accent-muted))] dark:bg-[hsl(var(--accent-muted))] p-4 rounded-lg border border-[hsl(var(--accent))] dark:border-[hsl(var(--accent))]">
                 <div className="flex items-start gap-3">
-                  <Download className="w-5 h-5 text-purple-600 dark:text-purple-400 mt-0.5" />
+                  <Download className="w-5 h-5 text-[hsl(var(--accent))] dark:text-[hsl(var(--accent))] mt-0.5" />
                   <div className="flex-1">
-                    <h3 className="font-semibold text-sm text-[var(--text-primary)] mb-1">
+                    <h3 className="font-semibold text-sm text-[hsl(var(--text-primary))] mb-1">
                       {modelInfo.recommended_model_name || 'Recommended Model'}
                     </h3>
-                    <p className="text-xs text-[var(--text-secondary)] mb-2">
+                    <p className="text-xs text-[hsl(var(--text-secondary))] mb-2">
                       A lightweight, high-quality embedding model for semantic search
                     </p>
-                    <div className="flex items-center gap-2 text-xs text-[var(--text-tertiary)]">
+                    <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-tertiary))]">
                       <span>Size: {modelInfo.estimated_size_bytes ? formatFileSize(modelInfo.estimated_size_bytes) : 'Unknown'}</span>
                       <span>•</span>
                       <span>Source: HuggingFace</span>
@@ -178,14 +178,14 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
               </div>
 
               {error && (
-                <div className="bg-red-50 dark:bg-red-950/20 p-4 rounded-lg border border-red-200 dark:border-red-800">
+                <div className="bg-[hsl(var(--danger-muted))] dark:bg-[hsl(var(--danger-muted))] p-4 rounded-lg border border-[hsl(var(--danger-fg))] dark:border-[hsl(var(--danger-fg))]">
                   <div className="flex items-start gap-3">
-                    <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5" />
+                    <XCircle className="w-5 h-5 text-[hsl(var(--danger-fg))] dark:text-[hsl(var(--danger-fg))] mt-0.5" />
                     <div className="flex-1">
-                      <h3 className="font-semibold text-sm text-red-800 dark:text-red-200 mb-1">
+                      <h3 className="font-semibold text-sm text-[hsl(var(--danger-fg))] dark:text-[hsl(var(--danger-fg))] mb-1">
                         Download Failed
                       </h3>
-                      <p className="text-xs text-red-700 dark:text-red-300">
+                      <p className="text-xs text-[hsl(var(--danger-fg))] dark:text-[hsl(var(--danger-fg))]">
                         {error}
                       </p>
                     </div>
@@ -197,18 +197,18 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
 
           {downloading && download?.kind === 'single' && (
             <div className="space-y-3">
-              <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+              <div className="bg-[hsl(var(--accent-muted))] dark:bg-[hsl(var(--accent-muted))] p-4 rounded-lg border border-[hsl(var(--accent))] dark:border-[hsl(var(--accent))]">
                 <div className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" />
+                  <CheckCircle className="w-5 h-5 text-[hsl(var(--accent))] dark:text-[hsl(var(--accent))] mt-0.5" />
                   <div className="flex-1">
-                    <h3 className="font-semibold text-sm text-[var(--text-primary)] mb-1">
+                    <h3 className="font-semibold text-sm text-[hsl(var(--text-primary))] mb-1">
                       Downloading Model
                     </h3>
-                    <p className="text-xs text-[var(--text-secondary)] mb-3">
+                    <p className="text-xs text-[hsl(var(--text-secondary))] mb-3">
                       {formatFileSize(download.bytesDownloaded)} of {formatFileSize(download.totalBytes || 0)}
                     </p>
                     <Progress value={progressPercentage} className="h-2" />
-                    <div className="flex items-center justify-between mt-2 text-xs text-[var(--text-tertiary)]">
+                    <div className="flex items-center justify-between mt-2 text-xs text-[hsl(var(--text-tertiary))]">
                       <span>{progressPercentage.toFixed(1)}%</span>
                       <span>
                         {download.bytesPerSecond > 0
@@ -224,18 +224,18 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
 
           {downloading && download?.kind === 'batch' && (
             <div className="space-y-3">
-              <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+              <div className="bg-[hsl(var(--accent-muted))] dark:bg-[hsl(var(--accent-muted))] p-4 rounded-lg border border-[hsl(var(--accent))] dark:border-[hsl(var(--accent))]">
                 <div className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" />
+                  <CheckCircle className="w-5 h-5 text-[hsl(var(--accent))] dark:text-[hsl(var(--accent))] mt-0.5" />
                   <div className="flex-1">
-                    <h3 className="font-semibold text-sm text-[var(--text-primary)] mb-1">
+                    <h3 className="font-semibold text-sm text-[hsl(var(--text-primary))] mb-1">
                       Downloading Model Files
                     </h3>
-                    <p className="text-xs text-[var(--text-secondary)] mb-3">
+                    <p className="text-xs text-[hsl(var(--text-secondary))] mb-3">
                       {download.completedFiles} of {download.totalFiles} files • {formatFileSize(download.aggregateBytesDownloaded)} of {formatFileSize(download.aggregateTotalBytes)}
                     </p>
                     <Progress value={progressPercentage} className="h-2" />
-                    <div className="flex items-center justify-between mt-2 text-xs text-[var(--text-tertiary)]">
+                    <div className="flex items-center justify-between mt-2 text-xs text-[hsl(var(--text-tertiary))]">
                       <span>{progressPercentage.toFixed(1)}%</span>
                       <span>
                         {download.aggregateBytesPerSecond > 0
@@ -263,7 +263,7 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
               <Button
                 onClick={handleDownload}
                 disabled={loading || error !== null}
-                className="bg-purple-600 hover:bg-purple-700"
+                className="bg-[hsl(var(--accent-muted))] hover:bg-[hsl(var(--accent-muted))]"
               >
                 <Download className="w-4 h-4 mr-2" />
                 Download Now
@@ -271,7 +271,7 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
             </>
           )}
           {downloading && (
-            <div className="text-xs text-[var(--text-tertiary)] text-center">
+            <div className="text-xs text-[hsl(var(--text-tertiary))] text-center">
               Please wait while the model downloads...
             </div>
           )}

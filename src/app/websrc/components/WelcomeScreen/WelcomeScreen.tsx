@@ -40,12 +40,12 @@ const StepIndicator = ({ current, total, labels }: StepIndicatorProps) => (
         <div key={index} className="flex items-center">
           <div className="flex flex-col items-center">
             <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-200 ${
+              className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-colors duration-fast ${
                 index < current
-                  ? 'bg-[var(--accent-primary)] border-[var(--accent-primary)] text-white'
+                  ? 'bg-[hsl(var(--accent))] border-[hsl(var(--accent))] text-[hsl(var(--accent-fg))]'
                   : index === current
-                  ? 'border-[var(--accent-primary)] text-[var(--accent-primary)] scale-110'
-                  : 'border-[var(--border-color)] text-[var(--text-tertiary)]'
+                  ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))] scale-110'
+                  : 'border-[hsl(var(--border-subtle))] text-[hsl(var(--text-tertiary))]'
               }`}
             >
               {index < current ? (
@@ -54,14 +54,14 @@ const StepIndicator = ({ current, total, labels }: StepIndicatorProps) => (
                 <span className="text-sm font-semibold">{index + 1}</span>
               )}
             </div>
-            <span className="text-xs text-[var(--text-secondary)] mt-1 whitespace-nowrap">
+            <span className="text-xs text-[hsl(var(--text-secondary))] mt-1 whitespace-nowrap">
               {labels[index]}
             </span>
           </div>
           {index < total - 1 && (
             <div
               className={`w-16 h-0.5 mx-2 mb-6 transition-colors ${
-                index < current ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-color)]'
+                index < current ? 'bg-[hsl(var(--accent))]' : 'bg-[hsl(var(--border-subtle))]'
               }`}
             />
           )}
@@ -102,7 +102,7 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   };
 
   const handleDownloadError = (error: string) => {
-    console.error('Model download failed:', error);
+    console.error("Model download didn't complete:", error);
   };
 
   const handleSkipIndexing = () => {
@@ -128,7 +128,7 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-[var(--bg-primary)] z-50 overflow-hidden">
+    <div className="fixed inset-0 bg-[hsl(var(--bg))] z-50 overflow-hidden">
       {step === 'welcome' && (
         <div
           key="welcome"
@@ -138,13 +138,13 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
               <StepIndicator current={currentStepIndex} total={4} labels={stepLabels} />
 
               <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom-5 duration-300" style={{ animationDelay: '100ms', animationFillMode: 'backwards' }}>
-                <div className="inline-flex items-center justify-center w-20 h-20 gradient-brand rounded-2xl mb-6 shadow-lg">
-                  <BookOpen className="w-10 h-10 text-white" />
+                <div className="inline-flex items-center justify-center w-20 h-20 bg-[hsl(var(--accent))] rounded-lg mb-6 shadow-sm">
+                  <BookOpen className="w-10 h-10 text-[hsl(var(--accent-fg))]" strokeWidth={1.75} />
                 </div>
-                <h1 className="text-4xl font-bold text-[var(--text-primary)] mb-4">
+                <h1 className="text-4xl font-bold text-[hsl(var(--text-primary))] mb-4">
                   Welcome to Recall/Vault
                 </h1>
-                <p className="text-xl text-[var(--text-secondary)] mb-8">
+                <p className="text-xl text-[hsl(var(--text-secondary))] mb-8">
                   Your intelligent document search companion
                 </p>
               </div>
@@ -170,13 +170,13 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
               <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300" style={{ animationDelay: '300ms', animationFillMode: 'backwards' }}>
                 <button
                   onClick={handleGetStarted}
-                  className="w-full px-6 py-4 bg-[var(--accent-primary)] text-white rounded-lg font-semibold text-lg hover:bg-[var(--accent-hover)] transition-colors shadow-md hover:shadow-lg flex items-center justify-center gap-2 group"
+                  className="w-full px-6 py-4 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md font-semibold text-lg hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast shadow-sm flex items-center justify-center gap-2 group"
                   aria-label="Get started with Recall/Vault"
                 >
-                  Get Started
-                  <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+                  Get started
+                  <ArrowRight className="w-4 h-4 transition-transform duration-fast group-hover:translate-x-1" strokeWidth={1.75} />
                 </button>
-                <p className="text-sm text-[var(--text-tertiary)] text-center">
+                <p className="text-sm text-[hsl(var(--text-tertiary))] text-center">
                   Takes about 2 minutes to set up
                 </p>
               </div>
@@ -235,13 +235,13 @@ interface FeatureCardProps {
 
 function FeatureCard({ icon, title, description }: FeatureCardProps) {
   return (
-    <div className="flex items-start gap-4 p-6 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg hover:border-[var(--accent-primary)] transition-all hover:shadow-md">
-      <div className="flex-shrink-0 w-12 h-12 bg-[var(--accent-light)] rounded-lg flex items-center justify-center text-[var(--accent-primary)]">
+    <div className="flex items-start gap-4 p-6 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg hover:border-[hsl(var(--accent))] transition-colors duration-fast">
+      <div className="flex-shrink-0 w-12 h-12 bg-[hsl(var(--accent-muted))] rounded-lg flex items-center justify-center text-[hsl(var(--accent))]">
         {icon}
       </div>
       <div>
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">{title}</h3>
-        <p className="text-sm text-[var(--text-secondary)]">{description}</p>
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-1">{title}</h3>
+        <p className="text-sm text-[hsl(var(--text-secondary))]">{description}</p>
       </div>
     </div>
   );

@@ -114,13 +114,13 @@ export function ChatTab() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-        <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-          <MessageSquare className="w-5 h-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+          <MessageSquare className="w-5 h-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Chat</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Chat</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Provider connection, active models, and runtime options
           </p>
         </div>
@@ -129,14 +129,14 @@ export function ChatTab() {
       {/* Chat Provider */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-[var(--accent-primary)]" />
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Chat Provider</h3>
+          <Server className="w-4 h-4 text-[hsl(var(--accent))]" />
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Chat Provider</h3>
         </div>
 
         {isLoading ? (
-          <div className="text-xs text-[var(--text-tertiary)]">Loading chat settings...</div>
+          <div className="text-xs text-[hsl(var(--text-tertiary))]">Loading chat settings...</div>
         ) : !llmSettings ? (
-          <div className="text-xs text-[var(--text-tertiary)]">
+          <div className="text-xs text-[hsl(var(--text-tertiary))]">
             Unable to load chat settings right now.
           </div>
         ) : (
@@ -150,10 +150,10 @@ export function ChatTab() {
               ].map((option) => (
                 <label
                   key={option.value}
-                  className={`p-3 rounded-lg border-2 transition-all text-center cursor-pointer ${
+                  className={`p-3 rounded-lg border-2 transition-colors duration-fast text-center cursor-pointer ${
                     provider === option.value
-                      ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]'
-                      : 'border-[var(--border-color)] hover:border-[var(--border-hover)] bg-[var(--surface-elevated)]'
+                      ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]'
+                      : 'border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--border-default))] bg-[hsl(var(--surface-raised))]'
                   }`}
                 >
                   <input
@@ -166,22 +166,22 @@ export function ChatTab() {
                     }
                     className="sr-only"
                   />
-                  <div className="font-medium text-sm text-[var(--text-primary)]">
+                  <div className="font-medium text-sm text-[hsl(var(--text-primary))]">
                     {option.label}
                   </div>
-                  <div className="text-xs text-[var(--text-secondary)] mt-0.5">{option.desc}</div>
+                  <div className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">{option.desc}</div>
                 </label>
               ))}
             </div>
 
             {/* Ollama configuration */}
             {showOllamaSettings && (
-              <div className="p-4 bg-[var(--bg-secondary)] rounded-lg space-y-4">
+              <div className="p-4 bg-[hsl(var(--surface))] rounded-lg space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label
                       htmlFor="ollamaUrl"
-                      className="block text-xs font-medium text-[var(--text-secondary)]"
+                      className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
                     >
                       Server URL
                     </label>
@@ -202,7 +202,7 @@ export function ChatTab() {
                   <div className="space-y-1.5">
                     <label
                       htmlFor="ollamaModel"
-                      className="block text-xs font-medium text-[var(--text-secondary)]"
+                      className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
                     >
                       Model
                     </label>
@@ -238,27 +238,27 @@ export function ChatTab() {
                     type="button"
                     onClick={handleTestOllamaConnection}
                     disabled={isTestingOllamaConnection}
-                    className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
                   >
                     {isTestingOllamaConnection ? 'Testing...' : 'Test Connection'}
                   </button>
                   {ollamaModelsEndpoint && (
-                    <span className="text-xs text-[var(--text-tertiary)]">
+                    <span className="text-xs text-[hsl(var(--text-tertiary))]">
                       {ollamaAvailableModels.length} model(s) from {ollamaModelsEndpoint}
                     </span>
                   )}
                   <button
                     type="button"
                     onClick={() => setShowOllamaAuth(!showOllamaAuth)}
-                    className="ml-auto text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
+                    className="ml-auto text-xs text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] transition-colors"
                   >
                     {showOllamaAuth ? 'Hide auth' : 'Authentication...'}
                   </button>
                 </div>
 
                 {showOllamaAuth && (
-                  <div className="pt-3 border-t border-[var(--border-color)] space-y-3">
-                    <div className="text-xs font-medium text-[var(--text-secondary)]">
+                  <div className="pt-3 border-t border-[hsl(var(--border-subtle))] space-y-3">
+                    <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                       Security Header
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -292,7 +292,7 @@ export function ChatTab() {
                       />
                     </div>
 
-                    <div className="text-xs font-medium text-[var(--text-secondary)] pt-1">
+                    <div className="text-xs font-medium text-[hsl(var(--text-secondary))] pt-1">
                       Basic Auth Helper
                     </div>
                     <div className="flex items-end gap-3">
@@ -317,12 +317,12 @@ export function ChatTab() {
                       <button
                         type="button"
                         onClick={handleApplyBasicAuth}
-                        className="px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] text-[var(--text-primary)] hover:border-[var(--border-hover)] whitespace-nowrap"
+                        className="px-3 py-2 text-xs font-medium rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))] whitespace-nowrap"
                       >
                         Set Header
                       </button>
                     </div>
-                    <p className="text-xs text-[var(--text-tertiary)]">
+                    <p className="text-xs text-[hsl(var(--text-tertiary))]">
                       Generates an Authorization header from your credentials. Your password is not
                       stored separately.
                     </p>
@@ -337,42 +337,42 @@ export function ChatTab() {
       {/* Active Models */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
-          <Brain className="w-4 h-4 text-[var(--accent-primary)]" />
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Active Models</h3>
+          <Brain className="w-4 h-4 text-[hsl(var(--accent))]" />
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Active Models</h3>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="p-3 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)]">
-            <div className="text-xs font-medium text-[var(--text-tertiary)]">Chat LLM</div>
-            <div className="text-sm text-[var(--text-primary)] mt-1">
+          <div className="p-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
+            <div className="text-xs font-medium text-[hsl(var(--text-tertiary))]">Chat LLM</div>
+            <div className="text-sm text-[hsl(var(--text-primary))] mt-1">
               {provider === 'ollama'
                 ? (llmSettings?.model ? `${llmSettings.model} (Ollama)` : 'Not set')
                 : (activeChatModel?.model_name ?? 'Not set')}
             </div>
             {provider !== 'ollama' && activeChatModel?.model_id && (
-              <div className="text-xs text-[var(--text-tertiary)] mt-1">
+              <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
                 {activeChatModel.model_id}
               </div>
             )}
           </div>
 
-          <div className="p-3 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)]">
-            <div className="text-xs font-medium text-[var(--text-tertiary)]">Router Model</div>
-            <div className="text-sm text-[var(--text-primary)] mt-1">
+          <div className="p-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
+            <div className="text-xs font-medium text-[hsl(var(--text-tertiary))]">Router Model</div>
+            <div className="text-sm text-[hsl(var(--text-primary))] mt-1">
               {llmSettings?.router?.model ?? 'Not set'}
             </div>
-            <div className="text-xs text-[var(--text-tertiary)] mt-1">
+            <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
               Required for follow-up routing
             </div>
           </div>
 
-          <div className="p-3 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)]">
-            <div className="text-xs font-medium text-[var(--text-tertiary)]">Embedding Model</div>
-            <div className="text-sm text-[var(--text-primary)] mt-1">
+          <div className="p-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
+            <div className="text-xs font-medium text-[hsl(var(--text-tertiary))]">Embedding Model</div>
+            <div className="text-sm text-[hsl(var(--text-primary))] mt-1">
               {activeEmbeddingModel?.model_name ?? 'Not set'}
             </div>
             {activeEmbeddingModel?.model_id && (
-              <div className="text-xs text-[var(--text-tertiary)] mt-1">
+              <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
                 {activeEmbeddingModel.model_id}
               </div>
             )}
@@ -383,22 +383,22 @@ export function ChatTab() {
       {/* Options */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
-          <Settings2 className="w-4 h-4 text-[var(--accent-primary)]" />
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Options</h3>
+          <Settings2 className="w-4 h-4 text-[hsl(var(--accent))]" />
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Options</h3>
         </div>
 
-        <div className="p-4 bg-[var(--bg-secondary)] rounded-lg space-y-4">
+        <div className="p-4 bg-[hsl(var(--surface))] rounded-lg space-y-4">
           <div className="flex items-start gap-3">
             <input
               id="useQuantization"
               type="checkbox"
               checked={aiSettings.useQuantization}
               onChange={(e) => updateAI({ useQuantization: e.target.checked })}
-              className="mt-0.5 w-4 h-4 text-[var(--accent-primary)] bg-[var(--bg-tertiary)] border-[var(--border-color)] rounded focus:ring-2 focus:ring-[var(--accent-primary)]"
+              className="mt-0.5 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
             />
             <label htmlFor="useQuantization" className="flex-1 cursor-pointer">
-              <div className="text-sm font-medium text-[var(--text-primary)]">Use Quantization</div>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+              <div className="text-sm font-medium text-[hsl(var(--text-primary))]">Use Quantization</div>
+              <p className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
                 Reduce model size and improve speed with minimal quality loss.
               </p>
             </label>

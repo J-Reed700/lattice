@@ -128,7 +128,7 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <Loader2 className="w-6 h-6 animate-spin text-[var(--accent-primary)]" />
+        <Loader2 className="w-6 h-6 animate-spin text-[hsl(var(--accent))]" />
       </div>
     );
   }
@@ -138,22 +138,22 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-            <Settings className="w-6 h-6 text-[var(--accent-primary)]" />
+          <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+            <Settings className="w-6 h-6 text-[hsl(var(--accent))]" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-[var(--text-primary)]">Summary Settings</h2>
-            <p className="text-sm text-[var(--text-secondary)]">Configure on-device AI summarization</p>
+            <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Summary Settings</h2>
+            <p className="text-sm text-[hsl(var(--text-secondary))]">Configure on-device AI summarization</p>
           </div>
         </div>
       </div>
 
       {/* Privacy Notice */}
-      <div className="flex items-start gap-3 p-4 bg-[var(--success-light)] border border-[var(--success-light)] rounded-lg">
-        <Shield className="w-5 h-5 text-[var(--success)] mt-0.5" />
+      <div className="flex items-start gap-3 p-4 bg-[hsl(var(--success-muted))] border border-[hsl(var(--success-muted))] rounded-lg">
+        <Shield className="w-5 h-5 text-[hsl(var(--success-fg))] mt-0.5" />
         <div>
-          <p className="text-sm font-medium text-[var(--success)]">100% Private & Offline</p>
-          <p className="text-xs text-[var(--success)] mt-1">
+          <p className="text-sm font-medium text-[hsl(var(--success-fg))]">100% Private & Offline</p>
+          <p className="text-xs text-[hsl(var(--success-fg))] mt-1">
             All models run locally on your device. No data is ever sent to external servers.
           </p>
         </div>
@@ -161,10 +161,10 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
 
       {/* General Settings */}
       <div className="space-y-4">
-        <h3 className="font-semibold text-[var(--text-primary)]">General</h3>
+        <h3 className="font-semibold text-[hsl(var(--text-primary))]">General</h3>
 
         <div className="space-y-3">
-          <label className="flex items-center gap-3 p-3 border border-[var(--border-color)] rounded-lg hover:bg-[var(--bg-secondary)] cursor-pointer">
+          <label className="flex items-center gap-3 p-3 border border-[hsl(var(--border-subtle))] rounded-lg hover:bg-[hsl(var(--surface))] cursor-pointer">
             <input
               type="checkbox"
               checked={autoSummarize}
@@ -172,15 +172,15 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
                 setAutoSummarize(e.target.checked);
                 saveSettings();
               }}
-              className="w-4 h-4 text-[var(--accent-primary)] rounded"
+              className="w-4 h-4 text-[hsl(var(--accent))] rounded"
             />
             <div>
-              <p className="font-medium text-[var(--text-primary)]">Auto-summarize new documents</p>
-              <p className="text-sm text-[var(--text-secondary)]">Generate summaries automatically when indexing</p>
+              <p className="font-medium text-[hsl(var(--text-primary))]">Auto-summarize new documents</p>
+              <p className="text-sm text-[hsl(var(--text-secondary))]">Generate summaries automatically when indexing</p>
             </div>
           </label>
 
-          <label className="flex items-center gap-3 p-3 border border-[var(--border-color)] rounded-lg hover:bg-[var(--bg-secondary)] cursor-pointer">
+          <label className="flex items-center gap-3 p-3 border border-[hsl(var(--border-subtle))] rounded-lg hover:bg-[hsl(var(--surface))] cursor-pointer">
             <input
               type="checkbox"
               checked={cacheEnabled}
@@ -188,11 +188,11 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
                 setCacheEnabled(e.target.checked);
                 saveSettings();
               }}
-              className="w-4 h-4 text-[var(--accent-primary)] rounded"
+              className="w-4 h-4 text-[hsl(var(--accent))] rounded"
             />
             <div>
-              <p className="font-medium text-[var(--text-primary)]">Cache summaries</p>
-              <p className="text-sm text-[var(--text-secondary)]">Store summaries to avoid regeneration</p>
+              <p className="font-medium text-[hsl(var(--text-primary))]">Cache summaries</p>
+              <p className="text-sm text-[hsl(var(--text-secondary))]">Store summaries to avoid regeneration</p>
             </div>
           </label>
         </div>
@@ -201,8 +201,8 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
       {/* Models */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-[var(--text-primary)]">Models</h3>
-          <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+          <h3 className="font-semibold text-[hsl(var(--text-primary))]">Models</h3>
+          <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-secondary))]">
             <HardDrive className="w-4 h-4" />
             <span>{totalDiskUsage.toFixed(1)} GB used</span>
           </div>
@@ -214,20 +214,20 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
               key={model.name}
               className={`p-4 border rounded-lg ${
                 defaultModel === model.name
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]'
-                  : 'border-[var(--border-color)] bg-[var(--surface-elevated)]'
+                  ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]'
+                  : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]'
               }`}
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <h4 className="font-medium text-[var(--text-primary)]">{model.full_name}</h4>
+                    <h4 className="font-medium text-[hsl(var(--text-primary))]">{model.full_name}</h4>
                     {model.downloaded && (
-                      <CheckCircle className="w-4 h-4 text-[var(--success)]" />
+                      <CheckCircle className="w-4 h-4 text-[hsl(var(--success-fg))]" />
                     )}
                   </div>
-                  <p className="text-sm text-[var(--text-secondary)] mt-1">{model.description}</p>
-                  <div className="flex flex-wrap gap-3 mt-2 text-xs text-[var(--text-secondary)]">
+                  <p className="text-sm text-[hsl(var(--text-secondary))] mt-1">{model.description}</p>
+                  <div className="flex flex-wrap gap-3 mt-2 text-xs text-[hsl(var(--text-secondary))]">
                     <span className="flex items-center gap-1">
                       <Cpu className="w-3 h-3" />
                       {model.parameters}B params
@@ -251,15 +251,15 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
                         }}
                         className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                           defaultModel === model.name
-                            ? 'bg-[var(--accent-primary)] text-white'
-                            : 'bg-[var(--surface-elevated)] border border-[var(--border-color)] hover:bg-[var(--bg-secondary)]'
+                            ? 'bg-[hsl(var(--accent))] text-white'
+                            : 'bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface))]'
                         }`}
                       >
                         {defaultModel === model.name ? 'Default' : 'Set Default'}
                       </button>
                       <button
                         onClick={() => setPendingDeleteModel(model)}
-                        className="p-2 text-[var(--error)] hover:bg-[var(--error-light)] rounded-lg transition-colors"
+                        className="p-2 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] rounded-lg transition-colors"
                         title="Delete model"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -269,7 +269,7 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
                     <button
                       onClick={() => handleDownloadModel(model.name)}
                       disabled={downloading === model.name}
-                      className="flex items-center gap-2 px-3 py-1 text-sm bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-primary)] transition-colors disabled:opacity-50"
+                      className="flex items-center gap-2 px-3 py-1 text-sm bg-[hsl(var(--accent))] text-white rounded-lg hover:bg-[hsl(var(--accent))] transition-colors disabled:opacity-50"
                     >
                       {downloading === model.name ? (
                         <>
@@ -305,10 +305,10 @@ export function SummarySettings({ onClose, className = '' }: SummarySettingsProp
 
       {/* Actions */}
       {onClose && (
-        <div className="flex justify-end pt-4 border-t border-[var(--border-color)]">
+        <div className="flex justify-end pt-4 border-t border-[hsl(var(--border-subtle))]">
           <button
             onClick={onClose}
-            className="px-6 py-2 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-primary)] transition-colors"
+            className="px-6 py-2 bg-[hsl(var(--accent))] text-white rounded-lg hover:bg-[hsl(var(--accent))] transition-colors"
           >
             Done
           </button>

@@ -14,7 +14,7 @@ struct MemoryToIndex {
 }
 
 pub(super) async fn persist_user_message_pending(
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     user_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
@@ -35,7 +35,7 @@ pub(super) async fn persist_user_message_pending(
 
 pub(super) async fn finalize_successful_turn(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
     user_message_id: &str,
     user_message: &str,
@@ -136,7 +136,7 @@ pub(super) async fn finalize_successful_turn(
 }
 
 pub(super) async fn mark_user_message_failed(
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     user_message_id: &str,
 ) {
     conv_service

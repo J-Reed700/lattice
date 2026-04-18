@@ -66,7 +66,7 @@ export function ModelSearchBar() {
       {localQuery && (
         <button
           onClick={handleClear}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors"
           aria-label="Clear search"
         >
           <X className="w-4 h-4" />

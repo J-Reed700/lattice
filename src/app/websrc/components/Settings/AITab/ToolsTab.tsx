@@ -265,30 +265,30 @@ export function ToolsTab() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-        <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-          <Wrench className="w-5 h-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+          <Wrench className="w-5 h-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Tool Integrations</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Tool Integrations</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Built-in tools, custom search endpoints, and presets
           </p>
         </div>
       </div>
 
       {isLoading || !llmSettings ? (
-        <div className="text-xs text-[var(--text-tertiary)]">Loading tools...</div>
+        <div className="text-xs text-[hsl(var(--text-tertiary))]">Loading tools...</div>
       ) : (
-        <div className="space-y-3 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
+        <div className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
           <div className="space-y-2">
-            <div className="text-xs font-medium text-[var(--text-secondary)]">Built-in tools</div>
+            <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">Built-in tools</div>
             <div className="flex flex-wrap gap-2">
               {['web_search', 'fetch_url_content', 'wiki_search', 'wiki_summary'].map(
                 (toolName) => (
                   <span
                     key={toolName}
-                    className="inline-flex items-center rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-1 text-[11px] text-[var(--text-secondary)]"
+                    className="inline-flex items-center rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-[hsl(var(--text-secondary))]"
                   >
                     {toolName}
                   </span>
@@ -297,45 +297,45 @@ export function ToolsTab() {
             </div>
           </div>
 
-          <div className="border-t border-[var(--border-color)] pt-3 space-y-3">
-            <div className="rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 space-y-3">
+          <div className="border-t border-[hsl(var(--border-subtle))] pt-3 space-y-3">
+            <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 space-y-3">
               <div className="space-y-1">
-                <div className="text-xs font-semibold text-[var(--text-primary)]">
+                <div className="text-xs font-semibold text-[hsl(var(--text-primary))]">
                   Preset Catalog (Templates)
                 </div>
-                <p className="text-xs text-[var(--text-secondary)]">
+                <p className="text-xs text-[hsl(var(--text-secondary))]">
                   Curated starter presets for common public APIs and self-hosted search. This
                   list is intentionally small and not exhaustive.
                 </p>
-                <p className="text-[11px] text-[var(--text-tertiary)]">
+                <p className="text-[11px] text-[hsl(var(--text-tertiary))]">
                   Select a preset, then click <span className="font-medium">Add Preset as Tool</span>.
                   This copies the template into your saved custom tools list below. Selecting a
                   preset alone does not change any saved tool.
                 </p>
               </div>
-              <div className="rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2.5">
+              <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => cyclePreset(-1)}
-                    className="rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+                    className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
                   >
                     Previous
                   </button>
-                  <div className="text-[11px] text-[var(--text-secondary)]">
+                  <div className="text-[11px] text-[hsl(var(--text-secondary))]">
                     Preset {selectedPresetIndex + 1} of {CUSTOM_TOOL_PRESETS.length}
                   </div>
                   <button
                     type="button"
                     onClick={() => cyclePreset(1)}
-                    className="rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 py-1 text-[11px] text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+                    className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
                   >
                     Next
                   </button>
                 </div>
               </div>
-              <div className="rounded-md border border-[var(--border-color)] bg-[var(--bg-secondary)] p-2.5 text-xs text-[var(--text-secondary)]">
-                <div className="font-medium text-[var(--text-primary)]">
+              <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2.5 text-xs text-[hsl(var(--text-secondary))]">
+                <div className="font-medium text-[hsl(var(--text-primary))]">
                   Selected preset: {selectedPreset.label}
                 </div>
                 <div className="mt-1 text-[11px]">{selectedPreset.summary}</div>
@@ -351,13 +351,13 @@ export function ToolsTab() {
                     href={selectedPreset.docsUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-1 inline-block text-[var(--accent-primary)] hover:underline"
+                    className="mt-1 inline-block text-[hsl(var(--accent))] hover:underline"
                   >
                     Open preset docs
                   </a>
                 )}
                 {selectedPreset.id === 'searxng_search' && (
-                  <p className="mt-1 text-[var(--text-tertiary)]">
+                  <p className="mt-1 text-[hsl(var(--text-tertiary))]">
                     Replace the endpoint with your deployed SearXNG URL
                     (`https://your-domain/search?format=json`). Localhost/private-network
                     endpoints are blocked by default security policy.
@@ -368,8 +368,8 @@ export function ToolsTab() {
 
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h4 className="text-sm font-semibold text-[var(--text-primary)]">Saved Custom Tools</h4>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Saved Custom Tools</h4>
+                <p className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
                   These are the tools chat can actually use after you click Save Tools.
                 </p>
               </div>
@@ -378,7 +378,7 @@ export function ToolsTab() {
                   type="button"
                   onClick={() => void importCustomToolsFromJson()}
                   disabled={isImportingCustomTools}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--border-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isImportingCustomTools ? 'Importing...' : 'Import JSON'}
                 </button>
@@ -386,14 +386,14 @@ export function ToolsTab() {
                   type="button"
                   onClick={() => void exportCustomToolsToJson()}
                   disabled={isExportingCustomTools || customToolsDraft.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--border-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isExportingCustomTools ? 'Exporting...' : 'Export JSON'}
                 </button>
                 <button
                   type="button"
                   onClick={addPresetTool}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Preset as Tool
@@ -401,7 +401,7 @@ export function ToolsTab() {
                 <button
                   type="button"
                   onClick={addCustomTool}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--border-hover)]"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Tool
@@ -410,7 +410,7 @@ export function ToolsTab() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--text-secondary)]">
+              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                 Test Query
               </label>
               <input
@@ -423,7 +423,7 @@ export function ToolsTab() {
             </div>
 
             {customToolsDraft.length === 0 ? (
-              <p className="text-xs text-[var(--text-tertiary)]">
+              <p className="text-xs text-[hsl(var(--text-tertiary))]">
                 No custom tools configured. Add one to expose a custom search endpoint to the
                 model.
               </p>
@@ -432,17 +432,17 @@ export function ToolsTab() {
                 {customToolsDraft.map((tool, index) => (
                   <div
                     key={`${tool.name || 'custom_tool'}_${index}`}
-                    className="rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] p-3 space-y-3"
+                    className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 space-y-3"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <label className="inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
                         <input
                           type="checkbox"
                           checked={tool.enabled}
                           onChange={(event) =>
                             updateCustomTool(index, 'enabled', event.target.checked)
                           }
-                          className="h-4 w-4 rounded border-[var(--border-color)] bg-[var(--bg-tertiary)] text-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]"
+                          className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
                         />
                         Enabled
                       </label>
@@ -451,7 +451,7 @@ export function ToolsTab() {
                           type="button"
                           onClick={() => void testCustomTool(tool, index)}
                           disabled={activeToolTestKey === `${tool.name || 'custom_tool'}_${index}`}
-                          className="inline-flex items-center gap-1 rounded-md border border-[var(--border-color)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                          className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-xs text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-default))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {activeToolTestKey === `${tool.name || 'custom_tool'}_${index}`
                             ? 'Testing...'
@@ -460,7 +460,7 @@ export function ToolsTab() {
                         <button
                           type="button"
                           onClick={() => removeCustomTool(index)}
-                          className="inline-flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-[var(--error)]"
+                          className="inline-flex items-center gap-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--danger-fg))]"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           Remove
@@ -470,7 +470,7 @@ export function ToolsTab() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--text-secondary)]">
+                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                           Tool Name
                         </label>
                         <input
@@ -484,7 +484,7 @@ export function ToolsTab() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--text-secondary)]">
+                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                           Query Param
                         </label>
                         <input
@@ -500,7 +500,7 @@ export function ToolsTab() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-[var(--text-secondary)]">
+                      <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                         Description
                       </label>
                       <input
@@ -515,7 +515,7 @@ export function ToolsTab() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-[var(--text-secondary)]">
+                      <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                         Endpoint
                       </label>
                       <input
@@ -531,7 +531,7 @@ export function ToolsTab() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--text-secondary)]">
+                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                           Max Results Param (optional)
                         </label>
                         <input
@@ -545,7 +545,7 @@ export function ToolsTab() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--text-secondary)]">
+                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                           Default Max Results
                         </label>
                         <input
@@ -574,7 +574,7 @@ export function ToolsTab() {
                 type="button"
                 onClick={resetCustomTools}
                 disabled={!customToolsDirty || isSavingCustomTools}
-                className="rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Reset
               </button>
@@ -582,19 +582,19 @@ export function ToolsTab() {
                 type="button"
                 onClick={persistCustomTools}
                 disabled={!customToolsDirty || isSavingCustomTools}
-                className="rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg bg-[hsl(var(--accent))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--accent-fg))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSavingCustomTools ? 'Saving...' : 'Save Tools'}
               </button>
             </div>
 
-            <p className="text-xs text-[var(--text-tertiary)]">
+            <p className="text-xs text-[hsl(var(--text-tertiary))]">
               Tool names must use only letters, numbers, and underscores.
             </p>
-            <p className="text-xs text-[var(--text-tertiary)]">
+            <p className="text-xs text-[hsl(var(--text-tertiary))]">
               Preset = template only. Tool = saved runnable integration.
             </p>
-            <p className="text-xs text-[var(--text-tertiary)]">
+            <p className="text-xs text-[hsl(var(--text-tertiary))]">
               Presets are convenience defaults. Some providers apply rate limits or anti-bot
               protection and may intermittently fail.
             </p>

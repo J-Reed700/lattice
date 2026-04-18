@@ -5,7 +5,7 @@ use crate::infrastructure::search::bm25::BM25Search;
 use crate::infrastructure::search::hybrid::HybridSearchService;
 use crate::infrastructure::search::reranker::RerankerService;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
-use crate::infrastructure::services::traits::{BM25SearchTrait, SearchServiceTrait};
+use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
 use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 

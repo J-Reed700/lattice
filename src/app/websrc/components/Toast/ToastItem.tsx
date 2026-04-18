@@ -43,31 +43,31 @@ export const ToastItem: React.FC<ToastItemProps> = ({
     switch (toast.type) {
       case 'success':
         return {
-          bg: 'var(--success-light)',
-          border: 'var(--success)',
-          icon: <SuccessIcon className="text-[var(--success)]" />,
-          iconBg: 'var(--success-light)',
+          bg: 'hsl(var(--success-muted))',
+          border: 'hsl(var(--success-fg))',
+          icon: <SuccessIcon className="text-[hsl(var(--success-fg))]" />,
+          iconBg: 'hsl(var(--success-muted))',
         };
       case 'error':
         return {
-          bg: 'var(--error-light)',
-          border: 'var(--error)',
-          icon: <ErrorIcon className="text-[var(--error)]" />,
-          iconBg: 'var(--error-light)',
+          bg: 'hsl(var(--danger-muted))',
+          border: 'hsl(var(--danger-fg))',
+          icon: <ErrorIcon className="text-[hsl(var(--danger-fg))]" />,
+          iconBg: 'hsl(var(--danger-muted))',
         };
       case 'warning':
         return {
-          bg: 'var(--warning-light)',
-          border: 'var(--warning)',
-          icon: <WarningIcon className="text-[var(--warning)]" />,
-          iconBg: 'var(--warning-light)',
+          bg: 'hsl(var(--warning-muted))',
+          border: 'hsl(var(--warning-fg))',
+          icon: <WarningIcon className="text-[hsl(var(--warning-fg))]" />,
+          iconBg: 'hsl(var(--warning-muted))',
         };
       case 'info':
         return {
-          bg: 'var(--accent-light)',
-          border: 'var(--accent-primary)',
-          icon: <InfoIcon className="text-[var(--accent-primary)]" />,
-          iconBg: 'var(--accent-light)',
+          bg: 'hsl(var(--accent-muted))',
+          border: 'hsl(var(--accent))',
+          icon: <InfoIcon className="text-[hsl(var(--accent))]" />,
+          iconBg: 'hsl(var(--accent-muted))',
         };
     }
   };
@@ -145,16 +145,16 @@ export const ToastItem: React.FC<ToastItemProps> = ({
       aria-atomic="true"
       className={`
         relative w-full max-w-sm overflow-hidden
-        bg-[var(--surface-elevated)]
+        bg-[hsl(var(--surface-raised))]
         border-l-4
-        rounded-lg shadow-lg
-        transition-all duration-300 ease-out
+        rounded-md shadow-md
+        transition-opacity duration-base ease-out
         ${isExiting ? 'opacity-0 translate-x-full scale-95' : 'opacity-100 translate-x-0 scale-100'}
         ${index > 0 ? 'mt-3' : ''}
       `}
       style={{
         borderLeftColor: styles.border,
-        boxShadow: 'var(--shadow-lg)',
+        boxShadow: 'var(--shadow-md)',
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -171,11 +171,11 @@ export const ToastItem: React.FC<ToastItemProps> = ({
 
         {/* Text content */}
         <div className="flex-1 min-w-0 pt-0.5">
-          <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-1">
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))] mb-1">
             {toast.title}
           </h3>
           {toast.message && (
-            <p className="text-sm text-[var(--text-secondary)] break-words">
+            <p className="text-sm text-[hsl(var(--text-secondary))] break-words">
               {toast.message}
             </p>
           )}
@@ -196,10 +196,10 @@ export const ToastItem: React.FC<ToastItemProps> = ({
         {toast.dismissible && (
           <button
             onClick={handleDismiss}
-            className="flex-shrink-0 p-1 rounded-md hover:bg-[var(--surface-hover)] transition-colors"
+            className="flex-shrink-0 p-1 rounded-md hover:bg-[hsl(var(--surface))] transition-colors duration-fast"
             aria-label="Dismiss notification"
           >
-            <CloseIcon className="text-[var(--text-secondary)]" />
+            <CloseIcon className="text-[hsl(var(--text-secondary))]" />
           </button>
         )}
       </div>
@@ -207,7 +207,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
       {/* Progress bar */}
       {toast.duration && toast.duration > 0 && (
         <div
-          className="absolute bottom-0 left-0 h-1 transition-all duration-100 ease-linear"
+          className="absolute bottom-0 left-0 h-1 transition-[width] duration-fast ease-linear"
           style={{
             width: `${progress}%`,
             backgroundColor: styles.border,

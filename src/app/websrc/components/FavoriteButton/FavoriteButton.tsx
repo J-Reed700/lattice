@@ -88,9 +88,9 @@ export const FavoriteButton = memo(({
       onClick={handleClick}
       className={`
         inline-flex items-center gap-1.5 rounded-md
-        transition-all duration-200 ease-out
-        hover:bg-[var(--surface-hover)]
-        focus:outline-none focus:ring-2 focus:ring-[var(--warning)] focus:ring-offset-1
+        transition-colors duration-200 ease-out
+        hover:bg-[hsl(var(--surface-raised))]
+        focus:outline-none focus:ring-2 focus:ring-[hsl(var(--warning-fg))] focus:ring-offset-1
         ${buttonSizeClasses[size]}
         ${className}
       `}
@@ -100,14 +100,14 @@ export const FavoriteButton = memo(({
       <Star
         className={`
           ${sizeClasses[size]}
-          transition-all duration-200 ease-out
+          transition-colors duration-200 ease-out
           ${
             isFavorite
-              ? 'fill-[var(--warning)] text-[var(--warning)]'
-              : 'fill-none text-[var(--text-tertiary)]'
+              ? 'fill-[hsl(var(--warning-fg))] text-[hsl(var(--warning-fg))]'
+              : 'fill-none text-[hsl(var(--text-tertiary))]'
           }
           ${isAnimating ? 'scale-125' : 'scale-100'}
-          hover:text-[var(--warning)] hover:fill-[var(--warning-light)]
+          hover:text-[hsl(var(--warning-fg))] hover:fill-[hsl(var(--warning-muted))]
         `}
         strokeWidth={2}
       />
@@ -115,7 +115,7 @@ export const FavoriteButton = memo(({
         <span
           className={`
             ${textSizeClasses[size]}
-            text-[var(--text-secondary)]
+            text-[hsl(var(--text-secondary))]
             font-medium
           `}
         >

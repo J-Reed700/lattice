@@ -30,7 +30,7 @@ export function SystemCapabilitiesCard() {
       <Card padding="md">
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Server className="w-5 h-5 text-[var(--accent-primary)]" />
+            <Server className="w-5 h-5 text-[hsl(var(--accent))]" />
             <CardTitle>System Capabilities</CardTitle>
           </div>
         </CardHeader>
@@ -52,8 +52,8 @@ export function SystemCapabilitiesCard() {
     return (
       <Card padding="md">
         <CardContent>
-          <div className="flex items-center gap-3 text-[var(--text-secondary)]">
-            <AlertCircle className="w-5 h-5 text-[var(--warning)]" />
+          <div className="flex items-center gap-3 text-[hsl(var(--text-secondary))]">
+            <AlertCircle className="w-5 h-5 text-[hsl(var(--warning-fg))]" />
             <span className="text-sm">Failed to detect system capabilities</span>
           </div>
         </CardContent>
@@ -80,7 +80,7 @@ export function SystemCapabilitiesCard() {
       value: capabilities.gpu_type !== 'None'
         ? `${capabilities.gpu_type} (${capabilities.gpu_acceleration}${capabilities.vram_gb ? `, ${capabilities.vram_gb.toFixed(1)} GB VRAM` : ''})`
         : 'Not detected',
-      color: capabilities.gpu_type !== 'None' ? 'text-green-500' : 'text-[var(--text-tertiary)]',
+      color: capabilities.gpu_type !== 'None' ? 'text-green-500' : 'text-[hsl(var(--text-tertiary))]',
     },
     {
       icon: HardDrive,
@@ -94,7 +94,7 @@ export function SystemCapabilitiesCard() {
     <Card padding="md">
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Server className="w-5 h-5 text-[var(--accent-primary)]" />
+          <Server className="w-5 h-5 text-[hsl(var(--accent))]" />
           <CardTitle className="text-base">System Capabilities</CardTitle>
         </div>
       </CardHeader>
@@ -108,10 +108,10 @@ export function SystemCapabilitiesCard() {
                   <Icon className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-[var(--text-secondary)]">
+                  <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                     {item.label}
                   </div>
-                  <div className="text-sm text-[var(--text-primary)] mt-0.5 break-words">
+                  <div className="text-sm text-[hsl(var(--text-primary))] mt-0.5 break-words">
                     {item.value}
                   </div>
                 </div>

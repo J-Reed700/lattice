@@ -111,10 +111,10 @@ export function HuggingFaceSettings() {
           <div className="flex items-start gap-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
             <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
             <div className="space-y-2 text-sm">
-              <p className="text-[var(--text-primary)] font-medium">
+              <p className="text-[hsl(var(--text-primary))] font-medium">
                 Why do I need a HuggingFace token?
               </p>
-              <p className="text-[var(--text-secondary)]">
+              <p className="text-[hsl(var(--text-secondary))]">
                 Some models require authentication to download. A HuggingFace token allows you to
                 download gated models that require acceptance of license terms.
               </p>
@@ -122,7 +122,7 @@ export function HuggingFaceSettings() {
                 href="https://huggingface.co/settings/tokens"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[var(--accent-primary)] hover:underline"
+                className="inline-flex items-center gap-1 text-[hsl(var(--accent))] hover:underline"
               >
                 Create a token on HuggingFace
                 <ExternalLink className="w-3 h-3" />
@@ -153,7 +153,7 @@ export function HuggingFaceSettings() {
 
           {/* Token Input */}
           <div className="space-y-2">
-            <label htmlFor="hf-token" className="block text-sm font-medium text-[var(--text-primary)]">
+            <label htmlFor="hf-token" className="block text-sm font-medium text-[hsl(var(--text-primary))]">
               {isTokenSet ? 'Update Token' : 'HuggingFace Token'}
             </label>
             <div className="relative">
@@ -163,18 +163,18 @@ export function HuggingFaceSettings() {
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 placeholder="hf_..."
-                className="w-full px-3 py-2 pr-10 bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+                className="w-full px-3 py-2 pr-10 bg-[hsl(var(--surface))] border border-[hsl(var(--border-subtle))] rounded-md text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))]"
                 disabled={isLoading}
               />
               <button
                 type="button"
                 onClick={() => setShowToken(!showToken)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
               >
                 {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <p className="text-xs text-[var(--text-secondary)]">
+            <p className="text-xs text-[hsl(var(--text-secondary))]">
               Your token will be stored securely in your system keyring
             </p>
           </div>
@@ -191,8 +191,8 @@ export function HuggingFaceSettings() {
           </div>
 
           {/* Security Note */}
-          <div className="p-3 bg-[var(--bg-tertiary)] rounded-md border border-[var(--border-color)]">
-            <p className="text-xs text-[var(--text-secondary)]">
+          <div className="p-3 bg-[hsl(var(--surface-raised))] rounded-md border border-[hsl(var(--border-subtle))]">
+            <p className="text-xs text-[hsl(var(--text-secondary))]">
               🔒 <strong>Security:</strong> Your token is stored in your operating system's secure
               keyring (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux).
               It is never stored in plain text.

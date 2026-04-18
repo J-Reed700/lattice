@@ -784,7 +784,7 @@ pub async fn extract_article(
 /// 5. Return total count
 #[tracing::instrument(skip(container))]
 pub async fn reindex_web_archive(container: State<'_, Container>) -> Result<usize, AppError> {
-    use crate::infrastructure::services::traits::WebArchiveServiceTrait;
+    use crate::features::web::WebArchiveServiceTrait;
 
     // Get web archive service
     let web_archive = container.web_archive();

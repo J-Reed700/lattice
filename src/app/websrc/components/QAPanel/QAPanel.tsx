@@ -89,16 +89,16 @@ export function QAPanel() {
   }, [handleAsk]);
 
   return (
-    <div className={`qa-panel p-6 ${theme === 'dark' ? 'bg-[var(--surface-elevated)]' : 'bg-[var(--surface-elevated)]'} rounded-lg shadow-lg`}>
-      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4 rounded">
+    <div className={`qa-panel p-6 ${theme === 'dark' ? 'bg-[hsl(var(--surface-raised))]' : 'bg-[hsl(var(--surface-raised))]'} rounded-lg shadow-lg`}>
+      <div className="bg-[hsl(var(--warning-muted))] border-l-4 border-[hsl(var(--warning-fg))] p-4 mb-4 rounded">
         <div className="flex items-center">
           <div className="flex-shrink-0">
-            <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <svg className="h-5 w-5 text-[hsl(var(--warning-fg))]" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
             </svg>
           </div>
           <div className="ml-3">
-            <p className="text-sm text-yellow-700">
+            <p className="text-sm text-[hsl(var(--warning-fg))]">
               <strong>⚠️ Deprecated:</strong> QAPanel is being replaced. Please use the <a href="/chat" className="underline font-semibold">Chat tab</a> for improved conversation experience with document grounding and streaming.
             </p>
           </div>
@@ -109,20 +109,20 @@ export function QAPanel() {
         <h2 className="text-2xl font-bold">
           Chat
         </h2>
-        <p className="text-sm text-[var(--text-tertiary)] mt-1">
+        <p className="text-sm text-[hsl(var(--text-tertiary))] mt-1">
           Ask questions about your knowledge base
         </p>
-        <div className={`text-sm ${theme === 'dark' ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-tertiary)]'} mt-2`}>
+        <div className={`text-sm ${theme === 'dark' ? 'text-[hsl(var(--text-tertiary))]' : 'text-[hsl(var(--text-tertiary))]'} mt-2`}>
           Ctrl/Cmd + Enter to ask
         </div>
       </div>
 
       <div className="mb-4">
         <textarea
-          className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-[var(--accent-primary)] focus:border-transparent ${
+          className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-[hsl(var(--accent))] focus:border-transparent ${
             theme === 'dark'
-              ? 'bg-[var(--surface-elevated)] border-[var(--border-color)] text-white placeholder-[var(--text-tertiary)]'
-              : 'bg-[var(--surface-elevated)] border-[var(--border-color)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]'
+              ? 'bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] text-[hsl(var(--accent-fg))] placeholder-[hsl(var(--text-tertiary))]'
+              : 'bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] text-[hsl(var(--text-primary))] placeholder-[hsl(var(--text-tertiary))]'
           }`}
           rows={3}
           placeholder="Ask anything about your documents..."
@@ -137,18 +137,18 @@ export function QAPanel() {
         className={`px-6 py-2 rounded-lg font-medium transition-colors ${
           loading || !question.trim()
             ? theme === 'dark'
-              ? 'bg-[var(--text-secondary)] text-[var(--text-tertiary)] cursor-not-allowed'
-              : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] cursor-not-allowed'
+              ? 'bg-[hsl(var(--text-secondary))] text-[hsl(var(--text-tertiary))] cursor-not-allowed'
+              : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-tertiary))] cursor-not-allowed'
             : theme === 'dark'
-              ? 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]'
-              : 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]'
+              ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent))]'
+              : 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent))]'
         }`}
         onClick={handleAsk}
         disabled={loading || !question.trim()}
       >
         {loading ? (
           <span className="flex items-center">
-            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-[hsl(var(--accent-fg))]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
@@ -161,15 +161,15 @@ export function QAPanel() {
 
       {(streamingAnswer || response) && (
         <div className={`mt-6 p-4 rounded-lg ${
-          theme === 'dark' ? 'bg-[var(--surface-elevated)]' : 'bg-[var(--bg-secondary)]'
+          theme === 'dark' ? 'bg-[hsl(var(--surface-raised))]' : 'bg-[hsl(var(--surface))]'
         }`}>
           <h3 className={`font-semibold mb-2 ${
-            theme === 'dark' ? 'text-white' : 'text-[var(--text-primary)]'
+            theme === 'dark' ? 'text-white' : 'text-[hsl(var(--text-primary))]'
           }`}>
             Answer:
           </h3>
           <p className={`whitespace-pre-wrap mb-4 ${
-            theme === 'dark' ? 'text-[var(--text-secondary)]' : 'text-[var(--text-primary)]'
+            theme === 'dark' ? 'text-[hsl(var(--text-secondary))]' : 'text-[hsl(var(--text-primary))]'
           }`}>
             {streamingAnswer || response?.answer}
             {loading && <span className="animate-pulse">▋</span>}
@@ -178,7 +178,7 @@ export function QAPanel() {
           {response?.sources && response.sources.length > 0 && (
             <div className="mt-4">
               <h4 className={`font-semibold mb-2 text-sm ${
-                theme === 'dark' ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-secondary)]'
+                theme === 'dark' ? 'text-[hsl(var(--text-tertiary))]' : 'text-[hsl(var(--text-secondary))]'
               }`}>
                 Sources ({response.sources.length}):
               </h4>
@@ -188,24 +188,24 @@ export function QAPanel() {
                     key={idx}
                     className={`p-3 rounded border ${
                       theme === 'dark'
-                        ? 'bg-[var(--surface-elevated)] border-[var(--border-color)]'
-                        : 'bg-[var(--surface-elevated)] border-[var(--border-color)]'
+                        ? 'bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))]'
+                        : 'bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))]'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className={`font-medium text-sm ${
-                        theme === 'dark' ? 'text-[var(--accent-light)]' : 'text-[var(--accent-primary)]'
+                        theme === 'dark' ? 'text-[hsl(var(--accent-muted))]' : 'text-[hsl(var(--accent))]'
                       }`}>
                         {source.file_path}
                       </span>
                       <span className={`text-xs ${
-                        theme === 'dark' ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-tertiary)]'
+                        theme === 'dark' ? 'text-[hsl(var(--text-tertiary))]' : 'text-[hsl(var(--text-tertiary))]'
                       }`}>
                         Relevance: {(source.score * 100).toFixed(1)}%
                       </span>
                     </div>
                     <p className={`text-sm ${
-                      theme === 'dark' ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-secondary)]'
+                      theme === 'dark' ? 'text-[hsl(var(--text-tertiary))]' : 'text-[hsl(var(--text-secondary))]'
                     }`}>
                       {source.snippet.substring(0, 150)}
                       {source.snippet.length > 150 && '...'}
@@ -221,10 +221,10 @@ export function QAPanel() {
       {error && (
         <div className={`mt-4 p-4 rounded-lg border ${
           theme === 'dark'
-            ? 'bg-[var(--error)] border-[var(--error)]'
-            : 'bg-[var(--error-light)] border-[var(--error)]'
+            ? 'bg-[hsl(var(--danger-fg))] border-[hsl(var(--danger-fg))]'
+            : 'bg-[hsl(var(--danger-muted))] border-[hsl(var(--danger-fg))]'
         }`}>
-          <p className={theme === 'dark' ? 'text-[var(--error-light)]' : 'text-[var(--error)]'}>
+          <p className={theme === 'dark' ? 'text-[hsl(var(--danger-muted))]' : 'text-[hsl(var(--danger-fg))]'}>
             {error}
           </p>
         </div>

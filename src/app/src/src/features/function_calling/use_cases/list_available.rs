@@ -28,7 +28,7 @@
 //! ```
 
 use crate::features::function_calling::domain::ToolDefinition;
-use crate::infrastructure::services::traits::FunctionRegistryTrait;
+use crate::features::function_calling::FunctionRegistryTrait;
 use crate::shared::result::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

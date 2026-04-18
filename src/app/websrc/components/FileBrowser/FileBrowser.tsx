@@ -794,7 +794,7 @@ export function FileBrowser() {
   }, [pendingDeleteDoc, refreshFiles]);
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-secondary)]">
+    <div className="flex h-full flex-col bg-[hsl(var(--surface))]">
       <LibraryToolbar
         filteredCount={filteredCount}
         totalCount={documents.length}
@@ -844,15 +844,15 @@ export function FileBrowser() {
       />
 
       {selectedDocumentIds.size > 0 && (
-        <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent-primary)]/20 bg-[var(--accent-light)]/25 px-3 py-2">
-          <span className="text-sm font-semibold text-[var(--text-primary)]">
+        <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[hsl(var(--accent))]/20 bg-[hsl(var(--accent-muted))]/25 px-3 py-2">
+          <span className="text-sm font-semibold text-[hsl(var(--text-primary))]">
             {selectedDocumentIds.size} selected
           </span>
           <select
             value={selectedBulkSpaceId}
             onChange={(event) => setSelectedBulkSpaceId(event.target.value)}
             disabled={isLoadingSpaces || isAssigningSpace || spaces.length === 0}
-            className="h-9 min-w-[180px] rounded-lg border border-[var(--border-color)] bg-[var(--surface-elevated)] px-2 text-sm text-[var(--text-primary)]"
+            className="h-9 min-w-[180px] rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 text-sm text-[hsl(var(--text-primary))]"
             aria-label="Bulk assign space"
           >
             <option value="">
@@ -869,7 +869,7 @@ export function FileBrowser() {
             size="sm"
             onClick={handleAsyncEvent(handleBulkAssignToSpace)}
             disabled={isAssigningSpace || !selectedBulkSpaceId || isLoadingSpaces || spaces.length === 0}
-            className="h-9 rounded-lg border border-[var(--accent-primary)]/30 px-3 text-sm text-[var(--accent-primary)] hover:bg-[var(--accent-light)]/40"
+            className="h-9 rounded-lg border border-[hsl(var(--accent))]/30 px-3 text-sm text-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-muted))]/40"
           >
             Assign to Space
           </Button>
@@ -877,7 +877,7 @@ export function FileBrowser() {
             variant="ghost"
             size="sm"
             onClick={handleAsyncEvent(handleBulkDelete)}
-            className="h-9 rounded-lg border border-[var(--error)]/30 px-3 text-sm text-[var(--error)] hover:bg-[var(--error-light)]"
+            className="h-9 rounded-lg border border-[hsl(var(--danger-fg))]/30 px-3 text-sm text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))]"
           >
             Delete Selected
           </Button>
@@ -885,7 +885,7 @@ export function FileBrowser() {
             variant="ghost"
             size="sm"
             onClick={clearSelection}
-            className="h-9 rounded-lg border border-[var(--border-color)] px-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+            className="h-9 rounded-lg border border-[hsl(var(--border-subtle))] px-3 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
           >
             Clear Selection
           </Button>
@@ -893,17 +893,17 @@ export function FileBrowser() {
       )}
 
       <div className="flex-1 overflow-hidden px-4 pb-4 pt-0.5">
-        <div className="h-full overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--surface-elevated)] shadow-[var(--shadow-sm)]">
+        <div className="h-full overflow-hidden rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] shadow-[var(--shadow-sm)]">
           {documents.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <div className="max-w-md p-8 text-center">
                 <div className="mb-4 flex justify-center">
-                  <div className="rounded-full border border-[var(--border-color)] bg-[var(--bg-secondary)] p-4">
-                    <FileUp className="h-12 w-12 text-[var(--text-tertiary)]" />
+                  <div className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
+                    <FileUp className="h-12 w-12 text-[hsl(var(--text-tertiary))]" />
                   </div>
                 </div>
                 <h3 className="mb-2 text-xl font-semibold">No Documents Yet</h3>
-                <p className="mb-6 text-[var(--text-secondary)]">
+                <p className="mb-6 text-[hsl(var(--text-secondary))]">
                   Get started by adding files to your knowledge base.
                 </p>
                 <Button onClick={() => navigate('/ingest')} className="inline-flex items-center gap-2">

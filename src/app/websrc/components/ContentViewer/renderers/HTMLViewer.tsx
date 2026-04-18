@@ -142,21 +142,21 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
               <button
                 type="button"
                 onClick={() => open(originalUrl)}
-                className="inline-flex items-center gap-2 rounded-full border border-[var(--border-color)]/70 bg-[var(--bg-secondary)]/90 px-4 py-1.5 text-sm text-primary hover:opacity-90"
+                className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/90 px-4 py-1.5 text-sm text-primary hover:opacity-90"
               >
                 <ExternalLink size={14} />
                 Open Original URL
               </button>
             )}
             {siteName && (
-              <span className="inline-flex items-center rounded-full border border-[var(--border-color)]/60 bg-[var(--bg-secondary)]/70 px-3 py-1 text-xs font-medium text-muted-foreground">
+              <span className="inline-flex items-center rounded-full border border-[hsl(var(--border-subtle))]/60 bg-[hsl(var(--surface))]/70 px-3 py-1 text-xs font-medium text-muted-foreground">
                 {siteName}
               </span>
             )}
             {links.length > 0 && (
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full border border-[var(--border-color)]/70 bg-[var(--bg-secondary)]/80 px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/80 px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => setShowLinks((prev) => !prev)}
               >
                 <Link2 size={12} />
@@ -165,7 +165,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
             )}
           </div>
           {showLinks && links.length > 0 && (
-            <div className="mt-3 flex flex-col gap-2 max-h-36 overflow-auto rounded-xl border border-[var(--border-color)]/70 bg-[var(--bg-secondary)]/55 p-3">
+            <div className="mt-3 flex flex-col gap-2 max-h-36 overflow-auto rounded-xl border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/55 p-3">
               {links.slice(0, 20).map((link) => (
                 <button
                   key={link}
@@ -186,11 +186,11 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
         </div>
       )}
       {fallbackNotice && (
-        <div className="px-6 py-2 border-b bg-amber-500/10 text-amber-200 text-xs">
+        <div className="px-6 py-2 border-b bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))] text-xs">
           {fallbackNotice}
         </div>
       )}
-      <div className="flex-1 min-h-0 rounded-xl border border-[var(--border-color)]/70 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]">
+      <div className="flex-1 min-h-0 rounded-xl border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))] shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]">
         <iframe
           srcDoc={htmlContent}
           className="h-full w-full border-0"

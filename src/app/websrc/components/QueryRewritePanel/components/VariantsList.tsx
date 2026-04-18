@@ -38,9 +38,9 @@ export function VariantsList({
   // Show empty state if we have a response but no parsed variants
   if (!isGenerating && streamingResponse) {
     return (
-      <Card className="border-[var(--warning-light)] bg-[var(--warning-light)]/20">
+      <Card className="border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))]/20">
         <div className="p-4">
-          <p className="text-sm text-[var(--warning)]">
+          <p className="text-sm text-[hsl(var(--warning-fg))]">
             Could not generate alternative queries. The response may not be in the expected
             format.
           </p>

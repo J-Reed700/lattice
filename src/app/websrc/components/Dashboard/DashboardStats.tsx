@@ -49,32 +49,32 @@ export const DashboardStats = ({ stats, loading = false }: DashboardStatsProps) 
       title: 'Documents Indexed',
       value: formatNumber(stats.indexedDocuments),
       icon: FileText,
-      color: 'text-[var(--accent-primary)]',
-      bgColor: 'bg-[var(--accent-light)]/20',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]/20',
       description: 'Total documents in vault',
     },
     {
       title: 'Text Chunks',
       value: formatNumber(stats.totalChunks),
       icon: Activity,
-      color: 'text-[var(--success)]',
-      bgColor: 'bg-[var(--success-light)]/20',
+      color: 'text-[hsl(var(--success-fg))]',
+      bgColor: 'bg-[hsl(var(--success-muted))]/20',
       description: 'Searchable segments',
     },
     {
       title: 'Estimated Storage',
       value: formatStorage(estimatedStorageBytes),
       icon: HardDrive,
-      color: 'text-[var(--warning)]',
-      bgColor: 'bg-[var(--warning-light)]/20',
+      color: 'text-[hsl(var(--warning-fg))]',
+      bgColor: 'bg-[hsl(var(--warning-muted))]/20',
       description: 'Index database size',
     },
     {
       title: 'Search Enabled',
       value: stats.indexedDocuments > 0 ? 'Ready' : 'Empty',
       icon: Search,
-      color: 'text-[var(--error)]',
-      bgColor: 'bg-[var(--error-light)]/20',
+      color: 'text-[hsl(var(--danger-fg))]',
+      bgColor: 'bg-[hsl(var(--danger-muted))]/20',
       description: 'Vector search status',
     },
   ];
@@ -85,9 +85,9 @@ export const DashboardStats = ({ stats, loading = false }: DashboardStatsProps) 
         {[...Array(4)].map((_, i) => (
           <Card key={i} padding="md">
             <div className="animate-pulse space-y-3">
-              <div className="h-4 bg-[var(--bg-tertiary)] rounded w-1/2" />
-              <div className="h-8 bg-[var(--bg-tertiary)] rounded w-3/4" />
-              <div className="h-3 bg-[var(--bg-tertiary)] rounded w-full" />
+              <div className="h-4 bg-[hsl(var(--surface-raised))] rounded w-1/2" />
+              <div className="h-8 bg-[hsl(var(--surface-raised))] rounded w-3/4" />
+              <div className="h-3 bg-[hsl(var(--surface-raised))] rounded w-full" />
             </div>
           </Card>
         ))}
@@ -103,7 +103,7 @@ export const DashboardStats = ({ stats, loading = false }: DashboardStatsProps) 
           <Card key={index} padding="md" className="transition-transform hover:scale-105">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium text-[var(--text-secondary)]">
+                <CardTitle className="text-sm font-medium text-[hsl(var(--text-secondary))]">
                   {stat.title}
                 </CardTitle>
                 <div className={`p-2 rounded-lg ${stat.bgColor}`}>
@@ -112,10 +112,10 @@ export const DashboardStats = ({ stats, loading = false }: DashboardStatsProps) 
               </div>
             </CardHeader>
             <CardContent className="mt-3">
-              <div className="text-2xl font-bold text-[var(--text-primary)]">
+              <div className="text-2xl font-bold text-[hsl(var(--text-primary))]">
                 {stat.value}
               </div>
-              <p className="text-xs text-[var(--text-secondary)] mt-1">
+              <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
                 {stat.description}
               </p>
             </CardContent>

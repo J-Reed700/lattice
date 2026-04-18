@@ -67,7 +67,7 @@ export const IngestHub: FC<IngestHubProps> = ({
           <Tabs.Trigger
             value="single-url"
             className={cn(
-              "px-4 py-2 font-medium transition-colors",
+              "px-4 py-2 font-medium transition-colors duration-fast",
               "border-b-2 border-transparent",
               "hover:text-foreground hover:border-muted-foreground/50",
               "data-[state=active]:border-primary data-[state=active]:text-foreground",
@@ -79,7 +79,7 @@ export const IngestHub: FC<IngestHubProps> = ({
           <Tabs.Trigger
             value="bulk-url"
             className={cn(
-              "px-4 py-2 font-medium transition-colors",
+              "px-4 py-2 font-medium transition-colors duration-fast",
               "border-b-2 border-transparent",
               "hover:text-foreground hover:border-muted-foreground/50",
               "data-[state=active]:border-primary data-[state=active]:text-foreground",
@@ -91,7 +91,7 @@ export const IngestHub: FC<IngestHubProps> = ({
           <Tabs.Trigger
             value="files"
             className={cn(
-              "px-4 py-2 font-medium transition-colors",
+              "px-4 py-2 font-medium transition-colors duration-fast",
               "border-b-2 border-transparent",
               "hover:text-foreground hover:border-muted-foreground/50",
               "data-[state=active]:border-primary data-[state=active]:text-foreground",
@@ -103,7 +103,7 @@ export const IngestHub: FC<IngestHubProps> = ({
           <Tabs.Trigger
             value="history"
             className={cn(
-              "px-4 py-2 font-medium transition-colors",
+              "px-4 py-2 font-medium transition-colors duration-fast",
               "border-b-2 border-transparent",
               "hover:text-foreground hover:border-muted-foreground/50",
               "data-[state=active]:border-primary data-[state=active]:text-foreground",

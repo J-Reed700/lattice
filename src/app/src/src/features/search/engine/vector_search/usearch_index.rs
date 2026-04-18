@@ -20,7 +20,7 @@
 use crate::features::search::dto::SearchResultPortDto;
 use crate::application::ports::VectorSearchPort;
 use crate::infrastructure::search::service::SearchResult;
-use crate::infrastructure::services::traits::SearchServiceTrait;
+use crate::features::search::SearchServiceTrait;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 use async_trait::async_trait;

@@ -1,7 +1,7 @@
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use crate::infrastructure::services::traits::BM25SearchTrait;
+use crate::features::search::BM25SearchTrait;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;

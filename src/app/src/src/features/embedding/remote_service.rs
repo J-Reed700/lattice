@@ -2,7 +2,7 @@
 //!
 //! Provides embeddings via a remote API (e.g., OpenAI-compatible endpoint).
 
-use crate::infrastructure::services::traits::EmbeddingServiceTrait;
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::reqwest_client_builder;
 use async_trait::async_trait;

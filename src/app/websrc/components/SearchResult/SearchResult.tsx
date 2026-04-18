@@ -68,9 +68,9 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
   const formatScore = useCallback((score: number) => (score * 100).toFixed(1), []);
 
   const scoreColor = useMemo(() => {
-    if (result.score >= 0.8) return 'text-[var(--success)]';
-    if (result.score >= 0.6) return 'text-[var(--warning)]';
-    return 'text-[var(--text-secondary)]';
+    if (result.score >= 0.8) return 'text-[hsl(var(--success-fg))]';
+    if (result.score >= 0.6) return 'text-[hsl(var(--warning-fg))]';
+    return 'text-[hsl(var(--text-secondary))]';
   }, [result.score]);
 
   const highlightedExcerpts = useMemo(() => {
@@ -114,7 +114,7 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
     return parts.map((part, idx) => {
       if (matchRegex.test(part)) {
         return (
-          <mark key={`${part}-${idx}`} className="bg-[var(--warning)]/30 text-[var(--text-primary)] rounded px-0.5">
+          <mark key={`${part}-${idx}`} className="bg-[hsl(var(--warning-fg))]/30 text-[hsl(var(--text-primary))] rounded px-0.5">
             {part}
           </mark>
         );
@@ -131,16 +131,16 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
   return (
     <button
       type="button"
-      className="w-full text-left bg-[var(--surface-elevated)] p-5 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer border border-[var(--border-color)]"
+      className="w-full text-left bg-[hsl(var(--surface-raised))] p-5 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer border border-[hsl(var(--border-subtle))]"
       onClick={handleClick}
     >
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1">
-          <h3 className="font-semibold text-lg text-[var(--text-primary)] mb-1">
+          <h3 className="font-semibold text-lg text-[hsl(var(--text-primary))] mb-1">
             {displayTitle}
           </h3>
           {displayPath && (
-            <p className="text-xs text-[var(--text-secondary)] truncate">
+            <p className="text-xs text-[hsl(var(--text-secondary))] truncate">
               {displayPath}
             </p>
           )}
@@ -150,7 +150,7 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
             {formatScore(result.score)}%
           </div>
           {result.metadata.file_type && (
-            <span className="text-xs text-[var(--text-secondary)] mt-1 uppercase">
+            <span className="text-xs text-[hsl(var(--text-secondary))] mt-1 uppercase">
               {result.metadata.file_type as string}
             </span>
           )}
@@ -160,16 +160,16 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
       {highlightedExcerpts.length > 0 && (
         <div className="mb-3">
           {highlightedExcerpts.map((excerpt, index) => (
-            <p className="text-sm text-[var(--text-secondary)] line-clamp-3" key={`${result.id}-excerpt-${index}`}>
+            <p className="text-sm text-[hsl(var(--text-secondary))] line-clamp-3" key={`${result.id}-excerpt-${index}`}>
               {renderHighlightedText(excerpt)}
             </p>
           ))}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 items-center text-xs text-[var(--text-secondary)]">
+      <div className="flex flex-wrap gap-2 items-center text-xs text-[hsl(var(--text-secondary))]">
         {result.vectorScore != null && (
-          <div className="flex items-center gap-1 bg-[var(--accent-light)]/30 text-[var(--accent-primary)] px-2 py-1 rounded">
+          <div className="flex items-center gap-1 bg-[hsl(var(--accent-muted))]/30 text-[hsl(var(--accent))] px-2 py-1 rounded">
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
               <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
               <path
@@ -180,12 +180,12 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
             </svg>
             <span>Vector: {formatScore(result.vectorScore)}%</span>
             {result.vectorRank != null && (
-              <span className="text-[var(--text-tertiary)]">#{result.vectorRank + 1}</span>
+              <span className="text-[hsl(var(--text-tertiary))]">#{result.vectorRank + 1}</span>
             )}
           </div>
         )}
         {result.bm25Score != null && (
-          <div className="flex items-center gap-1 bg-[var(--success-light)]/30 text-[var(--success)] px-2 py-1 rounded">
+          <div className="flex items-center gap-1 bg-[hsl(var(--success-muted))]/30 text-[hsl(var(--success-fg))] px-2 py-1 rounded">
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
               <path
                 fillRule="evenodd"
@@ -195,12 +195,12 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
             </svg>
             <span>BM25: {formatScore(result.bm25Score)}%</span>
             {result.bm25Rank != null && (
-              <span className="text-[var(--text-tertiary)]">#{result.bm25Rank + 1}</span>
+              <span className="text-[hsl(var(--text-tertiary))]">#{result.bm25Rank + 1}</span>
             )}
           </div>
         )}
         {(result.metadata.updated_at ? (
-          <div className="flex items-center gap-1 text-[var(--text-secondary)]" key="modified-at">
+          <div className="flex items-center gap-1 text-[hsl(var(--text-secondary))]" key="modified-at">
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
               <path
                 fillRule="evenodd"

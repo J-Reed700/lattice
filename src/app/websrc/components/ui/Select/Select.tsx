@@ -55,7 +55,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
         {label && (
           <label
             htmlFor={selectId}
-            className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5"
+            className="block text-sm font-medium text-[hsl(var(--text-secondary))] mb-1.5"
           >
             {label}
           </label>
@@ -70,17 +70,17 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
             aria-describedby={errorId || helperId}
             className={`
               w-full px-4 py-2.5 pr-10
-              bg-[var(--surface-elevated)]
-              text-[var(--text-primary)]
-              border rounded-lg
+              bg-[hsl(var(--surface))]
+              text-[hsl(var(--text-primary))]
+              border rounded-md
               appearance-none
-              transition-all duration-150
+              transition-colors duration-fast
               focus:outline-none focus:ring-2 focus:ring-offset-0
               disabled:opacity-50 disabled:cursor-not-allowed
               ${
                 hasError
-                  ? 'border-[var(--error)] focus:ring-[var(--error)]'
-                  : 'border-[var(--border-color)] ring-[var(--accent-primary)]'
+                  ? 'border-[hsl(var(--danger-fg))] focus:ring-[hsl(var(--danger-fg))]'
+                  : 'border-[hsl(var(--border-default))] focus:ring-[hsl(var(--ring))]'
               }
               ${className}
             `}
@@ -98,14 +98,14 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
           </select>
 
           <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-            <ChevronDown className="w-5 h-5 text-[var(--text-tertiary)]" />
+            <ChevronDown className="w-4 h-4 text-[hsl(var(--text-tertiary))]" strokeWidth={1.75} />
           </div>
         </div>
 
         {error && (
           <p
             id={errorId}
-            className="mt-1.5 text-sm text-[var(--error)] flex items-start gap-1"
+            className="mt-1.5 text-sm text-[hsl(var(--danger-fg))] flex items-start gap-1"
             role="alert"
           >
             <svg
@@ -126,7 +126,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
         {helperText && !error && (
           <p
             id={helperId}
-            className="mt-1.5 text-sm text-[var(--text-secondary)]"
+            className="mt-1.5 text-sm text-[hsl(var(--text-secondary))]"
           >
             {helperText}
           </p>

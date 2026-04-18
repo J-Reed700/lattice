@@ -77,32 +77,32 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full bg-[var(--bg-secondary)]">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--accent-primary)]" />
+      <div className="flex items-center justify-center h-full bg-[hsl(var(--surface))]">
+        <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--accent))]" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full p-8 bg-[var(--bg-secondary)]">
+      <div className="flex items-center justify-center h-full p-8 bg-[hsl(var(--surface))]">
         <div className="text-center space-y-2">
-          <AlertCircle className="w-12 h-12 text-[var(--error)] mx-auto" />
-          <p className="text-[var(--error)] font-medium">Failed to load file</p>
-          <p className="text-sm text-[var(--text-secondary)]">{error}</p>
+          <AlertCircle className="w-12 h-12 text-[hsl(var(--danger-fg))] mx-auto" />
+          <p className="text-[hsl(var(--danger-fg))] font-medium">Failed to load file</p>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-[var(--bg-secondary)]">
+    <div className="h-full flex flex-col bg-[hsl(var(--surface))]">
       {/* Language info bar */}
-      <div className="flex items-center px-6 py-3 bg-[var(--bg-primary)] border-b">
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-[var(--accent-light)] text-[var(--accent-primary)]">
+      <div className="flex items-center px-6 py-3 bg-[hsl(var(--bg))] border-b">
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]">
           {language.toUpperCase()}
         </span>
-        <span className="ml-3 text-sm text-[var(--text-tertiary)]">
+        <span className="ml-3 text-sm text-[hsl(var(--text-tertiary))]">
           {content.split('\n').length} lines
         </span>
       </div>

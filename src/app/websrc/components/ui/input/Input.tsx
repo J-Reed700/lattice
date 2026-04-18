@@ -100,7 +100,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5"
+            className="block text-sm font-medium text-[hsl(var(--text-secondary))] mb-1.5"
           >
             {label}
           </label>
@@ -108,7 +108,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
 
         <div className="relative">
           {leftIcon && (
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[hsl(var(--text-tertiary))] pointer-events-none">
               {leftIcon}
             </div>
           )}
@@ -124,18 +124,18 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             onBlur={handleBlur}
             className={`
               w-full px-4 py-2.5
-              bg-[var(--surface-elevated)]
-              text-[var(--text-primary)]
-              border rounded-lg
-              transition-all duration-150
-              placeholder-[var(--text-tertiary)]
+              bg-[hsl(var(--surface))]
+              text-[hsl(var(--text-primary))]
+              border rounded-md
+              transition-colors duration-fast
+              placeholder-[hsl(var(--text-tertiary))]
               focus:outline-none focus:ring-2 focus:ring-offset-0
               disabled:opacity-50 disabled:cursor-not-allowed
               ${leftIcon ? 'pl-10' : ''}
               ${showRightContent ? 'pr-10' : ''}
               ${hasError
-                ? 'border-[var(--error)] focus:ring-[var(--error)]'
-                : 'border-[var(--border-color)] ring-[var(--accent-primary)]'
+                ? 'border-[hsl(var(--danger-fg))] focus:ring-[hsl(var(--danger-fg))]'
+                : 'border-[hsl(var(--border-default))] focus:ring-[hsl(var(--ring))]'
               }
               ${className}
             `}
@@ -146,7 +146,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
               {isLoading ? (
                 <svg
-                  className="animate-spin h-5 w-5 text-[var(--text-tertiary)]"
+                  className="animate-spin h-4 w-4 text-[hsl(var(--text-tertiary))]"
                   xmlns="http://www.w3.org/2000/svg"
                   fill="none"
                   viewBox="0 0 24 24"
@@ -169,16 +169,16 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                 <button
                   type="button"
                   onClick={handleClear}
-                  className="text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
+                  className="text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast"
                   aria-label="Clear input"
                   tabIndex={-1}
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               ) : rightIcon ? (
-                <div className="text-[var(--text-tertiary)]">{rightIcon}</div>
+                <div className="text-[hsl(var(--text-tertiary))]">{rightIcon}</div>
               ) : null}
             </div>
           )}
@@ -187,7 +187,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         {error && (
           <p
             id={errorId}
-            className="mt-1.5 text-sm text-[var(--error)] flex items-start gap-1"
+            className="mt-1.5 text-sm text-[hsl(var(--danger-fg))] flex items-start gap-1"
             role="alert"
           >
             <svg
@@ -209,7 +209,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           {helperText && !error && (
             <p
               id={helperId}
-              className="text-sm text-[var(--text-secondary)]"
+              className="text-sm text-[hsl(var(--text-secondary))]"
             >
               {helperText}
             </p>
@@ -218,10 +218,10 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             <p
               className={`text-xs ${
                 charCount > maxLength * 0.9
-                  ? 'text-[var(--warning)]'
+                  ? 'text-[hsl(var(--warning-fg))]'
                   : charCount === maxLength
-                  ? 'text-[var(--error)]'
-                  : 'text-[var(--text-secondary)]'
+                  ? 'text-[hsl(var(--danger-fg))]'
+                  : 'text-[hsl(var(--text-secondary))]'
               }`}
             >
               {charCount} / {maxLength}

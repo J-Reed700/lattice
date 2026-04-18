@@ -53,7 +53,7 @@ export function IndexingTab() {
           excludePatterns: nextConfig.excludePatterns,
         });
       } else {
-        toast.error('Failed to load indexing config', { message: configResult.error });
+        toast.error("Couldn't load indexing config", { message: configResult.error });
       }
 
       if (settingsResult.ok) {
@@ -61,7 +61,7 @@ export function IndexingTab() {
         updateIndexing({ batchSize: backendBatchSize });
         setLastSavedBatchSize(backendBatchSize);
       } else {
-        toast.error('Failed to load indexing settings', { message: settingsResult.error });
+        toast.error("Couldn't load indexing settings", { message: settingsResult.error });
       }
 
       setIsSyncing(false);
@@ -77,7 +77,7 @@ export function IndexingTab() {
   const persistConfig = async (nextConfig: IndexingConfig): Promise<boolean> => {
     const result = await VaultAPI.saveConfig(nextConfig);
     if (!result.ok) {
-      toast.error('Failed to save indexing config', { message: result.error });
+      toast.error("Couldn't save indexing config", { message: result.error });
       return false;
     }
 
@@ -104,7 +104,7 @@ export function IndexingTab() {
     });
 
     if (!settingsSaved.ok) {
-      toast.error('Failed to sync auto-index setting', { message: settingsSaved.error });
+      toast.error("Couldn't sync auto-index setting", { message: settingsSaved.error });
     }
   };
 
@@ -126,7 +126,7 @@ export function IndexingTab() {
         const result = await VaultAPI.addWatchFolder(selected);
         if (!result.ok) {
           removeWatchFolder(selected);
-          toast.error('Failed to add watch folder', { message: result.error });
+          toast.error("Couldn't add watch folder", { message: result.error });
           return;
         }
 
@@ -140,7 +140,7 @@ export function IndexingTab() {
         );
       }
     } catch (error) {
-      console.error('Failed to select folder:', error);
+      console.error("Couldn't select folder:", error);
     } finally {
       setIsAddingFolder(false);
     }
@@ -151,7 +151,7 @@ export function IndexingTab() {
     const result = await VaultAPI.removeWatchFolder(folder);
     if (!result.ok) {
       addWatchFolder(folder);
-      toast.error('Failed to remove watch folder', { message: result.error });
+      toast.error("Couldn't remove watch folder", { message: result.error });
       return;
     }
 
@@ -221,7 +221,7 @@ export function IndexingTab() {
 
     if (!result.ok) {
       updateIndexing({ batchSize: lastSavedBatchSize });
-      toast.error('Failed to save batch size', { message: result.error });
+      toast.error("Couldn't save batch size", { message: result.error });
       return;
     }
 
@@ -231,23 +231,23 @@ export function IndexingTab() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[var(--border-color)]">
-        <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-          <Database className="w-5 h-5 text-[var(--accent-primary)]" />
+      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
+        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+          <Database className="w-5 h-5 text-[hsl(var(--accent))]" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-[var(--text-primary)]">Indexing Settings</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Indexing Settings</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
             Manage file watching and indexing behavior
           </p>
           {isSyncing ? (
-            <p className="text-xs text-[var(--text-tertiary)] mt-1">Syncing with backend settings...</p>
+            <p className="text-xs text-[hsl(var(--text-tertiary))] mt-1">Syncing with backend settings...</p>
           ) : null}
         </div>
       </div>
 
       {/* Auto Index */}
-      <div className="flex items-start gap-3 p-4 bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)]">
+      <div className="flex items-start gap-3 p-4 bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))]">
         <input
           id="autoIndex"
           type="checkbox"
@@ -256,13 +256,13 @@ export function IndexingTab() {
             void handleAutoIndexChange(e.target.checked);
           }}
           disabled={isSyncing}
-          className="mt-1 w-4 h-4 text-[var(--accent-primary)] bg-[var(--bg-secondary)] border-[var(--border-color)] rounded focus:ring-2 focus:ring-[var(--accent-primary)]"
+          className="mt-1 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
         />
         <div className="flex-1">
-          <label htmlFor="autoIndex" className="block text-sm font-medium text-[var(--text-primary)] cursor-pointer">
+          <label htmlFor="autoIndex" className="block text-sm font-medium text-[hsl(var(--text-primary))] cursor-pointer">
             Auto-index New Files
           </label>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">
+          <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
             Automatically index new files added to watched folders
           </p>
         </div>
@@ -270,10 +270,10 @@ export function IndexingTab() {
 
       {/* Batch Size */}
       <div className="space-y-2">
-        <label htmlFor="batchSize" className="block text-sm font-medium text-[var(--text-primary)]">
+        <label htmlFor="batchSize" className="block text-sm font-medium text-[hsl(var(--text-primary))]">
           Batch Size: {indexingSettings.batchSize}
         </label>
-        <p className="text-xs text-[var(--text-secondary)] mb-3">
+        <p className="text-xs text-[hsl(var(--text-secondary))] mb-3">
           Number of files to process simultaneously. Higher values are faster but use more memory.
         </p>
         <input
@@ -294,14 +294,14 @@ export function IndexingTab() {
             void commitBatchSize();
           }}
           disabled={isSyncing || isSavingBatchSize}
-          className="w-full h-2 bg-[var(--bg-secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--accent-primary)]"
+          className="w-full h-2 bg-[hsl(var(--surface))] rounded-lg appearance-none cursor-pointer accent-[hsl(var(--accent))]"
         />
-        <div className="flex justify-between text-xs text-[var(--text-tertiary)]">
+        <div className="flex justify-between text-xs text-[hsl(var(--text-tertiary))]">
           <span>1 (Slow)</span>
           <span>128 (Fast)</span>
         </div>
         {isSavingBatchSize ? (
-          <p className="text-xs text-[var(--text-tertiary)]">Saving batch size...</p>
+          <p className="text-xs text-[hsl(var(--text-tertiary))]">Saving batch size...</p>
         ) : null}
       </div>
 
@@ -309,15 +309,15 @@ export function IndexingTab() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Watch Folders</h3>
-            <p className="text-xs text-[var(--text-secondary)] mt-1">
+            <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Watch Folders</h3>
+            <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
               Folders that are automatically indexed
             </p>
           </div>
           <button
             onClick={handleAddFolder}
             disabled={isAddingFolder || isSyncing}
-            className="flex items-center gap-2 px-3 py-2 text-sm bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <FolderPlus className="w-4 h-4" />
             {isAddingFolder ? 'Adding...' : 'Add Folder'}
@@ -325,12 +325,12 @@ export function IndexingTab() {
         </div>
 
         {indexingSettings.watchFolders.length === 0 ? (
-          <div className="p-8 text-center bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)]">
-            <FolderPlus className="w-12 h-12 text-[var(--text-tertiary)] mx-auto mb-3" />
-            <p className="text-sm text-[var(--text-secondary)]">
+          <div className="p-8 text-center bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))]">
+            <FolderPlus className="w-12 h-12 text-[hsl(var(--text-tertiary))] mx-auto mb-3" />
+            <p className="text-sm text-[hsl(var(--text-secondary))]">
               No folders are being watched
             </p>
-            <p className="text-xs text-[var(--text-tertiary)] mt-1">
+            <p className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
               Click "Add Folder" to start indexing files
             </p>
           </div>
@@ -339,10 +339,10 @@ export function IndexingTab() {
             {indexingSettings.watchFolders.map((folder, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-3 bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] hover:border-[var(--border-hover)] transition-colors"
+                className="flex items-center justify-between p-3 bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--border-default))] transition-colors"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-[var(--text-primary)] truncate font-mono">
+                  <p className="text-sm text-[hsl(var(--text-primary))] truncate font-mono">
                     {folder}
                   </p>
                 </div>
@@ -351,7 +351,7 @@ export function IndexingTab() {
                     void handleRemoveFolder(folder);
                   }}
                   disabled={isSyncing}
-                  className="ml-3 p-1.5 text-[var(--error)] hover:bg-[var(--error-light)] rounded transition-colors"
+                  className="ml-3 p-1.5 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] rounded transition-colors"
                   title="Remove folder"
                 >
                   <X className="w-4 h-4" />
@@ -365,8 +365,8 @@ export function IndexingTab() {
       {/* Exclude Patterns */}
       <div className="space-y-3">
         <div>
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Exclude Patterns</h3>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">
+          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Exclude Patterns</h3>
+          <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
             File patterns to ignore during indexing (supports wildcards)
           </p>
         </div>
@@ -383,14 +383,14 @@ export function IndexingTab() {
               }
             }}
             placeholder="*.tmp, node_modules, .git"
-            className="flex-1 px-3 py-2 text-sm bg-[var(--bg-secondary)] text-[var(--text-primary)] border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] focus:border-transparent"
+            className="flex-1 px-3 py-2 text-sm bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] border border-[hsl(var(--border-subtle))] rounded-lg focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:border-transparent"
           />
           <button
             onClick={() => {
               void handleAddPattern();
             }}
             disabled={!newPattern.trim() || isSyncing}
-            className="px-4 py-2 text-sm bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            className="px-4 py-2 text-sm bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Add
@@ -402,15 +402,15 @@ export function IndexingTab() {
           {indexingSettings.excludePatterns.map((pattern, index) => (
             <div
               key={index}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[var(--bg-tertiary)] rounded-full text-sm"
+              className="flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--surface-raised))] rounded-full text-sm"
             >
-              <code className="text-[var(--text-primary)]">{pattern}</code>
+              <code className="text-[hsl(var(--text-primary))]">{pattern}</code>
               <button
                 onClick={() => {
                   void handleRemovePattern(pattern);
                 }}
                 disabled={isSyncing}
-                className="text-[var(--text-secondary)] hover:text-[var(--error)] transition-colors"
+                className="text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--danger-fg))] transition-colors"
                 title="Remove pattern"
               >
                 <X className="w-3.5 h-3.5" />
@@ -420,8 +420,8 @@ export function IndexingTab() {
         </div>
 
         {indexingSettings.excludePatterns.length === 0 && (
-          <div className="p-4 text-center bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)]">
-            <p className="text-sm text-[var(--text-secondary)]">
+          <div className="p-4 text-center bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))]">
+            <p className="text-sm text-[hsl(var(--text-secondary))]">
               No exclusion patterns defined
             </p>
           </div>

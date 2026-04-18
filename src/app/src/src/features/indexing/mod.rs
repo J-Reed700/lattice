@@ -18,8 +18,8 @@
 //! - `crate::infrastructure::indexing` (the indexing pipeline) —
 //!   consumed broadly by file, batch, web, conversation, etc. Stays
 //!   accessible via `infrastructure/mod.rs` #[path] redirect.
-//! - `trait_def` (IndexingServiceTrait) and `mocks` remain loaded via
-//!   shared `infrastructure::services::{traits,mocks}` aggregators.
+//!
+//! Public traits: `crate::features::indexing::{IndexingServiceTrait, IndexStorageTrait}`.
 //!
 //! No port or plugin — indexing flows through other plugins.
 
@@ -27,4 +27,10 @@ pub mod commands;
 pub mod dto;
 pub mod mapper;
 pub mod outcome;
+pub mod trait_def;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use trait_def::{IndexStorageTrait, IndexingServiceTrait};

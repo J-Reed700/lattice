@@ -51,13 +51,15 @@ export function Tooltip({
           className="
             z-50
             overflow-hidden
-            rounded-lg
-            bg-[var(--bg-tertiary)]
+            rounded-md
+            border
+            border-[hsl(var(--border-subtle))]
+            bg-[hsl(var(--surface-raised))]
             px-3
             py-2
             text-sm
-            text-white
-            shadow-lg
+            text-[hsl(var(--text-primary))]
+            shadow-md
             animate-in
             fade-in-0
             zoom-in-95
@@ -71,7 +73,7 @@ export function Tooltip({
           "
         >
           {content}
-          <TooltipPrimitive.Arrow className="fill-gray-900" />
+          <TooltipPrimitive.Arrow className="fill-[hsl(var(--surface-raised))]" />
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
     </TooltipPrimitive.Root>

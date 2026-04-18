@@ -44,11 +44,11 @@ export function ModelListView({
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <AlertCircle className="w-12 h-12 text-[var(--error)] mb-4" />
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+        <AlertCircle className="w-12 h-12 text-[hsl(var(--danger-fg))] mb-4" />
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
           Failed to Load Models
         </h3>
-        <p className="text-sm text-[var(--text-secondary)] max-w-md">
+        <p className="text-sm text-[hsl(var(--text-secondary))] max-w-md">
           {error}
         </p>
       </div>
@@ -59,11 +59,11 @@ export function ModelListView({
   if (!models || models.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <Inbox className="w-12 h-12 text-[var(--text-tertiary)] mb-4" />
-        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+        <Inbox className="w-12 h-12 text-[hsl(var(--text-tertiary))] mb-4" />
+        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
           No Models Found
         </h3>
-        <p className="text-sm text-[var(--text-secondary)] max-w-md">
+        <p className="text-sm text-[hsl(var(--text-secondary))] max-w-md">
           Try adjusting your filters or search query to find more models.
         </p>
       </div>

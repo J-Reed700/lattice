@@ -55,7 +55,8 @@
 
 use crate::domain::qa::hyde::{DocumentChunk, HyDEInterpretation, SearchStrategy};
 use crate::infrastructure::search::service::SearchResult;
-use crate::infrastructure::services::traits::{EmbeddingServiceTrait, SearchServiceTrait};
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::search::SearchServiceTrait;
 use crate::shared::error::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -281,7 +282,7 @@ impl DocumentRetriever {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::traits::EmbeddingServiceTrait;
+    use crate::features::embedding::EmbeddingServiceTrait;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

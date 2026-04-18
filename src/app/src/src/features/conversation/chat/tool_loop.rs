@@ -45,7 +45,7 @@ pub struct ToolLoopOutcome {
 
 pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     container: &Container,
-    conv_service: &Arc<dyn crate::infrastructure::services::traits::ConversationServiceTrait>,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conv_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     window: &tauri::Window<R>,

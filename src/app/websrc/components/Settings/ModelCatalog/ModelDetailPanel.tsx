@@ -328,10 +328,10 @@ export function ModelDetailPanel({
     return (
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
-          <span className="text-[var(--text-secondary)]">{label}</span>
-          <span className="font-medium text-[var(--text-primary)]">{score}/100</span>
+          <span className="text-[hsl(var(--text-secondary))]">{label}</span>
+          <span className="font-medium text-[hsl(var(--text-primary))]">{score}/100</span>
         </div>
-        <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+        <div className="h-2 bg-[hsl(var(--surface-raised))] rounded-full overflow-hidden">
           <div
             className={`h-full ${getColor(score)} transition-all duration-500`}
             style={{ width: `${score}%` }}
@@ -354,17 +354,17 @@ export function ModelDetailPanel({
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1">
-              <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-2">
+              <h2 className="text-2xl font-bold text-[hsl(var(--text-primary))] mb-2">
                 {metadata.name}
               </h2>
-              <div className="flex items-center gap-3 text-sm text-[var(--text-secondary)]">
-                <span className="px-2 py-1 bg-[var(--bg-tertiary)] rounded">
+              <div className="flex items-center gap-3 text-sm text-[hsl(var(--text-secondary))]">
+                <span className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded">
                   {metadata.category}
                 </span>
-                <span className="px-2 py-1 bg-[var(--bg-tertiary)] rounded">
+                <span className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded">
                   {metadata.performance_tier}
                 </span>
-                <span className="px-2 py-1 bg-[var(--bg-tertiary)] rounded">
+                <span className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded">
                   {metadata.license}
                 </span>
                 {metadata.requires_auth && (
@@ -381,7 +381,7 @@ export function ModelDetailPanel({
             </div>
           </div>
 
-          <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+          <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed">
             {metadata.description}
           </p>
 
@@ -482,11 +482,11 @@ export function ModelDetailPanel({
           </div>
 
           {compatibility.estimated_tokens_per_second && (
-            <div className="mt-4 pt-4 border-t border-[var(--border-color)]">
+            <div className="mt-4 pt-4 border-t border-[hsl(var(--border-subtle))]">
               <div className="flex items-center gap-2 text-sm">
-                <Zap className="w-4 h-4 text-[var(--accent-primary)]" />
-                <span className="text-[var(--text-secondary)]">Estimated Speed:</span>
-                <span className="font-medium text-[var(--text-primary)]">
+                <Zap className="w-4 h-4 text-[hsl(var(--accent))]" />
+                <span className="text-[hsl(var(--text-secondary))]">Estimated Speed:</span>
+                <span className="font-medium text-[hsl(var(--text-primary))]">
                   {compatibility.estimated_tokens_per_second.toFixed(1)} tokens/sec
                 </span>
               </div>
@@ -495,9 +495,9 @@ export function ModelDetailPanel({
 
           {compatibility.estimated_loading_time_seconds > 0 && (
             <div className="flex items-center gap-2 text-sm mt-2">
-              <Cpu className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span className="text-[var(--text-secondary)]">Load Time:</span>
-              <span className="font-medium text-[var(--text-primary)]">
+              <Cpu className="w-4 h-4 text-[hsl(var(--accent))]" />
+              <span className="text-[hsl(var(--text-secondary))]">Load Time:</span>
+              <span className="font-medium text-[hsl(var(--text-primary))]">
                 ~{compatibility.estimated_loading_time_seconds.toFixed(1)} seconds
               </span>
             </div>
@@ -510,15 +510,15 @@ export function ModelDetailPanel({
         <Card padding="md">
           <CardHeader>
             <div className="flex items-center gap-2">
-              <Info className="w-4 h-4 text-[var(--accent-primary)]" />
+              <Info className="w-4 h-4 text-[hsl(var(--accent))]" />
               <CardTitle className="text-base">Recommendations</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2 mt-4">
               {compatibility.recommendations.map((rec, idx) => (
-                <li key={idx} className="flex items-start gap-2 text-sm text-[var(--text-secondary)]">
-                  <span className="text-[var(--accent-primary)] mt-1">•</span>
+                <li key={idx} className="flex items-start gap-2 text-sm text-[hsl(var(--text-secondary))]">
+                  <span className="text-[hsl(var(--accent))] mt-1">•</span>
                   <span>{rec}</span>
                 </li>
               ))}
@@ -532,14 +532,14 @@ export function ModelDetailPanel({
         <Card padding="md">
           <CardHeader>
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-[var(--error)]" />
+              <AlertCircle className="w-4 h-4 text-[hsl(var(--danger-fg))]" />
               <CardTitle className="text-base">Compatibility Issues</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2 mt-4">
               {compatibility.blockers.map((blocker, idx) => (
-                <li key={idx} className="flex items-start gap-2 text-sm text-[var(--error)]">
+                <li key={idx} className="flex items-start gap-2 text-sm text-[hsl(var(--danger-fg))]">
                   <span className="mt-1">⚠️</span>
                   <span>{blocker}</span>
                 </li>
@@ -558,27 +558,27 @@ export function ModelDetailPanel({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div className="space-y-3">
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Model Size
                 </div>
-                <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
+                <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-primary))]">
                   <HardDrive className="w-4 h-4" />
                   {metadata.size_gb > 0 ? `${metadata.size_gb.toFixed(2)} GB` : 'Unknown'}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Minimum RAM
                 </div>
-                <div className="text-sm text-[var(--text-primary)]">
+                <div className="text-sm text-[hsl(var(--text-primary))]">
                   {metadata.minimum_ram_gb.toFixed(1)} GB
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Recommended RAM
                 </div>
-                <div className="text-sm text-[var(--text-primary)]">
+                <div className="text-sm text-[hsl(var(--text-primary))]">
                   {metadata.recommended_ram_gb.toFixed(1)} GB
                 </div>
               </div>
@@ -586,48 +586,48 @@ export function ModelDetailPanel({
 
             <div className="space-y-3">
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Context Length
                 </div>
-                <div className="text-sm text-[var(--text-primary)]">
+                <div className="text-sm text-[hsl(var(--text-primary))]">
                   {metadata.context_length.toLocaleString()} tokens
                 </div>
               </div>
               {metadata.category === 'Embedding' && metadata.embedding_dimensions && (
                 <div>
-                  <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                  <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                     Embedding Dimensions
                   </div>
-                  <div className="text-sm text-[var(--text-primary)]">
+                  <div className="text-sm text-[hsl(var(--text-primary))]">
                     {metadata.embedding_dimensions}
                   </div>
                 </div>
               )}
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Downloads
                 </div>
-                <div className="text-sm text-[var(--text-primary)]">
+                <div className="text-sm text-[hsl(var(--text-primary))]">
                   {formattedPopularityDownloads ?? 'Unavailable'}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Likes
                 </div>
-                <div className="text-sm text-[var(--text-primary)]">
+                <div className="text-sm text-[hsl(var(--text-primary))]">
                   {formattedPopularityLikes ?? 'Unavailable'}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
                   Quantizations
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {metadata.supported_quantizations.map((quant) => (
                     <span
                       key={quant}
-                      className="text-xs px-2 py-0.5 bg-[var(--bg-tertiary)] rounded"
+                      className="text-xs px-2 py-0.5 bg-[hsl(var(--surface-raised))] rounded"
                     >
                       {quant}
                     </span>
@@ -650,7 +650,7 @@ export function ModelDetailPanel({
               {metadata.capabilities.map((capability) => (
                 <span
                   key={capability}
-                  className="px-3 py-1.5 text-sm bg-[var(--accent-light)] text-[var(--accent-primary)] rounded-lg font-medium"
+                  className="px-3 py-1.5 text-sm bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] rounded-lg font-medium"
                 >
                   {capability}
                 </span>

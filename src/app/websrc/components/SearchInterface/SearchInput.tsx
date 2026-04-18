@@ -15,12 +15,12 @@ export const SearchInput = memo(({ value, onChange, isSearching }: SearchInputPr
       placeholder="Search your files..."
       value={value}
       onChange={onChange}
-      className="w-full px-5 py-3.5 pl-12 bg-[var(--surface-elevated)] text-[var(--text-primary)] text-[15px] border border-[var(--border-color)] rounded-xl focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/50 focus:border-[var(--accent-primary)]/50 focus:shadow-lg focus:shadow-[var(--accent-primary)]/5 placeholder-[var(--text-tertiary)] transition-all duration-200"
+      className="w-full px-5 py-3.5 pl-12 bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] text-base border border-[hsl(var(--border-subtle))] rounded-md focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] focus:border-[hsl(var(--accent))] placeholder-[hsl(var(--text-tertiary))] transition-colors duration-fast"
     />
-    <Search className="absolute left-4 top-4 w-5 h-5 text-[var(--text-tertiary)]" />
+    <Search className="absolute left-4 top-4 w-4 h-4 text-[hsl(var(--text-tertiary))]" strokeWidth={1.75} />
     {isSearching && (
       <div className="absolute right-4 top-4">
-        <Loader2 className="h-5 w-5 text-[var(--accent-primary)] animate-spin" />
+        <Loader2 className="h-4 w-4 text-[hsl(var(--accent))] animate-spin" />
       </div>
     )}
   </div>

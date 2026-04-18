@@ -95,8 +95,8 @@ export function Settings() {
         toast.success('Settings exported successfully', { duration: 3000 });
       }
     } catch (error) {
-      console.error('Export failed:', error);
-      toast.error('Export failed', { message: String(error), duration: 5000 });
+      console.error("Couldn't export settings:", error);
+      toast.error("Couldn't export settings", { message: String(error), duration: 5000 });
     } finally {
       setIsExporting(false);
     }
@@ -126,8 +126,8 @@ export function Settings() {
         }
       }
     } catch (error) {
-      console.error('Import failed:', error);
-      toast.error('Import failed', { message: String(error), duration: 5000 });
+      console.error("Couldn't import settings:", error);
+      toast.error("Couldn't import settings", { message: String(error), duration: 5000 });
     } finally {
       setIsImporting(false);
     }
@@ -137,18 +137,18 @@ export function Settings() {
   const isWideContentTab = activeTab === 'models' || activeTab === 'downloaded-models' || activeTab === 'tools';
 
   return (
-    <div className="flex h-full bg-[var(--bg-primary)]">
+    <div className="flex h-full bg-[hsl(var(--bg))]">
       {/* Sidebar */}
-      <div className="w-60 bg-[var(--bg-secondary)] border-r border-[var(--border-color)] flex flex-col">
+      <div className="w-60 bg-[hsl(var(--surface))] border-r border-[hsl(var(--border-subtle))] flex flex-col">
         {/* Header */}
-        <div className="p-4 border-b border-[var(--border-color)]">
+        <div className="p-4 border-b border-[hsl(var(--border-subtle))]">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--accent-light)] rounded-lg">
-              <SettingsIcon className="w-5 h-5 text-[var(--accent-primary)]" />
+            <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
+              <SettingsIcon className="w-5 h-5 text-[hsl(var(--accent))]" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-[var(--text-primary)]">Settings</h1>
-              <p className="text-xs text-[var(--text-tertiary)]">v{settings.version}</p>
+              <h1 className="text-lg font-semibold text-[hsl(var(--text-primary))]">Settings</h1>
+              <p className="text-xs text-[hsl(var(--text-tertiary))]">v{settings.version}</p>
             </div>
           </div>
         </div>
@@ -157,7 +157,7 @@ export function Settings() {
         <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
           {tabGroups.map((group) => (
             <div key={group.label}>
-              <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+              <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--text-tertiary))]">
                 {group.label}
               </div>
               <div className="space-y-1">
@@ -168,15 +168,15 @@ export function Settings() {
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={`
-                        w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all duration-200
+                        w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-md transition-colors duration-fast
                         ${
                           activeTab === tab.id
-                            ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] font-semibold'
-                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                            ? 'bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] font-semibold'
+                            : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
                         }
                       `}
                     >
-                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
                       <span className="font-medium">{tab.label}</span>
                     </button>
                   );
@@ -187,31 +187,31 @@ export function Settings() {
         </nav>
 
         {/* Actions */}
-        <div className="p-3 border-t border-[var(--border-color)] space-y-2">
+        <div className="p-3 border-t border-[hsl(var(--border-subtle))] space-y-2">
           <button
             onClick={handleExport}
             disabled={isExporting}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] rounded-lg transition-colors disabled:opacity-50"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] rounded-md transition-colors duration-fast disabled:opacity-50"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-4 h-4" strokeWidth={1.75} />
             {isExporting ? 'Exporting...' : 'Export'}
           </button>
 
           <button
             onClick={handleImport}
             disabled={isImporting}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] rounded-lg transition-colors disabled:opacity-50"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] rounded-md transition-colors duration-fast disabled:opacity-50"
           >
-            <Upload className="w-4 h-4" />
+            <Upload className="w-4 h-4" strokeWidth={1.75} />
             {isImporting ? 'Importing...' : 'Import'}
           </button>
 
           <button
             onClick={() => setShowResetDialog(true)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--error)] hover:bg-[var(--error-light)] rounded-lg transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] rounded-md transition-colors duration-fast"
           >
-            <RotateCcw className="w-4 h-4" />
-            Reset All
+            <RotateCcw className="w-4 h-4" strokeWidth={1.75} />
+            Reset all
           </button>
         </div>
       </div>
@@ -233,18 +233,18 @@ export function Settings() {
 
       {/* Reset Confirmation Dialog */}
       {showResetDialog && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--surface-elevated)] rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--border-color)]">
+        <div className="fixed inset-0 bg-[hsl(var(--overlay))] flex items-center justify-center z-50 p-4">
+          <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md max-w-md w-full p-6 border border-[hsl(var(--border-subtle))]">
             <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-[var(--error-light)] rounded-lg">
-                <RotateCcw className="w-5 h-5 text-[var(--error)]" />
+              <div className="p-2 bg-[hsl(var(--danger-muted))] rounded-md">
+                <RotateCcw className="w-4 h-4 text-[hsl(var(--danger-fg))]" strokeWidth={1.75} />
               </div>
-              <h2 className="text-xl font-semibold text-[var(--text-primary)]">
-                Reset All Settings?
+              <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">
+                Reset all settings?
               </h2>
             </div>
 
-            <p className="text-sm text-[var(--text-secondary)] mb-6">
+            <p className="text-sm text-[hsl(var(--text-secondary))] mb-6">
               This will restore all settings to their default values. This action cannot be
               undone. Consider exporting your settings first.
             </p>
@@ -252,15 +252,15 @@ export function Settings() {
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setShowResetDialog(false)}
-                className="px-4 py-2 text-sm font-medium text-[var(--text-primary)] bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-[hsl(var(--text-primary))] bg-[hsl(var(--surface-raised))] hover:bg-[hsl(var(--surface))] rounded-md transition-colors duration-fast border border-[hsl(var(--border-subtle))]"
               >
                 Cancel
               </button>
               <button
                 onClick={handleReset}
-                className="px-4 py-2 text-sm font-medium text-white bg-[var(--error)] hover:opacity-90 rounded-lg transition-opacity"
+                className="px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] bg-[hsl(var(--danger))] hover:opacity-90 rounded-md transition-opacity duration-fast"
               >
-                Reset Settings
+                Reset settings
               </button>
             </div>
           </div>
@@ -268,9 +268,9 @@ export function Settings() {
       )}
 
       {/* Auto-save indicator */}
-      <div className="fixed bottom-4 right-4 px-3 py-2 bg-[var(--surface-elevated)] backdrop-blur-xl border border-[var(--border-color)] rounded-lg shadow-lg flex items-center gap-2">
-        <div className="w-2 h-2 bg-[var(--success)] rounded-full animate-pulse" />
-        <span className="text-xs text-[var(--text-secondary)]">Settings saved automatically</span>
+      <div className="fixed bottom-4 right-4 px-3 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-md shadow-sm flex items-center gap-2">
+        <div className="w-2 h-2 bg-[hsl(var(--success-fg))] rounded-full animate-pulse" />
+        <span className="text-xs text-[hsl(var(--text-secondary))]">Settings saved automatically</span>
       </div>
     </div>
   );

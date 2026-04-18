@@ -63,7 +63,7 @@ export function TagFilter({ onTagSelect, selectedTag, className = '' }: TagFilte
   if (isLoading) {
     return (
       <div className={`tag-filter ${className}`}>
-        <div className="text-sm text-[var(--text-secondary)]">Loading tags...</div>
+        <div className="text-sm text-[hsl(var(--text-secondary))]">Loading tags...</div>
       </div>
     );
   }
@@ -71,7 +71,7 @@ export function TagFilter({ onTagSelect, selectedTag, className = '' }: TagFilte
   if (error) {
     return (
       <div className={`tag-filter ${className}`}>
-        <div className="text-sm text-[var(--error)]">{error}</div>
+        <div className="text-sm text-[hsl(var(--danger-fg))]">{error}</div>
       </div>
     );
   }
@@ -83,13 +83,13 @@ export function TagFilter({ onTagSelect, selectedTag, className = '' }: TagFilte
   return (
     <div className={`tag-filter ${className}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold text-[var(--text-secondary)]">
+        <h3 className="text-sm font-semibold text-[hsl(var(--text-secondary))]">
           Filter by Tag
         </h3>
         {selectedTag && (
           <button
             onClick={handleClearFilter}
-            className="text-xs text-[var(--accent-primary)] hover:underline"
+            className="text-xs text-[hsl(var(--accent))] hover:underline"
           >
             Clear filter
           </button>
@@ -105,7 +105,7 @@ export function TagFilter({ onTagSelect, selectedTag, className = '' }: TagFilte
               inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm
               transition-all duration-200
               ${selectedTag?.id === tag.id
-                ? 'ring-2 ring-[var(--accent-primary)] ring-offset-2'
+                ? 'ring-2 ring-[hsl(var(--accent))] ring-offset-2'
                 : 'hover:opacity-80'
               }
             `}
@@ -125,7 +125,7 @@ export function TagFilter({ onTagSelect, selectedTag, className = '' }: TagFilte
       {hasMoreTags && (
         <button
           onClick={() => setShowAll(!showAll)}
-          className="mt-2 text-xs text-[var(--accent-primary)] hover:underline"
+          className="mt-2 text-xs text-[hsl(var(--accent))] hover:underline"
         >
           {showAll ? 'Show less' : `Show ${tags.length - 10} more...`}
         </button>

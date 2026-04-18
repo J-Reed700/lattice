@@ -140,10 +140,10 @@ export function MarkdownEditor({
     <div className="relative" ref={editorWrapperRef}>
       <div
         className={`w-full min-h-[400px] p-4 text-sm border rounded-lg
-                   focus-within:outline-none focus-within:ring-2 ring-[var(--accent-primary)]
-                   bg-[var(--surface-elevated)]
-                   text-[var(--text-primary)]
-                   border-[var(--border-color)]
+                   focus-within:outline-none focus-within:ring-2 ring-[hsl(var(--accent))]
+                   bg-[hsl(var(--surface-raised))]
+                   text-[hsl(var(--text-primary))]
+                   border-[hsl(var(--border-subtle))]
                    ${className}`}
       >
         <TiptapEditor
@@ -165,15 +165,15 @@ export function MarkdownEditor({
         />
       )}
 
-      <div className="mt-2 text-xs text-[var(--text-secondary)] flex gap-4">
+      <div className="mt-2 text-xs text-[hsl(var(--text-secondary))] flex gap-4">
         <span>
-          <kbd className="px-2 py-1 bg-[var(--bg-tertiary)] rounded border border-[var(--border-color)]">
+          <kbd className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded border border-[hsl(var(--border-subtle))]">
             [[
           </kbd>{' '}
           for wikilinks
         </span>
         <span>
-          <kbd className="px-2 py-1 bg-[var(--bg-tertiary)] rounded border border-[var(--border-color)]">
+          <kbd className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded border border-[hsl(var(--border-subtle))]">
             @[
           </kbd>{' '}
           for mentions

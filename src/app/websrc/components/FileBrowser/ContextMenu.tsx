@@ -253,7 +253,6 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
       label: 'Get Info',
       icon: <Info className="w-4 h-4" />,
       action: () => {
-        console.log('Document info:', doc);
         onClose();
       },
       disabled: false,
@@ -263,9 +262,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
       label: 'Delete',
       icon: <Trash2 className="w-4 h-4" />,
       action: () => {
-        console.log('[ContextMenu.delete] Delete action triggered for:', doc.fileName);
         if (onDelete) {
-          console.log('[ContextMenu.delete] Calling onDelete callback');
           onDelete(doc);
         } else {
           console.warn('[ContextMenu.delete] onDelete callback is missing!');
@@ -280,7 +277,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[200px] bg-[var(--surface-elevated)] rounded-lg shadow-lg border border-[var(--border-color)] py-1"
+      className="fixed z-50 min-w-[200px] bg-[hsl(var(--surface-raised))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] py-1"
       style={{
         left: position.x,
         top: position.y,
@@ -293,7 +290,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
           return (
             <div
               key={action.id}
-              className="h-px bg-[var(--bg-tertiary)] my-1"
+              className="h-px bg-[hsl(var(--surface-raised))] my-1"
               role="separator"
             />
           );
@@ -306,12 +303,12 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
             key={action.id}
             onClick={() => !isDisabled && action.action()}
             disabled={isDisabled}
-            className={`w-full flex items-center gap-3 px-4 py-2 text-sm text-left transition-colors ${
+            className={`w-full flex items-center gap-3 px-4 py-2 text-sm text-left transition-colors duration-fast ${
               isDisabled
                 ? 'opacity-50 cursor-not-allowed'
                 : action.dangerous
-                ? 'text-[var(--error)] hover:bg-[var(--error-light)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+                ? 'text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))]'
+                : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]'
             }`}
             role="menuitem"
           >
@@ -321,19 +318,19 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
         );
       })}
 
-      <div className="mx-2 my-1 h-px bg-[var(--bg-tertiary)]" />
+      <div className="mx-2 my-1 h-px bg-[hsl(var(--surface-raised))]" />
       <div className="px-4 py-2">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
           Space Scope
         </p>
       </div>
 
       {isLoadingSpaces && (
-        <div className="px-4 pb-2 text-xs text-[var(--text-tertiary)]">Loading spaces...</div>
+        <div className="px-4 pb-2 text-xs text-[hsl(var(--text-tertiary))]">Loading spaces...</div>
       )}
 
       {!isLoadingSpaces && spaces.length === 0 && (
-        <div className="px-4 pb-2 text-xs text-[var(--text-tertiary)]">
+        <div className="px-4 pb-2 text-xs text-[hsl(var(--text-tertiary))]">
           No spaces available.
         </div>
       )}
@@ -346,10 +343,10 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
             key={`space-${space.id}`}
             onClick={() => void toggleSpaceAssignment(space.id)}
             disabled={isSaving}
-            className={`w-full flex items-center justify-between gap-3 px-4 py-2 text-sm text-left transition-colors ${
+            className={`w-full flex items-center justify-between gap-3 px-4 py-2 text-sm text-left transition-colors duration-fast ${
               isSaving
-                ? 'opacity-60 cursor-not-allowed text-[var(--text-tertiary)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+                ? 'opacity-60 cursor-not-allowed text-[hsl(var(--text-tertiary))]'
+                : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]'
             }`}
             role="menuitemcheckbox"
             aria-checked={assigned}
@@ -358,7 +355,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
               {space.name}
               {space.isArchived ? ' (archived)' : ''}
             </span>
-            {assigned && <span className="text-[var(--accent-primary)]">✓</span>}
+            {assigned && <span className="text-[hsl(var(--accent))]">✓</span>}
           </button>
         );
       })}

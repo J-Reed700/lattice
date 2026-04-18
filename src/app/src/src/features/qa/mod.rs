@@ -11,25 +11,26 @@
 //! - `crate::features::qa::conversational_service` — ConversationalQAService
 //! - `crate::features::qa::commands` — Tauri command handlers
 //! - `crate::features::qa::plugin::init()` — Tauri plugin
+//! - `crate::features::qa::{QAEngineTrait, ConversationalQAServiceTrait}` — service traits
 //!
-//! ## Kept as shared namespaces (redirects retained)
+//! ## Kept as shared namespaces
 //!
 //! - `crate::domain::qa::*` (domain types like HyDEInterpretation, QueryType)
-//!   — consumed broadly by conversation chat retrieval, etc.
-//! - `crate::infrastructure::qa` (QA engine modules) — consumed by
-//!   conversation chat retrieval
-//! - `crate::infrastructure::services::hyde` — HyDE retrieval, consumed
-//!   by conversation chat retrieval
-//! - `trait_def` (traits.rs) and `mocks` remain via shared
-//!   `infrastructure::services::{traits,mocks}` aggregators
+//! - `crate::infrastructure::qa` (QA engine modules)
+//! - `crate::infrastructure::services::hyde` — HyDE retrieval
 //! - `tests/conversational_service.rs` remains via
 //!   `infrastructure::services::tests` aggregator
 //!
-//! Shared ports (EmbeddingPort, LLMPort, VectorSearchPort, etc.) stay
-//! in `application/ports/`.
+//! Shared ports stay in `application/ports/`.
 
 pub mod commands;
 pub mod conversational_service;
 pub mod dto;
 pub mod plugin;
+pub mod traits;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use traits::{ConversationalQAServiceTrait, QAEngineTrait};

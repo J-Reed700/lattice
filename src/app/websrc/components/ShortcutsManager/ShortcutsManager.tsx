@@ -296,18 +296,18 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <Keyboard className="w-6 h-6 text-[var(--accent-primary)]" />
-          <h2 className="text-2xl font-semibold text-[var(--text-primary)]">
+          <Keyboard className="w-6 h-6 text-[hsl(var(--accent))]" />
+          <h2 className="text-2xl font-semibold text-[hsl(var(--text-primary))]">
             Keyboard Shortcuts
           </h2>
         </div>
         {onClose && (
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-[var(--surface-hover)] transition-colors"
+            className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors"
             aria-label="Close"
           >
-            <X className="w-5 h-5 text-[var(--text-tertiary)]" />
+            <X className="w-5 h-5 text-[hsl(var(--text-tertiary))]" />
           </button>
         )}
       </div>
@@ -316,13 +316,13 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
         {/* Search */}
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-tertiary)]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-tertiary))]" />
           <input
             type="text"
             placeholder="Search shortcuts..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 ring-[var(--accent-primary)]"
+            className="w-full pl-10 pr-4 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg text-sm focus:outline-none focus:ring-2 ring-[hsl(var(--accent))]"
           />
         </div>
 
@@ -330,7 +330,7 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
         <select
           value={selectedCategory}
           onChange={(e) => setSelectedCategory(e.target.value)}
-          className="px-4 py-2 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg text-sm focus:outline-none focus:ring-2 ring-[var(--accent-primary)]"
+          className="px-4 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg text-sm focus:outline-none focus:ring-2 ring-[hsl(var(--accent))]"
         >
           {categories.map((cat) => (
             <option key={cat} value={cat}>
@@ -343,21 +343,21 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
         <div className="flex gap-2">
           <button
             onClick={importShortcuts}
-            className="px-3 py-2 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] transition-colors flex items-center gap-2"
+            className="px-3 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg text-sm hover:bg-[hsl(var(--surface))] transition-colors flex items-center gap-2"
             title="Import shortcuts"
           >
             <Upload className="w-4 h-4" />
           </button>
           <button
             onClick={exportShortcuts}
-            className="px-3 py-2 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] transition-colors flex items-center gap-2"
+            className="px-3 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg text-sm hover:bg-[hsl(var(--surface))] transition-colors flex items-center gap-2"
             title="Export shortcuts"
           >
             <Download className="w-4 h-4" />
           </button>
           <button
             onClick={resetAllShortcuts}
-            className="px-3 py-2 bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] transition-colors flex items-center gap-2"
+            className="px-3 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg text-sm hover:bg-[hsl(var(--surface))] transition-colors flex items-center gap-2"
             title="Reset all to defaults"
           >
             <RotateCcw className="w-4 h-4" />
@@ -368,10 +368,10 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
       {/* Shortcuts List */}
       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
         {Object.entries(groupedShortcuts).map(([category, categoryShortcuts]) => (
-          <div key={category} className="bg-[var(--surface-elevated)] rounded-lg border border-[var(--border-color)] overflow-hidden">
+          <div key={category} className="bg-[hsl(var(--surface-raised))] rounded-lg border border-[hsl(var(--border-subtle))] overflow-hidden">
             {/* Category Header */}
-            <div className="px-4 py-3 bg-[var(--bg-secondary)]/50 border-b border-[var(--border-color)]">
-              <h3 className="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
+            <div className="px-4 py-3 bg-[hsl(var(--surface))]/50 border-b border-[hsl(var(--border-subtle))]">
+              <h3 className="text-sm font-semibold text-[hsl(var(--text-secondary))] uppercase tracking-wide">
                 {CATEGORY_NAMES[category] || category}
               </h3>
             </div>
@@ -381,16 +381,16 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
               {categoryShortcuts.map((shortcut) => (
                 <div
                   key={shortcut.id}
-                  className="px-4 py-3 hover:bg-[var(--surface-hover)]/50 transition-colors"
+                  className="px-4 py-3 hover:bg-[hsl(var(--surface-raised))]/50 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-4">
                     {/* Description */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[var(--text-primary)]">
+                      <p className="text-sm font-medium text-[hsl(var(--text-primary))]">
                         {shortcut.description}
                       </p>
                       {shortcut.isCustom && (
-                        <p className="text-xs text-[var(--accent-primary)] mt-0.5">
+                        <p className="text-xs text-[hsl(var(--accent))] mt-0.5">
                           Custom
                         </p>
                       )}
@@ -400,8 +400,8 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
                     <div className="flex items-center gap-2">
                       {editingId === shortcut.id ? (
                         <div ref={captureRef} className="flex items-center gap-2">
-                          <div className="px-3 py-2 bg-[var(--accent-light)]/30 border-2 border-[var(--accent-primary)] rounded-lg min-w-[120px]">
-                            <p className="text-xs text-[var(--accent-primary)] font-mono text-center">
+                          <div className="px-3 py-2 bg-[hsl(var(--accent-muted))]/30 border-2 border-[hsl(var(--accent))] rounded-lg min-w-[120px]">
+                            <p className="text-xs text-[hsl(var(--accent))] font-mono text-center">
                               {capturingKeys.length > 0
                                 ? capturingKeys.join('+')
                                 : 'Press keys...'}
@@ -409,29 +409,29 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
                           </div>
                           <button
                             onClick={cancelEditing}
-                            className="p-1.5 rounded hover:bg-[var(--surface-hover)] transition-colors"
+                            className="p-1.5 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors"
                             title="Cancel"
                           >
-                            <X className="w-4 h-4 text-[var(--text-tertiary)]" />
+                            <X className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
                           </button>
                         </div>
                       ) : (
                         <>
                           <button
                             onClick={() => startEditing(shortcut.id)}
-                            className="px-3 py-1.5 bg-[var(--bg-tertiary)] hover:bg-[var(--surface-hover)] rounded-lg transition-colors"
+                            className="px-3 py-1.5 bg-[hsl(var(--surface-raised))] hover:bg-[hsl(var(--surface-raised))] rounded-lg transition-colors"
                           >
-                            <span className="text-xs font-mono text-[var(--text-secondary)]">
+                            <span className="text-xs font-mono text-[hsl(var(--text-secondary))]">
                               {formatShortcut(shortcut.keys)}
                             </span>
                           </button>
                           {shortcut.isCustom && (
                             <button
                               onClick={() => resetShortcut(shortcut.id)}
-                              className="p-1.5 rounded hover:bg-[var(--surface-hover)] transition-colors"
+                              className="p-1.5 rounded hover:bg-[hsl(var(--surface-raised))] transition-colors"
                               title="Reset to default"
                             >
-                              <RotateCcw className="w-4 h-4 text-[var(--text-tertiary)]" />
+                              <RotateCcw className="w-4 h-4 text-[hsl(var(--text-tertiary))]" />
                             </button>
                           )}
                         </>
@@ -441,7 +441,7 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
 
                   {/* Conflict Warning */}
                   {editingId === shortcut.id && conflictWarning && (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-[var(--error)] animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="mt-2 flex items-center gap-2 text-xs text-[hsl(var(--danger-fg))] animate-in fade-in slide-in-from-top-2 duration-200">
                       <AlertTriangle className="w-3 h-3" />
                       {conflictWarning}
                     </div>
@@ -456,8 +456,8 @@ export function ShortcutsManager({ onClose }: ShortcutsManagerProps) {
       {/* No Results */}
       {filteredShortcuts.length === 0 && (
         <div className="text-center py-12">
-          <Search className="w-12 h-12 text-[var(--text-tertiary)] mx-auto mb-3" />
-          <p className="text-[var(--text-secondary)]">No shortcuts found</p>
+          <Search className="w-12 h-12 text-[hsl(var(--text-tertiary))] mx-auto mb-3" />
+          <p className="text-[hsl(var(--text-secondary))]">No shortcuts found</p>
         </div>
       )}
     </div>

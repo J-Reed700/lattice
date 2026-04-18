@@ -45,7 +45,7 @@ export const SettingsSkeleton: React.FC<SettingsSkeletonProps> = memo(({
         ))}
 
         {/* Action buttons */}
-        <div className="flex items-center justify-between pt-6 border-t border-[var(--border-color)]">
+        <div className="flex items-center justify-between pt-6 border-t border-[hsl(var(--border-subtle))]">
           <SkeletonButton size="md" />
           <div className="flex gap-3">
             <SkeletonButton size="md" />
@@ -64,7 +64,7 @@ SettingsSkeleton.displayName = 'SettingsSkeleton';
  * Settings tabs skeleton
  */
 const SettingsTabsSkeleton: React.FC = memo(() => (
-    <div className="border-b border-[var(--border-color)] bg-[var(--surface-elevated)]">
+    <div className="border-b border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
       <div className="flex gap-1 px-6 overflow-x-auto" aria-hidden="true">
         {[120, 100, 90, 110, 130, 100, 95].map((width, index) => (
           <div key={index} className="flex items-center gap-2 px-4 py-3">
@@ -183,7 +183,7 @@ export const SettingsSkeletonCompact: React.FC = memo(() => (
       </div>
 
       {/* Action button */}
-      <div className="pt-4 border-t border-[var(--border-color)]">
+      <div className="pt-4 border-t border-[hsl(var(--border-subtle))]">
         <SkeletonButton size="md" />
       </div>
 
@@ -197,9 +197,9 @@ SettingsSkeletonCompact.displayName = 'SettingsSkeletonCompact';
  * Settings dialog skeleton (for modal settings)
  */
 export const SettingsDialogSkeleton: React.FC = memo(() => (
-    <div className="w-full max-w-4xl bg-[var(--surface-elevated)] rounded-lg shadow-xl">
+    <div className="w-full max-w-4xl bg-[hsl(var(--surface-raised))] rounded-lg shadow-xl">
       {/* Dialog header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)]">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(var(--border-subtle))]">
         <Skeleton height="1.5rem" width="120px" />
         <Skeleton width={24} height={24} />
       </div>
@@ -207,7 +207,7 @@ export const SettingsDialogSkeleton: React.FC = memo(() => (
       {/* Dialog content */}
       <div className="flex" style={{ height: '600px' }}>
         {/* Sidebar */}
-        <div className="w-64 border-r border-[var(--border-color)] p-4 space-y-2">
+        <div className="w-64 border-r border-[hsl(var(--border-subtle))] p-4 space-y-2">
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="flex items-center gap-3 px-3 py-2" aria-hidden="true">
               <Skeleton width={16} height={16} />

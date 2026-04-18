@@ -206,34 +206,34 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
     if (activity.status === 'error') {
       return {
         icon: '✕',
-        bgColor: 'bg-[var(--error-light)]/30',
-        textColor: 'text-[var(--error)]',
+        bgColor: 'bg-[hsl(var(--danger-muted))]/30',
+        textColor: 'text-[hsl(var(--danger-fg))]',
       };
     }
     if (activity.status === 'success') {
       return {
         icon: '✓',
-        bgColor: 'bg-[var(--success-light)]/30',
-        textColor: 'text-[var(--success)]',
+        bgColor: 'bg-[hsl(var(--success-muted))]/30',
+        textColor: 'text-[hsl(var(--success-fg))]',
       };
     }
     return {
       icon: '○',
-      bgColor: 'bg-[var(--accent-light)]/30',
-      textColor: 'text-[var(--accent-primary)]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]/30',
+      textColor: 'text-[hsl(var(--accent))]',
     };
   };
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-4 border-b border-[var(--border-color)]">
+      <div className="flex-shrink-0 px-6 py-4 border-b border-[hsl(var(--border-subtle))]">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-[var(--text-primary)]">
+            <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">
               Document Indexing
             </h2>
-            <p className="text-sm text-[var(--text-secondary)] mt-1">
+            <p className="text-sm text-[hsl(var(--text-secondary))] mt-1">
               Manage folders and track indexing progress
             </p>
           </div>
@@ -242,7 +242,7 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
           <button
             onClick={handleAsyncEvent(handleQuickAddFolder)}
             disabled={isIndexing}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-hover))] disabled:bg-[hsl(var(--surface-raised))] disabled:cursor-not-allowed text-[hsl(var(--accent-fg))] rounded-lg font-medium transition-colors duration-fast"
             aria-label="Add folder to index"
           >
             <FolderPlus className="w-4 h-4" />
@@ -253,7 +253,7 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
 
       {/* Current indexing progress (if active) */}
       {isIndexing && currentProgress && (
-        <div className="flex-shrink-0 px-6 py-4 bg-[var(--accent-light)]/10 border-b border-[var(--accent-light)]">
+        <div className="flex-shrink-0 px-6 py-4 bg-[hsl(var(--accent-muted))]/10 border-b border-[hsl(var(--accent-muted))]">
           <IndexProgress
             onComplete={() => setIsIndexing(false)}
             onCancel={() => setIsIndexing(false)}
@@ -262,14 +262,14 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
       )}
 
       {/* Tabs */}
-      <div className="flex-shrink-0 border-b border-[var(--border-color)]">
+      <div className="flex-shrink-0 border-b border-[hsl(var(--border-subtle))]">
         <nav className="flex gap-6 px-6" aria-label="Indexing sections">
           <button
             onClick={() => setActiveTab('folders')}
-            className={`py-3 border-b-2 font-medium text-sm transition-colors ${
+            className={`py-3 border-b-2 font-medium text-sm transition-colors duration-fast ${
               activeTab === 'folders'
-                ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]'
-                : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-color)]'
+                ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                : 'border-transparent text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-subtle))]'
             }`}
             aria-current={activeTab === 'folders' ? 'page' : undefined}
           >
@@ -277,10 +277,10 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
           </button>
           <button
             onClick={() => setActiveTab('activity')}
-            className={`py-3 border-b-2 font-medium text-sm transition-colors ${
+            className={`py-3 border-b-2 font-medium text-sm transition-colors duration-fast ${
               activeTab === 'activity'
-                ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]'
-                : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-color)]'
+                ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                : 'border-transparent text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-subtle))]'
             }`}
             aria-current={activeTab === 'activity' ? 'page' : undefined}
           >
@@ -315,20 +315,20 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
             {activities.length === 0 ? (
               // Empty state
               <div className="text-center py-12">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-[var(--bg-primary)] rounded-full mb-4">
-                  <Activity className="w-8 h-8 text-[var(--text-tertiary)]" />
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-[hsl(var(--bg))] rounded-full mb-4">
+                  <Activity className="w-8 h-8 text-[hsl(var(--text-tertiary))]" />
                 </div>
-                <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+                <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
                   No activity yet
                 </h3>
-                <p className="text-sm text-[var(--text-secondary)]">
+                <p className="text-sm text-[hsl(var(--text-secondary))]">
                   Index your first folder to see activity history
                 </p>
               </div>
             ) : (
               // Activity list
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-3 px-1">
+                <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))] mb-3 px-1">
                   Last 10 Operations
                 </h3>
                 {activities.map((activity) => {
@@ -336,7 +336,7 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
                   return (
                     <div
                       key={activity.id}
-                      className="flex items-start gap-3 p-3 rounded-lg hover:bg-[var(--surface-hover)]/50 transition-colors"
+                      className="flex items-start gap-3 p-3 rounded-lg hover:bg-[hsl(var(--surface-raised))]/50 transition-colors duration-fast"
                     >
                       {/* Status icon */}
                       <div className={`flex-shrink-0 w-8 h-8 ${style.bgColor} rounded-full flex items-center justify-center mt-0.5`}>
@@ -348,18 +348,18 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
                       {/* Activity details */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline justify-between gap-2">
-                          <p className="text-sm font-medium text-[var(--text-primary)]">
+                          <p className="text-sm font-medium text-[hsl(var(--text-primary))]">
                             {activity.action}
                           </p>
-                          <span className="text-xs text-[var(--text-tertiary)] flex-shrink-0">
+                          <span className="text-xs text-[hsl(var(--text-tertiary))] flex-shrink-0">
                             {formatActivityTime(activity.timestamp)}
                           </span>
                         </div>
-                        <p className="text-xs text-[var(--text-secondary)] mt-1 truncate">
+                        <p className="text-xs text-[hsl(var(--text-secondary))] mt-1 truncate">
                           {activity.file_path}
                         </p>
                         {activity.details && (
-                          <p className="text-xs text-[var(--text-tertiary)] mt-1">
+                          <p className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
                             {activity.details}
                           </p>
                         )}
@@ -374,15 +374,15 @@ export function IndexingPanel({ className = '' }: IndexingPanelProps) {
       </div>
 
       {/* Footer with stats or settings */}
-      <div className="flex-shrink-0 px-6 py-3 border-t border-[var(--border-color)] bg-[var(--bg-secondary)]/50">
-        <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+      <div className="flex-shrink-0 px-6 py-3 border-t border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]/50">
+        <div className="flex items-center justify-between text-xs text-[hsl(var(--text-secondary))]">
           <span>
             Vault automatically monitors indexed folders for changes
           </span>
           {/* Settings button for future features */}
           {/* <button
             onClick={() => setShowSettings(!showSettings)}
-            className="p-1 hover:bg-[var(--surface-hover)] rounded transition-colors"
+            className="p-1 hover:bg-[hsl(var(--surface-raised))] rounded transition-colors duration-fast"
             aria-label="Indexing settings"
           >
             <Settings className="w-4 h-4" />

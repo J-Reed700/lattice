@@ -14,7 +14,7 @@ use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort
 use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::infrastructure::indexing::extraction::ContentExtractor;
-use crate::infrastructure::services::traits::{BatchFileImportServiceTrait, ProcessedFileInfo};
+use super::file_import_trait::{BatchFileImportServiceTrait, ProcessedFileInfo};
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
 

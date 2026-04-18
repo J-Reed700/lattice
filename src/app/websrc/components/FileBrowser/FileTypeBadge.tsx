@@ -73,8 +73,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: Globe,
       label: 'Web Article',
-      color: 'text-blue-700',
-      bgColor: 'bg-blue-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -88,8 +88,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileText,
       label: 'PDF Document',
-      color: 'text-red-700',
-      bgColor: 'bg-red-100',
+      color: 'text-[hsl(var(--danger-fg))]',
+      bgColor: 'bg-[hsl(var(--danger-muted))]',
     };
   }
 
@@ -97,8 +97,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileText,
       label: 'Word Document',
-      color: 'text-blue-700',
-      bgColor: 'bg-blue-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -106,8 +106,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileText,
       label: 'Text Document',
-      color: 'text-gray-700',
-      bgColor: 'bg-gray-100',
+      color: 'text-[hsl(var(--text-muted))]',
+      bgColor: 'bg-[hsl(var(--surface))]',
     };
   }
 
@@ -116,8 +116,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: Image,
       label: 'Image',
-      color: 'text-purple-700',
-      bgColor: 'bg-purple-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -126,8 +126,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileCode,
       label: 'JavaScript',
-      color: 'text-yellow-700',
-      bgColor: 'bg-yellow-100',
+      color: 'text-[hsl(var(--warning-fg))]',
+      bgColor: 'bg-[hsl(var(--warning-muted))]',
     };
   }
 
@@ -135,8 +135,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileCode,
       label: 'Python',
-      color: 'text-blue-700',
-      bgColor: 'bg-blue-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -144,8 +144,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileCode,
       label: 'Rust',
-      color: 'text-orange-700',
-      bgColor: 'bg-orange-100',
+      color: 'text-[hsl(var(--warning-fg))]',
+      bgColor: 'bg-[hsl(var(--warning-muted))]',
     };
   }
 
@@ -153,8 +153,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileCode,
       label: ext.toUpperCase(),
-      color: 'text-pink-700',
-      bgColor: 'bg-pink-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -162,8 +162,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileCode,
       label: 'Config',
-      color: 'text-green-700',
-      bgColor: 'bg-green-100',
+      color: 'text-[hsl(var(--success-fg))]',
+      bgColor: 'bg-[hsl(var(--success-muted))]',
     };
   }
 
@@ -172,8 +172,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileArchive,
       label: 'Archive',
-      color: 'text-amber-700',
-      bgColor: 'bg-amber-100',
+      color: 'text-[hsl(var(--warning-fg))]',
+      bgColor: 'bg-[hsl(var(--warning-muted))]',
     };
   }
 
@@ -182,8 +182,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileVideo,
       label: 'Video',
-      color: 'text-indigo-700',
-      bgColor: 'bg-indigo-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -192,8 +192,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileAudio,
       label: 'Audio',
-      color: 'text-cyan-700',
-      bgColor: 'bg-cyan-100',
+      color: 'text-[hsl(var(--accent))]',
+      bgColor: 'bg-[hsl(var(--accent-muted))]',
     };
   }
 
@@ -202,8 +202,8 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
     return {
       icon: FileSpreadsheet,
       label: 'Spreadsheet',
-      color: 'text-green-700',
-      bgColor: 'bg-green-100',
+      color: 'text-[hsl(var(--success-fg))]',
+      bgColor: 'bg-[hsl(var(--success-muted))]',
     };
   }
 
@@ -211,7 +211,7 @@ function getFileTypeInfo(file: FileNode | DocumentMetadata): FileTypeInfo {
   return {
     icon: File,
     label: ext ? ext.toUpperCase() : 'File',
-    color: 'text-gray-700',
-    bgColor: 'bg-gray-100',
+    color: 'text-[hsl(var(--text-muted))]',
+    bgColor: 'bg-[hsl(var(--surface))]',
   };
 }

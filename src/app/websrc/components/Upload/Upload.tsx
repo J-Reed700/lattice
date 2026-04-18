@@ -147,7 +147,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
           ? await VaultAPI.indexFile(filePath, selectedSpaceId)
           : await VaultAPI.indexFile(filePath);
         if (!result.ok) {
-          setError(`Failed to index ${filePath}: ${result.error}`);
+          setError(`Couldn't index ${filePath}: ${result.error}`);
           hadError = true;
           break;
         }
@@ -219,7 +219,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
           ? await VaultAPI.indexFile(filePath, selectedSpaceId)
           : await VaultAPI.indexFile(filePath);
         if (!result.ok) {
-          setError(`Failed to index ${file.name}: ${result.error}`);
+          setError(`Couldn't index ${file.name}: ${result.error}`);
           hadError = true;
           break;
         }
@@ -243,8 +243,8 @@ export default function Upload({ onUploadComplete }: UploadProps) {
       <div
         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
           dragActive
-            ? 'border-[var(--accent-primary)] bg-[var(--accent-light)]/20'
-            : 'border-[var(--border-color)] hover:border-[var(--border-color)]'
+            ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]/20'
+            : 'border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--border-subtle))]'
         }`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
@@ -252,7 +252,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
         onDrop={handleDrop}
       >
         <svg
-          className="mx-auto w-12 h-12 text-[var(--text-tertiary)] mb-4"
+          className="mx-auto w-10 h-10 text-[hsl(var(--text-tertiary))] mb-4"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -260,18 +260,18 @@ export default function Upload({ onUploadComplete }: UploadProps) {
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeWidth={2}
+            strokeWidth={1.75}
             d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
           />
         </svg>
-        <p className="text-[var(--text-secondary)] mb-4">
+        <p className="text-[hsl(var(--text-secondary))] mb-4">
           Drag and drop files here, or click below to select
         </p>
         <div className="mx-auto mb-4 grid max-w-2xl gap-3 text-left sm:grid-cols-2">
           <div className="space-y-1">
             <label
               htmlFor="upload-space-select"
-              className="block text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]"
+              className="block text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]"
             >
               Optional Space Scope
             </label>
@@ -280,7 +280,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
               value={selectedSpaceId}
               onChange={(event) => setSelectedSpaceId(event.target.value)}
               disabled={isUploading || isLoadingSpaces}
-              className="w-full rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">No Space (All)</option>
               {spaces.map((space) => (
@@ -294,7 +294,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
           <div className="space-y-1">
             <label
               htmlFor="upload-collection-select"
-              className="block text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]"
+              className="block text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]"
             >
               Optional Collection
             </label>
@@ -303,7 +303,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
               value={selectedCollectionId}
               onChange={(event) => setSelectedCollectionId(event.target.value)}
               disabled={isUploading || manualCollections.length === 0}
-              className="w-full rounded-md border border-[var(--border-color)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">
                 {manualCollections.length === 0 ? 'No collections available' : 'No Collection'}
@@ -316,7 +316,7 @@ export default function Upload({ onUploadComplete }: UploadProps) {
             </select>
           </div>
         </div>
-        <p className="mx-auto mb-4 max-w-2xl text-left text-xs text-[var(--text-tertiary)]">
+        <p className="mx-auto mb-4 max-w-2xl text-left text-xs text-[hsl(var(--text-tertiary))]">
           Collection assignment is applied to selected files and drag-drop uploads. Folder indexing
           applies the space scope and can be added to collections later from Library.
         </p>
@@ -324,21 +324,21 @@ export default function Upload({ onUploadComplete }: UploadProps) {
           <button
             onClick={handleSelectFile}
             disabled={isUploading}
-            className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] disabled:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] disabled:bg-[hsl(var(--surface-raised))] disabled:cursor-not-allowed transition-colors"
           >
             Select File
           </button>
           <button
             onClick={handleSelectMultipleFiles}
             disabled={isUploading}
-            className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] disabled:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] disabled:bg-[hsl(var(--surface-raised))] disabled:cursor-not-allowed transition-colors"
           >
             Select Multiple Files
           </button>
           <button
             onClick={handleSelectFolder}
             disabled={isUploading}
-            className="px-4 py-2 bg-[var(--success)] text-white rounded-lg hover:bg-[var(--success)] disabled:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 bg-[hsl(var(--success-fg))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--success-fg))] disabled:bg-[hsl(var(--surface-raised))] disabled:cursor-not-allowed transition-colors"
           >
             Select Folder
           </button>
@@ -346,21 +346,21 @@ export default function Upload({ onUploadComplete }: UploadProps) {
       </div>
 
       {isUploading && (
-        <div className="flex items-center justify-center space-x-2 p-4 bg-[var(--accent-light)]/20 rounded-lg">
-          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[var(--accent-primary)]" />
-          <span className="text-[var(--accent-primary)]">Indexing files...</span>
+        <div className="flex items-center justify-center space-x-2 p-4 bg-[hsl(var(--accent-muted))]/20 rounded-lg">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[hsl(var(--accent))]" />
+          <span className="text-[hsl(var(--accent))]">Indexing files...</span>
         </div>
       )}
 
       {error && (
-        <div className="p-4 bg-[var(--error-light)]/20 border border-[var(--error-light)] rounded-lg">
-          <p className="text-[var(--error)] text-sm">{error}</p>
+        <div className="p-4 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg">
+          <p className="text-[hsl(var(--danger-fg))] text-sm">{error}</p>
         </div>
       )}
 
       {success && (
-        <div className="p-4 bg-[var(--success-light)]/20 border border-[var(--success-light)] rounded-lg">
-          <p className="text-[var(--success)] text-sm">{success}</p>
+        <div className="p-4 bg-[hsl(var(--success-muted))]/20 border border-[hsl(var(--success-muted))] rounded-lg">
+          <p className="text-[hsl(var(--success-fg))] text-sm">{success}</p>
         </div>
       )}
     </div>

@@ -46,9 +46,9 @@ use crate::features::search::dto::SearchResultDto;
 use crate::domain::ValidatedMetadata;
 use crate::infrastructure::observability::Metrics;
 use crate::infrastructure::qa::types::StreamChunk;
-use crate::infrastructure::services::traits::{
-    ContextManagerTrait, ConversationServiceTrait, ConversationalQAServiceTrait, QAEngineTrait,
-};
+use crate::infrastructure::services::traits::ContextManagerTrait;
+use crate::features::conversation::ConversationServiceTrait;
+use crate::features::qa::{ConversationalQAServiceTrait, QAEngineTrait};
 use crate::shared::error::{AppError, Result};
 
 // ============================================================================
@@ -578,7 +578,8 @@ impl ConversationalQAServiceTrait for ConversationalQAService {
 mod tests {
     use super::*;
     use crate::infrastructure::qa::QAEngine;
-    use crate::infrastructure::services::traits::{MockContextManager, MockConversationService};
+    use crate::infrastructure::services::mocks::MockContextManager;
+    use crate::features::conversation::mocks::MockConversationService;
     use crate::llm::OllamaClient;
 
     #[tokio::test]

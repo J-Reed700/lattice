@@ -56,13 +56,13 @@ const Switch = forwardRef<HTMLInputElement, SwitchProps>(
           onClick={() => !disabled && onCheckedChange?.(!checked)}
           className={`
             relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full
-            transition-colors duration-200 ease-in-out
-            focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2
+            transition-colors duration-fast ease-out
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]
             disabled:opacity-50 disabled:cursor-not-allowed
             ${
               checked
-                ? 'bg-[var(--accent-primary)]'
-                : 'bg-[var(--bg-tertiary)]'
+                ? 'bg-[hsl(var(--accent))]'
+                : 'bg-[hsl(var(--surface-raised))]'
             }
           `}
         >
@@ -80,7 +80,7 @@ const Switch = forwardRef<HTMLInputElement, SwitchProps>(
             aria-hidden="true"
             className={`
               pointer-events-none inline-block h-5 w-5 transform rounded-full
-              bg-[var(--surface-elevated)] shadow ring-0 transition duration-200 ease-in-out
+              bg-[hsl(var(--bg))] ring-0 transition-transform duration-fast ease-out
               ${checked ? 'translate-x-5' : 'translate-x-0.5'}
               mt-0.5
             `}
@@ -93,7 +93,7 @@ const Switch = forwardRef<HTMLInputElement, SwitchProps>(
               <label
                 id={`${switchId}-label`}
                 htmlFor={switchId}
-                className="block text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                className="block text-sm font-medium text-[hsl(var(--text-primary))] cursor-pointer"
               >
                 {label}
               </label>
@@ -101,7 +101,7 @@ const Switch = forwardRef<HTMLInputElement, SwitchProps>(
             {description && (
               <p
                 id={`${switchId}-description`}
-                className="text-sm text-[var(--text-secondary)] mt-0.5"
+                className="text-sm text-[hsl(var(--text-secondary))] mt-0.5"
               >
                 {description}
               </p>

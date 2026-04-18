@@ -33,7 +33,7 @@
 //! ```
 
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
-use crate::infrastructure::services::traits::{FunctionExecutorTrait, FunctionRegistryTrait};
+use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::shared::result::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use crate::features::function_calling::domain::ToolDefinition;
     use crate::features::function_calling::registry::FunctionRegistry;
-    use crate::infrastructure::services::mocks::MockFunctionExecutor;
+    use crate::features::function_calling::mocks::MockFunctionExecutor;
     use serde_json::json;
 
     #[tokio::test]

@@ -73,7 +73,7 @@ export function Header({
 
   return (
     <header
-      className={`flex items-center justify-between px-6 py-4 bg-[var(--surface-elevated)] border-b border-[var(--border-color)] ${className}`}
+      className={`flex items-center justify-between px-6 py-4 bg-[hsl(var(--surface))] border-b border-[hsl(var(--border-subtle))] ${className}`}
       role="banner"
     >
       {/* Left: Title and Breadcrumbs */}
@@ -84,17 +84,17 @@ export function Header({
               {breadcrumbs.map((crumb, index) => (
                 <li key={index} className="flex items-center gap-2">
                   {index > 0 && (
-                    <span className="text-[var(--text-tertiary)]">/</span>
+                    <span className="text-[hsl(var(--text-tertiary))]">/</span>
                   )}
                   {crumb.onClick ? (
                     <button
                       onClick={crumb.onClick}
-                      className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                      className="text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
                     >
                       {crumb.label}
                     </button>
                   ) : (
-                    <span className="text-[var(--text-primary)] font-medium">
+                    <span className="text-[hsl(var(--text-primary))] font-medium">
                       {crumb.label}
                     </span>
                   )}
@@ -106,11 +106,11 @@ export function Header({
 
         {title && (
           <div>
-            <h1 className="text-xl font-semibold text-[var(--text-primary)] truncate">
+            <h1 className="text-xl font-semibold text-[hsl(var(--text-primary))] truncate">
               {title}
             </h1>
             {subtitle && (
-              <p className="text-sm text-[var(--text-secondary)] truncate mt-1">
+              <p className="text-sm text-[hsl(var(--text-secondary))] truncate mt-1">
                 {subtitle}
               </p>
             )}
@@ -127,25 +127,25 @@ export function Header({
         {showSearch && (
           <button
             onClick={onSearchClick}
-            className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors"
+            className="p-2 rounded-md text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
             title="Search (⌘K)"
             aria-label="Open search"
           >
-            <Search className="w-5 h-5" />
+            <Search className="w-4 h-4" strokeWidth={1.75} />
           </button>
         )}
 
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
-          className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors"
+          className="p-2 rounded-md text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
           title={`Switch to ${effectiveTheme === 'dark' ? 'light' : 'dark'} mode`}
           aria-label={`Switch to ${effectiveTheme === 'dark' ? 'light' : 'dark'} mode`}
         >
           {effectiveTheme === 'dark' ? (
-            <Sun className="w-5 h-5" />
+            <Sun className="w-4 h-4" strokeWidth={1.75} />
           ) : (
-            <Moon className="w-5 h-5" />
+            <Moon className="w-4 h-4" strokeWidth={1.75} />
           )}
         </button>
 
@@ -153,11 +153,11 @@ export function Header({
         {showHelp && (
           <button
             onClick={onHelpClick}
-            className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors"
+            className="p-2 rounded-md text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
             title="Help (?)"
             aria-label="Open help"
           >
-            <HelpCircle className="w-5 h-5" />
+            <HelpCircle className="w-4 h-4" strokeWidth={1.75} />
           </button>
         )}
       </div>
@@ -178,16 +178,16 @@ export function CompactHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="flex items-center justify-between px-4 py-3 bg-[var(--surface-elevated)] border-b border-[var(--border-color)]">
+    <header className="flex items-center justify-between px-4 py-3 bg-[hsl(var(--surface))] border-b border-[hsl(var(--border-subtle))]">
       <div className="flex items-center gap-3 flex-1 min-w-0">
         {onBack && (
           <button
             onClick={onBack}
-            className="p-1 rounded text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] transition-colors"
+            className="p-1 rounded-md text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast"
             aria-label="Go back"
           >
             <svg
-              className="w-5 h-5"
+              className="w-4 h-4"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -195,13 +195,13 @@ export function CompactHeader({
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={2}
+                strokeWidth={1.75}
                 d="M15 19l-7-7 7-7"
               />
             </svg>
           </button>
         )}
-        <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate">
+        <h2 className="text-lg font-semibold text-[hsl(var(--text-primary))] truncate">
           {title}
         </h2>
       </div>

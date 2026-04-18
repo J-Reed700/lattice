@@ -14,10 +14,7 @@
 //! - `crate::features::function_calling::registry` — FunctionRegistry
 //! - `crate::features::function_calling::commands` — Tauri command handlers
 //! - `crate::features::function_calling::plugin::init()` — Tauri plugin
-//!
-//! `trait_def` (FunctionServiceTrait) and `mocks` (MockFunctionService)
-//! remain loaded via the shared `infrastructure::services::{traits,mocks}`
-//! aggregators.
+//! - `crate::features::function_calling::{FunctionRegistryTrait, FunctionExecutorTrait}` — service traits
 
 pub mod commands;
 pub mod domain;
@@ -25,4 +22,10 @@ pub mod dto;
 pub mod executor;
 pub mod plugin;
 pub mod registry;
+pub mod trait_def;
 pub mod use_cases;
+
+#[cfg(test)]
+pub mod mocks;
+
+pub use trait_def::{FunctionExecutorTrait, FunctionRegistryTrait};

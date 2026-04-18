@@ -118,11 +118,11 @@ export function SearchBar({
   }, [query, onSearch]);
 
   const searchIcon = (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
-        strokeWidth={2}
+        strokeWidth={1.75}
         d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
       />
     </svg>
@@ -151,7 +151,7 @@ export function SearchBar({
         role="group"
         aria-label="Search mode selection"
       >
-        <span className="text-sm text-[var(--text-secondary)] font-medium">
+        <span className="text-sm text-[hsl(var(--text-secondary))] font-medium">
           Search mode:
         </span>
 
@@ -178,12 +178,12 @@ export function SearchBar({
       </div>
 
       {/* Keyboard Shortcuts Hint */}
-      <div className="flex items-center gap-4 text-xs text-[var(--text-secondary)]">
-        <kbd className="px-2 py-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded">
+      <div className="flex items-center gap-4 text-xs text-[hsl(var(--text-secondary))]">
+        <kbd className="px-2 py-1 bg-[hsl(var(--bg))] border border-[hsl(var(--border-subtle))] rounded">
           Cmd+K
         </kbd>
         <span>Focus search</span>
-        <kbd className="px-2 py-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded">
+        <kbd className="px-2 py-1 bg-[hsl(var(--bg))] border border-[hsl(var(--border-subtle))] rounded">
           Cmd+F
         </kbd>
         <span>Cycle modes</span>
@@ -207,13 +207,13 @@ function ModeButton({ active, onClick, label, description }: ModeButtonProps) {
       title={description}
       aria-pressed={active}
       className={`
-        px-3 py-1.5 text-sm font-medium rounded-lg
-        transition-all duration-150
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2
+        px-3 py-1.5 text-sm font-medium rounded-md
+        transition-colors duration-fast
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2
         ${
           active
-            ? 'bg-[var(--accent-primary)] text-white shadow-sm'
-            : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]'
+            ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-sm'
+            : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface))]'
         }
       `}
     >

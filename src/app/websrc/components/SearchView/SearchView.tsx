@@ -133,9 +133,9 @@ export function SearchView() {
   }, [currentQuery, toggleRewritePanel]);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[var(--bg-secondary)]">
+    <div className="flex-1 flex flex-col h-full bg-[hsl(var(--surface))]">
       {/* Search Header */}
-      <div className="bg-[var(--surface-elevated)] border-b border-[var(--border-color)] px-6 py-4">
+      <div className="bg-[hsl(var(--surface-raised))] border-b border-[hsl(var(--border-subtle))] px-6 py-4">
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <div className="flex-1">
@@ -149,13 +149,13 @@ export function SearchView() {
               <button
                 onClick={toggleRewritePanel}
                 className={`
-                  px-4 py-2 text-sm font-medium rounded-lg
-                  transition-all duration-150
-                  focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] focus-visible:ring-offset-2
+                  px-4 py-2 text-sm font-medium rounded-md
+                  transition-colors duration-fast
+                  focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2
                   ${
                     showRewritePanel
-                      ? 'bg-[var(--accent-primary)] text-white shadow-sm'
-                      : 'bg-[var(--surface-elevated)] text-[var(--text-secondary)] border border-[var(--border-color)] hover:bg-[var(--bg-secondary)]'
+                      ? 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-sm'
+                      : 'bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border-subtle))] hover:bg-[hsl(var(--surface))]'
                   }
                 `}
                 aria-label="Toggle query suggestions"
@@ -171,7 +171,7 @@ export function SearchView() {
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      strokeWidth={2}
+                      strokeWidth={1.75}
                       d="M13 10V3L4 14h7v7l9-11h-7z"
                     />
                   </svg>
@@ -203,9 +203,9 @@ export function SearchView() {
             {/* No Results Message with Suggestion */}
             {results.length === 0 && !isSearching && !error && (
               <div className="flex flex-col items-center justify-center py-12">
-                <div className="w-16 h-16 bg-[var(--bg-tertiary)] rounded-full flex items-center justify-center mb-4">
+                <div className="w-16 h-16 bg-[hsl(var(--surface-raised))] rounded-full flex items-center justify-center mb-4">
                   <svg
-                    className="w-8 h-8 text-[var(--text-tertiary)]"
+                    className="w-8 h-8 text-[hsl(var(--text-tertiary))]"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -218,16 +218,16 @@ export function SearchView() {
                     />
                   </svg>
                 </div>
-                <h3 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
+                <h3 className="text-xl font-semibold text-[hsl(var(--text-primary))] mb-2">
                   No results found
                 </h3>
-                <p className="text-[var(--text-secondary)] mb-4 text-center max-w-md">
+                <p className="text-[hsl(var(--text-secondary))] mb-4 text-center max-w-md">
                   We couldn't find any documents matching "{currentQuery}". Try using different keywords or let AI suggest alternative queries.
                 </p>
                 {!showRewritePanel && (
                   <button
                     onClick={toggleRewritePanel}
-                    className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded-lg hover:bg-[var(--accent-hover)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+                    className="px-4 py-2 bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] rounded-md hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
                   >
                     Suggest alternative queries
                   </button>
@@ -263,9 +263,9 @@ export function SearchView() {
 function WelcomeMessage() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-4">
-      <div className="w-20 h-20 gradient-brand rounded-2xl flex items-center justify-center mb-6 shadow-lg">
+      <div className="w-20 h-20 bg-[hsl(var(--accent))] rounded-lg flex items-center justify-center mb-6 shadow-sm">
         <svg
-          className="w-10 h-10 text-white"
+          className="w-10 h-10 text-[hsl(var(--accent-fg))]"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -273,17 +273,17 @@ function WelcomeMessage() {
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeWidth={2}
+            strokeWidth={1.75}
             d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
           />
         </svg>
       </div>
 
-      <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-2">
-        Search Your Documents
+      <h2 className="text-2xl font-bold text-[hsl(var(--text-primary))] mb-2">
+        Search your documents
       </h2>
 
-      <p className="text-[var(--text-secondary)] max-w-md mb-6">
+      <p className="text-[hsl(var(--text-secondary))] max-w-md mb-6">
         Start typing to search through your indexed documents using AI-powered semantic search,
         fast keyword matching, or a hybrid approach.
       </p>
@@ -330,10 +330,10 @@ interface FeatureCardProps {
 
 function FeatureCard({ icon, title, description }: FeatureCardProps) {
   return (
-    <div className="bg-[var(--surface-elevated)] border border-[var(--border-color)] rounded-lg p-4 text-left">
-      <div className="text-[var(--accent-primary)] mb-2">{icon}</div>
-      <h3 className="font-semibold text-[var(--text-primary)] mb-1">{title}</h3>
-      <p className="text-sm text-[var(--text-secondary)]">{description}</p>
+    <div className="bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-lg p-4 text-left">
+      <div className="text-[hsl(var(--accent))] mb-2">{icon}</div>
+      <h3 className="font-semibold text-[hsl(var(--text-primary))] mb-1">{title}</h3>
+      <p className="text-sm text-[hsl(var(--text-secondary))]">{description}</p>
     </div>
   );
 }

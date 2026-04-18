@@ -68,7 +68,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::features::function_calling::dto::CleanArticle;
-use crate::infrastructure::services::traits::WebArchiveServiceTrait;
+use crate::features::web::WebArchiveServiceTrait;
 use crate::shared::error::{AppError, Result};
 
 /// Structured metadata stored in metadata.json
