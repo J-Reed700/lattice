@@ -375,6 +375,14 @@ impl HuggingFaceModel {
         }
         let description = self.build_description(&id, preferred_is_gguf);
 
+        // Detect Candle compatibility for embedding models from architecture
+        // tags. Non-embedding models get None.
+        let embedding_compatibility = if self.is_embedding_model() {
+            Some(crate::features::embedding::compatibility::detect_from_tags(&tags))
+        } else {
+            None
+        };
+
         ExternalModelMetadata {
             id: id.clone(),
             name,
@@ -391,6 +399,7 @@ impl HuggingFaceModel {
             gated: self.gated,
             preferred_filename: preferred_file.as_ref().map(|f| f.0.clone()),
             preferred_size_bytes: preferred_file.and_then(|f| f.1),
+            embedding_compatibility,
         }
     }
 }

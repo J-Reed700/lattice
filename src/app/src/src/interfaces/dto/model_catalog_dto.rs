@@ -166,6 +166,35 @@ pub struct ModelMetadataDto {
     /// Output dimension for embedding models (e.g., 384, 768, 1024).
     /// Null for non-embedding models.
     pub embedding_dimensions: Option<usize>,
+    /// Compatibility verdict for embedding models. Null for non-embedding
+    /// models. Frontend uses this to disable + badge incompatible rows so
+    /// users don't waste a 1GB+ download on a model that won't load.
+    pub embedding_compatibility: Option<EmbeddingCompatibilityDto>,
+}
+
+/// Frontend mirror of `EmbeddingCompatibility`.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum EmbeddingCompatibilityDto {
+    /// Model is loadable today.
+    Compatible { architecture: String },
+    /// Recognized architecture but not yet implemented in the local runtime.
+    Incompatible { architecture: String, reason: String },
+    /// We couldn't tell from tags. Treated as not-yet-supported.
+    Unknown,
+}
+
+impl From<crate::features::embedding::compatibility::EmbeddingCompatibility>
+    for EmbeddingCompatibilityDto
+{
+    fn from(domain: crate::features::embedding::compatibility::EmbeddingCompatibility) -> Self {
+        use crate::features::embedding::compatibility::EmbeddingCompatibility as E;
+        match domain {
+            E::Compatible { architecture } => Self::Compatible { architecture },
+            E::Incompatible { architecture, reason } => Self::Incompatible { architecture, reason },
+            E::Unknown => Self::Unknown,
+        }
+    }
 }
 
 impl From<crate::features::model_management::domain::ModelMetadata> for ModelMetadataDto {
@@ -190,6 +219,7 @@ impl From<crate::features::model_management::domain::ModelMetadata> for ModelMet
             files: domain.files.into_iter().map(Into::into).collect(),
             total_size_bytes: domain.total_size_bytes,
             embedding_dimensions: domain.embedding_dimensions,
+            embedding_compatibility: domain.embedding_compatibility.map(Into::into),
         }
     }
 }

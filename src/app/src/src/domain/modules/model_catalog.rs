@@ -251,6 +251,7 @@ impl ModelSearchResult {
 ///         files: vec![],
 ///         total_size_bytes: 0,
 ///         embedding_dimensions: None,
+///         embedding_compatibility: None,
 ///     },
 /// ];
 ///
@@ -406,6 +407,7 @@ mod tests {
             files: vec![],
             total_size_bytes: 0,
             embedding_dimensions: None,
+            embedding_compatibility: None,
         }
     }
 

@@ -35,9 +35,6 @@ export type { DocumentViewerProps, FileData } from './DocumentViewer';
 
 // Dashboard Components (NEW - v1.0)
 export { Dashboard } from './Dashboard';
-export { DashboardStats } from './Dashboard';
-export { RecentActivity } from './Dashboard';
-export { QuickActions } from './Dashboard';
 
 // Panel Components
 export { QAPanel } from './QAPanel';

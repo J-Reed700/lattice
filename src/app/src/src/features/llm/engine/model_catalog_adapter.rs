@@ -49,6 +49,7 @@ mod model_info {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             }
         }
     }

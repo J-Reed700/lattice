@@ -66,6 +66,13 @@ pub struct ExternalModelMetadata {
     /// Preferred file size in bytes.
     #[serde(default)]
     pub preferred_size_bytes: Option<u64>,
+    /// For embedding models: whether the local Candle inference path can load
+    /// this architecture. `None` for non-embedding models. Catalog browsers
+    /// surface this so users see a "Coming soon" badge instead of starting a
+    /// download that will fail.
+    #[serde(default)]
+    pub embedding_compatibility:
+        Option<crate::features::embedding::compatibility::EmbeddingCompatibility>,
 }
 
 impl ExternalModelMetadata {
@@ -287,6 +294,7 @@ impl ExternalModelMetadata {
                 .preferred_size_bytes
                 .unwrap_or((size_gb * 1_000_000_000.0) as u64),
             embedding_dimensions: None,
+            embedding_compatibility: self.embedding_compatibility.clone(),
         })
     }
 
@@ -574,6 +582,7 @@ impl MockModelCatalogPort {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             },
         );
 
@@ -601,6 +610,7 @@ impl MockModelCatalogPort {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             },
         );
 
@@ -622,6 +632,7 @@ impl MockModelCatalogPort {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             },
         );
 
@@ -648,6 +659,7 @@ impl MockModelCatalogPort {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             },
         );
 
@@ -671,6 +683,7 @@ impl MockModelCatalogPort {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             },
         );
 
@@ -697,6 +710,7 @@ impl MockModelCatalogPort {
                 gated: None,
                 preferred_filename: None,
                 preferred_size_bytes: None,
+                embedding_compatibility: None,
             },
         );
 
@@ -822,6 +836,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let domain = external.to_domain_model().unwrap();
@@ -847,6 +862,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let domain = external.to_domain_model().unwrap();
@@ -870,6 +886,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let category = external.infer_category().unwrap();
@@ -891,6 +908,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let size = external.estimate_size_gb();
@@ -912,6 +930,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let context = external.extract_context_length();
@@ -933,6 +952,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let quants = external.extract_quantizations();
@@ -954,6 +974,7 @@ mod tests {
             gated: None,
             preferred_filename: None,
             preferred_size_bytes: None,
+            embedding_compatibility: None,
         };
 
         let caps = external.extract_capabilities();
@@ -989,6 +1010,7 @@ mod tests {
             gated: Some(true),
             preferred_filename: Some("Llama-3.2-3B-Instruct-Q4_K_M.gguf".into()),
             preferred_size_bytes: Some(2_300_000_000),
+            embedding_compatibility: None,
         };
 
         let domain = external.to_domain_model().unwrap();

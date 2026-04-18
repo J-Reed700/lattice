@@ -292,6 +292,7 @@ impl SystemCapabilities {
 ///     files: vec![],
 ///     total_size_bytes: 0,
 ///     embedding_dimensions: None,
+///     embedding_compatibility: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -347,6 +348,13 @@ pub struct ModelMetadata {
     /// Used to filter catalog models to those compatible with the app's vector index.
     #[serde(default)]
     pub embedding_dimensions: Option<usize>,
+    /// For embedding models: whether the local Candle inference path can load
+    /// this architecture. `None` for non-embedding models. Threaded through
+    /// from `ExternalModelMetadata` so the catalog UI can badge incompatible
+    /// rows.
+    #[serde(default)]
+    pub embedding_compatibility:
+        Option<crate::features::embedding::compatibility::EmbeddingCompatibility>,
 }
 
 impl ModelMetadata {
@@ -390,6 +398,7 @@ impl ModelMetadata {
     ///     files: vec![],
     ///     total_size_bytes: 0,
     ///     embedding_dimensions: None,
+    ///     embedding_compatibility: None,
     /// };
     ///
     /// assert_eq!(
@@ -628,6 +637,7 @@ impl ModelRecommendation {
 ///     files: vec![],
 ///     total_size_bytes: 0,
 ///     embedding_dimensions: None,
+///     embedding_compatibility: None,
 /// };
 ///
 /// let score = scorer.score_compatibility(&model, &capabilities)?;
@@ -853,6 +863,7 @@ mod tests {
             files: vec![],
             total_size_bytes: 0,
             embedding_dimensions: None,
+            embedding_compatibility: None,
         }
     }
 
