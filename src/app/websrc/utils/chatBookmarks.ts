@@ -2,12 +2,21 @@ import { VaultAPI } from '../lib/api';
 
 import type { ChatReferenceSource } from './chatReferenceCapture';
 import type { ConversationMessageBookmarkDto } from '../types';
-import type { ConversationMessage } from '../types/conversation';
+import type { ConversationMessage, SourceWithMetadata } from '../types/conversation';
 
 export interface BookmarkPayload {
   content: string;
   sourceReferences: ChatReferenceSource[];
+  /**
+   * Full rich source metadata from the resolved message, suitable for
+   * rendering with {@link components/Chat/SourceCitations}. May be empty
+   * when the resolved message carried no structured sources.
+   */
+  sources: SourceWithMetadata[];
 }
+
+const extractFullSources = (value: unknown): SourceWithMetadata[] =>
+  Array.isArray(value) ? (value as SourceWithMetadata[]) : [];
 
 const toStringOrEmpty = (value: unknown): string =>
   typeof value === 'string' ? value : '';
@@ -65,6 +74,7 @@ export async function resolveBookmarkPayload(
         loadedMessage.metadata,
         loadedMessage.sources
       ),
+      sources: extractFullSources(loadedMessage.sources),
     };
   }
 
@@ -86,5 +96,6 @@ export async function resolveBookmarkPayload(
   return {
     content: matched.content,
     sourceReferences: parseBookmarkSourceReferences(matched.metadata, matched.sources),
+    sources: extractFullSources((matched as { sources?: unknown }).sources),
   };
 }

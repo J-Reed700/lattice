@@ -99,6 +99,13 @@ async-trait = "0.1"
 ollama-rs = "0.2"
 tokio-stream = "0.1"
 fastembed = "5.5"
+# Candle — pure-Rust ML framework for embedding model inference.
+# Metal acceleration is enabled on macOS via the `metal` feature on `candle-core`.
+candle-core = { version = "0.8", features = ["metal"] }
+candle-nn = { version = "0.8", features = ["metal"] }
+candle-transformers = { version = "0.8", features = ["metal"] }
+hf-hub = { version = "0.3", features = ["tokio"] }
+safetensors = "0.4"
 # Rust modernization dependencies
 derive_more = { version = "1.0", features = ["from", "into", "display", "deref"] }
 parking_lot = "0.12"

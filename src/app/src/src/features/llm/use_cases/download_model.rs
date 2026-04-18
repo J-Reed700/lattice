@@ -167,7 +167,7 @@ impl DownloadModelUseCase {
     /// tokenizer/config at root even when the ONNX file is in a subdirectory.
     /// The `fallback_url_for_onnx_metadata` method handles the onnx/ → root
     /// fallback for repos that use the onnx/ subdirectory convention.
-    fn build_onnx_embedding_file_list(
+    async fn build_onnx_embedding_file_list(
         repo_id: &str,
         onnx_filename: &str,
     ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
@@ -175,26 +175,61 @@ impl DownloadModelUseCase {
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
 
-        vec![
-            // The ONNX model file itself
+        // Many modern ONNX embedding models (EmbeddingGemma, BGE-M3, etc.) ship
+        // external weights in a sibling `*.onnx_data` file. The `.onnx` graph
+        // alone is ~500KB and will fail to load without its companion weights.
+        // Probe HF for the sibling and include it if present.
+        let onnx_data_filename = format!("{}_data", onnx_filename);
+        let onnx_data_url = format!("{}/{}", base_url, onnx_data_filename);
+        let include_onnx_data = Self::remote_file_exists(&onnx_data_url).await;
+
+        let mut files = vec![
             ModelFileMetadata::new(
                 onnx_filename.to_string(),
                 format!("{}/{}", base_url, onnx_filename),
-                0, // Size unknown, determined by download manager
+                0,
             ),
-            // tokenizer.json — required by OnnxEmbeddingService
             ModelFileMetadata::new(
                 "tokenizer.json".to_string(),
                 format!("{}/tokenizer.json", base_url),
                 0,
             ),
-            // config.json — model configuration
             ModelFileMetadata::new(
                 "config.json".to_string(),
                 format!("{}/config.json", base_url),
                 0,
             ),
-        ]
+        ];
+
+        if include_onnx_data {
+            files.push(ModelFileMetadata::new(
+                onnx_data_filename,
+                onnx_data_url,
+                0,
+            ));
+        }
+
+        files
+    }
+
+    /// HEAD-check a URL on Hugging Face to confirm a file exists before adding
+    /// it to the download list. HF returns 200 on HEAD (after redirects) for
+    /// existing files and 404 otherwise.
+    async fn remote_file_exists(url: &str) -> bool {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        client
+            .head(url)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
     }
 
     fn infer_model_name_from_repo(repo_id: &str) -> String {
@@ -260,7 +295,8 @@ impl DownloadModelUseCase {
             if resolved.category == crate::features::model_management::domain::ModelCategory::Embedding
                 && filename.ends_with(".onnx")
             {
-                resolved.files = Self::build_onnx_embedding_file_list(&repo_id, &filename);
+                resolved.files =
+                    Self::build_onnx_embedding_file_list(&repo_id, &filename).await;
                 resolved.default_filename = None; // Use files list instead
             }
 

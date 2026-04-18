@@ -4,7 +4,7 @@
  * Rules are token-only (HSL CSS variables) so light/dark modes swap automatically.
  * Font-family is deliberately `inherit` on all prose elements — the outer wrapper
  * decides the face (e.g. Message.tsx wraps assistant output in `font-serif`, user
- * input in `font-sans`; DailyNotes leaves it as body sans). Do not hardcode a
+ * input in `font-sans`; Journal wraps the editor body in `font-serif`). Do not hardcode a
  * family in this file.
  *
  * References:

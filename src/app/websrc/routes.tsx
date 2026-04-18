@@ -19,7 +19,7 @@ const SearchInterface = lazy(() => import('./components/SearchInterface').then(m
 const FileTree = lazy(() => import('./components/FileTree').then(m => ({ default: m.FileTree })));
 const ChatView = lazy(() => import('./components/Chat').then(m => ({ default: m.ChatView })));
 const IngestHub = lazy(() => import('./components/IngestHub').then(m => ({ default: m.IngestHub })));
-const DailyNotesWorkspace = lazy(() => import('./components/DailyNotes').then(m => ({ default: m.DailyNotesWorkspace })));
+const JournalWorkspace = lazy(() => import('./components/Journal').then(m => ({ default: m.JournalWorkspace })));
 const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then(m => ({ default: m.ReferenceInbox })));
 const Settings = lazy(() => import('./components/Settings').then(m => ({ default: m.Settings })));
 
@@ -156,7 +156,7 @@ export const router = createBrowserRouter([
                 className="h-full"
               >
                 <Suspense fallback={<PageLoading />}>
-                  <DailyNotesWorkspace />
+                  <JournalWorkspace />
                 </Suspense>
               </motion.div>
             ),

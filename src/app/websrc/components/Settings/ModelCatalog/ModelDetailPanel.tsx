@@ -52,6 +52,10 @@ export function ModelDetailPanel({
   const queryClient = useQueryClient();
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [isCheckingDownload, setIsCheckingDownload] = useState(true);
+  // Tracks the moment between click and the backend registering the download.
+  // Without this, the button stays enabled for ~3s while the Tauri command
+  // does its initial network/DB work, letting impatient users spam the button.
+  const [isStartingDownload, setIsStartingDownload] = useState(false);
   const [isSettingChatModel, setIsSettingChatModel] = useState(false);
   const [isSettingEmbeddingModel, setIsSettingEmbeddingModel] = useState(false);
   const [isSettingRouterModel, setIsSettingRouterModel] = useState(false);
@@ -226,11 +230,13 @@ export function ModelDetailPanel({
 
   // Handle model download
   const handleDownload = async () => {
-    // Guard against multiple downloads
-    if (hasActiveDownload) {
+    // Guard against multiple downloads, including in-flight invoke calls
+    // that haven't yet registered an active download in the store.
+    if (hasActiveDownload || isStartingDownload) {
       return;
     }
 
+    setIsStartingDownload(true);
     try {
       // Use plugin pattern: model domain download command
       const response = await invoke<DownloadModelCommandResponse>('plugin:model|download_model', {
@@ -314,6 +320,8 @@ export function ModelDetailPanel({
           message: errorMessage,
         });
       }
+    } finally {
+      setIsStartingDownload(false);
     }
   };
 
@@ -407,9 +415,14 @@ export function ModelDetailPanel({
                   variant="default"
                   size="sm"
                   onClick={handleAsyncEvent(handleDownload)}
-                  disabled={isDownloading || hasActiveDownload}
+                  disabled={isDownloading || hasActiveDownload || isStartingDownload}
                 >
-                  {isDownloading ? (
+                  {isStartingDownload ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Starting…
+                    </>
+                  ) : isDownloading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
                       Downloading...

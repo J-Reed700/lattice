@@ -29,8 +29,8 @@ describe('Layout', () => {
       expect(screen.getAllByLabelText('Search').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByLabelText('Files').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByLabelText('Chat').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Daily Notes').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Reference Inbox').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByLabelText('Journals').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByLabelText('References').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByLabelText('Settings').length).toBeGreaterThanOrEqual(1);
     });
 
@@ -78,8 +78,8 @@ describe('Layout', () => {
         { view: 'search', label: 'Search' },
         { view: 'files', label: 'Files' },
         { view: 'chat', label: 'Chat' },
-        { view: 'daily', label: 'Daily Notes' },
-        { view: 'references', label: 'Reference Inbox' },
+        { view: 'journals', label: 'Journals' },
+        { view: 'references', label: 'References' },
         { view: 'settings', label: 'Settings' }
       ] as const;
 
@@ -162,8 +162,8 @@ describe('Layout', () => {
         { label: 'Search', title: 'Search (⌘1)' },
         { label: 'Files', title: 'Files (⌘2)' },
         { label: 'Chat', title: 'Chat (⌘4)' },
-        { label: 'Daily Notes', title: 'Daily Notes (⌘3)' },
-        { label: 'Reference Inbox', title: 'Reference Inbox (⌘5)' },
+        { label: 'Journals', title: 'Journals (⌘3)' },
+        { label: 'References', title: 'References (⌘5)' },
         { label: 'Settings', title: 'Settings (⌘,)' }
       ];
 
@@ -208,7 +208,7 @@ describe('Layout', () => {
     it('has accessible button labels', () => {
       renderLayout();
 
-      const labels = ['Home', 'Search', 'Files', 'Chat', 'Daily Notes', 'Reference Inbox', 'Settings'];
+      const labels = ['Home', 'Search', 'Files', 'Chat', 'Journals', 'References', 'Settings'];
       labels.forEach(label => {
         const buttons = screen.getAllByLabelText(label);
         buttons.forEach(btn => {
