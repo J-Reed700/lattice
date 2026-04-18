@@ -52,12 +52,25 @@ pub async fn build(
     usearch_index_path: std::path::PathBuf,
     embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
 ) -> Result<SearchDi> {
+    // Candle-era models vary in output dimension (384 / 768 / 1024). For this
+    // step we still open the index at the legacy default; step 6 will plumb
+    // the live dimension through from CandleEmbeddingService.
+    let dimension = DEFAULT_EMBEDDING_DIM;
+
+    // Compare persisted dimension against the requested one. If they differ,
+    // wipe the index (USearch can't resize at runtime) so the new model can
+    // start from an empty index. `DimensionCheck::Wiped` is logged inside the
+    // helper; the re-index prompt is surfaced to the UI in a later step.
+    let _check = crate::infrastructure::search::vector_search::ensure_dimension_match(
+        &usearch_index_path,
+        dimension,
+    )?;
+
     // USearch: single index that implements both VectorSearchPort and SearchServiceTrait.
     let usearch_index = Arc::new(
-        USearchVectorIndex::open_or_create(DEFAULT_EMBEDDING_DIM, usearch_index_path.clone())
-            .map_err(|e| {
-                AppError::InternalError(format!("Failed to initialize USearch index: {}", e))
-            })?,
+        USearchVectorIndex::open_or_create(dimension, usearch_index_path.clone()).map_err(
+            |e| AppError::InternalError(format!("Failed to initialize USearch index: {}", e)),
+        )?,
     );
 
     // One-time migration: rebuild from SQLite if USearch file is empty
