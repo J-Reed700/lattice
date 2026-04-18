@@ -19,5 +19,6 @@
 //! No port (`LLMPort` stays in `application/ports/`). No plugin.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod use_cases;

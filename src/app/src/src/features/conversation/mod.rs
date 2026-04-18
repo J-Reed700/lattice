@@ -35,6 +35,7 @@
 
 pub mod chat;
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod message_bookmark_dto;

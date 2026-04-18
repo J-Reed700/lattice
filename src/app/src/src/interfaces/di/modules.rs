@@ -181,63 +181,30 @@ use crate::infrastructure::services::model_manager::ModelManager;
 /// - Credentials port for API keys
 #[derive(Clone)]
 pub struct CoreModule {
-    // Database
+    // Cross-cutting shared infrastructure — not owned by any feature slice.
     db_pool: SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
-
-    // Security
     security_context: Arc<SecurityContext>,
     file_access_config: Arc<FileAccessConfig>,
-
-    // Paths
     data_dir: PathBuf,
 
-    // Credentials (used by AI, System modules)
-    credentials: Arc<dyn CredentialsPort>,
-
-    // Use Cases
-    set_api_key_use_case: Arc<SetApiKeyUseCase>,
-    get_api_key_use_case: Arc<GetApiKeyUseCase>,
-    delete_api_key_use_case: Arc<DeleteApiKeyUseCase>,
-    set_custom_endpoint_use_case: Arc<SetCustomEndpointUseCase>,
+    // Feature slice
+    credentials: crate::features::credentials::di::CredentialsDi,
 }
 
 impl CoreModule {
-    /// Build Core infrastructure - Layer 1 (Hierarchical init)
-    ///
-    /// This builds shared singletons used by all feature modules:
-    /// - Security context (rate limiting, input validation)
-    /// - File access config (CWE-22 mitigation)
-    /// - Credentials adapter (secure storage)
-    ///
-    /// Stack frame is freed after this returns, before feature modules start.
+    /// Build shared Layer-1 infrastructure plus the credentials feature slice.
     pub async fn new(
         db_pool: SqlitePool,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         data_dir: PathBuf,
     ) -> crate::shared::error::Result<Self> {
-        // === Build Core Infrastructure (Layer 1) ===
-
-        // Security Context (rate limiting + input validation)
         let security_context = Arc::new(SecurityContext::new());
-
-        // File Access Config (CWE-22 mitigation)
-        // Default allowed roots: user home directory
         let allowed_roots = vec![dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))];
         let file_access_config = Arc::new(FileAccessConfig::new(allowed_roots));
 
-        // Credentials Adapter (secure storage)
-        use crate::features::credentials::adapter::CredentialsAdapter;
         let credentials_path = data_dir.join("credentials.json");
-        let credentials =
-            Arc::new(CredentialsAdapter::new(credentials_path)) as Arc<dyn CredentialsPort>;
-
-        // === Build Use Cases (Credentials Management) ===
-        let set_api_key_use_case = Arc::new(SetApiKeyUseCase::new(credentials.clone()));
-        let get_api_key_use_case = Arc::new(GetApiKeyUseCase::new(credentials.clone()));
-        let delete_api_key_use_case = Arc::new(DeleteApiKeyUseCase::new(credentials.clone()));
-        let set_custom_endpoint_use_case =
-            Arc::new(SetCustomEndpointUseCase::new(credentials.clone()));
+        let credentials = crate::features::credentials::di::build(credentials_path);
 
         Ok(Self {
             db_pool,
@@ -246,14 +213,10 @@ impl CoreModule {
             file_access_config,
             data_dir,
             credentials,
-            set_api_key_use_case,
-            get_api_key_use_case,
-            delete_api_key_use_case,
-            set_custom_endpoint_use_case,
         })
     }
 
-    // Getters
+    // Infrastructure getters
     pub fn db_pool(&self) -> &SqlitePool {
         &self.db_pool
     }
@@ -276,25 +239,25 @@ impl CoreModule {
         &self.data_dir
     }
 
+    // Credentials feature getters
     pub fn credentials(&self) -> &Arc<dyn CredentialsPort> {
-        &self.credentials
+        &self.credentials.credentials
     }
 
-    // Use case getters
     pub fn set_api_key_use_case(&self) -> &Arc<SetApiKeyUseCase> {
-        &self.set_api_key_use_case
+        &self.credentials.set_api_key_use_case
     }
 
     pub fn get_api_key_use_case(&self) -> &Arc<GetApiKeyUseCase> {
-        &self.get_api_key_use_case
+        &self.credentials.get_api_key_use_case
     }
 
     pub fn delete_api_key_use_case(&self) -> &Arc<DeleteApiKeyUseCase> {
-        &self.delete_api_key_use_case
+        &self.credentials.delete_api_key_use_case
     }
 
     pub fn set_custom_endpoint_use_case(&self) -> &Arc<SetCustomEndpointUseCase> {
-        &self.set_custom_endpoint_use_case
+        &self.credentials.set_custom_endpoint_use_case
     }
 }
 
@@ -543,57 +506,17 @@ impl IndexingModule {
 /// - Model catalog and credentials
 #[derive(Clone)]
 pub struct AIModule {
-    // Use Cases - Conversation
-    create_conversation_use_case: Arc<CreateConversationUseCase>,
-    list_conversations_use_case: Arc<ListConversationsUseCase>,
-    get_conversation_use_case: Arc<GetConversationUseCase>,
-    get_conversation_messages_use_case: Arc<GetConversationMessagesUseCase>,
-    rename_conversation_use_case: Arc<RenameConversationUseCase>,
-    delete_conversation_use_case: Arc<DeleteConversationUseCase>,
+    conversation: crate::features::conversation::di::ConversationDi,
+    qa: crate::features::qa::di::QaDi,
+    llm: crate::features::llm::di::LlmDi,
+    ai_tags: crate::features::tags::di::AiTagsDi,
 
-    // Use Cases - LLM
-    get_system_capabilities_use_case: Arc<GetSystemCapabilitiesUseCase>,
-    get_available_models_use_case: Arc<GetAvailableModelsUseCase>,
-    get_recommended_models_use_case: Arc<GetRecommendedModelsUseCase>,
-    get_best_model_use_case: Arc<GetBestModelUseCase>,
-    check_model_downloaded_use_case: Arc<CheckModelDownloadedUseCase>,
-    get_model_path_use_case: Arc<GetModelPathUseCase>,
-    download_model_use_case: Arc<DownloadModelUseCase>,
-    delete_model_use_case: Arc<DeleteModelUseCase>,
-    list_models_use_case: Arc<ListDownloadedModelsUseCase>,
-
-    // Use Cases - AI-Powered Tags
-    generate_tags_use_case: Arc<GenerateTagsUseCase>,
-    auto_tag_all_documents_use_case: Arc<AutoTagAllDocumentsUseCase>,
-
-    // Services
-    conversation_service: Arc<dyn ConversationServiceTrait>,
-    conversational_qa_service: Arc<dyn ConversationalQAServiceTrait>,
-    llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
-    inference_engine_cache: Arc<RwLock<Option<Arc<InferenceEngine>>>>,
-
-    // Repositories
-    downloaded_model_repo:
-        Arc<crate::infrastructure::persistence::repositories::DownloadedModelRepository>,
-
-    // Adapters
-    model_catalog: Arc<dyn ModelCatalogPort>,
-    model_catalog_cache: Arc<crate::features::model_management::cache_adapter::ModelCacheAdapter>,
+    // Credentials handle echoed from CoreModule for legacy Container API.
     credentials: Arc<dyn CredentialsPort>,
-
-    // Services
-    download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
 }
 
 impl AIModule {
-    /// Build AIModule with all its dependencies
-    ///
-    /// Constructs repositories, services, adapters, and use cases for AI features:
-    /// - Conversations (create, list, get, rename, delete)
-    /// - LLM model management (9 model-related operations)
-    /// - AI-powered tags (generate, auto-tag)
-    ///
-    /// Note: llm_cache and inference_engine_cache are passed in (shared state)
+    /// Build AIModule by composing conversation + qa + llm + ai-tags features.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
@@ -602,296 +525,142 @@ impl AIModule {
         _llm_endpoint: &str,
         _llm_model: &str,
     ) -> crate::shared::error::Result<Self> {
-        // === Build Repositories ===
-
-        // Downloaded Model Repository
-        use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
-        let downloaded_model_repo = Arc::new(DownloadedModelRepository::new(db_pool.clone()));
-
-        // === Build Adapters ===
-
-        // Model Catalog adapter (Hugging Face + SQLite cache)
-        use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
-        use crate::features::model_management::cache_adapter::ModelCacheAdapter;
-
-        let huggingface = Arc::new(HuggingFaceAdapter::new()) as Arc<dyn ModelCatalogPort>;
-        let model_catalog_cache =
-            Arc::new(ModelCacheAdapter::new(db_pool.clone(), huggingface).await?);
-        let model_catalog = model_catalog_cache.clone() as Arc<dyn ModelCatalogPort>;
-
-        // System Info adapter (for system capabilities)
-        use crate::infrastructure::system::system_info_adapter::SystemInfoAdapter;
-        let system_info = Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>;
-
-        // Credentials from CoreModule
-        let credentials = core.credentials().clone();
-
-        // === Build Services ===
-
-        // Conversation Service
-        use crate::infrastructure::services::ConversationService;
-        let conversation_service = Arc::new(ConversationService::new(db_pool.clone()))
-            as Arc<dyn ConversationServiceTrait>;
-
-        // Conversational QA Service - requires context manager, QA engine, and metrics
-        use crate::infrastructure::observability::metrics::Metrics;
-        use crate::infrastructure::qa::engine::QAEngine;
-        use crate::infrastructure::services::context_manager::ContextManager;
-        use crate::features::qa::conversational_service::ConversationalQAService;
-        use crate::infrastructure::services::traits::ContextManagerTrait;
-        use crate::features::qa::QAEngineTrait;
-
-        // Create LLM client from cache (degraded mode if not loaded)
-        use crate::infrastructure::llm::noop_client::NoOpLLMClient;
-        let llm_client = Arc::new(NoOpLLMClient::new("LLM not loaded yet".into()))
-            as Arc<dyn crate::llm::LLMClient>;
-
-        let context_manager = Arc::new(ContextManager::new(8192)) as Arc<dyn ContextManagerTrait>; // 8K token budget
-        let qa_engine = Arc::new(QAEngine::new(llm_client)) as Arc<dyn QAEngineTrait>;
-        let metrics_service = Metrics::new();
-
-        let conversational_qa_service = Arc::new(ConversationalQAService::new(
-            conversation_service.clone(),
-            context_manager,
-            qa_engine,
-            Arc::new(metrics_service),
-        )) as Arc<dyn ConversationalQAServiceTrait>;
-
-        // === Build Use Cases ===
-
-        // Conversation use cases
-        use crate::features::conversation::use_cases::*;
-        let create_conversation_use_case =
-            Arc::new(CreateConversationUseCase::new(conversation_service.clone()));
-        let list_conversations_use_case =
-            Arc::new(ListConversationsUseCase::new(conversation_service.clone()));
-        let get_conversation_use_case =
-            Arc::new(GetConversationUseCase::new(conversation_service.clone()));
-        let get_conversation_messages_use_case = Arc::new(GetConversationMessagesUseCase::new(
-            conversation_service.clone(),
-        ));
-        let rename_conversation_use_case =
-            Arc::new(RenameConversationUseCase::new(conversation_service.clone()));
-        let delete_conversation_use_case =
-            Arc::new(DeleteConversationUseCase::new(conversation_service.clone()));
-
-        // LLM/Model use cases
-        use crate::features::llm::use_cases::*;
-
-        // Use system_info for GetSystemCapabilitiesUseCase
-        let get_system_capabilities_use_case =
-            Arc::new(GetSystemCapabilitiesUseCase::new(system_info.clone()));
-
-        // Cast DownloadedModelRepository as ModelStoragePort
-        let model_storage = downloaded_model_repo.clone() as Arc<dyn ModelStoragePort>;
-
-        let get_available_models_use_case =
-            Arc::new(GetAvailableModelsUseCase::new(model_catalog.clone()));
-        let get_recommended_models_use_case = Arc::new(GetRecommendedModelsUseCase::new(
-            get_system_capabilities_use_case.clone(),
-            model_catalog.clone(),
-        ));
-        let get_best_model_use_case = Arc::new(GetBestModelUseCase::new(
-            get_recommended_models_use_case.clone(),
-        ));
-        let check_model_downloaded_use_case =
-            Arc::new(CheckModelDownloadedUseCase::new(model_storage.clone()));
-        let get_model_path_use_case = Arc::new(GetModelPathUseCase::new(
-            check_model_downloaded_use_case.clone(),
-            model_storage.clone(),
-        ));
-        // TODO: DownloadModelUseCase requires many dependencies not available in AIModule
-        // For now, create a stub that returns "not implemented" error
-        // Full implementation should be in a separate DownloadModule
-        use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
-        use crate::features::download::download_repository::SqliteDownloadRepository;
-        use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
-        use crate::features::download::engine::HttpDownloadEngine;
-        use crate::features::download::manager::DownloadManagerService;
-
-        let download_repository = Arc::new(SqliteDownloadRepository::new(core.db_conn().clone()));
-        let download_engine = Arc::new(HttpDownloadEngine::new()?);
-        let download_manager = Arc::new(DownloadManagerService::new(
-            download_repository,
-            download_engine,
+        let conversation = crate::features::conversation::di::build(db_pool.clone());
+        let qa = crate::features::qa::di::build(conversation.conversation_service.clone());
+        let llm = crate::features::llm::di::build(
+            db_pool.clone(),
+            core.db_conn().clone(),
             core.data_dir().clone(),
-        ))
-            as Arc<dyn crate::features::download::manager::DownloadManager>;
-        let file_system = Arc::new(crate::infrastructure::file_system::FileSystemAdapter::new())
-            as Arc<dyn crate::application::ports::FileSystemPort>;
-        let checksum_service = Arc::new(TokioChecksumAdapter)
-            as Arc<dyn crate::domain::ports::file_access::ChecksumService>;
-        let file_system_access =
-            Arc::new(crate::infrastructure::adapters::fs::TokioFileSystemAdapter)
-                as Arc<dyn crate::domain::ports::file_access::FileSystemAccess>;
-        let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(core.db_pool().clone()))
-            as Arc<dyn crate::domain::repositories::UnitOfWorkFactory>;
-
-        let download_model_use_case = Arc::new(DownloadModelUseCase::new(
-            model_catalog.clone(),
-            model_storage.clone(),
-            download_manager.clone(),
-            file_system,
             core.credentials().clone(),
-            checksum_service,
-            file_system_access,
-            uow_factory,
-        ));
-        let delete_model_use_case = Arc::new(DeleteModelUseCase::new(model_storage.clone()));
-        let list_models_use_case =
-            Arc::new(ListDownloadedModelsUseCase::new(model_storage.clone()));
-
-        // AI-powered tags use cases - need TagService
-        use crate::features::tags::use_cases::AutoTagAllDocumentsUseCase;
-        use crate::features::tags::use_cases::GenerateTagsUseCase;
-        use crate::features::tags::service_impl::TagServiceImpl;
-        let tag_service = Arc::new(TagServiceImpl::new(db_pool.clone(), llm_cache.clone()))
-            as Arc<dyn TagServiceTrait>;
-
-        let generate_tags_use_case = Arc::new(GenerateTagsUseCase::new(tag_service.clone()));
-        let auto_tag_all_documents_use_case =
-            Arc::new(AutoTagAllDocumentsUseCase::new(tag_service.clone()));
+            llm_cache.clone(),
+            inference_engine_cache,
+        )
+        .await?;
+        let ai_tags = crate::features::tags::di::build_ai(db_pool, llm_cache);
 
         Ok(Self {
-            create_conversation_use_case,
-            list_conversations_use_case,
-            get_conversation_use_case,
-            get_conversation_messages_use_case,
-            rename_conversation_use_case,
-            delete_conversation_use_case,
-            get_system_capabilities_use_case,
-            get_available_models_use_case,
-            get_recommended_models_use_case,
-            get_best_model_use_case,
-            check_model_downloaded_use_case,
-            get_model_path_use_case,
-            download_model_use_case,
-            delete_model_use_case,
-            list_models_use_case,
-            generate_tags_use_case,
-            auto_tag_all_documents_use_case,
-            conversation_service,
-            conversational_qa_service,
-            llm_cache,
-            inference_engine_cache,
-            downloaded_model_repo,
-            model_catalog,
-            model_catalog_cache,
-            credentials,
-            download_manager,
+            conversation,
+            qa,
+            llm,
+            ai_tags,
+            credentials: core.credentials().clone(),
         })
     }
 
     // Conversation use case getters
     pub fn create_conversation_use_case(&self) -> &Arc<CreateConversationUseCase> {
-        &self.create_conversation_use_case
+        &self.conversation.create_conversation_use_case
     }
 
     pub fn list_conversations_use_case(&self) -> &Arc<ListConversationsUseCase> {
-        &self.list_conversations_use_case
+        &self.conversation.list_conversations_use_case
     }
 
     pub fn get_conversation_use_case(&self) -> &Arc<GetConversationUseCase> {
-        &self.get_conversation_use_case
+        &self.conversation.get_conversation_use_case
     }
 
     pub fn get_conversation_messages_use_case(&self) -> &Arc<GetConversationMessagesUseCase> {
-        &self.get_conversation_messages_use_case
+        &self.conversation.get_conversation_messages_use_case
     }
 
     pub fn rename_conversation_use_case(&self) -> &Arc<RenameConversationUseCase> {
-        &self.rename_conversation_use_case
+        &self.conversation.rename_conversation_use_case
     }
 
     pub fn delete_conversation_use_case(&self) -> &Arc<DeleteConversationUseCase> {
-        &self.delete_conversation_use_case
+        &self.conversation.delete_conversation_use_case
     }
 
-    // LLM use case getters
+    // LLM/model use case getters
     pub fn get_system_capabilities_use_case(&self) -> &Arc<GetSystemCapabilitiesUseCase> {
-        &self.get_system_capabilities_use_case
+        &self.llm.get_system_capabilities_use_case
     }
 
     pub fn get_available_models_use_case(&self) -> &Arc<GetAvailableModelsUseCase> {
-        &self.get_available_models_use_case
+        &self.llm.get_available_models_use_case
     }
 
     pub fn get_recommended_models_use_case(&self) -> &Arc<GetRecommendedModelsUseCase> {
-        &self.get_recommended_models_use_case
+        &self.llm.get_recommended_models_use_case
     }
 
     pub fn get_best_model_use_case(&self) -> &Arc<GetBestModelUseCase> {
-        &self.get_best_model_use_case
+        &self.llm.get_best_model_use_case
     }
 
     pub fn check_model_downloaded_use_case(&self) -> &Arc<CheckModelDownloadedUseCase> {
-        &self.check_model_downloaded_use_case
+        &self.llm.check_model_downloaded_use_case
     }
 
     pub fn get_model_path_use_case(&self) -> &Arc<GetModelPathUseCase> {
-        &self.get_model_path_use_case
+        &self.llm.get_model_path_use_case
     }
 
     pub fn download_model_use_case(&self) -> &Arc<DownloadModelUseCase> {
-        &self.download_model_use_case
+        &self.llm.download_model_use_case
     }
 
     pub fn delete_model_use_case(&self) -> &Arc<DeleteModelUseCase> {
-        &self.delete_model_use_case
+        &self.llm.delete_model_use_case
     }
 
     pub fn list_models_use_case(&self) -> &Arc<ListDownloadedModelsUseCase> {
-        &self.list_models_use_case
+        &self.llm.list_models_use_case
     }
 
-    // AI-powered tag getters
+    // AI-powered tag use case getters
     pub fn generate_tags_use_case(&self) -> &Arc<GenerateTagsUseCase> {
-        &self.generate_tags_use_case
+        &self.ai_tags.generate_tags_use_case
     }
 
     pub fn auto_tag_all_documents_use_case(&self) -> &Arc<AutoTagAllDocumentsUseCase> {
-        &self.auto_tag_all_documents_use_case
+        &self.ai_tags.auto_tag_all_documents_use_case
     }
 
     // Service getters
     pub fn conversation_service(&self) -> &Arc<dyn ConversationServiceTrait> {
-        &self.conversation_service
+        &self.conversation.conversation_service
     }
 
     pub fn conversational_qa_service(&self) -> &Arc<dyn ConversationalQAServiceTrait> {
-        &self.conversational_qa_service
+        &self.qa.conversational_qa_service
     }
 
     pub fn downloaded_model_repo(
         &self,
     ) -> &Arc<crate::infrastructure::persistence::repositories::DownloadedModelRepository> {
-        &self.downloaded_model_repo
+        &self.llm.downloaded_model_repo
     }
 
     // Cache getters (for Container lazy loading)
     pub fn llm_cache(&self) -> &Arc<RwLock<Option<Arc<dyn LLMPort>>>> {
-        &self.llm_cache
+        &self.llm.llm_cache
     }
 
     pub fn inference_engine_cache(&self) -> &Arc<RwLock<Option<Arc<InferenceEngine>>>> {
-        &self.inference_engine_cache
+        &self.llm.inference_engine_cache
     }
 
-    // Additional getters needed by Container
     pub fn model_catalog(&self) -> &Arc<dyn ModelCatalogPort> {
-        &self.model_catalog
+        &self.llm.model_catalog
     }
 
     pub fn model_catalog_cache(
         &self,
     ) -> &Arc<crate::features::model_management::cache_adapter::ModelCacheAdapter> {
-        &self.model_catalog_cache
+        &self.llm.model_catalog_cache
     }
 
     pub fn download_manager(
         &self,
     ) -> &Arc<dyn crate::features::download::manager::DownloadManager> {
-        &self.download_manager
+        &self.llm.download_manager
+    }
+
+    #[allow(dead_code)]
+    pub fn credentials(&self) -> &Arc<dyn CredentialsPort> {
+        &self.credentials
     }
 }
 

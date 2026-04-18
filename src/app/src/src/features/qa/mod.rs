@@ -25,6 +25,7 @@
 
 pub mod commands;
 pub mod conversational_service;
+pub mod di;
 pub mod dto;
 pub mod plugin;
 pub mod traits;
