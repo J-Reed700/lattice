@@ -14,4 +14,5 @@
 //! health plugin's commands.
 
 pub mod database_stats;
+pub mod di;
 pub mod use_cases;

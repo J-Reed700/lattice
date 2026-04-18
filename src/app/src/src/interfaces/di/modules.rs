@@ -1783,329 +1783,153 @@ impl FileOpsModule {
 /// - Settings repository
 #[derive(Clone)]
 pub struct SystemModule {
-    // Use Cases - Health
-    health_check_use_case: Arc<HealthCheckUseCase>,
-    initialize_database_use_case: Arc<InitializeDatabaseUseCase>,
-    initialize_models_use_case: Arc<InitializeModelsUseCase>,
+    settings: crate::features::settings::di::SettingsDi,
+    cache: crate::features::cache::di::CacheDi,
+    backup: crate::features::backup::di::BackupDi,
+    updates: crate::features::updates::di::UpdatesDi,
+    metrics: crate::features::metrics::di::MetricsDi,
+    health: crate::features::health::di::HealthDi,
+    stats: crate::features::stats::di::StatsDi,
+    initialization: crate::features::initialization::di::InitializationDi,
 
-    // Use Cases - Settings
-    get_settings_use_case: Arc<GetSettingsUseCase>,
-    update_settings_use_case: Arc<UpdateSettingsUseCase>,
-    reset_settings_use_case: Arc<ResetSettingsUseCase>,
-    export_settings_use_case: Arc<ExportSettingsUseCase>,
-    import_settings_use_case: Arc<ImportSettingsUseCase>,
-    validate_settings_use_case: Arc<ValidateSettingsUseCase>,
-
-    // Use Cases - Cache
-    clear_cache_use_case: Arc<ClearCacheUseCase>,
-    get_cache_size_use_case: Arc<GetCacheSizeUseCase>,
-    get_cache_stats_use_case: Arc<GetCacheStatsUseCase>,
-
-    // Use Cases - Backup
-    create_backup_use_case: Arc<CreateBackupUseCase>,
-    restore_backup_use_case: Arc<RestoreBackupUseCase>,
-    list_backups_use_case: Arc<ListBackupsUseCase>,
-    start_auto_backup_use_case: Arc<StartAutoBackupUseCase>,
-    stop_auto_backup_use_case: Arc<StopAutoBackupUseCase>,
-    startup_auto_backup_use_case: Arc<StartupAutoBackupUseCase>,
-
-    // Backup scheduler
-    backup_scheduler: Arc<crate::features::backup::scheduler::BackupScheduler>,
-
-    // Use Cases - Updates
-    check_for_updates_use_case: Arc<CheckForUpdatesUseCase>,
-    get_current_version_use_case: Arc<GetCurrentVersionUseCase>,
-
-    // Use Cases - Metrics
-    get_metrics_use_case: Arc<GetMetricsUseCase>,
-
-    // Use Cases - Stats
-    get_system_stats_use_case: Arc<GetSystemStatsUseCase>,
-
-    // Adapters
-    cache: Arc<dyn CachePort>,
-    backup: Arc<dyn BackupPort>,
-    update_checker: Arc<dyn UpdateCheckerPort>,
-    metrics: Arc<dyn MetricsPort>,
+    // System-info adapter stays here — it's a shared infra concern
+    // with no dedicated feature slice.
     system_info: Arc<dyn SystemInfoPort>,
-    metrics_service: Arc<Metrics>,
-
-    // Repositories
-    settings_repo: Arc<dyn SettingsRepositoryPort>,
 }
 
 impl SystemModule {
-    /// Build SystemModule with its own dependencies - Layer 2
-    ///
-    /// Constructs system-wide infrastructure:
-    /// - Settings repository
-    /// - Cache, backup, updates, metrics adapters
-    /// - System health and stats use cases
-    ///
-    /// Stack frame is freed after return, independent of other modules.
+    /// Build SystemModule by composing system-level feature builders.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
     ) -> crate::shared::error::Result<Self> {
-        // === Build System Infrastructure ===
-
-        // Settings Repository (JSON file-based)
-        use crate::infrastructure::persistence::repositories::SettingsRepository;
-        let settings_path = core.data_dir().join("settings.json");
-        let settings_repo = Arc::new(SettingsRepository::new(settings_path).await?)
-            as Arc<dyn SettingsRepositoryPort>;
-
-        // Cache Adapter (LLM response caching)
-        use crate::features::cache::adapter::CacheAdapter;
-        use crate::features::cache::llm_cache::LlmCache;
-        let llm_cache = LlmCache::new();
-        let cache = Arc::new(CacheAdapter::new(llm_cache)) as Arc<dyn CachePort>;
-
-        // Backup Adapter (database backups)
-        use crate::features::backup::adapter::BackupAdapter;
-        let db_path = core.data_dir().join("vault.db");
-        let backup = Arc::new(BackupAdapter::new(db_pool.clone(), db_path)) as Arc<dyn BackupPort>;
-
-        // Update Checker Adapter
-        use crate::features::updates::adapter::UpdateCheckerAdapter;
-        let update_checker = Arc::new(UpdateCheckerAdapter::new()) as Arc<dyn UpdateCheckerPort>;
-
-        // Metrics Adapter
-        use crate::infrastructure::observability::metrics::Metrics;
-        use crate::features::metrics::adapter::MetricsAdapter;
-        let metrics_service = Arc::new(Metrics::new());
-        let metrics =
-            Arc::new(MetricsAdapter::new(metrics_service.as_ref().clone())) as Arc<dyn MetricsPort>;
-
-        // System Info Adapter
         use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
-        let system_info = Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>;
 
-        // === Build Repos for Stats (read-only counts) ===
-        use crate::application::ports::RepositoryPort;
-        use crate::domain::entities::{Chunk, Document as DocumentEntity};
-        use crate::features::tags::entity::Tag as TagEntity;
-        use crate::infrastructure::persistence::repositories::{
-            ChunkRepositoryImpl, DocumentRepositoryImpl, TagRepositoryImpl,
-        };
+        let settings_path = core.data_dir().join("settings.json");
+        let settings = crate::features::settings::di::build(&settings_path).await?;
 
-        let document_repo = Arc::new(DocumentRepositoryImpl::new(db_pool.clone()))
-            as Arc<dyn RepositoryPort<DocumentEntity>>;
-        let chunk_repo =
-            Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn RepositoryPort<Chunk>>;
-        let tag_repo =
-            Arc::new(TagRepositoryImpl::new(db_pool.clone())) as Arc<dyn RepositoryPort<TagEntity>>;
+        let db_path = core.data_dir().join("vault.db");
+        let backup = crate::features::backup::di::build(
+            db_pool.clone(),
+            db_path,
+            settings.settings_repo.clone(),
+        );
 
-        // === Build Use Cases ===
-
-        // Health Check (needs embedding + LLM - use mocks for now)
         let models_path = core.data_dir().join("models");
         let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
-        let initialize_database_use_case =
-            Arc::new(InitializeDatabaseUseCase::new(Arc::new(db_pool.clone())));
-        let initialize_models_use_case = Arc::new(InitializeModelsUseCase::new(model_manager));
-
-        use crate::application::ports::MockEmbeddingPort;
-        let health_embedding =
-            Arc::new(MockEmbeddingPort::new_degraded()) as Arc<dyn EmbeddingPort>;
-        use crate::infrastructure::llm::factory::MockLLMPort;
-        let health_llm = Arc::new(MockLLMPort::default()) as Arc<dyn LLMPort>;
-
-        let health_check_use_case = Arc::new(HealthCheckUseCase::new(
-            db_pool.clone(),
-            health_embedding,
-            health_llm,
-        ));
-
-        // Stats
-        let database_stats = Arc::new(
-            crate::features::stats::database_stats::DatabaseStatsAdapter::new(
-                db_pool.clone(),
-            ),
-        ) as Arc<dyn crate::application::ports::DatabaseStatsPort>;
-        let get_system_stats_use_case = Arc::new(GetSystemStatsUseCase::new(
-            document_repo,
-            chunk_repo,
-            tag_repo,
-            database_stats,
-        ));
-
-        // Settings
-        let get_settings_use_case = Arc::new(GetSettingsUseCase::new(settings_repo.clone()));
-        let update_settings_use_case = Arc::new(UpdateSettingsUseCase::new(settings_repo.clone()));
-        let reset_settings_use_case = Arc::new(ResetSettingsUseCase::new(settings_repo.clone()));
-        let export_settings_use_case = Arc::new(ExportSettingsUseCase::new(settings_repo.clone()));
-        let import_settings_use_case = Arc::new(ImportSettingsUseCase::new(settings_repo.clone()));
-        let validate_settings_use_case =
-            Arc::new(ValidateSettingsUseCase::new(settings_repo.clone()));
-
-        // Cache
-        let clear_cache_use_case = Arc::new(ClearCacheUseCase::new(cache.clone()));
-        let get_cache_size_use_case = Arc::new(GetCacheSizeUseCase::new(cache.clone()));
-        let get_cache_stats_use_case = Arc::new(GetCacheStatsUseCase::new(cache.clone()));
-
-        // Backup
-        let create_backup_use_case = Arc::new(CreateBackupUseCase::new(backup.clone()));
-        let restore_backup_use_case = Arc::new(RestoreBackupUseCase::new(backup.clone()));
-        let list_backups_use_case = Arc::new(ListBackupsUseCase::new(backup.clone()));
-        let backup_scheduler = Arc::new(crate::features::backup::scheduler::BackupScheduler::new(
-            create_backup_use_case.clone(),
-            settings_repo.clone(),
-        ));
-        let backup_scheduler_port: Arc<dyn BackupSchedulerPort> = backup_scheduler.clone();
-        let start_auto_backup_use_case = Arc::new(StartAutoBackupUseCase::new(
-            settings_repo.clone(),
-            backup_scheduler_port.clone(),
-        ));
-        let stop_auto_backup_use_case = Arc::new(StopAutoBackupUseCase::new(
-            settings_repo.clone(),
-            backup_scheduler_port.clone(),
-        ));
-        let startup_auto_backup_use_case = Arc::new(StartupAutoBackupUseCase::new(
-            settings_repo.clone(),
-            backup_scheduler_port.clone(),
-        ));
-
-        // Updates
-        let check_for_updates_use_case =
-            Arc::new(CheckForUpdatesUseCase::new(update_checker.clone()));
-        let get_current_version_use_case =
-            Arc::new(GetCurrentVersionUseCase::new(update_checker.clone()));
-
-        // Metrics
-        let get_metrics_use_case = Arc::new(GetMetricsUseCase::new(metrics.clone()));
+        let initialization =
+            crate::features::initialization::di::build(db_pool.clone(), model_manager);
 
         Ok(Self {
-            health_check_use_case,
-            initialize_database_use_case,
-            initialize_models_use_case,
-            get_settings_use_case,
-            update_settings_use_case,
-            reset_settings_use_case,
-            export_settings_use_case,
-            import_settings_use_case,
-            validate_settings_use_case,
-            clear_cache_use_case,
-            get_cache_size_use_case,
-            get_cache_stats_use_case,
-            create_backup_use_case,
-            restore_backup_use_case,
-            list_backups_use_case,
-            start_auto_backup_use_case,
-            stop_auto_backup_use_case,
-            startup_auto_backup_use_case,
-            backup_scheduler,
-            check_for_updates_use_case,
-            get_current_version_use_case,
-            get_metrics_use_case,
-            get_system_stats_use_case,
-            cache,
+            settings,
+            cache: crate::features::cache::di::build(),
             backup,
-            update_checker,
-            metrics,
-            system_info,
-            metrics_service,
-            settings_repo,
+            updates: crate::features::updates::di::build(),
+            metrics: crate::features::metrics::di::build(),
+            health: crate::features::health::di::build(db_pool.clone()),
+            stats: crate::features::stats::di::build(db_pool),
+            initialization,
+            system_info: Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>,
         })
     }
 
     // Health use case getters
     pub fn health_check_use_case(&self) -> &Arc<HealthCheckUseCase> {
-        &self.health_check_use_case
+        &self.health.health_check_use_case
     }
 
     pub fn initialize_database_use_case(&self) -> &Arc<InitializeDatabaseUseCase> {
-        &self.initialize_database_use_case
+        &self.initialization.initialize_database_use_case
     }
 
     pub fn initialize_models_use_case(&self) -> &Arc<InitializeModelsUseCase> {
-        &self.initialize_models_use_case
+        &self.initialization.initialize_models_use_case
     }
 
     // Settings use case getters
     pub fn get_settings_use_case(&self) -> &Arc<GetSettingsUseCase> {
-        &self.get_settings_use_case
+        &self.settings.get_settings_use_case
     }
 
     pub fn update_settings_use_case(&self) -> &Arc<UpdateSettingsUseCase> {
-        &self.update_settings_use_case
+        &self.settings.update_settings_use_case
     }
 
     pub fn reset_settings_use_case(&self) -> &Arc<ResetSettingsUseCase> {
-        &self.reset_settings_use_case
+        &self.settings.reset_settings_use_case
     }
 
     pub fn export_settings_use_case(&self) -> &Arc<ExportSettingsUseCase> {
-        &self.export_settings_use_case
+        &self.settings.export_settings_use_case
     }
 
     pub fn import_settings_use_case(&self) -> &Arc<ImportSettingsUseCase> {
-        &self.import_settings_use_case
+        &self.settings.import_settings_use_case
     }
 
     pub fn validate_settings_use_case(&self) -> &Arc<ValidateSettingsUseCase> {
-        &self.validate_settings_use_case
+        &self.settings.validate_settings_use_case
     }
 
     // Cache use case getters
     pub fn clear_cache_use_case(&self) -> &Arc<ClearCacheUseCase> {
-        &self.clear_cache_use_case
+        &self.cache.clear_cache_use_case
     }
 
     pub fn get_cache_size_use_case(&self) -> &Arc<GetCacheSizeUseCase> {
-        &self.get_cache_size_use_case
+        &self.cache.get_cache_size_use_case
     }
 
     pub fn get_cache_stats_use_case(&self) -> &Arc<GetCacheStatsUseCase> {
-        &self.get_cache_stats_use_case
+        &self.cache.get_cache_stats_use_case
     }
 
     // Backup use case getters
     pub fn create_backup_use_case(&self) -> &Arc<CreateBackupUseCase> {
-        &self.create_backup_use_case
+        &self.backup.create_backup_use_case
     }
 
     pub fn restore_backup_use_case(&self) -> &Arc<RestoreBackupUseCase> {
-        &self.restore_backup_use_case
+        &self.backup.restore_backup_use_case
     }
 
     pub fn list_backups_use_case(&self) -> &Arc<ListBackupsUseCase> {
-        &self.list_backups_use_case
+        &self.backup.list_backups_use_case
     }
 
     pub fn start_auto_backup_use_case(&self) -> &Arc<StartAutoBackupUseCase> {
-        &self.start_auto_backup_use_case
+        &self.backup.start_auto_backup_use_case
     }
 
     pub fn stop_auto_backup_use_case(&self) -> &Arc<StopAutoBackupUseCase> {
-        &self.stop_auto_backup_use_case
+        &self.backup.stop_auto_backup_use_case
     }
 
     pub fn startup_auto_backup_use_case(&self) -> &Arc<StartupAutoBackupUseCase> {
-        &self.startup_auto_backup_use_case
+        &self.backup.startup_auto_backup_use_case
     }
 
     pub fn backup_scheduler(&self) -> &Arc<crate::features::backup::scheduler::BackupScheduler> {
-        &self.backup_scheduler
+        &self.backup.backup_scheduler
     }
 
     // Updates use case getters
     pub fn check_for_updates_use_case(&self) -> &Arc<CheckForUpdatesUseCase> {
-        &self.check_for_updates_use_case
+        &self.updates.check_for_updates_use_case
     }
 
     pub fn get_current_version_use_case(&self) -> &Arc<GetCurrentVersionUseCase> {
-        &self.get_current_version_use_case
+        &self.updates.get_current_version_use_case
     }
 
     // Metrics use case getters
     pub fn get_metrics_use_case(&self) -> &Arc<GetMetricsUseCase> {
-        &self.get_metrics_use_case
+        &self.metrics.get_metrics_use_case
     }
 
     // Stats use case getters
     pub fn get_system_stats_use_case(&self) -> &Arc<GetSystemStatsUseCase> {
-        &self.get_system_stats_use_case
+        &self.stats.get_system_stats_use_case
     }
 
     // Adapter getters needed by Container
@@ -2114,6 +1938,6 @@ impl SystemModule {
     }
 
     pub fn metrics_service(&self) -> &Arc<Metrics> {
-        &self.metrics_service
+        &self.metrics.metrics_service
     }
 }

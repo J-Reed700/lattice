@@ -20,6 +20,7 @@
 
 pub mod adapter;
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod llm_cache;
 pub mod plugin;

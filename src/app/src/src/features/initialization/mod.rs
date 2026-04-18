@@ -14,5 +14,6 @@
 //! the shared plugin infrastructure during app startup.
 
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod use_cases;

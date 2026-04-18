@@ -18,6 +18,7 @@
 
 pub mod adapter;
 pub mod commands;
+pub mod di;
 pub mod dto;
 pub mod plugin;
 pub mod scheduler;

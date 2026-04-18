@@ -18,6 +18,7 @@
 //! `interfaces/commands/domains/hf_settings.rs` is NOT part of this
 //! feature — it's huggingface's concern.
 
+pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod plugin;
