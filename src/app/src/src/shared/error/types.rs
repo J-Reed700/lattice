@@ -699,9 +699,13 @@ impl From<keyring::Error> for AppError {
     }
 }
 
-/// Auto-convert from ONNX Runtime errors
-impl From<ort::Error> for AppError {
-    fn from(err: ort::Error) -> Self {
+/// Auto-convert from ONNX Runtime errors. `ort 2.0.0-rc.11+` made
+/// `Error` generic (`Error<R>`) so failed builder methods can return a
+/// recovery value the caller could reuse. We don't use the recovery
+/// path — and some recovery types (e.g. `SessionBuilder`) aren't Send,
+/// so we leave `R` unbounded and just discard it.
+impl<R> From<ort::Error<R>> for AppError {
+    fn from(err: ort::Error<R>) -> Self {
         AppError::EmbeddingFailed {
             reason: format!("ONNX runtime error: {}", err),
         }

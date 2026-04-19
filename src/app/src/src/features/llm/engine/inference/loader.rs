@@ -93,18 +93,19 @@ impl ModelLoader {
             tracing::warn!("❌ CPU-only mode: No GPU acceleration (not recommended for M3 Max)");
         }
 
-        // Configure PagedAttention if enabled
+        // Configure PagedAttention if enabled. mistralrs 97708f2 changed
+        // `with_paged_attn` from a closure-returning-Result to a direct
+        // `PagedAttentionConfig` value; build the config separately and
+        // pass it in.
         if config.use_paged_attention {
             let block_size = config.paged_attention_block_size.unwrap_or(32);
-            builder = builder
-                .with_paged_attn(move || {
-                    PagedAttentionMetaBuilder::default()
-                        .with_block_size(block_size)
-                        .build()
-                })
+            let paged_cfg = PagedAttentionMetaBuilder::default()
+                .with_block_size(block_size)
+                .build()
                 .map_err(|e| {
                     LLMError::InvalidConfig(format!("PagedAttention config failed: {}", e))
                 })?;
+            builder = builder.with_paged_attn(paged_cfg);
         }
 
         if config.enable_isq {

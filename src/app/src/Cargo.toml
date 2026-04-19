@@ -60,7 +60,10 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 # ORT remains only for the search reranker (see features/search/engine/reranker.rs).
 # Embeddings have migrated to Candle. The reranker migration is a separate PR.
-ort = "=2.0.0-rc.10"
+# Bumped rc.10 → rc.12: rc.10 pinned smallvec to =2.0.0-alpha.10 which
+# conflicts with mistralrs needing alpha.12. rc.12 relaxed to smallvec 1.15
+# (different major coexists fine).
+ort = "=2.0.0-rc.12"
 tokenizers = "0.15"
 ndarray = "0.16.1"
 anyhow = "1.0"
@@ -128,14 +131,14 @@ readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extract
 
 # Platform-specific Metal GPU support for macOS (M-series chips)
 [target.'cfg(target_os = "macos")'.dependencies]
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "fd60163", features = ["metal"] }
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "97708f2", features = ["metal"] }
 
 # Uncomment to enable CUDA on Windows/Linux
 # [target.'cfg(target_os = "windows")'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "fd60163", features = ["cuda"] }
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "97708f2", features = ["cuda"] }
 #
 # [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "fd60163", features = ["cuda"] }
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "97708f2", features = ["cuda"] }
 
 
 [target.'cfg(windows)'.dependencies]

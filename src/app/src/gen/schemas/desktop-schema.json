@@ -759,6 +759,12 @@
           "markdownDescription": "Enables the archive_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the archive_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-archive-conversation-thread",
+          "markdownDescription": "Enables the archive_conversation_thread command without any pre-configured scope."
+        },
+        {
           "description": "Enables the archive_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-archive-journal",
@@ -795,6 +801,12 @@
           "markdownDescription": "Enables the create_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-create-conversation-thread",
+          "markdownDescription": "Enables the create_conversation_thread command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-create-journal",
@@ -811,6 +823,12 @@
           "type": "string",
           "const": "conversation:allow-delete-conversation-message",
           "markdownDescription": "Enables the delete_conversation_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-delete-conversation-thread",
+          "markdownDescription": "Enables the delete_conversation_thread command without any pre-configured scope."
         },
         {
           "description": "Enables the delete_journal command without any pre-configured scope.",
@@ -847,6 +865,12 @@
           "type": "string",
           "const": "conversation:allow-list-conversation-spaces",
           "markdownDescription": "Enables the list_conversation_spaces command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_conversation_threads command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-conversation-threads",
+          "markdownDescription": "Enables the list_conversation_threads command without any pre-configured scope."
         },
         {
           "description": "Enables the list_conversation_web_sources command without any pre-configured scope.",
@@ -895,6 +919,12 @@
           "type": "string",
           "const": "conversation:allow-move-conversation-to-space",
           "markdownDescription": "Enables the move_conversation_to_space command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the move_conversation_to_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-move-conversation-to-thread",
+          "markdownDescription": "Enables the move_conversation_to_thread command without any pre-configured scope."
         },
         {
           "description": "Enables the remove_conversation_from_journal command without any pre-configured scope.",
@@ -981,6 +1011,12 @@
           "markdownDescription": "Enables the update_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Enables the update_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-update-conversation-thread",
+          "markdownDescription": "Enables the update_conversation_thread command without any pre-configured scope."
+        },
+        {
           "description": "Enables the update_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-update-journal",
@@ -1009,6 +1045,12 @@
           "type": "string",
           "const": "conversation:deny-archive-conversation-space",
           "markdownDescription": "Denies the archive_conversation_space command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the archive_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-archive-conversation-thread",
+          "markdownDescription": "Denies the archive_conversation_thread command without any pre-configured scope."
         },
         {
           "description": "Denies the archive_journal command without any pre-configured scope.",
@@ -1047,6 +1089,12 @@
           "markdownDescription": "Denies the create_conversation_space command without any pre-configured scope."
         },
         {
+          "description": "Denies the create_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-create-conversation-thread",
+          "markdownDescription": "Denies the create_conversation_thread command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:deny-create-journal",
@@ -1063,6 +1111,12 @@
           "type": "string",
           "const": "conversation:deny-delete-conversation-message",
           "markdownDescription": "Denies the delete_conversation_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-delete-conversation-thread",
+          "markdownDescription": "Denies the delete_conversation_thread command without any pre-configured scope."
         },
         {
           "description": "Denies the delete_journal command without any pre-configured scope.",
@@ -1099,6 +1153,12 @@
           "type": "string",
           "const": "conversation:deny-list-conversation-spaces",
           "markdownDescription": "Denies the list_conversation_spaces command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_conversation_threads command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-conversation-threads",
+          "markdownDescription": "Denies the list_conversation_threads command without any pre-configured scope."
         },
         {
           "description": "Denies the list_conversation_web_sources command without any pre-configured scope.",
@@ -1147,6 +1207,12 @@
           "type": "string",
           "const": "conversation:deny-move-conversation-to-space",
           "markdownDescription": "Denies the move_conversation_to_space command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the move_conversation_to_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-move-conversation-to-thread",
+          "markdownDescription": "Denies the move_conversation_to_thread command without any pre-configured scope."
         },
         {
           "description": "Denies the remove_conversation_from_journal command without any pre-configured scope.",
@@ -1231,6 +1297,12 @@
           "type": "string",
           "const": "conversation:deny-update-conversation-space",
           "markdownDescription": "Denies the update_conversation_space command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_conversation_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-update-conversation-thread",
+          "markdownDescription": "Denies the update_conversation_thread command without any pre-configured scope."
         },
         {
           "description": "Denies the update_journal command without any pre-configured scope.",
