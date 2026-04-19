@@ -46,27 +46,27 @@ impl EmbeddingCompatibility {
 }
 
 /// Architecture tags that the local CandleEmbeddingService can actually
-/// load today. Currently just standard BERT — other BERT-family variants
-/// (Nomic uses RoPE, Jina v2 uses ALiBi, DistilBert lacks token_type_ids,
-/// MPNet uses relative position, ModernBERT uses RoPE+GeGLU) need their
-/// own Candle loader before they can be marked Compatible. Marking them
-/// Compatible here would lie to the UI: download succeeds, then loading
-/// crashes or produces silent garbage.
-const SUPPORTED_TAGS: &[&str] = &["bert"];
+/// load today. Each entry corresponds to a wired `ModelVariant` case in
+/// `candle_service.rs` — promote here only after wiring the loader and
+/// forward dispatch, otherwise the UI lies and downloads will fail at
+/// model-load time.
+const SUPPORTED_TAGS: &[&str] = &[
+    "bert",
+    "distilbert",
+    "xlm-roberta",
+    "xlm_roberta",
+    "roberta", // RoBERTa repos commonly tag this; XLMRobertaModel handles them
+    "jina_bert",
+    "jina_bert_v2",
+    "nomic_bert",
+    "modernbert",
+];
 
 /// Architecture tags we recognize but can't run yet. The reason is shown
 /// in the UI tooltip so users understand what's blocking the model.
 const KNOWN_INCOMPATIBLE_TAGS: &[(&str, &str)] = &[
-    // BERT-family variants that need their own Candle module.
-    ("distilbert", "DistilBert loader not yet wired (no token_type_ids; planned)"),
-    ("xlm_roberta", "XLM-RoBERTa loader not yet wired (planned)"),
-    ("xlm-roberta", "XLM-RoBERTa loader not yet wired (planned)"),
-    ("roberta", "RoBERTa loader not yet wired (planned)"),
-    ("mpnet", "MPNet loader not yet wired (relative-position attention; planned)"),
-    ("jina_bert", "Jina v2 loader not yet wired (ALiBi attention; planned)"),
-    ("jina_bert_v2", "Jina v2 loader not yet wired (ALiBi attention; planned)"),
-    ("nomic_bert", "Nomic loader not yet wired (RoPE + SwiGLU; planned)"),
-    ("modernbert", "ModernBERT loader not yet wired (RoPE + GeGLU; planned)"),
+    // BERT-family variants without a Candle loader.
+    ("mpnet", "MPNet loader not yet wired (no Candle module today; planned)"),
     // Decoder-style architectures need last-token pooling and a different runner.
     ("gemma", "Gemma family — decoder-style, planned for a future release"),
     ("gemma2", "Gemma 2 — decoder-style, planned for a future release"),
@@ -127,16 +127,38 @@ mod tests {
     }
 
     #[test]
-    fn xlm_roberta_is_incompatible_today() {
-        // XLM-RoBERTa is recognized but its loader isn't wired yet — should
-        // surface as Incompatible with a clear reason, not falsely Compatible.
+    fn xlm_roberta_is_compatible() {
         let result = detect_from_tags(&tags(&["xlm-roberta", "feature-extraction"]));
+        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+    }
+
+    #[test]
+    fn nomic_bert_is_compatible() {
+        let result = detect_from_tags(&tags(&["sentence-transformers", "nomic_bert"]));
+        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+    }
+
+    #[test]
+    fn modernbert_is_compatible() {
+        let result = detect_from_tags(&tags(&["sentence-transformers", "modernbert"]));
+        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+    }
+
+    #[test]
+    fn distilbert_is_compatible() {
+        let result = detect_from_tags(&tags(&["sentence-transformers", "distilbert"]));
+        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+    }
+
+    #[test]
+    fn mpnet_remains_incompatible() {
+        // mpnet has no Candle loader available — should still be Incompatible.
+        let result = detect_from_tags(&tags(&["sentence-transformers", "mpnet"]));
         match result {
-            EmbeddingCompatibility::Incompatible { architecture, reason } => {
-                assert_eq!(architecture, "xlm-roberta");
-                assert!(reason.to_lowercase().contains("not yet wired"));
+            EmbeddingCompatibility::Incompatible { architecture, .. } => {
+                assert_eq!(architecture, "mpnet");
             }
-            other => panic!("expected Incompatible for xlm-roberta, got {:?}", other),
+            other => panic!("expected Incompatible for mpnet, got {:?}", other),
         }
     }
 
@@ -164,17 +186,18 @@ mod tests {
     }
 
     #[test]
-    fn specific_arch_overrides_generic_bert_inheritance() {
-        // HF inheritance tagging: a DistilBERT checkpoint may carry both
-        // "distilbert" AND "bert" tags. The specific arch wins — otherwise
-        // we'd promote it to Compatible and the BertModel loader would
-        // crash at load (DistilBERT lacks token_type_ids etc.).
-        let result = detect_from_tags(&tags(&["sentence-transformers", "distilbert", "bert"]));
+    fn specific_incompatible_arch_overrides_generic_bert_inheritance() {
+        // HF inheritance tagging: an MPNet checkpoint commonly carries both
+        // "mpnet" AND "bert" tags (sentence-transformers exports inherit
+        // the bert tag). The specific incompatible arch must win over the
+        // generic compatible one — otherwise we'd falsely promote and the
+        // BertModel loader would crash at load (MPNet has no Candle loader).
+        let result = detect_from_tags(&tags(&["sentence-transformers", "mpnet", "bert"]));
         match result {
             EmbeddingCompatibility::Incompatible { architecture, .. } => {
-                assert_eq!(architecture, "distilbert");
+                assert_eq!(architecture, "mpnet");
             }
-            other => panic!("expected Incompatible (distilbert wins), got {:?}", other),
+            other => panic!("expected Incompatible (mpnet wins), got {:?}", other),
         }
     }
 }

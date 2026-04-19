@@ -27,10 +27,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig, HiddenAct};
+use candle_transformers::models::distilbert::{Config as DistilBertConfig, DistilBertModel};
 use candle_transformers::models::gemma3::{Model as GemmaModel, Config as Gemma3Config};
+use candle_transformers::models::jina_bert::{
+    BertModel as JinaBertModel, Config as JinaBertConfig,
+};
+use candle_transformers::models::modernbert::{Config as ModernBertConfig, ModernBert};
+use candle_transformers::models::nomic_bert::{Config as NomicBertConfig, NomicBertModel};
+use candle_transformers::models::xlm_roberta::{Config as XlmRobertaConfig, XLMRobertaModel};
 use serde::Deserialize;
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams, TruncationStrategy};
 use tokio::sync::Mutex;
@@ -107,11 +114,21 @@ struct ModelConfig {
     hidden_size: usize,
 }
 
-/// Internal dispatch over the loaded Candle model. Currently single-variant
-/// while only BERT-family is supported; the enum stays so the next PR
-/// (decoder-style: Gemma3, Qwen3, Llama) is a one-variant addition.
+/// Internal dispatch over the loaded Candle model. Each BERT-family arch
+/// uses a different Candle module because the layer plumbing differs
+/// (DistilBERT skips token_type_ids, Nomic uses RoPE, ModernBERT uses
+/// global+local attention, etc.). Gemma3 is a placeholder for the
+/// upcoming decoder-style PR — currently unreachable behind the
+/// architecture-rejection check.
 enum ModelVariant {
     Bert(BertModel),
+    DistilBert(DistilBertModel),
+    XlmRoberta(XLMRobertaModel),
+    JinaBert(JinaBertModel),
+    NomicBert(NomicBertModel),
+    ModernBert(ModernBert),
+    /// Decoder-style placeholder — not yet wired into `forward()`. Loading
+    /// is rejected upstream until last-token pooling is implemented.
     Gemma3(GemmaModel),
 }
 
@@ -187,20 +204,24 @@ impl CandleEmbeddingService {
         let architecture = ModelArchitecture::from_model_type(&config.model_type)
             .ok_or_else(|| LoadError::UnsupportedArchitecture(config.model_type.clone()))?;
 
-        // Only the standard `bert` model_type is wired into the BertModel
-        // loader. Variants like Nomic (RoPE), Jina v2 (ALiBi), DistilBert
-        // (no token_type_ids), MPNet (relative position), ModernBERT (RoPE +
-        // GeGLU) need their own Candle module and pooling. Loading them
-        // through the BertModel graph either crashes on shape mismatch or —
-        // worse — silently produces garbage embeddings. Strict-reject until
-        // each architecture has a real loader.
-        if !matches!(architecture, ModelArchitecture::Bert) {
-            return Err(LoadError::UnsupportedArchitecture(format!(
-                "{:?} (model_type='{}') — only standard BERT is wired today; \
-                 other BERT-family loaders are planned",
-                architecture, config.model_type
-            ))
-            .into());
+        // Decoder-style architectures (Gemma3, Qwen3, Llama) need last-token
+        // pooling and a different KV-cache-aware forward path. Reject them
+        // here until that scaffolding lands. MPNet has no Candle loader at
+        // all today — same outcome.
+        match architecture {
+            ModelArchitecture::Bert
+            | ModelArchitecture::DistilBert
+            | ModelArchitecture::XlmRoberta
+            | ModelArchitecture::JinaBert
+            | ModelArchitecture::NomicBert
+            | ModelArchitecture::ModernBert => {}
+            ModelArchitecture::Mpnet => {
+                return Err(LoadError::UnsupportedArchitecture(format!(
+                    "MPNet (model_type='{}') — Candle has no MPNet loader; planned",
+                    config.model_type
+                ))
+                .into());
+            }
         }
 
         let pooling = read_pooling_strategy(dir);
@@ -234,13 +255,6 @@ impl CandleEmbeddingService {
             }))
             .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
 
-        let bert_config: BertConfig = serde_json::from_slice(&config_bytes)
-            .map_err(|e| LoadError::BadConfig(e.to_string()))?;
-
-        // Some BGE variants use `hidden_act: "gelu_new"` which Candle's parser
-        // accepts; for safety we coerce to a value Candle handles cleanly.
-        let _ = HiddenAct::Gelu; // ensure type is referenced
-
         // SAFETY: we mmap a model file that we own and never mutate after
         // download. Candle's loader is built around mmap; the alternative
         // (`VarBuilder::from_buffered_safetensors`) reads the entire 100MB-1GB
@@ -252,11 +266,60 @@ impl CandleEmbeddingService {
                 .map_err(|e| LoadError::Candle(format!("safetensors load: {}", e)))?
         };
 
-        let bert_model = BertModel::load(var_builder, &bert_config)
-            .map_err(|e| LoadError::Candle(format!("BertModel::load: {}", e)))?;
+        // Each architecture has a different Candle module + Config struct.
+        // `config.json` is the same file though — every loader parses the
+        // same source, just keying off different fields. (HiddenAct is
+        // referenced from the BertConfig branch and required to satisfy
+        // some HF model variants that emit `hidden_act: "gelu_new"`.)
+        let _ = HiddenAct::Gelu;
+        let model = match architecture {
+            ModelArchitecture::Bert => {
+                let cfg: BertConfig = serde_json::from_slice(&config_bytes)
+                    .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let m = BertModel::load(var_builder, &cfg)
+                    .map_err(|e| LoadError::Candle(format!("BertModel::load: {}", e)))?;
+                ModelVariant::Bert(m)
+            }
+            ModelArchitecture::DistilBert => {
+                let cfg: DistilBertConfig = serde_json::from_slice(&config_bytes)
+                    .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let m = DistilBertModel::load(var_builder, &cfg)
+                    .map_err(|e| LoadError::Candle(format!("DistilBertModel::load: {}", e)))?;
+                ModelVariant::DistilBert(m)
+            }
+            ModelArchitecture::XlmRoberta => {
+                let cfg: XlmRobertaConfig = serde_json::from_slice(&config_bytes)
+                    .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let m = XLMRobertaModel::new(&cfg, var_builder)
+                    .map_err(|e| LoadError::Candle(format!("XLMRobertaModel::new: {}", e)))?;
+                ModelVariant::XlmRoberta(m)
+            }
+            ModelArchitecture::JinaBert => {
+                let cfg: JinaBertConfig = serde_json::from_slice(&config_bytes)
+                    .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let m = JinaBertModel::new(var_builder, &cfg)
+                    .map_err(|e| LoadError::Candle(format!("JinaBertModel::new: {}", e)))?;
+                ModelVariant::JinaBert(m)
+            }
+            ModelArchitecture::NomicBert => {
+                let cfg: NomicBertConfig = serde_json::from_slice(&config_bytes)
+                    .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let m = NomicBertModel::load(var_builder, &cfg)
+                    .map_err(|e| LoadError::Candle(format!("NomicBertModel::load: {}", e)))?;
+                ModelVariant::NomicBert(m)
+            }
+            ModelArchitecture::ModernBert => {
+                let cfg: ModernBertConfig = serde_json::from_slice(&config_bytes)
+                    .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let m = ModernBert::load(var_builder, &cfg)
+                    .map_err(|e| LoadError::Candle(format!("ModernBert::load: {}", e)))?;
+                ModelVariant::ModernBert(m)
+            }
+            ModelArchitecture::Mpnet => unreachable!("rejected above"),
+        };
 
         Ok(Self {
-            model: Mutex::new(ModelVariant::Bert(bert_model)),
+            model: Mutex::new(model),
             tokenizer,
             device,
             dimension: config.hidden_size,
@@ -342,15 +405,57 @@ impl CandleEmbeddingService {
         // Serialize Metal access — concurrent kernel dispatch can crash.
         let guard = self.model.lock().await;
 
+        // Each architecture's forward takes a slightly different signature.
+        // DistilBERT skips token_type_ids entirely. XLM-RoBERTa accepts them
+        // but reorders the args + has 3 None tail arguments for KV-cache /
+        // cross-attention features we don't use. ModernBert names its first
+        // arg `xs` but treats it as input_ids. Nomic + Jina take optional
+        // token_type_ids — we pass them when available since they're cheap.
         let hidden_states = match &*guard {
             ModelVariant::Bert(model) => model
                 .forward(&input_ids_t, &token_type_ids_t, Some(&attention_mask_t))
                 .map_err(|e| AppError::EmbeddingFailed {
                     reason: format!("BertModel forward: {}", e),
                 })?,
+            ModelVariant::DistilBert(model) => model
+                .forward(&input_ids_t, &attention_mask_t)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("DistilBertModel forward: {}", e),
+                })?,
+            ModelVariant::XlmRoberta(model) => model
+                .forward(
+                    &input_ids_t,
+                    &attention_mask_t,
+                    &token_type_ids_t,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("XLMRobertaModel forward: {}", e),
+                })?,
+            ModelVariant::JinaBert(model) => model
+                .forward(&input_ids_t)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("JinaBertModel forward: {}", e),
+                })?,
+            ModelVariant::NomicBert(model) => model
+                .forward(
+                    &input_ids_t,
+                    Some(&token_type_ids_t),
+                    Some(&attention_mask_t),
+                )
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("NomicBertModel forward: {}", e),
+                })?,
+            ModelVariant::ModernBert(model) => model
+                .forward(&input_ids_t, &attention_mask_t)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("ModernBert forward: {}", e),
+                })?,
             ModelVariant::Gemma3(_model) => {
                 return Err(AppError::EmbeddingFailed {
-                    reason: "Gemma3 not wired yet".into(),
+                    reason: "Gemma3 not wired yet — needs last-token pooling + decoder-style runner".into(),
                 })
             }
         };
