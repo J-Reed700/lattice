@@ -410,6 +410,40 @@ impl DownloadModelUseCase {
         // STEP 2: Resolve metadata from catalog (curated and Hugging Face external IDs)
         let model_metadata = self.resolve_model_metadata(model_id).await?;
 
+        // STEP 2.5: Refuse incompatible embedding models server-side. The
+        // frontend should also disable the download button, but defense-
+        // in-depth — never trust a UI-only gate for a long-running, large-
+        // file operation that will fail at model-load time anyway.
+        if model_metadata.category
+            == crate::features::model_management::domain::ModelCategory::Embedding
+        {
+            use crate::features::embedding::compatibility::EmbeddingCompatibility;
+            match &model_metadata.embedding_compatibility {
+                Some(EmbeddingCompatibility::Incompatible {
+                    architecture,
+                    reason,
+                }) => {
+                    return Err(AppError::InvalidInput(format!(
+                        "Embedding model '{}' uses architecture '{}' which the local \
+                         runtime cannot load yet: {}. Pick a compatible model from the \
+                         catalog instead.",
+                        model_metadata.name, architecture, reason
+                    )));
+                }
+                Some(EmbeddingCompatibility::Unknown) => {
+                    return Err(AppError::InvalidInput(format!(
+                        "Embedding model '{}' has an unrecognized architecture. \
+                         The local runtime can only load BERT-family models today.",
+                        model_metadata.name
+                    )));
+                }
+                Some(EmbeddingCompatibility::Compatible { .. }) | None => {
+                    // None happens for curated models (compatibility wasn't
+                    // populated on the curated path); allow them through.
+                }
+            }
+        }
+
         // STEP 3: Create paths (needed for verification)
         let paths = ModelPaths::new(model_id)?;
         let model_path = paths.unified_path();

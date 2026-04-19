@@ -375,8 +375,6 @@ impl CandleEmbeddingService {
             .max()
             .unwrap_or(0);
 
-        // Build (batch, seq) tensors for token IDs, attention mask, and token
-        // type IDs. All three are required by the BERT forward signature.
         let mut input_ids = Vec::with_capacity(batch_size * max_len);
         let mut attention_mask = Vec::with_capacity(batch_size * max_len);
         let mut token_type_ids = Vec::with_capacity(batch_size * max_len);
@@ -402,15 +400,8 @@ impl CandleEmbeddingService {
                 reason: format!("token_type_ids tensor: {}", e),
             })?;
 
-        // Serialize Metal access — concurrent kernel dispatch can crash.
         let guard = self.model.lock().await;
 
-        // Each architecture's forward takes a slightly different signature.
-        // DistilBERT skips token_type_ids entirely. XLM-RoBERTa accepts them
-        // but reorders the args + has 3 None tail arguments for KV-cache /
-        // cross-attention features we don't use. ModernBert names its first
-        // arg `xs` but treats it as input_ids. Nomic + Jina take optional
-        // token_type_ids — we pass them when available since they're cheap.
         let hidden_states = match &*guard {
             ModelVariant::Bert(model) => model
                 .forward(&input_ids_t, &token_type_ids_t, Some(&attention_mask_t))
@@ -535,11 +526,18 @@ fn best_device() -> Device {
     {
         match Device::new_metal(0) {
             Ok(d) => return d,
-            Err(e) => tracing::warn!(error = %e, "Metal unavailable, using CPU"),
+            Err(e) => tracing::warn!(error = %e, "Metal unavailable"),
         }
     }
-    Device::Cpu
+    
+    let device = Device::cuda_if_available(0).unwrap_or_else(|e| {
+        eprintln!("CUDA not available, falling back to CPU: {:?}", e);
+        Device::Cpu
+    });
+
+    device
 }
+
 
 /// Read pooling strategy from `1_Pooling/config.json` if present.
 /// Defaults to CLS — that's what BGE/mxbai/UAE use, and it's the safer default

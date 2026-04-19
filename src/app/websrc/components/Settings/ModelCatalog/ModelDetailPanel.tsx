@@ -68,6 +68,21 @@ export function ModelDetailPanel({
   const isRouterActive = routerModelId === metadata.id;
   const isLlmCategory = metadata.category === 'LLM';
   const isEmbeddingCategory = metadata.category === 'Embedding';
+  // Architecture compatibility for embedding models. Server-side gate also
+  // exists in the download use case; this is purely UX so users see the
+  // "won't work" reason before clicking download instead of after a
+  // multi-GB transfer.
+  const embeddingCompat = metadata.embedding_compatibility ?? null;
+  const isEmbeddingArchIncompatible =
+    isEmbeddingCategory &&
+    embeddingCompat !== null &&
+    embeddingCompat.kind !== 'compatible';
+  const incompatibilityReason =
+    embeddingCompat?.kind === 'incompatible'
+      ? embeddingCompat.reason
+      : embeddingCompat?.kind === 'unknown'
+        ? 'Architecture not recognized — only BERT-family embedders are supported today.'
+        : null;
   const canSetRouter = Boolean(onSetRouterModel);
 
   // Check if model is already downloaded
@@ -381,7 +396,21 @@ export function ModelDetailPanel({
                     Requires Token
                   </span>
                 )}
+                {isEmbeddingArchIncompatible && (
+                  <span
+                    className="px-2 py-1 bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))] rounded flex items-center gap-1"
+                    title={incompatibilityReason ?? undefined}
+                  >
+                    <AlertCircle className="w-3 h-3" />
+                    Architecture not supported
+                  </span>
+                )}
               </div>
+              {isEmbeddingArchIncompatible && incompatibilityReason && (
+                <div className="mt-2 text-xs text-[hsl(var(--text-secondary))] max-w-xl">
+                  {incompatibilityReason}
+                </div>
+              )}
             </div>
             <div className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium ${compatStyle.bg} ${compatStyle.text}`}>
               {compatStyle.icon}
@@ -409,6 +438,17 @@ export function ModelDetailPanel({
                 >
                   <Check className="w-4 h-4" />
                   Already Downloaded
+                </Button>
+              ) : isEmbeddingArchIncompatible ? (
+                <Button
+                  variant="default"
+                  size="sm"
+                  disabled
+                  title={incompatibilityReason ?? undefined}
+                  className="bg-[hsl(var(--surface-muted))] text-[hsl(var(--text-secondary))] cursor-not-allowed"
+                >
+                  <AlertCircle className="w-4 h-4" />
+                  Not Compatible
                 </Button>
               ) : (
                 <Button

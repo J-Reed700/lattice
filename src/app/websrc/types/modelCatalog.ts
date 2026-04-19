@@ -88,7 +88,20 @@ export interface ModelMetadata {
   total_size_bytes: number;
   /** Output dimension for embedding models (e.g., 384, 768, 1024). Null for non-embedding models. */
   embedding_dimensions: number | null;
+  /** Compatibility verdict for embedding models. Null for non-embedding models. */
+  embedding_compatibility: EmbeddingCompatibility | null;
 }
+
+/**
+ * Whether the local CandleEmbeddingService can actually load a given
+ * embedding model. Threaded through from the backend so the catalog UI
+ * can disable + badge incompatible rows before users start a multi-GB
+ * download that would fail at model-load time.
+ */
+export type EmbeddingCompatibility =
+  | { kind: 'compatible'; architecture: string }
+  | { kind: 'incompatible'; architecture: string; reason: string }
+  | { kind: 'unknown' };
 
 /**
  * Detailed compatibility analysis between a model and system.

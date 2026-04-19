@@ -103,6 +103,20 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
                 {metadata.embedding_dimensions}d
               </span>
             )}
+            {metadata.category === 'Embedding' &&
+              metadata.embedding_compatibility &&
+              metadata.embedding_compatibility.kind !== 'compatible' && (
+                <span
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))]"
+                  title={
+                    metadata.embedding_compatibility.kind === 'incompatible'
+                      ? metadata.embedding_compatibility.reason
+                      : 'Architecture not recognized'
+                  }
+                >
+                  Unsupported
+                </span>
+              )}
           </div>
         </div>
         <div className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${compatStyle.bg} ${compatStyle.text}`}>
