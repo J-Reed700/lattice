@@ -185,15 +185,20 @@ impl CandleEmbeddingService {
         let architecture = ModelArchitecture::from_model_type(&config.model_type)
             .ok_or_else(|| LoadError::UnsupportedArchitecture(config.model_type.clone()))?;
 
-        // Only the Bert variant is wired in for this PR; the other architectures
-        // are recognized so we surface a clear error rather than panicking.
+        // Only the standard `bert` model_type is wired into the BertModel
+        // loader. Variants like Nomic (RoPE), Jina v2 (ALiBi), DistilBert
+        // (no token_type_ids), MPNet (relative position), ModernBERT (RoPE +
+        // GeGLU) need their own Candle module and pooling. Loading them
+        // through the BertModel graph either crashes on shape mismatch or —
+        // worse — silently produces garbage embeddings. Strict-reject until
+        // each architecture has a real loader.
         if !matches!(architecture, ModelArchitecture::Bert) {
-            tracing::warn!(
-                ?architecture,
-                "Architecture recognized but not yet implemented; falling back to BERT loader"
-            );
-            // Try BERT loader anyway — many "near-BERT" models work with it.
-            // If it fails, the user gets the candle parse error.
+            return Err(LoadError::UnsupportedArchitecture(format!(
+                "{:?} (model_type='{}') — only standard BERT is wired today; \
+                 other BERT-family loaders are planned",
+                architecture, config.model_type
+            ))
+            .into());
         }
 
         let pooling = read_pooling_strategy(dir);

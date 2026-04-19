@@ -45,24 +45,29 @@ impl EmbeddingCompatibility {
     }
 }
 
-/// BERT-family architecture tags that load via `candle_transformers::models::bert`.
-const BERT_FAMILY_TAGS: &[&str] = &[
-    "bert",
-    "distilbert",
-    "xlm_roberta",
-    "xlm-roberta",
-    "roberta",
-    "mpnet",
-    "jina_bert",
-    "jina_bert_v2",
-    "nomic_bert",
-    "modernbert",
-];
+/// Architecture tags that the local CandleEmbeddingService can actually
+/// load today. Currently just standard BERT — other BERT-family variants
+/// (Nomic uses RoPE, Jina v2 uses ALiBi, DistilBert lacks token_type_ids,
+/// MPNet uses relative position, ModernBERT uses RoPE+GeGLU) need their
+/// own Candle loader before they can be marked Compatible. Marking them
+/// Compatible here would lie to the UI: download succeeds, then loading
+/// crashes or produces silent garbage.
+const SUPPORTED_TAGS: &[&str] = &["bert"];
 
-/// Architecture tags we recognize as decoder-style. Surfaced in the
-/// "Incompatible" reason so users see a meaningful message rather than a
-/// generic failure.
-const DECODER_FAMILY_TAGS: &[(&str, &str)] = &[
+/// Architecture tags we recognize but can't run yet. The reason is shown
+/// in the UI tooltip so users understand what's blocking the model.
+const KNOWN_INCOMPATIBLE_TAGS: &[(&str, &str)] = &[
+    // BERT-family variants that need their own Candle module.
+    ("distilbert", "DistilBert loader not yet wired (no token_type_ids; planned)"),
+    ("xlm_roberta", "XLM-RoBERTa loader not yet wired (planned)"),
+    ("xlm-roberta", "XLM-RoBERTa loader not yet wired (planned)"),
+    ("roberta", "RoBERTa loader not yet wired (planned)"),
+    ("mpnet", "MPNet loader not yet wired (relative-position attention; planned)"),
+    ("jina_bert", "Jina v2 loader not yet wired (ALiBi attention; planned)"),
+    ("jina_bert_v2", "Jina v2 loader not yet wired (ALiBi attention; planned)"),
+    ("nomic_bert", "Nomic loader not yet wired (RoPE + SwiGLU; planned)"),
+    ("modernbert", "ModernBERT loader not yet wired (RoPE + GeGLU; planned)"),
+    // Decoder-style architectures need last-token pooling and a different runner.
     ("gemma", "Gemma family — decoder-style, planned for a future release"),
     ("gemma2", "Gemma 2 — decoder-style, planned for a future release"),
     ("gemma3", "Gemma 3 — decoder-style, planned for a future release"),
@@ -80,7 +85,7 @@ pub fn detect_from_tags(tags: &[String]) -> EmbeddingCompatibility {
     let normalized: Vec<String> = tags.iter().map(|t| t.to_ascii_lowercase()).collect();
 
     for tag in &normalized {
-        if BERT_FAMILY_TAGS.contains(&tag.as_str()) {
+        if SUPPORTED_TAGS.contains(&tag.as_str()) {
             return EmbeddingCompatibility::Compatible {
                 architecture: tag.clone(),
             };
@@ -88,7 +93,7 @@ pub fn detect_from_tags(tags: &[String]) -> EmbeddingCompatibility {
     }
 
     for tag in &normalized {
-        if let Some((_, reason)) = DECODER_FAMILY_TAGS.iter().find(|(name, _)| name == tag) {
+        if let Some((_, reason)) = KNOWN_INCOMPATIBLE_TAGS.iter().find(|(name, _)| name == tag) {
             return EmbeddingCompatibility::Incompatible {
                 architecture: tag.clone(),
                 reason: (*reason).to_string(),
@@ -117,10 +122,17 @@ mod tests {
     }
 
     #[test]
-    fn xlm_roberta_with_dash_is_compatible() {
-        // HF uses both forms in the wild
+    fn xlm_roberta_is_incompatible_today() {
+        // XLM-RoBERTa is recognized but its loader isn't wired yet — should
+        // surface as Incompatible with a clear reason, not falsely Compatible.
         let result = detect_from_tags(&tags(&["xlm-roberta", "feature-extraction"]));
-        assert!(result.is_compatible());
+        match result {
+            EmbeddingCompatibility::Incompatible { architecture, reason } => {
+                assert_eq!(architecture, "xlm-roberta");
+                assert!(reason.to_lowercase().contains("not yet wired"));
+            }
+            other => panic!("expected Incompatible for xlm-roberta, got {:?}", other),
+        }
     }
 
     #[test]

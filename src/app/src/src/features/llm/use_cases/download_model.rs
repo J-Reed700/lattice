@@ -168,6 +168,7 @@ impl DownloadModelUseCase {
     /// Absent is fine: `CandleEmbeddingService` defaults to CLS.
     async fn build_safetensors_embedding_file_list(
         repo_id: &str,
+        auth_token: Option<&str>,
     ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
         use crate::domain::model_metadata::ModelFileMetadata;
 
@@ -190,9 +191,10 @@ impl DownloadModelUseCase {
             ),
         ];
 
-        // Optional pooling config — only present on sentence-transformers repos.
+        // Optional pooling config — only present on sentence-transformers
+        // repos. Pass auth so probes against gated repos succeed.
         let pooling_url = format!("{}/1_Pooling/config.json", base_url);
-        if Self::remote_file_exists(&pooling_url).await {
+        if Self::remote_file_exists(&pooling_url, auth_token).await {
             files.push(ModelFileMetadata::new(
                 "1_Pooling/config.json".to_string(),
                 pooling_url,
@@ -228,7 +230,10 @@ impl DownloadModelUseCase {
         // Probe HF for the sibling and include it if present.
         let onnx_data_filename = format!("{}_data", onnx_filename);
         let onnx_data_url = format!("{}/{}", base_url, onnx_data_filename);
-        let include_onnx_data = Self::remote_file_exists(&onnx_data_url).await;
+        // Note: caller `resolve_model_metadata` does not currently thread an
+        // auth token here. ONNX is the legacy path on its way out; if we
+        // ever need gated-model ONNX support, add an auth_token parameter.
+        let include_onnx_data = Self::remote_file_exists(&onnx_data_url, None).await;
 
         let mut files = vec![
             ModelFileMetadata::new(
@@ -262,7 +267,7 @@ impl DownloadModelUseCase {
     /// HEAD-check a URL on Hugging Face to confirm a file exists before adding
     /// it to the download list. HF returns 200 on HEAD (after redirects) for
     /// existing files and 404 otherwise.
-    async fn remote_file_exists(url: &str) -> bool {
+    async fn remote_file_exists(url: &str, auth_token: Option<&str>) -> bool {
         let client = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::limited(5))
@@ -271,9 +276,11 @@ impl DownloadModelUseCase {
             Ok(c) => c,
             Err(_) => return false,
         };
-        client
-            .head(url)
-            .send()
+        let mut req = client.head(url);
+        if let Some(token) = auth_token {
+            req = req.bearer_auth(token);
+        }
+        req.send()
             .await
             .map(|r| r.status().is_success())
             .unwrap_or(false)
@@ -343,9 +350,23 @@ impl DownloadModelUseCase {
             // all consumers have migrated).
             if resolved.category == crate::features::model_management::domain::ModelCategory::Embedding
             {
+                // For gated repos, fetch the user's HF token so HEAD probes
+                // (e.g., 1_Pooling/config.json) don't 401 silently and skip
+                // a file we'd actually need.
+                let auth_token: Option<String> = if resolved.requires_auth {
+                    self.credentials
+                        .get_api_key("huggingface_token")
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+
                 if filename.ends_with(".safetensors") {
                     resolved.files =
-                        Self::build_safetensors_embedding_file_list(&repo_id).await;
+                        Self::build_safetensors_embedding_file_list(&repo_id, auth_token.as_deref())
+                            .await;
                     resolved.default_filename = None;
                 } else if filename.ends_with(".onnx") {
                     resolved.files =

@@ -280,15 +280,26 @@ pub struct SearchModule {
 
 impl SearchModule {
     /// Build SearchModule by composing the search feature builder.
+    ///
+    /// Resolves the active embedding model's expected dimension (from its
+    /// `config.json::hidden_size`) before opening the USearch index, so the
+    /// dimension sidecar can wipe a stale index *once*, ahead of the
+    /// container's model load — avoiding a startup loop where each restart
+    /// wipes-then-fails.
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
     ) -> crate::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
-        let search =
-            crate::features::search::di::build(db_pool, usearch_index_path, embedding_cache)
-                .await?;
+        let active_dim = resolve_active_embedding_dimension(&db_pool).await;
+        let search = crate::features::search::di::build(
+            db_pool,
+            usearch_index_path,
+            embedding_cache,
+            active_dim,
+        )
+        .await?;
         Ok(Self { search })
     }
 
@@ -336,6 +347,30 @@ impl SearchModule {
     pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
         &self.search.document_repo
     }
+}
+
+/// Read the active embedding model's expected output dimension from disk.
+///
+/// Path: DB → active downloaded embedding model → file_path's parent dir
+/// → `config.json::hidden_size`. Returns `None` if any step is missing
+/// (no active model, file moved, malformed config) — the caller treats
+/// `None` as "leave the existing index dimension alone".
+///
+/// Why this matters: the USearch index sidecar (`.dim`) is checked at
+/// SearchDi::build() time. If we passed the legacy `DEFAULT_EMBEDDING_DIM`
+/// here while the active model was actually 1024-dim, every restart would
+/// wipe the user's index back to 384, then the container would fail to
+/// load the model at the wrong dim, cycle forever.
+async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usize> {
+    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+
+    let repo = DownloadedModelRepository::new(db_pool.clone());
+    let active = repo.get_active_embedding_model().await.ok().flatten()?;
+    let model_dir = active.file_path().parent()?;
+    let config_path = model_dir.join("config.json");
+    let bytes = std::fs::read(&config_path).ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    json.get("hidden_size")?.as_u64().map(|n| n as usize)
 }
 
 

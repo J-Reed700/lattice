@@ -51,16 +51,22 @@ pub async fn build(
     db_pool: SqlitePool,
     usearch_index_path: std::path::PathBuf,
     embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+    active_embedding_dimension: Option<usize>,
 ) -> Result<SearchDi> {
-    // Candle-era models vary in output dimension (384 / 768 / 1024). For this
-    // step we still open the index at the legacy default; step 6 will plumb
-    // the live dimension through from CandleEmbeddingService.
-    let dimension = DEFAULT_EMBEDDING_DIM;
+    // Candle-era models vary in output dimension (384 / 768 / 1024). The
+    // active model's true dimension comes from its config.json::hidden_size,
+    // resolved by the composition root before this point. If the active
+    // model is unset (or its config can't be read), fall back to the
+    // persisted index dimension — that way we keep an existing index intact
+    // until a model load actually proves its dimension.
+    let dimension = active_embedding_dimension
+        .or_else(|| crate::infrastructure::search::vector_search::read_dimension(&usearch_index_path))
+        .unwrap_or(DEFAULT_EMBEDDING_DIM);
 
     // Compare persisted dimension against the requested one. If they differ,
     // wipe the index (USearch can't resize at runtime) so the new model can
-    // start from an empty index. `DimensionCheck::Wiped` is logged inside the
-    // helper; the re-index prompt is surfaced to the UI in a later step.
+    // start from an empty index. `DimensionCheck::Wiped` is logged inside
+    // the helper.
     let _check = crate::infrastructure::search::vector_search::ensure_dimension_match(
         &usearch_index_path,
         dimension,
