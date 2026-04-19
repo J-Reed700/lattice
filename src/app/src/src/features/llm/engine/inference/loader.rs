@@ -95,17 +95,30 @@ impl ModelLoader {
 
         // Configure PagedAttention if enabled. mistralrs 97708f2 changed
         // `with_paged_attn` from a closure-returning-Result to a direct
-        // `PagedAttentionConfig` value; build the config separately and
-        // pass it in.
+        // `PagedAttentionConfig` value. Build the config eagerly here.
+        //
+        // On unsupported platforms `build()` may error; the previous
+        // closure-based API would silently no-op in that case (the closure
+        // wasn't called when paged attention wasn't supported). Preserve
+        // that behavior: log the error, skip the `with_paged_attn` call,
+        // and let model loading proceed without paged attention.
         if config.use_paged_attention {
             let block_size = config.paged_attention_block_size.unwrap_or(32);
-            let paged_cfg = PagedAttentionMetaBuilder::default()
+            match PagedAttentionMetaBuilder::default()
                 .with_block_size(block_size)
                 .build()
-                .map_err(|e| {
-                    LLMError::InvalidConfig(format!("PagedAttention config failed: {}", e))
-                })?;
-            builder = builder.with_paged_attn(paged_cfg);
+            {
+                Ok(paged_cfg) => {
+                    builder = builder.with_paged_attn(paged_cfg);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "PagedAttention config build failed (unsupported platform?); \
+                         continuing without paged attention"
+                    );
+                }
+            }
         }
 
         if config.enable_isq {
