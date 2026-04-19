@@ -30,6 +30,7 @@ use async_trait::async_trait;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig, HiddenAct};
+use candle_transformers::models::gemma3::{Model as GemmaModel, Config as Gemma3Config};
 use serde::Deserialize;
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams, TruncationStrategy};
 use tokio::sync::Mutex;
@@ -111,6 +112,7 @@ struct ModelConfig {
 /// (decoder-style: Gemma3, Qwen3, Llama) is a one-variant addition.
 enum ModelVariant {
     Bert(BertModel),
+    Gemma3(GemmaModel),
 }
 
 /// Errors specific to model loading. Surfaced through `AppError::EmbeddingFailed`
@@ -346,6 +348,11 @@ impl CandleEmbeddingService {
                 .map_err(|e| AppError::EmbeddingFailed {
                     reason: format!("BertModel forward: {}", e),
                 })?,
+            ModelVariant::Gemma3(_model) => {
+                return Err(AppError::EmbeddingFailed {
+                    reason: "Gemma3 not wired yet".into(),
+                })
+            }
         };
 
         drop(guard);

@@ -84,19 +84,24 @@ const KNOWN_INCOMPATIBLE_TAGS: &[(&str, &str)] = &[
 pub fn detect_from_tags(tags: &[String]) -> EmbeddingCompatibility {
     let normalized: Vec<String> = tags.iter().map(|t| t.to_ascii_lowercase()).collect();
 
-    for tag in &normalized {
-        if SUPPORTED_TAGS.contains(&tag.as_str()) {
-            return EmbeddingCompatibility::Compatible {
-                architecture: tag.clone(),
-            };
-        }
-    }
-
+    // Scan incompatibles FIRST. HF often auto-tags inheritance — a DistilBERT
+    // checkpoint may carry both "distilbert" and "bert" tags. The specific
+    // architecture (distilbert) is the source of truth; the generic "bert"
+    // tag would otherwise falsely promote it to Compatible and the loader
+    // would crash at runtime.
     for tag in &normalized {
         if let Some((_, reason)) = KNOWN_INCOMPATIBLE_TAGS.iter().find(|(name, _)| name == tag) {
             return EmbeddingCompatibility::Incompatible {
                 architecture: tag.clone(),
                 reason: (*reason).to_string(),
+            };
+        }
+    }
+
+    for tag in &normalized {
+        if SUPPORTED_TAGS.contains(&tag.as_str()) {
+            return EmbeddingCompatibility::Compatible {
+                architecture: tag.clone(),
             };
         }
     }
@@ -156,5 +161,20 @@ mod tests {
     #[test]
     fn empty_tags_are_unknown() {
         assert!(matches!(detect_from_tags(&[]), EmbeddingCompatibility::Unknown));
+    }
+
+    #[test]
+    fn specific_arch_overrides_generic_bert_inheritance() {
+        // HF inheritance tagging: a DistilBERT checkpoint may carry both
+        // "distilbert" AND "bert" tags. The specific arch wins — otherwise
+        // we'd promote it to Compatible and the BertModel loader would
+        // crash at load (DistilBERT lacks token_type_ids etc.).
+        let result = detect_from_tags(&tags(&["sentence-transformers", "distilbert", "bert"]));
+        match result {
+            EmbeddingCompatibility::Incompatible { architecture, .. } => {
+                assert_eq!(architecture, "distilbert");
+            }
+            other => panic!("expected Incompatible (distilbert wins), got {:?}", other),
+        }
     }
 }
