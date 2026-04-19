@@ -262,13 +262,24 @@ pub async fn get_all_recommended_models(
     };
     tracing::info!("get_all_recommended_models: Built system capabilities");
 
-    // Get downloadable Hugging Face models (GGUF for LLMs + ONNX for embeddings)
+    // Get downloadable Hugging Face models. Two passes:
+    //   - GGUF for chat LLMs (mistralrs runtime)
+    //   - safetensors for embeddings (Candle runtime)
+    // The old code searched "onnx embedding" because we used to ship ONNX
+    // for embeddings; that query biased the results toward `onnx-community`
+    // / `Xenova` re-export repos that ONLY ship .onnx (no safetensors).
+    // After the Candle migration we need original sentence-transformer
+    // upstreams that publish `model.safetensors`, so search for that
+    // explicitly.
     tracing::info!("get_all_recommended_models: Getting Hugging Face models");
     let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
 
-    // Also fetch ONNX embedding models (the "gguf" query only returns GGUF repos)
-    let embedding_models =
-        fetch_downloadable_hf_models(container.inner(), "onnx embedding", 30).await?;
+    let embedding_models = fetch_downloadable_hf_models(
+        container.inner(),
+        "sentence-transformers",
+        200,
+    )
+    .await?;
     let existing_ids: std::collections::HashSet<String> =
         models.iter().map(|m| m.model.id.clone()).collect();
     for entry in embedding_models {
@@ -290,14 +301,24 @@ pub async fn get_all_recommended_models(
         models.len()
     );
 
-    // Score compatibility for each model
-    // Filter out GGUF embedding models — our embedding service only supports ONNX
+    // Score compatibility for each model.
+    //
+    // Embedding-model filtering: drop entries whose `embedding_compatibility`
+    // is `Incompatible` (architecture not loadable, OR no safetensors in
+    // the repo — the HF adapter sets the second case via to_external_metadata).
+    // We keep `Compatible` and `Unknown` (Unknown still surfaces the badge
+    // in the UI). This replaces the older is_gguf_only_model heuristic which
+    // assumed ONNX was the runtime — no longer true after the Candle migration.
     let scorer = CompatibilityScorer::new();
     let mut recommendations: Vec<ModelRecommendation> = models
         .into_iter()
         .filter(|entry| {
             if entry.model.category == ModelCategory::Embedding {
-                !is_gguf_only_model(&entry.model)
+                use crate::features::embedding::compatibility::EmbeddingCompatibility;
+                !matches!(
+                    entry.model.embedding_compatibility,
+                    Some(EmbeddingCompatibility::Incompatible { .. })
+                )
             } else {
                 true
             }

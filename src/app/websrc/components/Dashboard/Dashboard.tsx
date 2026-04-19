@@ -180,7 +180,7 @@ export const Dashboard = (_props: DashboardProps) => {
   };
 
   return (
-    <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
+    <main className="relative h-full overflow-y-auto bg-[hsl(var(--bg))]">
       <div className="mx-auto w-full max-w-[760px] px-6 pt-10 pb-16">
         <header className="mb-12">
           <h1 className="font-serif text-3xl font-semibold tracking-[-0.02em] text-[hsl(var(--text-primary))]">

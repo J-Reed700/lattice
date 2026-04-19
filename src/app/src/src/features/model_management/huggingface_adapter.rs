@@ -404,8 +404,15 @@ impl HuggingFaceModel {
         }
         let description = self.build_description(&id, preferred_is_gguf);
 
-        // Detect Candle compatibility for embedding models from architecture
-        // tags. Non-embedding models get None.
+        // Detect Candle compatibility from architecture tags only.
+        //
+        // We deliberately don't gate on file format here — the catalog
+        // search now targets sentence-transformers upstreams that ship
+        // safetensors as primary weights, so a file-format check would
+        // just add noise. If a rare repo turns out to be ONNX-only, the
+        // download path's `select_preferred_safetensors_file` falls
+        // through to ONNX and the loader rejects it with a clear error
+        // at that point.
         let embedding_compatibility = if self.is_embedding_model() {
             Some(crate::features::embedding::compatibility::detect_from_tags(&tags))
         } else {
