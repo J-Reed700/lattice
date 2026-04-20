@@ -303,21 +303,23 @@ pub async fn get_all_recommended_models(
 
     // Score compatibility for each model.
     //
-    // Embedding-model filtering: drop entries whose `embedding_compatibility`
-    // is `Incompatible` (architecture not loadable, OR no safetensors in
-    // the repo — the HF adapter sets the second case via to_external_metadata).
-    // We keep `Compatible` and `Unknown` (Unknown still surfaces the badge
-    // in the UI). This replaces the older is_gguf_only_model heuristic which
-    // assumed ONNX was the runtime — no longer true after the Candle migration.
+    // Embedding-model filtering: only surface Compatible models. Drops
+    // both Incompatible (architecture not loadable / no safetensors) and
+    // Unknown (we can't tell from tags, and download_model.rs's gate
+    // rejects Unknown anyway — surfacing them in the catalog would let
+    // users click a button that always errors).
+    //
+    // This replaces the older is_gguf_only_model heuristic which assumed
+    // ONNX was the runtime — no longer true after the Candle migration.
     let scorer = CompatibilityScorer::new();
     let mut recommendations: Vec<ModelRecommendation> = models
         .into_iter()
         .filter(|entry| {
             if entry.model.category == ModelCategory::Embedding {
                 use crate::features::embedding::compatibility::EmbeddingCompatibility;
-                !matches!(
+                matches!(
                     entry.model.embedding_compatibility,
-                    Some(EmbeddingCompatibility::Incompatible { .. })
+                    Some(EmbeddingCompatibility::Compatible { .. })
                 )
             } else {
                 true
@@ -360,24 +362,6 @@ pub async fn get_all_recommended_models(
 
 fn is_downloadable_model(model: &ModelMetadata) -> bool {
     model.default_filename.is_some() || !model.files.is_empty()
-}
-
-/// Check if a model is GGUF-only (no ONNX files).
-///
-/// Embedding models require ONNX format with tokenizer.json. GGUF embedding
-/// models cannot be loaded by our OnnxEmbeddingService, so they must be
-/// filtered from search results to prevent users from downloading unusable models.
-fn is_gguf_only_model(model: &ModelMetadata) -> bool {
-    let has_gguf_default = model
-        .default_filename
-        .as_ref()
-        .is_some_and(|f| f.ends_with(".gguf"));
-    let has_onnx_files = model.files.iter().any(|f| f.filename.ends_with(".onnx"));
-    let has_gguf_in_name =
-        model.name.to_lowercase().contains("gguf") || model.id.to_lowercase().contains("gguf");
-
-    // Model is GGUF-only if it has a GGUF default file or GGUF in name, and no ONNX files
-    (has_gguf_default || has_gguf_in_name) && !has_onnx_files
 }
 
 #[derive(Debug, Clone)]
@@ -649,10 +633,18 @@ pub async fn search_model_catalog(
     let external_models: Vec<_> = discovered_models
         .into_iter()
         .map(|entry| (entry.model, ModelSource::External))
-        // Filter out GGUF embedding models — our embedding service only supports ONNX
+        // Embedding-model gate (search path): only surface models the
+        // local Candle runtime can actually load. Compatible-only —
+        // Unknown is filtered out because download_model.rs rejects it,
+        // so showing it here would let users click a button that always
+        // errors. Mirrors the gate in get_all_recommended_models.
         .filter(|(model, _)| {
             if model.category == ModelCategory::Embedding {
-                !is_gguf_only_model(model)
+                use crate::features::embedding::compatibility::EmbeddingCompatibility;
+                matches!(
+                    model.embedding_compatibility,
+                    Some(EmbeddingCompatibility::Compatible { .. })
+                )
             } else {
                 true
             }

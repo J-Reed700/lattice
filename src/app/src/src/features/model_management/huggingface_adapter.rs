@@ -404,17 +404,28 @@ impl HuggingFaceModel {
         }
         let description = self.build_description(&id, preferred_is_gguf);
 
-        // Detect Candle compatibility from architecture tags only.
-        //
-        // We deliberately don't gate on file format here — the catalog
-        // search now targets sentence-transformers upstreams that ship
-        // safetensors as primary weights, so a file-format check would
-        // just add noise. If a rare repo turns out to be ONNX-only, the
-        // download path's `select_preferred_safetensors_file` falls
-        // through to ONNX and the loader rejects it with a clear error
-        // at that point.
+        // Detect Candle compatibility from architecture tags AND from
+        // whether the repo actually ships safetensors. Both gates exist
+        // because a repo can have a Compatible architecture tag (e.g.
+        // bert) but only publish .onnx weights — in which case the
+        // download path falls back to ONNX, the loader rejects it, and
+        // the user has wasted bandwidth on a multi-GB transfer. The
+        // catalog must promise only what the runtime can actually deliver.
         let embedding_compatibility = if self.is_embedding_model() {
-            Some(crate::features::embedding::compatibility::detect_from_tags(&tags))
+            let arch_compat = crate::features::embedding::compatibility::detect_from_tags(&tags);
+            let has_safetensors = self.select_preferred_safetensors_file().is_some();
+            let final_compat = match arch_compat {
+                crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible {
+                    architecture,
+                } if !has_safetensors => {
+                    crate::features::embedding::compatibility::EmbeddingCompatibility::Incompatible {
+                        architecture,
+                        reason: "Repo doesn't ship model.safetensors. The local Candle runtime needs safetensors weights — look for the original sentence-transformers upstream of this model.".to_string(),
+                    }
+                }
+                other => other,
+            };
+            Some(final_compat)
         } else {
             None
         };
