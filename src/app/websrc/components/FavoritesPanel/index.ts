@@ -1,1 +1,0 @@
-export { FavoritesPanel } from './FavoritesPanel';

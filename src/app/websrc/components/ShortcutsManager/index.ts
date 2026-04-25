@@ -1,1 +1,0 @@
-export { ShortcutsManager } from './ShortcutsManager';

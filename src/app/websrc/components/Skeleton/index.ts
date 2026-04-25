@@ -36,30 +36,8 @@ export {
 export type { SearchResultSkeletonProps } from './SearchResultSkeleton';
 
 export {
-  DocumentViewerSkeleton,
-  DocumentViewerSkeletonMinimal,
-} from './DocumentViewerSkeleton';
-
-export type { DocumentViewerSkeletonProps } from './DocumentViewerSkeleton';
-
-export {
   FileBrowserSkeleton,
   FileBrowserSkeletonCompact,
 } from './FileBrowserSkeleton';
 
 export type { FileBrowserSkeletonProps } from './FileBrowserSkeleton';
-
-export {
-  SettingsSkeleton,
-  SettingsSkeletonCompact,
-  SettingsDialogSkeleton,
-} from './SettingsSkeleton';
-
-export type { SettingsSkeletonProps } from './SettingsSkeleton';
-
-export {
-  DashboardSkeleton,
-  DashboardSkeletonCompact,
-} from './DashboardSkeleton';
-
-export type { DashboardSkeletonProps } from './DashboardSkeleton';

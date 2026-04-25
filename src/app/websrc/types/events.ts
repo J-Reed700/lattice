@@ -741,11 +741,6 @@ export type IndexingCompleteEvent = TauriEvents.Indexing.Complete;
 export type IndexingErrorEvent = TauriEvents.Indexing.Error;
 
 /**
- * @deprecated Use TauriEvents.Models.DownloadProgress instead
- */
-export type ModelDownloadProgressEvent = TauriEvents.Models.DownloadProgress;
-
-/**
  * @deprecated Use TauriEvents.FileWatch.Event instead
  */
 export type FileWatchEvent = TauriEvents.FileWatch.Event;

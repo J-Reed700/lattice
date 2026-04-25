@@ -1,1 +1,0 @@
-export { QAPanel } from './QAPanel';
