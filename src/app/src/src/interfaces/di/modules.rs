@@ -50,10 +50,7 @@ use crate::features::batch::use_cases::{
 };
 
 // Application Use Cases - Conversation
-use crate::features::conversation::use_cases::{
-    CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
-    GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
-};
+use crate::features::conversation::use_cases::CreateConversationUseCase;
 
 // Application Use Cases - LLM
 use crate::features::llm::use_cases::{
@@ -585,26 +582,6 @@ impl AIModule {
     // Conversation use case getters
     pub fn create_conversation_use_case(&self) -> &Arc<CreateConversationUseCase> {
         &self.conversation.create_conversation_use_case
-    }
-
-    pub fn list_conversations_use_case(&self) -> &Arc<ListConversationsUseCase> {
-        &self.conversation.list_conversations_use_case
-    }
-
-    pub fn get_conversation_use_case(&self) -> &Arc<GetConversationUseCase> {
-        &self.conversation.get_conversation_use_case
-    }
-
-    pub fn get_conversation_messages_use_case(&self) -> &Arc<GetConversationMessagesUseCase> {
-        &self.conversation.get_conversation_messages_use_case
-    }
-
-    pub fn rename_conversation_use_case(&self) -> &Arc<RenameConversationUseCase> {
-        &self.conversation.rename_conversation_use_case
-    }
-
-    pub fn delete_conversation_use_case(&self) -> &Arc<DeleteConversationUseCase> {
-        &self.conversation.delete_conversation_use_case
     }
 
     // LLM/model use case getters

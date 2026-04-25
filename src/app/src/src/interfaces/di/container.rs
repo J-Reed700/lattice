@@ -45,10 +45,7 @@ use crate::features::tags::use_cases::{
 };
 
 // Application Use Cases - Conversation
-use crate::features::conversation::use_cases::{
-    CreateConversationUseCase, DeleteConversationUseCase, GetConversationMessagesUseCase,
-    GetConversationUseCase, ListConversationsUseCase, RenameConversationUseCase,
-};
+use crate::features::conversation::use_cases::CreateConversationUseCase;
 
 // Application Use Cases - Settings
 use crate::features::settings::use_cases::{
@@ -1533,26 +1530,6 @@ impl Container {
     // Conversations (from AIModule)
     pub fn create_conversation_use_case(&self) -> Arc<CreateConversationUseCase> {
         Arc::clone(self.ai.create_conversation_use_case())
-    }
-
-    pub fn list_conversations_use_case(&self) -> Arc<ListConversationsUseCase> {
-        Arc::clone(self.ai.list_conversations_use_case())
-    }
-
-    pub fn get_conversation_use_case(&self) -> Arc<GetConversationUseCase> {
-        Arc::clone(self.ai.get_conversation_use_case())
-    }
-
-    pub fn get_conversation_messages_use_case(&self) -> Arc<GetConversationMessagesUseCase> {
-        Arc::clone(self.ai.get_conversation_messages_use_case())
-    }
-
-    pub fn rename_conversation_use_case(&self) -> Arc<RenameConversationUseCase> {
-        Arc::clone(self.ai.rename_conversation_use_case())
-    }
-
-    pub fn delete_conversation_use_case(&self) -> Arc<DeleteConversationUseCase> {
-        Arc::clone(self.ai.delete_conversation_use_case())
     }
 
     pub fn file_search_use_case(&self) -> Arc<FileSearchUseCase> {

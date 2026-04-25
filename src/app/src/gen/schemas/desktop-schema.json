@@ -741,6 +741,12 @@
           "markdownDescription": "Denies the save_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the add_conversation_linked_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-add-conversation-linked-document",
+          "markdownDescription": "Enables the add_conversation_linked_document command without any pre-configured scope."
+        },
+        {
           "description": "Enables the add_conversation_to_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-add-conversation-to-journal",
@@ -1027,6 +1033,12 @@
           "type": "string",
           "const": "conversation:allow-upsert-conversation-space-member",
           "markdownDescription": "Enables the upsert_conversation_space_member command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_conversation_linked_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-add-conversation-linked-document",
+          "markdownDescription": "Denies the add_conversation_linked_document command without any pre-configured scope."
         },
         {
           "description": "Denies the add_conversation_to_journal command without any pre-configured scope.",
@@ -4419,6 +4431,12 @@
           "markdownDescription": "Enables the clear_active_embedding_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the clear_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-clear-active-utility-model",
+          "markdownDescription": "Enables the clear_active_utility_model command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear_model_catalog_cache command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-clear-model-catalog-cache",
@@ -4557,6 +4575,18 @@
           "markdownDescription": "Enables the set_active_inference_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-set-active-utility-model",
+          "markdownDescription": "Enables the set_active_utility_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sync_ollama_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-sync-ollama-models",
+          "markdownDescription": "Enables the sync_ollama_models command without any pre-configured scope."
+        },
+        {
           "description": "Enables the validate_model_compatibility command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-validate-model-compatibility",
@@ -4591,6 +4621,12 @@
           "type": "string",
           "const": "model:deny-clear-active-embedding-model",
           "markdownDescription": "Denies the clear_active_embedding_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-clear-active-utility-model",
+          "markdownDescription": "Denies the clear_active_utility_model command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_model_catalog_cache command without any pre-configured scope.",
@@ -4729,6 +4765,18 @@
           "type": "string",
           "const": "model:deny-set-active-inference-model",
           "markdownDescription": "Denies the set_active_inference_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-set-active-utility-model",
+          "markdownDescription": "Denies the set_active_utility_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sync_ollama_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-sync-ollama-models",
+          "markdownDescription": "Denies the sync_ollama_models command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_model_compatibility command without any pre-configured scope.",
@@ -5133,6 +5181,12 @@
           "markdownDescription": "Denies the get_version_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_batch_ingest command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-cancel-batch-ingest",
+          "markdownDescription": "Enables the cancel_batch_ingest command without any pre-configured scope."
+        },
+        {
           "description": "Enables the extract_article command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-extract-article",
@@ -5151,10 +5205,22 @@
           "markdownDescription": "Enables the ingest_web_url command without any pre-configured scope."
         },
         {
+          "description": "Enables the ingest_web_urls_batch command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:allow-ingest-web-urls-batch",
+          "markdownDescription": "Enables the ingest_web_urls_batch command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reindex_web_archive command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-reindex-web-archive",
           "markdownDescription": "Enables the reindex_web_archive command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_batch_ingest command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-cancel-batch-ingest",
+          "markdownDescription": "Denies the cancel_batch_ingest command without any pre-configured scope."
         },
         {
           "description": "Denies the extract_article command without any pre-configured scope.",
@@ -5173,6 +5239,12 @@
           "type": "string",
           "const": "web:deny-ingest-web-url",
           "markdownDescription": "Denies the ingest_web_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ingest_web_urls_batch command without any pre-configured scope.",
+          "type": "string",
+          "const": "web:deny-ingest-web-urls-batch",
+          "markdownDescription": "Denies the ingest_web_urls_batch command without any pre-configured scope."
         },
         {
           "description": "Denies the reindex_web_archive command without any pre-configured scope.",

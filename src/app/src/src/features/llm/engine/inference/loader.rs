@@ -1,7 +1,6 @@
 //! Model loading and initialization using mistral.rs.
 
 use super::config::InferenceConfig;
-use crate::llm::system::gpu::detect_gpu;
 use crate::llm::types::LLMError;
 use mistralrs::{GgufModelBuilder, Model, PagedAttentionMetaBuilder};
 use std::path::Path;
@@ -30,21 +29,17 @@ impl ModelLoader {
     /// Returns `LLMError::ModelNotLoaded` if file doesn't exist
     /// Returns `LLMError::GenerationFailed` if loading fails
     pub async fn load<P: AsRef<Path>>(&self, model_path: P) -> Result<Model, LLMError> {
-        let mut config = self.config.clone();
+        let config = self.config.clone();
         if let Err(err) = config.validate() {
             return Err(LLMError::InvalidConfig(err));
         }
 
-        if config.n_gpu_layers < 0 {
-            let gpu_info = detect_gpu().await;
-            let has_gpu = gpu_info
-                .as_ref()
-                .map(|info| info.vendor.is_accelerated())
-                .unwrap_or(false);
-            if !has_gpu {
-                config.n_gpu_layers = 0;
-            }
-        }
+        // Note: we used to call `detect_gpu()` here and overwrite
+        // `n_gpu_layers` to 0 on "no GPU detected". That heuristic was
+        // wrong on Apple Silicon under the Tauri sandbox (sysinfo
+        // returns an empty CPU brand) and irrelevant in any case —
+        // mistralrs ignores the field. Whatever value `n_gpu_layers`
+        // holds is informational only.
 
         let model_path = model_path.as_ref();
 
@@ -71,27 +66,21 @@ impl ModelLoader {
         let mut builder =
             GgufModelBuilder::new(model_dir_str, vec![model_filename.to_string()]).with_logging();
 
-        // Log Metal GPU configuration
-        tracing::info!("🚀 Initializing LLM with Metal GPU support (M3 Max optimized)",);
+        // Log inference configuration. Note: mistralrs (rev 97708f2) does
+        // not have an `n_gpu_layers` API for GGUF — it auto-maps layers
+        // to whatever device its `auto_device_map` selects (Metal on
+        // Apple Silicon, CUDA on NVIDIA, CPU fallback otherwise). The
+        // `n_gpu_layers` field on `InferenceConfig` is therefore advisory
+        // only and is NOT plumbed into `GgufModelBuilder`. Look for the
+        // `mistralrs_quant ... Layers N-M: <device> ...` line a few
+        // lines below to see the actual device placement.
         tracing::info!(
-            "Configuration: n_gpu_layers={}, context_size={}, batch_size={}, threads={:?}, paged_attention={}",
-            config.n_gpu_layers,
+            "Initializing LLM (mistralrs auto-device-map): context_size={}, batch_size={}, threads={:?}, paged_attention={}",
             config.context_size,
             config.batch_size,
             config.n_threads,
             config.use_paged_attention
         );
-
-        if config.n_gpu_layers == -1 {
-            tracing::info!("✅ Metal GPU enabled: All layers will run on GPU (optimal for M3 Max)");
-        } else if config.n_gpu_layers > 0 {
-            tracing::info!(
-                "⚠️  Partial GPU: {} layers on GPU, rest on CPU",
-                config.n_gpu_layers
-            );
-        } else {
-            tracing::warn!("❌ CPU-only mode: No GPU acceleration (not recommended for M3 Max)");
-        }
 
         // Configure PagedAttention if enabled. mistralrs 97708f2 changed
         // `with_paged_attn` from a closure-returning-Result to a direct

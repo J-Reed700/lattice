@@ -1,20 +1,10 @@
 //! # Conversation Use Cases
 //!
-//! Use cases for conversation management operations.
-//!
-//! Orchestrates conversation creation, listing, retrieval, renaming, and deletion
-//! using the ConversationServiceTrait.
+//! Currently only `CreateConversationUseCase` is exposed — used by `chat.rs`
+//! when a chat turn needs to lazily create a conversation. The other CRUD
+//! use cases were removed because the Tauri plugin commands route directly
+//! through `features/conversation/commands.rs` and never invoked them.
 
 mod create;
-mod delete;
-mod get;
-mod get_messages;
-mod list;
-mod rename;
 
 pub use create::CreateConversationUseCase;
-pub use delete::DeleteConversationUseCase;
-pub use get::GetConversationUseCase;
-pub use get_messages::GetConversationMessagesUseCase;
-pub use list::ListConversationsUseCase;
-pub use rename::RenameConversationUseCase;

@@ -39,7 +39,6 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::collections::HashSet;
 
 const DEFAULT_SPACE_ID: &str = "space_general";
-const LOCAL_OWNER_MEMBER_ID: &str = "member_local_owner";
 const JOURNAL_SYNTHESIS_ENTRY_LIMIT_DEFAULT: usize = 12;
 const JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX: usize = 24;
 const JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT: usize = 900;
@@ -889,112 +888,13 @@ pub async fn synthesize_journal_entries_impl(
     synthesis_result
 }
 
-pub async fn create_conversation_space_impl(
+pub async fn create_conversation_space(
     request: CreateConversationSpaceRequestDto,
     container: &Container,
 ) -> Result<ConversationSpaceDto, ApiError> {
-    let CreateConversationSpaceRequestDto {
-        name,
-        description,
-        icon,
-        accent_color,
-        space_prompt,
-        default_model_name,
-        tool_preferences_json,
-    } = request;
-
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(ApiError::from(AppError::InvalidInput(
-            "Space name cannot be empty".to_string(),
-        )));
-    }
-    validate_space_preferences_not_journal(tool_preferences_json.as_deref(), "Conversation space")?;
-
-    let id = format!("space_{}", uuid::Uuid::new_v4().simple());
-    let now = Utc::now().to_rfc3339();
-
-    sqlx::query(
-        r#"
-        INSERT INTO conversation_spaces (
-            id, name, description, icon, accent_color, space_prompt,
-            default_model_name, tool_preferences_json, is_archived, sort_order, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-        "#,
-    )
-    .bind(&id)
-    .bind(name)
-    .bind(description)
-    .bind(icon)
-    .bind(accent_color)
-    .bind(space_prompt)
-    .bind(default_model_name)
-    .bind(tool_preferences_json)
-    .bind(&now)
-    .bind(&now)
-    .execute(container.db_pool())
-    .await
-    .map_err(|e| ApiError::from(AppError::Database(format!("Failed to create space: {}", e))))?;
-
-    sqlx::query(
-        r#"
-        INSERT OR IGNORE INTO collaborator_profiles (
-            id, display_name, email, avatar_url, created_at, updated_at
-        ) VALUES (?, 'Local Owner', NULL, NULL, ?, ?)
-        "#,
-    )
-    .bind(LOCAL_OWNER_MEMBER_ID)
-    .bind(&now)
-    .bind(&now)
-    .execute(container.db_pool())
-    .await
-    .map_err(|e| {
-        ApiError::from(AppError::Database(format!(
-            "Failed to ensure local owner profile while creating space: {}",
-            e
-        )))
-    })?;
-
-    sqlx::query(
-        r#"
-        INSERT OR IGNORE INTO conversation_space_members (
-            space_id, member_id, role, created_at, updated_at
-        ) VALUES (?, ?, 'owner', ?, ?)
-        "#,
-    )
-    .bind(&id)
-    .bind(LOCAL_OWNER_MEMBER_ID)
-    .bind(&now)
-    .bind(&now)
-    .execute(container.db_pool())
-    .await
-    .map_err(|e| {
-        ApiError::from(AppError::Database(format!(
-            "Failed to create default owner membership for new space: {}",
-            e
-        )))
-    })?;
-
-    let created = sqlx::query_as::<_, ConversationSpaceDto>(
-        r#"
-        SELECT
-            id, name, description, icon, accent_color, space_prompt, default_model_name,
-            tool_preferences_json, is_archived, sort_order, created_at, updated_at
-        FROM conversation_spaces
-        WHERE id = ?
-        "#,
-    )
-    .bind(&id)
-    .fetch_one(container.db_pool())
-    .await
-    .map_err(|e| {
-        ApiError::from(AppError::Database(format!(
-            "Failed to fetch created space: {}",
-            e
-        )))
-    })?;
-
-    Ok(created)
+    conversation::create_conversation_space_impl(container, request)
+        .await
+        .map_err(|e | ApiError::from(e))
 }
 
 pub async fn list_conversation_spaces_impl(

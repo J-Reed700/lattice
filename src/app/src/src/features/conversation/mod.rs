@@ -42,9 +42,11 @@ pub mod message_bookmark_dto;
 pub mod plugin;
 pub mod plugin_impl;
 pub mod space_dto;
+pub mod space_repository;
 pub mod summarizer;
 pub mod trait_def;
 pub mod use_cases;
+
 
 #[cfg(test)]
 pub mod mocks;

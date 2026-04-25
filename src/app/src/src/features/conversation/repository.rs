@@ -735,6 +735,18 @@ impl ConversationRepositoryPort for ConversationRepository {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
+        // Both inserts must commit together. If the membership insert
+        // fails after the conversation_documents insert, we'd otherwise
+        // have a doc linked to the conversation that is invisible in
+        // the conversation's space — breaks the invariant that linked
+        // chat docs are also space members. Drop-on-error rolls back.
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to open tx for add_document_reference: {}",
+                e
+            ))
+        })?;
+
         sqlx::query(
             r#"
             INSERT OR IGNORE INTO conversation_documents (conversation_id, document_id, chunk_id, relevance_score, added_at)
@@ -746,7 +758,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         .bind(chunk_id)
         .bind(relevance_score)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to add document reference: {}", e)))?;
 
@@ -763,11 +775,18 @@ impl ConversationRepositoryPort for ConversationRepository {
         .bind(document_id)
         .bind(&now)
         .bind(conversation_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!(
                 "Failed to add document-space membership for reference: {}",
+                e
+            ))
+        })?;
+
+        tx.commit().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to commit add_document_reference: {}",
                 e
             ))
         })?;

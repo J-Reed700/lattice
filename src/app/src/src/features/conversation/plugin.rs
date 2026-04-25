@@ -139,7 +139,7 @@ pub async fn create_conversation_space(
     request: CreateConversationSpaceRequestDto,
     container: State<'_, Container>,
 ) -> Result<ConversationSpaceDto, ApiError> {
-    conversation_impl::create_conversation_space_impl(request, container.inner()).await
+    conversation_impl::create_conversation_space(request, container.inner()).await
 }
 
 #[tauri::command]
