@@ -59,15 +59,8 @@ use crate::features::file::use_cases::{
     ReadFileBytesUseCase, ReadFileContentUseCase, ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };
 
-// Application Use Cases - Favorites
-use crate::features::favorites::use_cases::{
-    AddFavoriteUseCase, IsFavoriteUseCase, ListFavoritesUseCase, RemoveFavoriteUseCase,
-};
-
-// Application Use Cases - Recent
-use crate::features::recent::use_cases::{
-    ClearRecentHistoryUseCase, GetRecentDocumentsUseCase, TrackAccessUseCase,
-};
+// (Favorites + Recent: no use cases — Tauri commands route through
+// raw sqlx in their respective commands.rs files.)
 
 // Application Use Cases - Mentions
 use crate::features::mentions::use_cases::{
@@ -87,10 +80,8 @@ use crate::features::credentials::use_cases::{
     DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
 };
 
-// Application Use Cases - Cache
-use crate::features::cache::use_cases::{
-    ClearCacheUseCase, GetCacheSizeUseCase, GetCacheStatsUseCase,
-};
+// (Cache: no use cases — commands operate on the global QUERY_CACHE
+// singleton directly.)
 
 // Application Use Cases - Backup
 use crate::features::backup::use_cases::{
@@ -128,7 +119,7 @@ use crate::features::batch::use_cases::{
 use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort;
 use crate::application::ports::model_storage::ModelStoragePort;
 use crate::application::ports::{
-    BackupPort, CachePort, ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort,
+    BackupPort, ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort,
     CredentialsPort, DocumentRepository, DocumentRepositoryPort, EmbeddingPort,
     EmbeddingRepositoryPort, FavoritesRepositoryPort, FileStoragePort, FileSystemPort, LLMPort,
     MentionRepositoryPort, MetricsPort, ModelCatalogPort, RecentDocumentsRepositoryPort,
@@ -167,7 +158,6 @@ use crate::infrastructure::persistence::repositories::{
 use crate::infrastructure::adapters::{
     ContentExtractionAdapter, SystemFileSystemAdapter, TokioChecksumAdapter,
 };
-use crate::features::cache::adapter::CacheAdapter;
 use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
 use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
@@ -1594,35 +1584,8 @@ impl Container {
         Arc::clone(self.file_ops.update_file_metadata_use_case())
     }
 
-    // Favorites (from LibraryModule)
-    pub fn add_favorite_use_case(&self) -> Arc<AddFavoriteUseCase> {
-        Arc::clone(self.library.add_favorite_use_case())
-    }
-
-    pub fn remove_favorite_use_case(&self) -> Arc<RemoveFavoriteUseCase> {
-        Arc::clone(self.library.remove_favorite_use_case())
-    }
-
-    pub fn list_favorites_use_case(&self) -> Arc<ListFavoritesUseCase> {
-        Arc::clone(self.library.list_favorites_use_case())
-    }
-
-    pub fn is_favorite_use_case(&self) -> Arc<IsFavoriteUseCase> {
-        Arc::clone(self.library.is_favorite_use_case())
-    }
-
-    // Recent (from LibraryModule)
-    pub fn track_access_use_case(&self) -> Arc<TrackAccessUseCase> {
-        Arc::clone(self.library.track_access_use_case())
-    }
-
-    pub fn get_recent_documents_use_case(&self) -> Arc<GetRecentDocumentsUseCase> {
-        Arc::clone(self.library.get_recent_documents_use_case())
-    }
-
-    pub fn clear_recent_history_use_case(&self) -> Arc<ClearRecentHistoryUseCase> {
-        Arc::clone(self.library.clear_recent_history_use_case())
-    }
+    // (Favorites + Recent: no use cases — Tauri commands route through
+    // raw sqlx in their respective commands.rs files.)
 
     // Mentions (from LibraryModule)
     pub fn extract_mentions_use_case(&self) -> Arc<ExtractMentionsUseCase> {
@@ -1691,18 +1654,8 @@ impl Container {
         Arc::clone(self.core.set_custom_endpoint_use_case())
     }
 
-    // Cache (from SystemModule)
-    pub fn clear_cache_use_case(&self) -> Arc<ClearCacheUseCase> {
-        Arc::clone(self.system.clear_cache_use_case())
-    }
-
-    pub fn get_cache_size_use_case(&self) -> Arc<GetCacheSizeUseCase> {
-        Arc::clone(self.system.get_cache_size_use_case())
-    }
-
-    pub fn get_cache_stats_use_case(&self) -> Arc<GetCacheStatsUseCase> {
-        Arc::clone(self.system.get_cache_stats_use_case())
-    }
+    // (Cache: no use cases — commands operate on the global QUERY_CACHE
+    // singleton directly.)
 
     // Backup (from SystemModule)
     pub fn create_backup_use_case(&self) -> Arc<CreateBackupUseCase> {

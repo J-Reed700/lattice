@@ -7,9 +7,10 @@
 //!
 //! - `crate::features::favorites::dto` — `FavoriteDto`, request/response DTOs
 //! - `crate::features::favorites::mapper::FavoriteMapper`
-//! - `crate::features::favorites::use_cases` — Add/Remove/List/IsFavorite
 //! - `crate::features::favorites::repository::FavoritesRepository`
+//!   (port consumer: `function_calling/executor.rs`)
 //! - `crate::features::favorites::commands` — Tauri command handlers
+//!   (use raw sqlx via internal helpers; do not route through repository)
 //! - `crate::features::favorites::plugin::init()` — Tauri plugin
 //!
 //! `FavoritesRepositoryPort` stays in `application/ports/`.
@@ -20,4 +21,3 @@ pub mod dto;
 pub mod mapper;
 pub mod plugin;
 pub mod repository;
-pub mod use_cases;

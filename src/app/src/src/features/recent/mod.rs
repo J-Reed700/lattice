@@ -9,9 +9,8 @@
 //! - `crate::features::recent::dto` — `RecentDocumentDto`,
 //!   `GetRecentDocumentsRequestDto`, `GetRecentDocumentsResponseDto`
 //! - `crate::features::recent::mapper::RecentDocumentMapper`
-//! - `crate::features::recent::use_cases` — `GetRecentDocumentsUseCase`,
-//!   `TrackAccessUseCase`, `ClearRecentHistoryUseCase`
 //! - `crate::features::recent::repository::RecentDocumentsRepository`
+//!   (port consumer: `function_calling/executor.rs`)
 //! - `crate::features::recent::commands` — Tauri command handlers
 //!
 //! `RecentDocumentsRepositoryPort` stays in `application/ports/`.
@@ -21,4 +20,3 @@ pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod repository;
-pub mod use_cases;

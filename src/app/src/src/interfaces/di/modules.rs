@@ -66,15 +66,9 @@ use crate::features::tags::use_cases::{
     UpdateTagUseCase,
 };
 
-// Application Use Cases - Favorites
-use crate::features::favorites::use_cases::{
-    AddFavoriteUseCase, IsFavoriteUseCase, ListFavoritesUseCase, RemoveFavoriteUseCase,
-};
-
-// Application Use Cases - Recent
-use crate::features::recent::use_cases::{
-    ClearRecentHistoryUseCase, GetRecentDocumentsUseCase, TrackAccessUseCase,
-};
+// (Favorites and Recent: no use cases — Tauri commands route through
+// raw sqlx in commands.rs. Repository ports are still wired below for
+// the function-calling executor.)
 
 // Application Use Cases - Mentions
 use crate::features::mentions::use_cases::{
@@ -110,10 +104,8 @@ use crate::features::settings::use_cases::{
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
 
-// Application Use Cases - Cache
-use crate::features::cache::use_cases::{
-    ClearCacheUseCase, GetCacheSizeUseCase, GetCacheStatsUseCase,
-};
+// (Cache: no use cases — commands operate on the global QUERY_CACHE
+// singleton directly.)
 
 // Application Use Cases - Backup
 use crate::features::backup::use_cases::{
@@ -140,7 +132,7 @@ use crate::features::credentials::use_cases::{
 // Application Ports
 use crate::application::ports::BackupSchedulerPort;
 use crate::application::ports::{
-    BackupPort, BatchJobRepositoryPort, CachePort, ChunkRepositoryPort,
+    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort,
     ContentAddressedStoragePort, ContentExtractionPort, CredentialsPort, DocumentRepository,
     EmbeddingPort, EmbeddingRepositoryPort, FavoritesRepositoryPort, FileStoragePort,
     FileSystemPort, MentionRepositoryPort, MetricsPort, ModelCatalogPort, ModelStoragePort,
@@ -737,35 +729,10 @@ impl LibraryModule {
         &self.tags.search_by_tag_use_case
     }
 
-    // Favorites use case getters
-    pub fn add_favorite_use_case(&self) -> &Arc<AddFavoriteUseCase> {
-        &self.favorites.add_favorite_use_case
-    }
-
-    pub fn remove_favorite_use_case(&self) -> &Arc<RemoveFavoriteUseCase> {
-        &self.favorites.remove_favorite_use_case
-    }
-
-    pub fn list_favorites_use_case(&self) -> &Arc<ListFavoritesUseCase> {
-        &self.favorites.list_favorites_use_case
-    }
-
-    pub fn is_favorite_use_case(&self) -> &Arc<IsFavoriteUseCase> {
-        &self.favorites.is_favorite_use_case
-    }
-
-    // Recent use case getters
-    pub fn track_access_use_case(&self) -> &Arc<TrackAccessUseCase> {
-        &self.recent.track_access_use_case
-    }
-
-    pub fn get_recent_documents_use_case(&self) -> &Arc<GetRecentDocumentsUseCase> {
-        &self.recent.get_recent_documents_use_case
-    }
-
-    pub fn clear_recent_history_use_case(&self) -> &Arc<ClearRecentHistoryUseCase> {
-        &self.recent.clear_recent_history_use_case
-    }
+    // (Favorites + Recent: no use case getters — Tauri commands route
+    // through raw sqlx in their respective commands.rs files. The
+    // repository ports are exposed below for the function-calling
+    // executor.)
 
     // Mentions use case getters
     pub fn extract_mentions_use_case(&self) -> &Arc<ExtractMentionsUseCase> {
@@ -926,19 +893,17 @@ impl FileOpsModule {
 }
 
 // ==============================================================================
-// 7. SystemModule - Settings, Health, Backup, Cache
+// 7. SystemModule - Settings, Health, Backup
 // ==============================================================================
 
 /// System module for application-wide operations
 ///
-/// **Fields**: ~15
-/// - 17 use cases (health, settings, cache, backup, updates, metrics, stats)
-/// - 5 adapters
-/// - Settings repository
+/// Cache used to live here as a feature DI; it has been removed because
+/// Tauri commands operate on the global `QUERY_CACHE` singleton
+/// directly (no DI needed).
 #[derive(Clone)]
 pub struct SystemModule {
     settings: crate::features::settings::di::SettingsDi,
-    cache: crate::features::cache::di::CacheDi,
     backup: crate::features::backup::di::BackupDi,
     updates: crate::features::updates::di::UpdatesDi,
     metrics: crate::features::metrics::di::MetricsDi,
@@ -976,7 +941,6 @@ impl SystemModule {
 
         Ok(Self {
             settings,
-            cache: crate::features::cache::di::build(),
             backup,
             updates: crate::features::updates::di::build(),
             metrics: crate::features::metrics::di::build(),
@@ -1025,18 +989,8 @@ impl SystemModule {
         &self.settings.validate_settings_use_case
     }
 
-    // Cache use case getters
-    pub fn clear_cache_use_case(&self) -> &Arc<ClearCacheUseCase> {
-        &self.cache.clear_cache_use_case
-    }
-
-    pub fn get_cache_size_use_case(&self) -> &Arc<GetCacheSizeUseCase> {
-        &self.cache.get_cache_size_use_case
-    }
-
-    pub fn get_cache_stats_use_case(&self) -> &Arc<GetCacheStatsUseCase> {
-        &self.cache.get_cache_stats_use_case
-    }
+    // (Cache: no use cases — commands operate on the global QUERY_CACHE
+    // singleton directly.)
 
     // Backup use case getters
     pub fn create_backup_use_case(&self) -> &Arc<CreateBackupUseCase> {
