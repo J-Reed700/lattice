@@ -1,20 +1,14 @@
 //! # Search Use Cases
 //!
-//! Use cases for searching documents and content.
+//! - **Semantic Search**: vector-based similarity
+//! - **Hybrid Search**: vector + BM25 keyword
 //!
-//! This module provides different search strategies:
-//! - **Semantic Search**: Vector-based similarity search
-//! - **Hybrid Search**: Combines vector and BM25 keyword search
-//! - **File Search**: Search by filename and path
-//! - **Recency Search**: Time-aware search with recency weighting
+//! `file_search` and `recency_search` were removed — file lookup is
+//! served by the file feature directly, and recency-aware search is
+//! performed inline by the hybrid search service.
 
-pub mod file_search;
 pub mod hybrid_search;
-pub mod recency_search;
 pub mod semantic_search;
 
-// Re-export use cases for convenience
-pub use file_search::FileSearchUseCase;
 pub use hybrid_search::HybridSearchUseCase;
-pub use recency_search::RecencySearchUseCase;
 pub use semantic_search::SemanticSearchUseCase;

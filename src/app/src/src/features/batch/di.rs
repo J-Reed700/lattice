@@ -6,9 +6,9 @@ use crate::application::ports::BatchJobRepositoryPort;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::features::batch::services::url_import::BatchUrlImportService;
 use crate::features::batch::use_cases::{
-    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchFileStatusUseCase,
-    GetBatchJobStatusUseCase, ListBatchJobsUseCase, RetryFailedItemsUseCase,
-    StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
+    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase,
+    ListBatchJobsUseCase, RetryFailedItemsUseCase, StartBatchFileImportUseCase,
+    StartBatchUrlImportUseCase,
 };
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::indexing::use_cases::IndexFileUseCase;
@@ -22,7 +22,6 @@ pub struct BatchDi {
     pub batch_url_import_service: Arc<dyn BatchUrlImportServiceTrait>,
 
     pub start_batch_file_import_use_case: Arc<StartBatchFileImportUseCase>,
-    pub get_batch_file_status_use_case: Arc<GetBatchFileStatusUseCase>,
     pub start_batch_url_import_use_case: Arc<StartBatchUrlImportUseCase>,
     pub get_batch_job_status_use_case: Arc<GetBatchJobStatusUseCase>,
     pub cancel_batch_job_use_case: Arc<CancelBatchJobUseCase>,
@@ -63,9 +62,6 @@ pub fn build(
         batch_file_import_service,
         batch_url_import_service,
         start_batch_file_import_use_case,
-        get_batch_file_status_use_case: Arc::new(GetBatchFileStatusUseCase::new(
-            batch_job_repo.clone(),
-        )),
         start_batch_url_import_use_case,
         get_batch_job_status_use_case: Arc::new(GetBatchJobStatusUseCase::new(
             batch_job_repo.clone(),

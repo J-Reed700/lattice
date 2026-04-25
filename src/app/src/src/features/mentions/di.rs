@@ -9,7 +9,6 @@ use crate::features::mentions::mapper::MentionMapper;
 use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
-    UpdateMentionUseCase,
 };
 use crate::infrastructure::persistence::repositories::MentionRepository;
 
@@ -22,7 +21,6 @@ pub struct MentionsDi {
     pub get_mentions_by_type_use_case: Arc<GetMentionsByTypeUseCase>,
     pub get_mentions_for_document_use_case: Arc<GetMentionsForDocumentUseCase>,
     pub create_mention_use_case: Arc<CreateMentionUseCase>,
-    pub update_mention_use_case: Arc<UpdateMentionUseCase>,
     pub delete_mention_use_case: Arc<DeleteMentionUseCase>,
 }
 
@@ -50,10 +48,6 @@ pub fn build(db_pool: SqlitePool) -> MentionsDi {
             mapper.clone(),
         )),
         create_mention_use_case: Arc::new(CreateMentionUseCase::new(
-            mention_repo.clone(),
-            mapper.clone(),
-        )),
-        update_mention_use_case: Arc::new(UpdateMentionUseCase::new(
             mention_repo.clone(),
             mapper.clone(),
         )),

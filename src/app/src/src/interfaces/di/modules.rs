@@ -27,9 +27,7 @@ use std::sync::RwLock;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 
 // Application Use Cases - Search
-use crate::features::search::use_cases::{
-    FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
-};
+use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 
 // Application Use Cases - Indexing
 use crate::features::indexing::use_cases::{
@@ -38,15 +36,12 @@ use crate::features::indexing::use_cases::{
 };
 
 // Application Use Cases - Web
-use crate::features::web::use_cases::{
-    CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase,
-};
+use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
 
 // Application Use Cases - Batch
 use crate::features::batch::use_cases::{
-    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchFileStatusUseCase,
-    GetBatchJobStatusUseCase, ListBatchJobsUseCase, RetryFailedItemsUseCase,
-    StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
+    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
+    RetryFailedItemsUseCase, StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
 };
 
 // Application Use Cases - Conversation
@@ -74,7 +69,6 @@ use crate::features::tags::use_cases::{
 use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
-    UpdateMentionUseCase,
 };
 
 // Application Use Cases - File Operations
@@ -109,8 +103,8 @@ use crate::features::settings::use_cases::{
 
 // Application Use Cases - Backup
 use crate::features::backup::use_cases::{
-    CreateBackupUseCase, ListBackupsUseCase, RestoreBackupUseCase, StartAutoBackupUseCase,
-    StartupAutoBackupUseCase, StopAutoBackupUseCase,
+    CreateBackupUseCase, RestoreBackupUseCase, StartAutoBackupUseCase, StartupAutoBackupUseCase,
+    StopAutoBackupUseCase,
 };
 
 // Application Use Cases - Updates
@@ -301,14 +295,6 @@ impl SearchModule {
         &self.search.hybrid_search_use_case
     }
 
-    pub fn file_search_use_case(&self) -> &Arc<FileSearchUseCase> {
-        &self.search.file_search_use_case
-    }
-
-    pub fn recency_search_use_case(&self) -> &Arc<RecencySearchUseCase> {
-        &self.search.recency_search_use_case
-    }
-
     pub fn search_service(&self) -> &Arc<dyn SearchServiceTrait> {
         &self.search.search_service
     }
@@ -433,17 +419,9 @@ impl IndexingModule {
         &self.web.get_url_preview_use_case
     }
 
-    pub fn clean_article_content_use_case(&self) -> &Arc<CleanArticleContentUseCase> {
-        &self.web.clean_article_content_use_case
-    }
-
     // Batch use case getters
     pub fn start_batch_file_import_use_case(&self) -> &Arc<StartBatchFileImportUseCase> {
         &self.batch.start_batch_file_import_use_case
-    }
-
-    pub fn get_batch_file_status_use_case(&self) -> &Arc<GetBatchFileStatusUseCase> {
-        &self.batch.get_batch_file_status_use_case
     }
 
     pub fn start_batch_url_import_use_case(&self) -> &Arc<StartBatchUrlImportUseCase> {
@@ -767,10 +745,6 @@ impl LibraryModule {
         &self.mentions.create_mention_use_case
     }
 
-    pub fn update_mention_use_case(&self) -> &Arc<UpdateMentionUseCase> {
-        &self.mentions.update_mention_use_case
-    }
-
     pub fn delete_mention_use_case(&self) -> &Arc<DeleteMentionUseCase> {
         &self.mentions.delete_mention_use_case
     }
@@ -999,10 +973,6 @@ impl SystemModule {
 
     pub fn restore_backup_use_case(&self) -> &Arc<RestoreBackupUseCase> {
         &self.backup.restore_backup_use_case
-    }
-
-    pub fn list_backups_use_case(&self) -> &Arc<ListBackupsUseCase> {
-        &self.backup.list_backups_use_case
     }
 
     pub fn start_auto_backup_use_case(&self) -> &Arc<StartAutoBackupUseCase> {

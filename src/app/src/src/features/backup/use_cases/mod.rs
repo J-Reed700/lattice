@@ -1,14 +1,15 @@
 //! Backup feature — use cases.
+//!
+//! `list` was removed — `backup/commands.rs::list_backups_impl` calls
+//! `BackupAdapter::list_backups` directly.
 
 pub mod create;
-pub mod list;
 pub mod restore;
 pub mod start_auto;
 pub mod startup_auto;
 pub mod stop_auto;
 
 pub use create::CreateBackupUseCase;
-pub use list::ListBackupsUseCase;
 pub use restore::RestoreBackupUseCase;
 pub use start_auto::StartAutoBackupUseCase;
 pub use startup_auto::StartupAutoBackupUseCase;

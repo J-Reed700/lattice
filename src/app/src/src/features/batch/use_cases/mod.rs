@@ -1,7 +1,9 @@
 //! Batch feature — use cases (file + URL batch imports).
+//!
+//! `get_file_status` was removed — file-import status is derived
+//! through `get_job_status` like URL imports.
 
 // File import
-mod get_file_status;
 mod start_file_import;
 
 // URL import + job management
@@ -14,7 +16,6 @@ mod start_url_import;
 
 pub use cancel::CancelBatchJobUseCase;
 pub use delete::DeleteBatchJobUseCase;
-pub use get_file_status::GetBatchFileStatusUseCase;
 pub use get_job_status::GetBatchJobStatusUseCase;
 pub use list_jobs::ListBatchJobsUseCase;
 pub use retry_failed::RetryFailedItemsUseCase;

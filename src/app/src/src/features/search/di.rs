@@ -8,15 +8,11 @@ use std::sync::{Arc, RwLock};
 use sqlx::SqlitePool;
 
 use crate::application::ports::{
-    DocumentRepository, EmbeddingPort, RecentDocumentsRepositoryPort, TextSearchPort,
-    VectorSearchPort,
+    DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
 use crate::features::embedding::service::DynamicEmbedding;
-use crate::features::recent::repository::RecentDocumentsRepository;
-use crate::features::search::use_cases::{
-    FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
-};
+use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::search::bm25::BM25Search;
@@ -32,8 +28,6 @@ pub struct SearchDi {
     // Use cases
     pub semantic_search_use_case: Arc<SemanticSearchUseCase>,
     pub hybrid_search_use_case: Arc<HybridSearchUseCase>,
-    pub file_search_use_case: Arc<FileSearchUseCase>,
-    pub recency_search_use_case: Arc<RecencySearchUseCase>,
 
     // Services
     pub search_service: Arc<dyn SearchServiceTrait>,
@@ -127,8 +121,6 @@ pub async fn build(
         Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-    let _recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool.clone()))
-        as Arc<dyn RecentDocumentsRepositoryPort>;
 
     let bm25_search = Arc::new(BM25Search::new(db_pool.clone())) as Arc<dyn BM25SearchTrait>;
     let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
@@ -159,21 +151,14 @@ pub async fn build(
         vector_search.clone(),
     ));
     let hybrid_search_use_case = Arc::new(HybridSearchUseCase::new(
-        dynamic_embedding.clone(),
-        vector_search.clone(),
-        text_search.clone(),
-    ));
-    let file_search_use_case = Arc::new(FileSearchUseCase::new(text_search));
-    let recency_search_use_case = Arc::new(RecencySearchUseCase::new(
         dynamic_embedding,
-        hybrid_search_service.clone(),
+        vector_search.clone(),
+        text_search,
     ));
 
     Ok(SearchDi {
         semantic_search_use_case,
         hybrid_search_use_case,
-        file_search_use_case,
-        recency_search_use_case,
         search_service,
         bm25_search,
         hybrid_search_service,

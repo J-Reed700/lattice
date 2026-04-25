@@ -35,7 +35,7 @@ use crate::features::initialization::use_cases::{
 };
 use crate::features::qa::use_cases::AskQuestionUseCase;
 use crate::features::search::use_cases::{
-    FileSearchUseCase, HybridSearchUseCase, RecencySearchUseCase, SemanticSearchUseCase,
+    HybridSearchUseCase, SemanticSearchUseCase,
 };
 use crate::features::stats::use_cases::GetSystemStatsUseCase;
 use crate::features::tags::use_cases::{
@@ -66,7 +66,6 @@ use crate::features::file::use_cases::{
 use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
-    UpdateMentionUseCase,
 };
 
 // Application Use Cases - Extraction
@@ -85,8 +84,8 @@ use crate::features::credentials::use_cases::{
 
 // Application Use Cases - Backup
 use crate::features::backup::use_cases::{
-    CreateBackupUseCase, ListBackupsUseCase, RestoreBackupUseCase, StartAutoBackupUseCase,
-    StartupAutoBackupUseCase, StopAutoBackupUseCase,
+    CreateBackupUseCase, RestoreBackupUseCase, StartAutoBackupUseCase, StartupAutoBackupUseCase,
+    StopAutoBackupUseCase,
 };
 
 // Application Use Cases - Updates
@@ -104,15 +103,12 @@ use crate::features::llm::use_cases::{
 };
 
 // Application Use Cases - Web
-use crate::features::web::use_cases::{
-    CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase,
-};
+use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
 
 // Application Use Cases - Batch
 use crate::features::batch::use_cases::{
-    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchFileStatusUseCase,
-    GetBatchJobStatusUseCase, ListBatchJobsUseCase, RetryFailedItemsUseCase,
-    StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
+    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
+    RetryFailedItemsUseCase, StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
 };
 
 // Application Ports (abstractions)
@@ -1425,10 +1421,6 @@ impl Container {
         Arc::clone(self.search.hybrid_search_use_case())
     }
 
-    pub fn recency_search_use_case(&self) -> Arc<RecencySearchUseCase> {
-        Arc::clone(self.search.recency_search_use_case())
-    }
-
     // Indexing (from IndexingModule)
     pub fn index_file_use_case(&self) -> Arc<IndexFileUseCase> {
         Arc::clone(self.indexing.index_file_use_case())
@@ -1522,10 +1514,6 @@ impl Container {
         Arc::clone(self.ai.create_conversation_use_case())
     }
 
-    pub fn file_search_use_case(&self) -> Arc<FileSearchUseCase> {
-        Arc::clone(self.search.file_search_use_case())
-    }
-
     // Settings (from SystemModule)
     pub fn get_settings_use_case(&self) -> Arc<GetSettingsUseCase> {
         Arc::clone(self.system.get_settings_use_case())
@@ -1612,10 +1600,6 @@ impl Container {
         Arc::clone(self.library.create_mention_use_case())
     }
 
-    pub fn update_mention_use_case(&self) -> Arc<UpdateMentionUseCase> {
-        Arc::clone(self.library.update_mention_use_case())
-    }
-
     pub fn delete_mention_use_case(&self) -> Arc<DeleteMentionUseCase> {
         Arc::clone(self.library.delete_mention_use_case())
     }
@@ -1664,10 +1648,6 @@ impl Container {
 
     pub fn restore_backup_use_case(&self) -> Arc<RestoreBackupUseCase> {
         Arc::clone(self.system.restore_backup_use_case())
-    }
-
-    pub fn list_backups_use_case(&self) -> Arc<ListBackupsUseCase> {
-        Arc::clone(self.system.list_backups_use_case())
     }
 
     pub fn start_auto_backup_use_case(&self) -> Arc<StartAutoBackupUseCase> {
@@ -1824,18 +1804,10 @@ impl Container {
         Arc::clone(self.indexing.get_url_preview_use_case())
     }
 
-    pub fn clean_article_content_use_case(&self) -> Arc<CleanArticleContentUseCase> {
-        Arc::clone(self.indexing.clean_article_content_use_case())
-    }
-
     // === Batch Use Case Getters (from IndexingModule) ===
 
     pub fn start_batch_file_import_use_case(&self) -> Arc<StartBatchFileImportUseCase> {
         Arc::clone(self.indexing.start_batch_file_import_use_case())
-    }
-
-    pub fn get_batch_file_status_use_case(&self) -> Arc<GetBatchFileStatusUseCase> {
-        Arc::clone(self.indexing.get_batch_file_status_use_case())
     }
 
     pub fn start_batch_url_import_use_case(&self) -> Arc<StartBatchUrlImportUseCase> {

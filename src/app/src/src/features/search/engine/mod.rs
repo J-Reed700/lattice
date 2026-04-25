@@ -149,7 +149,6 @@
 // Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod bm25;
 pub mod builder;
-pub mod file_search;
 pub mod fusion;
 pub mod index;
 pub mod profiler;
@@ -170,7 +169,6 @@ pub use bm25::{BM25Result, BM25Search};
 pub use builder::{
     HybridSearchBuilder, Ready as SearchReady, Uninitialized as SearchUninitialized,
 };
-pub use file_search::{FileSearch, FileSearchResult};
 pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedFusion};
 pub use hybrid::{HybridSearchResult, HybridSearchService, SearchConfig, SearchMode};
 pub use index::EmbeddingIndex;

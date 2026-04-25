@@ -9,8 +9,8 @@ use crate::application::ports::{BackupPort, BackupSchedulerPort, SettingsReposit
 use crate::features::backup::adapter::BackupAdapter;
 use crate::features::backup::scheduler::BackupScheduler;
 use crate::features::backup::use_cases::{
-    CreateBackupUseCase, ListBackupsUseCase, RestoreBackupUseCase, StartAutoBackupUseCase,
-    StartupAutoBackupUseCase, StopAutoBackupUseCase,
+    CreateBackupUseCase, RestoreBackupUseCase, StartAutoBackupUseCase, StartupAutoBackupUseCase,
+    StopAutoBackupUseCase,
 };
 
 #[derive(Clone)]
@@ -19,7 +19,6 @@ pub struct BackupDi {
     pub backup_scheduler: Arc<BackupScheduler>,
     pub create_backup_use_case: Arc<CreateBackupUseCase>,
     pub restore_backup_use_case: Arc<RestoreBackupUseCase>,
-    pub list_backups_use_case: Arc<ListBackupsUseCase>,
     pub start_auto_backup_use_case: Arc<StartAutoBackupUseCase>,
     pub stop_auto_backup_use_case: Arc<StopAutoBackupUseCase>,
     pub startup_auto_backup_use_case: Arc<StartupAutoBackupUseCase>,
@@ -41,7 +40,6 @@ pub fn build(
 
     BackupDi {
         restore_backup_use_case: Arc::new(RestoreBackupUseCase::new(backup.clone())),
-        list_backups_use_case: Arc::new(ListBackupsUseCase::new(backup.clone())),
         start_auto_backup_use_case: Arc::new(StartAutoBackupUseCase::new(
             settings_repo.clone(),
             scheduler_port.clone(),

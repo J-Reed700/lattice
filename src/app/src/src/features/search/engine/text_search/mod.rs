@@ -1,17 +1,9 @@
-//! Text Search Implementations
+//! Text search implementations.
 //!
-//! This module contains text-based search algorithms.
-//!
-//! # Migration Status
-//! - [ ] bm25.rs - Will move from `search/bm25.rs`
-//! - [ ] file_search.rs - Will move from `search/file_search.rs`
-//!
-//! # Algorithms
-//! - BM25 (Best Matching 25) for keyword relevance scoring
-//! - Full-text search with tokenization
+//! Currently only the SQLite FTS5 backed `SqliteTextSearch`. Earlier
+//! placeholder modules (`bm25.rs`, `file_search.rs`) for a never-completed
+//! migration were removed.
 
-pub mod bm25;
-pub mod file_search;
 pub mod sqlite_text_search;
 
 pub use sqlite_text_search::SqliteTextSearch;

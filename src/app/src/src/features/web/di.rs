@@ -8,9 +8,7 @@ use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::services::ingestion::WebIngestionService;
-use crate::features::web::use_cases::{
-    CleanArticleContentUseCase, GetUrlPreviewUseCase, IngestWebUrlUseCase,
-};
+use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
 use crate::features::web::{
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
 };
@@ -31,7 +29,6 @@ pub struct WebDi {
     pub web_archive: Arc<dyn WebArchiveServiceTrait>,
     pub ingest_web_url_use_case: Arc<IngestWebUrlUseCase>,
     pub get_url_preview_use_case: Arc<GetUrlPreviewUseCase>,
-    pub clean_article_content_use_case: Arc<CleanArticleContentUseCase>,
 }
 
 pub fn build(
@@ -67,9 +64,6 @@ pub fn build(
     Ok(WebDi {
         ingest_web_url_use_case: Arc::new(IngestWebUrlUseCase::new(web_ingestion_service.clone())),
         get_url_preview_use_case: Arc::new(GetUrlPreviewUseCase::new(web_capture_service.clone())),
-        clean_article_content_use_case: Arc::new(CleanArticleContentUseCase::new(
-            article_extractor_service.clone(),
-        )),
         web_ingestion_service,
         web_capture_service,
         article_extractor_service,
