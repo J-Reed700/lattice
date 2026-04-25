@@ -73,7 +73,6 @@
 pub mod backup_port;
 pub mod backup_scheduler_port;
 pub mod batch_job_repository_port;
-pub mod cache_port;
 pub mod chunk_repository_port;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
@@ -107,7 +106,6 @@ pub use backup_scheduler_port::BackupSchedulerPort;
 pub use batch_job_repository_port::{
     BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus,
 };
-pub use cache_port::{CachePort, CacheStatsData};
 pub use chunk_repository_port::ChunkRepositoryPort;
 pub use content_addressed_storage_port::ContentAddressedStoragePort;
 pub use content_extraction_port::{ContentExtractionPort, ExtractedContentData};
