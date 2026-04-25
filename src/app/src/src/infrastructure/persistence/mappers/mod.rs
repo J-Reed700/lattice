@@ -46,7 +46,7 @@ pub mod document_mapper;
 // Re-export mappers (public API)
 pub use chunk_mapper::ChunkMapper;
 pub use conversation_mapper::{
-    ConversationMapper, ConversationMessageMapper, DocumentReferenceMapper,
+    ConversationRowMapper, ConversationMessageMapper, DocumentReferenceMapper,
 };
 pub use document_mapper::DocumentMapper;
 pub use crate::features::embedding::persistence_mapper::EmbeddingMapper;

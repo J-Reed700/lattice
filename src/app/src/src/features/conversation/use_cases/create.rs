@@ -3,7 +3,7 @@
 use crate::features::conversation::dto::{
     CreateConversationRequestDto, CreateConversationResponseDto,
 };
-use crate::features::conversation::mapper::ConversationMapper;
+use crate::features::conversation::mapper::ConversationDtoMapper;
 use crate::features::conversation::ConversationServiceTrait;
 use crate::shared::error::Result;
 use std::sync::Arc;
@@ -46,7 +46,7 @@ impl CreateConversationUseCase {
             .await?;
 
         // Convert to DTO
-        let conversation_dto = ConversationMapper::to_dto(&conversation);
+        let conversation_dto = ConversationDtoMapper::to_dto(&conversation);
 
         Ok(CreateConversationResponseDto {
             conversation: conversation_dto,

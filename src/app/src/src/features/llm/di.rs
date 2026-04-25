@@ -25,7 +25,7 @@ use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
-use crate::infrastructure::system::system_info_adapter::SystemInfoAdapter;
+use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 use crate::shared::error::Result;
 use std::path::PathBuf;
 

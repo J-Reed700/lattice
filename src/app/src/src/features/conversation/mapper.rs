@@ -8,9 +8,9 @@ use crate::features::conversation::dto::{ConversationDto, MessageDto};
 use crate::domain::{Conversation, ConversationAggregate, ConversationMessage};
 
 /// Mapper for conversation-related conversions.
-pub struct ConversationMapper;
+pub struct ConversationDtoMapper;
 
-impl ConversationMapper {
+impl ConversationDtoMapper {
     /// Convert Conversation domain model to DTO.
     ///
     /// # Arguments
@@ -81,7 +81,7 @@ mod tests {
             total_tokens: 1000,
         };
 
-        let dto = ConversationMapper::to_dto(&conversation);
+        let dto = ConversationDtoMapper::to_dto(&conversation);
 
         assert_eq!(dto.id, conversation.id.to_string());
         assert_eq!(dto.title, "Test Conversation");
@@ -99,7 +99,7 @@ mod tests {
         )
         .unwrap();
 
-        let dto = ConversationMapper::aggregate_to_dto(&aggregate);
+        let dto = ConversationDtoMapper::aggregate_to_dto(&aggregate);
 
         assert_eq!(dto.title, "Test Aggregate");
         assert_eq!(dto.model_name, "claude-sonnet-4-5-20250929");

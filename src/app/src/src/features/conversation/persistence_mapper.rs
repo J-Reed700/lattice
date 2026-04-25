@@ -67,9 +67,9 @@ pub struct DocumentReferenceModel {
 /// Mapper for Conversation entity and database model.
 ///
 /// Provides bidirectional conversion between domain entities and database models.
-pub struct ConversationMapper;
+pub struct ConversationRowMapper;
 
-impl ConversationMapper {
+impl ConversationRowMapper {
     /// Convert domain entity to database model.
     ///
     /// # Arguments
@@ -271,8 +271,8 @@ mod tests {
             total_tokens: 1000,
         };
 
-        let model = ConversationMapper::to_model(&entity);
-        let converted = ConversationMapper::to_entity(&model).unwrap();
+        let model = ConversationRowMapper::to_model(&entity);
+        let converted = ConversationRowMapper::to_entity(&model).unwrap();
 
         assert_eq!(converted.id, entity.id);
         assert_eq!(converted.title, entity.title);

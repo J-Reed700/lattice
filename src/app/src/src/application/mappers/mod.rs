@@ -18,4 +18,4 @@
 //! - `conversation_mapper` (re-export) — used by chat-side conversation creation
 
 // Re-export mappers
-pub use crate::features::conversation::mapper::ConversationMapper;
+pub use crate::features::conversation::mapper::ConversationDtoMapper;

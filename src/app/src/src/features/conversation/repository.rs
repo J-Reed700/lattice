@@ -17,7 +17,7 @@ use crate::domain::conversation::{
 };
 use crate::domain_types::ConversationId;
 use crate::infrastructure::persistence::mappers::{
-    ConversationMapper, ConversationMessageMapper, ConversationMessageModel, ConversationModel,
+    ConversationRowMapper, ConversationMessageMapper, ConversationMessageModel, ConversationModel,
     DocumentReferenceMapper, DocumentReferenceModel,
 };
 use crate::shared::error::{AppError, Result};
@@ -287,7 +287,7 @@ impl ConversationRepository {
         .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
 
         match db_model {
-            Some(model) => Ok(Some(ConversationMapper::to_entity(&model)?)),
+            Some(model) => Ok(Some(ConversationRowMapper::to_entity(&model)?)),
             None => Ok(None),
         }
     }
@@ -330,7 +330,7 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to list conversations: {}", e)))?;
 
-        Ok(ConversationMapper::to_entities(&db_models))
+        Ok(ConversationRowMapper::to_entities(&db_models))
     }
 
     pub async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
