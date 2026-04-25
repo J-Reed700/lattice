@@ -76,7 +76,6 @@ pub mod batch_job_repository_port;
 pub mod chunk_repository_port;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
-pub mod conversation_repository_port;
 pub mod credentials_port;
 pub mod database_stats_port;
 pub mod document_repository_port;
@@ -109,7 +108,6 @@ pub use batch_job_repository_port::{
 pub use chunk_repository_port::ChunkRepositoryPort;
 pub use content_addressed_storage_port::ContentAddressedStoragePort;
 pub use content_extraction_port::{ContentExtractionPort, ExtractedContentData};
-pub use conversation_repository_port::ConversationRepositoryPort;
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;

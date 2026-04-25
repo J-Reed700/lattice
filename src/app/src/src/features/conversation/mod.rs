@@ -30,8 +30,6 @@
 //!   (persistence mapper)
 //! - `crate::infrastructure::events::conversation_events`
 //! - `crate::infrastructure::services::conversation_service`
-//!
-//! `ConversationRepositoryPort` stays in `application/ports/`.
 
 pub mod chat;
 pub mod commands;

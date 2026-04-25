@@ -1,24 +1,17 @@
 //! Conversation Repository Implementation
 //!
-//! Infrastructure implementation for conversation persistence using SQLite.
+//! SQLite-backed CRUD for conversations, messages, and document
+//! references. All DB ops go through the mapper layer to keep domain
+//! entities decoupled from database models.
 //!
-//! # Architecture
+//! # Architecture note
 //!
-//! This repository implements the ConversationRepositoryPort trait,
-//! providing CRUD operations for conversations, messages, and document
-//! references using SQLite. All database operations go through the
-//! mapper layer to maintain clean separation between domain entities
-//! and database models.
-//!
-//! # Features
-//!
-//! - Full conversation CRUD
-//! - Message persistence with automatic token counting
-//! - Document reference tracking
-//! - Aggregate loading (conversation + messages + references)
-//! - Transaction support for consistency
+//! This used to implement a `ConversationRepositoryPort` trait. The
+//! trait had one implementor (this struct) and zero `dyn` consumers —
+//! a Java/C# 'Header Interface' anti-pattern in Rust. Methods are now
+//! plain inherent methods. If polymorphism is ever needed, extract
+//! the trait at that point.
 
-use crate::application::ports::ConversationRepositoryPort;
 use crate::domain::conversation::{
     Conversation, ConversationAggregate, ConversationMessage, DocumentReference, MessageRole,
 };
@@ -28,7 +21,6 @@ use crate::infrastructure::persistence::mappers::{
     DocumentReferenceMapper, DocumentReferenceModel,
 };
 use crate::shared::error::{AppError, Result};
-use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::str::FromStr;
@@ -196,48 +188,6 @@ impl ConversationRepository {
         Ok(total_deleted)
     }
 
-    /// Delete a conversation by ID (delegates to trait method)
-    ///
-    /// # Arguments
-    /// * `id` - Conversation ID
-    ///
-    /// # Errors
-    /// - `AppError::NotFound` if conversation doesn't exist
-    /// - `AppError::Database` if deletion fails
-    pub async fn delete(&self, id: &str) -> Result<()> {
-        ConversationRepositoryPort::delete(self, id).await
-    }
-
-    /// Add a message to a conversation (delegates to trait method)
-    ///
-    /// # Arguments
-    /// * `conversation_id` - Conversation ID
-    /// * `role` - Message role (User, Assistant, System)
-    /// * `content` - Message content
-    /// * `tokens` - Token count
-    /// * `metadata` - Optional metadata JSON string
-    ///
-    /// # Returns
-    /// Created message entity
-    pub async fn add_message(
-        &self,
-        conversation_id: &str,
-        role: MessageRole,
-        content: &str,
-        tokens: i64,
-        metadata: Option<&str>,
-    ) -> Result<ConversationMessage> {
-        ConversationRepositoryPort::add_message(
-            self,
-            conversation_id,
-            role,
-            content,
-            tokens,
-            metadata,
-        )
-        .await
-    }
-
     /// Add a message with a specific status (for two-phase commit)
     ///
     /// # Arguments
@@ -275,34 +225,14 @@ impl ConversationRepository {
         self.update_message_status(message_id, status).await
     }
 
-    /// Add a document reference to a conversation (delegates to trait method)
-    ///
-    /// # Arguments
-    /// * `conversation_id` - Conversation ID
-    /// * `document_id` - Document ID
-    /// * `chunk_id` - Optional chunk ID
-    /// * `relevance_score` - Optional relevance score (0.0 to 1.0)
-    pub async fn add_document_reference(
-        &self,
-        conversation_id: &str,
-        document_id: &str,
-        chunk_id: Option<&str>,
-        relevance_score: Option<f32>,
-    ) -> Result<()> {
-        ConversationRepositoryPort::add_document_reference(
-            self,
-            conversation_id,
-            document_id,
-            chunk_id,
-            relevance_score,
-        )
-        .await
-    }
-}
+    // ---------------------------------------------------------------
+    // Methods below were previously the body of
+    // `impl ConversationRepositoryPort for ConversationRepository`.
+    // The port trait had no `dyn` consumers, so it was deleted and the
+    // methods promoted to inherent methods directly on the repository.
+    // ---------------------------------------------------------------
 
-#[async_trait]
-impl ConversationRepositoryPort for ConversationRepository {
-    async fn create_conversation(
+    pub async fn create_conversation(
         &self,
         title: &str,
         model_name: &str,
@@ -342,7 +272,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         })
     }
 
-    async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
         let db_model = sqlx::query_as::<_, ConversationModel>(
             r#"
             SELECT id, title, model_name, system_prompt, created_at, updated_at,
@@ -362,7 +292,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         }
     }
 
-    async fn find_aggregate_by_id(&self, id: &str) -> Result<Option<ConversationAggregate>> {
+    pub async fn find_aggregate_by_id(&self, id: &str) -> Result<Option<ConversationAggregate>> {
         let conversation = match self.find_by_id(id).await? {
             Some(conv) => conv,
             None => return Ok(None),
@@ -381,7 +311,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(Some(aggregate))
     }
 
-    async fn find_all(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Conversation>> {
+    pub async fn find_all(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Conversation>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -403,7 +333,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(ConversationMapper::to_entities(&db_models))
     }
 
-    async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
+    pub async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
         let result = sqlx::query!(
@@ -430,7 +360,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(())
     }
 
-    async fn update_system_prompt(&self, id: &str, system_prompt: Option<&str>) -> Result<()> {
+    pub async fn update_system_prompt(&self, id: &str, system_prompt: Option<&str>) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
         let result = sqlx::query!(
@@ -462,7 +392,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> Result<()> {
+    pub async fn delete(&self, id: &str) -> Result<()> {
         let mut tx = self
             .pool
             .begin()
@@ -489,7 +419,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(())
     }
 
-    async fn add_message(
+    pub async fn add_message(
         &self,
         conversation_id: &str,
         role: MessageRole,
@@ -577,7 +507,7 @@ impl ConversationRepositoryPort for ConversationRepository {
     ///
     /// # Returns
     /// Created message entity with specified status
-    async fn add_message_with_status(
+    pub async fn add_message_with_status(
         &self,
         conversation_id: &str,
         role: MessageRole,
@@ -660,7 +590,7 @@ impl ConversationRepositoryPort for ConversationRepository {
     /// # Errors
     /// - `AppError::NotFound` if message doesn't exist
     /// - `AppError::Database` if update fails
-    async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
+    pub async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
         let result = sqlx::query!(
@@ -708,7 +638,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(())
     }
 
-    async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
+    pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
         let db_models = sqlx::query_as::<_, ConversationMessageModel>(
             r#"
             SELECT id, conversation_id, role, content, tokens, created_at,
@@ -726,7 +656,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(ConversationMessageMapper::to_entities(&db_models))
     }
 
-    async fn add_document_reference(
+    pub async fn add_document_reference(
         &self,
         conversation_id: &str,
         document_id: &str,
@@ -794,7 +724,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(())
     }
 
-    async fn get_document_references(
+    pub async fn get_document_references(
         &self,
         conversation_id: &str,
     ) -> Result<Vec<DocumentReference>> {
@@ -814,7 +744,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(DocumentReferenceMapper::to_entities(&db_models))
     }
 
-    async fn save_aggregate(&self, aggregate: &ConversationAggregate) -> Result<()> {
+    pub async fn save_aggregate(&self, aggregate: &ConversationAggregate) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let conversation = aggregate.conversation();
 
@@ -852,7 +782,7 @@ impl ConversationRepositoryPort for ConversationRepository {
         Ok(())
     }
 
-    async fn count(&self) -> Result<usize> {
+    pub async fn count(&self) -> Result<usize> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversations")
             .fetch_one(&self.pool)
             .await
@@ -860,7 +790,7 @@ impl ConversationRepositoryPort for ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to count conversations: {}", e)))
     }
 
-    async fn exists(&self, id: &str) -> Result<bool> {
+    pub async fn exists(&self, id: &str) -> Result<bool> {
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)")
             .bind(id)
             .fetch_one(&self.pool)
