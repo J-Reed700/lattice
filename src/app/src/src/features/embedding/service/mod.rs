@@ -3,7 +3,6 @@
 //! Re-exports embedding services. This mod.rs is loaded as
 //! `crate::infrastructure::services::embedding` during migration.
 
-pub mod builder;
 #[path = "dynamic.rs"]
 pub mod dynamic_embedding_service;
 pub mod dynamic_port;

@@ -6,14 +6,10 @@ pub mod context_manager;
 // Vertical-slice migration (conversation): service lives in features/conversation/service.rs.
 #[path = "../../features/conversation/service.rs"]
 pub mod conversation_service;
-#[path = "domains/database.rs"]
-pub mod database;
 #[path = "domains/file_cleanup.rs"]
 pub mod file_cleanup;
 #[path = "domains/file_type_detector.rs"]
 pub mod file_type_detector;
-#[path = "domains/file_watch.rs"]
-pub mod file_watch;
 #[path = "domains/metadata_extraction.rs"]
 pub mod metadata_extraction;
 #[path = "domains/model_manager.rs"]
@@ -25,8 +21,9 @@ pub mod router;
 pub mod search_enrichment_service;
 #[path = "domains/startup_reconciliation.rs"]
 pub mod startup_reconciliation;
-#[path = "domains/sync.rs"]
-pub mod sync;
+// Validated path used by FileCleanupService (download manager dep). Distinct
+// from `shared::domain_types::ValidatedFilePath`; do not consolidate without
+// migrating FileCleanupService's API expectations.
 #[path = "domains/validated_path.rs"]
 pub mod validated_path;
 

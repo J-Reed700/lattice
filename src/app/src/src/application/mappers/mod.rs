@@ -15,17 +15,7 @@
 //!
 //! ## Organization
 //!
-//! - `search_mapper` - SearchResult ↔ SearchResultDto
-//! - `document_mapper` - DocumentAggregate ↔ DocumentDto
-//! - `tag_mapper` - Tag models ↔ TagDto
-//! - `indexing_mapper` - ChunkingStrategy ↔ ChunkingStrategyDto
-//! - `conversation_mapper` - Conversation models ↔ ConversationDto
-//! - `mention_mapper` - Mention data ↔ MentionDto
-//! - `favorite_mapper` - Favorite data ↔ FavoriteDto
-//! - `recent_document_mapper` - Recent document data ↔ RecentDocumentDto
-
-pub mod document_mapper;
+//! - `conversation_mapper` (re-export) — used by chat-side conversation creation
 
 // Re-export mappers
-pub use crate::features::conversation::mapper::{ConversationMapper, MessageMapper};
-pub use document_mapper::DocumentMapper;
+pub use crate::features::conversation::mapper::ConversationMapper;

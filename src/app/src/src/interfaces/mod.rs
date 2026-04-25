@@ -58,9 +58,7 @@
 pub mod commands;
 pub mod di;
 pub mod dto;
-pub mod event_handlers;
 
 // Re-export for convenience
 pub use commands::*;
 pub use di::Container;
-pub use event_handlers::*;

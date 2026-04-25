@@ -12,4 +12,4 @@ pub use engine::QAEngine;
 pub use ollama::OllamaClient;
 pub use prompts::{build_user_prompt, SYSTEM_PROMPT};
 pub use tokenizer::{count_tokens, truncate_to_tokens};
-pub use types::{QAError, QAResponse, SourceReference, StreamChunk};
+pub use types::{QAError, SourceReference, StreamChunk};

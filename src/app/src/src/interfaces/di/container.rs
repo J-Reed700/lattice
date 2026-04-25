@@ -151,9 +151,7 @@ use crate::infrastructure::persistence::repositories::{
 };
 
 // Infrastructure Implementations - Adapters
-use crate::infrastructure::adapters::{
-    ContentExtractionAdapter, SystemFileSystemAdapter, TokioChecksumAdapter,
-};
+use crate::infrastructure::adapters::{ContentExtractionAdapter, TokioChecksumAdapter};
 use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
 use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;

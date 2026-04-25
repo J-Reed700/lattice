@@ -57,46 +57,6 @@ impl ConversationMapper {
     }
 }
 
-/// Mapper for message-related conversions.
-pub struct MessageMapper;
-
-impl MessageMapper {
-    /// Convert ConversationMessage domain model to DTO.
-    ///
-    /// # Arguments
-    ///
-    /// * `message` - Domain message entity
-    ///
-    /// # Returns
-    ///
-    /// Message DTO for JSON serialization
-    pub fn to_dto(message: &ConversationMessage) -> MessageDto {
-        MessageDto {
-            id: message.id.clone(),
-            conversation_id: message.conversation_id.to_string(),
-            role: message.role.to_string(),
-            content: message.content.clone(),
-            tokens: message.tokens,
-            created_at: message.created_at.to_rfc3339(),
-            metadata: message.metadata.clone(),
-            status: message.status.clone(),
-        }
-    }
-
-    /// Convert a list of ConversationMessages to DTOs.
-    ///
-    /// # Arguments
-    ///
-    /// * `messages` - Slice of domain message entities
-    ///
-    /// # Returns
-    ///
-    /// Vector of message DTOs for JSON serialization
-    pub fn to_dto_list(messages: &[ConversationMessage]) -> Vec<MessageDto> {
-        messages.iter().map(Self::to_dto).collect()
-    }
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -128,62 +88,6 @@ mod tests {
         assert_eq!(dto.model_name, "claude-sonnet-4-5-20250929");
         assert_eq!(dto.message_count, 5);
         assert_eq!(dto.total_tokens, 1000);
-    }
-
-    #[test]
-    fn test_message_to_dto() {
-        let conversation_id = ConversationId::new();
-        let message = ConversationMessage {
-            id: "msg-123".to_string(),
-            conversation_id: conversation_id.clone(),
-            role: MessageRole::User,
-            content: "Hello!".to_string(),
-            tokens: 5,
-            created_at: Utc::now(),
-            metadata: None,
-            status: "completed".to_string(),
-        };
-
-        let dto = MessageMapper::to_dto(&message);
-
-        assert_eq!(dto.id, "msg-123");
-        assert_eq!(dto.conversation_id, conversation_id.to_string());
-        assert_eq!(dto.role, "user");
-        assert_eq!(dto.content, "Hello!");
-        assert_eq!(dto.tokens, 5);
-    }
-
-    #[test]
-    fn test_message_to_dto_list() {
-        let conversation_id = ConversationId::new();
-        let messages = vec![
-            ConversationMessage {
-                id: "msg-1".to_string(),
-                conversation_id: conversation_id.clone(),
-                role: MessageRole::User,
-                content: "Question".to_string(),
-                tokens: 5,
-                created_at: Utc::now(),
-                metadata: None,
-                status: "completed".to_string(),
-            },
-            ConversationMessage {
-                id: "msg-2".to_string(),
-                conversation_id: conversation_id.clone(),
-                role: MessageRole::Assistant,
-                content: "Answer".to_string(),
-                tokens: 10,
-                created_at: Utc::now(),
-                metadata: None,
-                status: "completed".to_string(),
-            },
-        ];
-
-        let dtos = MessageMapper::to_dto_list(&messages);
-
-        assert_eq!(dtos.len(), 2);
-        assert_eq!(dtos[0].role, "user");
-        assert_eq!(dtos[1].role, "assistant");
     }
 
     #[test]

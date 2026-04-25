@@ -319,7 +319,7 @@ pub use shared::{
     constants::*,
     domain_types::{ChunkId, DocumentId, MentionId, TagId, ValidatedFilePath},
     error::{AppError, ErrorResponse, Result, ResultExt},
-    utils::{alignment, progress_emitter, retry},
+    utils::{alignment, retry},
 };
 
 // =============================================================================
@@ -402,7 +402,6 @@ pub mod application;
 
 #[cfg(feature = "indexing")]
 pub use application::{
-    dtos::document_dto::DocumentDto,
     mappers,
     ports::{
         EmbeddingPort, FileStoragePort, LLMPort, NotificationPort, RepositoryPort, TextSearchPort,
@@ -483,7 +482,7 @@ pub use infrastructure::{
 /// ```
 pub mod interfaces;
 
-pub use interfaces::{di::Container, event_handlers};
+pub use interfaces::di::Container;
 
 // =============================================================================
 // IPC LAYER - Anti-Corruption Boundary

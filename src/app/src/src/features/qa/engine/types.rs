@@ -57,17 +57,6 @@ pub struct SourceReference {
     pub snippet: String,
 }
 
-/// Q&A response with answer and sources
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QAResponse {
-    /// Generated answer
-    pub answer: String,
-
-    /// Source documents used
-    pub sources: Vec<SourceReference>,
-}
-
 /// Stream chunk types
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
