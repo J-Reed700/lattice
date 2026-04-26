@@ -518,7 +518,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     tracing::info!("Initializing conversation summary saga...");
     let summary_repo = Arc::new(SummaryRepository::new(container.db_pool().clone()));
     let conversation_summary_saga = Arc::new(ConversationSummarySaga::new(
-        container.conversation_event_bus(),
+        container.conversation_command_rx(),
         summary_repo,
     ));
     let summary_saga_listener = Arc::clone(&conversation_summary_saga);

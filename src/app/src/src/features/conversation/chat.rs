@@ -1065,11 +1065,15 @@ async fn trigger_background_summary_refresh_if_needed(
         transcript_tokens,
         Arc::clone(llm),
     );
-    if let Err(e) = container.conversation_event_bus().publish(event) {
+    // Send awaits backpressure if the saga is buried (rare — channel
+    // capacity is 32, summary refreshes are at most one per chat turn).
+    // SendError only fires if the saga has been dropped, which would
+    // mean app shutdown is in progress; treat that as a non-error.
+    if let Err(e) = container.conversation_command_tx().send(event).await {
         warn!(
             conversation_id = conversation_id,
             error = %e,
-            "Failed to publish conversation summary refresh event"
+            "Conversation summary saga unavailable; refresh skipped (likely shutdown)"
         );
         return;
     }
@@ -1078,7 +1082,7 @@ async fn trigger_background_summary_refresh_if_needed(
         conversation_id = conversation_id,
         projected_total_tokens = projected_total_tokens,
         threshold_tokens = trigger_threshold_tokens,
-        "Published conversation summary refresh event"
+        "Sent conversation summary refresh command"
     );
 }
 

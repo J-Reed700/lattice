@@ -1,10 +1,21 @@
-//! Generic in-process event bus.
+//! Generic in-process event bus for fan-out notifications.
 //!
 //! `EventBus<T>` is a thin typed wrapper around `tokio::sync::broadcast`.
 //! Per project policy, event types stay narrowly scoped to a single
 //! bounded context — instantiate one bus per domain
-//! (`EventBus<ConversationEvent>`, `EventBus<ModelDownloadEvent>`, …)
-//! rather than a global "all events" enum.
+//! (`EventBus<ModelDownloadEvent>`, …) rather than a global
+//! "all events" enum.
+//!
+//! Use this when:
+//! - There are MULTIPLE subscribers (broadcast / fan-out semantics).
+//! - Messages are observability/notifications where dropping under
+//!   load is acceptable (broadcast is lossy on slow consumer).
+//!
+//! For 1-to-1 *commands* where lossless backpressure matters (a slow
+//! consumer must not silently lose work), use
+//! `infrastructure::command_channel::CommandSender/CommandReceiver`
+//! instead — that's a backpressured mpsc with the same tracing-context
+//! envelope pattern.
 //!
 //! # Tracing context propagation
 //!

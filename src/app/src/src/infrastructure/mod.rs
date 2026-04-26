@@ -27,6 +27,7 @@
 
 pub mod adapters;
 pub mod audit;
+pub mod command_channel;
 pub mod crash;
 pub mod event_bus;
 pub mod events;

@@ -1,58 +1,64 @@
 use crate::features::conversation::summarizer::ConversationSummarizer;
-use crate::infrastructure::event_bus::EventBus;
+use crate::infrastructure::command_channel::CommandReceiver;
 use crate::infrastructure::events::{ConversationEvent, SummaryRefreshRequestedEvent};
 use crate::infrastructure::persistence::repositories::summary_repository::SummaryRepository;
 use crate::shared::error::Result;
 use std::sync::Arc;
-use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn, Instrument};
+use tracing::{error, info, Instrument};
 
-/// Background worker that processes conversation summary events.
+/// Background worker that processes conversation summary commands.
+///
+/// Migrated from broadcast `EventBus` to mpsc `CommandChannel`:
+/// SummaryRefreshRequested is a *command* (do this work), not a
+/// notification — losing one because a slow saga lagged would
+/// silently break the user's summary. mpsc gives backpressure
+/// instead of dropping. There is exactly one publisher (chat.rs)
+/// and one consumer (this saga), so fan-out is unnecessary.
 pub struct ConversationSummarySaga {
-    event_bus: Arc<EventBus<ConversationEvent>>,
+    command_rx: Arc<CommandReceiver<ConversationEvent>>,
     summary_repo: Arc<SummaryRepository>,
 }
 
 impl ConversationSummarySaga {
     pub fn new(
-        event_bus: Arc<EventBus<ConversationEvent>>,
+        command_rx: Arc<CommandReceiver<ConversationEvent>>,
         summary_repo: Arc<SummaryRepository>,
     ) -> Self {
         Self {
-            event_bus,
+            command_rx,
             summary_repo,
         }
     }
 
-    /// Run the saga until either the event bus closes (clean shutdown
-    /// of the producer) or `cancel` fires (app-wide shutdown signal).
+    /// Run the saga until either the command channel closes (sender
+    /// dropped — clean shutdown) or `cancel` fires (app-wide shutdown
+    /// signal).
     ///
     /// The cancellation token races `recv()` so a saga blocked on a
-    /// quiet bus can still wake up promptly when the app is closing.
-    /// Once cancelled, the saga drops its receiver and returns; the
+    /// quiet channel can still wake up promptly when the app is
+    /// closing. Once cancelled or closed, the saga returns; the
     /// supervisor (if any) will not restart it.
     pub async fn start(&self, cancel: CancellationToken) {
-        let mut receiver = self.event_bus.subscribe();
         loop {
             tokio::select! {
                 // Bias toward cancellation so a fired token wins over
-                // a simultaneously-ready event.
+                // a simultaneously-ready command.
                 biased;
 
                 _ = cancel.cancelled() => {
-                    info!("ConversationSummarySaga cancelled; subscriber exiting");
+                    info!("ConversationSummarySaga cancelled; consumer exiting");
                     return;
                 }
 
-                recv = receiver.recv() => match recv {
-                    Ok(envelope) => {
-                        // Instrument the handler under the publish-time
+                recv = self.command_rx.recv() => match recv {
+                    Some(envelope) => {
+                        // Instrument the handler under the send-time
                         // span so any #[tracing::instrument] inside
                         // handle_event inherits this trace context.
                         // Net effect: a single user click produces one
-                        // contiguous trace across chat.rs → publish →
-                        // saga handler → DB write.
+                        // contiguous trace across chat.rs → command
+                        // send → saga handler → DB write.
                         let span = envelope.span.clone();
                         let payload = envelope.payload;
                         let result = async {
@@ -64,17 +70,11 @@ impl ConversationSummarySaga {
                             error!("ConversationSummarySaga error: {}", e);
                         }
                     }
-                    // Slow consumer dropped events. Channel still live.
-                    Err(RecvError::Lagged(n)) => {
-                        warn!(
-                            dropped = n,
-                            "ConversationSummarySaga lagged behind producer; events dropped"
-                        );
-                    }
-                    // Producer side closed. MUST break or we spin a
-                    // CPU core at 100% — recv() returns immediately.
-                    Err(RecvError::Closed) => {
-                        info!("ConversationSummarySaga event bus closed; subscriber exiting");
+                    // Sender dropped — clean shutdown. mpsc has no
+                    // Lagged variant (backpressured, lossless), so
+                    // this is the only error case.
+                    None => {
+                        info!("ConversationSummarySaga command channel closed; consumer exiting");
                         return;
                     }
                 },

@@ -163,6 +163,9 @@ use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 use crate::features::updates::adapter::UpdateCheckerAdapter;
 
 // Service Implementations
+use crate::infrastructure::command_channel::{
+    self, CommandReceiver, CommandSender,
+};
 use crate::infrastructure::event_bus::EventBus;
 use crate::infrastructure::events::ConversationEvent;
 use crate::infrastructure::indexing::IndexingService;
@@ -248,8 +251,16 @@ pub struct Container {
     /// Router LLM cache (optional smaller routing model)
     router_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
 
-    /// Conversation-scoped event bus for background workflows.
-    conversation_event_bus: Arc<EventBus<ConversationEvent>>,
+    /// Producer half of the conversation command channel. Cloneable;
+    /// chat.rs sends `SummaryRefreshRequested` here. Backpressured
+    /// mpsc rather than broadcast because this is a 1-to-1 command
+    /// channel — losing a refresh because a slow saga lagged would
+    /// silently break the user's summary.
+    conversation_command_tx: CommandSender<ConversationEvent>,
+    /// Consumer half of the conversation command channel. Held by the
+    /// container so we can hand it to the saga at startup; saga uses
+    /// `recv().await` in its event loop.
+    conversation_command_rx: Arc<CommandReceiver<ConversationEvent>>,
 
     /// Cooldown timestamp for embedding load failures.
     /// When a `ModelLoadFailed` error occurs, we record the time so that
@@ -340,7 +351,12 @@ impl Container {
         let llm_cache = Arc::new(RwLock::new(None));
         let router_llm_cache = Arc::new(RwLock::new(None));
         let inference_engine_cache = Arc::new(RwLock::new(None));
-        let conversation_event_bus = Arc::new(EventBus::<ConversationEvent>::new());
+        // Capacity 32: well above the natural per-second rate of chat
+        // turns. Provides slack if the saga briefly lags during summary
+        // generation; backpressure kicks in only if the user blasts
+        // dozens of refreshes faster than the saga can drain.
+        let (conversation_command_tx, conversation_command_rx) =
+            command_channel::channel::<ConversationEvent>(32);
 
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
@@ -468,7 +484,8 @@ impl Container {
             function_registry,
             function_executor,
             router_llm_cache,
-            conversation_event_bus,
+            conversation_command_tx,
+            conversation_command_rx,
             embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
         })
     }
@@ -1064,8 +1081,15 @@ impl Container {
         &self.function_executor
     }
 
-    pub fn conversation_event_bus(&self) -> Arc<EventBus<ConversationEvent>> {
-        Arc::clone(&self.conversation_event_bus)
+    /// Sender half of the conversation command channel. Clone is
+    /// cheap (mpsc Sender is internally an Arc).
+    pub fn conversation_command_tx(&self) -> CommandSender<ConversationEvent> {
+        self.conversation_command_tx.clone()
+    }
+
+    /// Receiver half — handed to ConversationSummarySaga at startup.
+    pub fn conversation_command_rx(&self) -> Arc<CommandReceiver<ConversationEvent>> {
+        Arc::clone(&self.conversation_command_rx)
     }
 
     /// Get file access configuration (for secure path validation)
