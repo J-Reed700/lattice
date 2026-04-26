@@ -5,6 +5,7 @@ use crate::infrastructure::persistence::repositories::summary_repository::Summar
 use crate::shared::error::Result;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 /// Background worker that processes conversation summary events.
@@ -24,29 +25,46 @@ impl ConversationSummarySaga {
         }
     }
 
-    pub async fn start(&self) {
+    /// Run the saga until either the event bus closes (clean shutdown
+    /// of the producer) or `cancel` fires (app-wide shutdown signal).
+    ///
+    /// The cancellation token races `recv()` so a saga blocked on a
+    /// quiet bus can still wake up promptly when the app is closing.
+    /// Once cancelled, the saga drops its receiver and returns; the
+    /// supervisor (if any) will not restart it.
+    pub async fn start(&self, cancel: CancellationToken) {
         let mut receiver = self.event_bus.subscribe();
         loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    if let Err(e) = self.handle_event(event).await {
-                        error!("ConversationSummarySaga error: {}", e);
+            tokio::select! {
+                // Bias toward cancellation so a fired token wins over
+                // a simultaneously-ready event.
+                biased;
+
+                _ = cancel.cancelled() => {
+                    info!("ConversationSummarySaga cancelled; subscriber exiting");
+                    return;
+                }
+
+                recv = receiver.recv() => match recv {
+                    Ok(event) => {
+                        if let Err(e) = self.handle_event(event).await {
+                            error!("ConversationSummarySaga error: {}", e);
+                        }
                     }
-                }
-                // Slow consumer dropped events. We've lost N events but
-                // the channel is still live — log and keep going.
-                Err(RecvError::Lagged(n)) => {
-                    warn!(
-                        dropped = n,
-                        "ConversationSummarySaga lagged behind producer; events dropped"
-                    );
-                }
-                // Producer side closed (app shutdown). MUST break or we
-                // spin a CPU core at 100% — recv() returns immediately.
-                Err(RecvError::Closed) => {
-                    info!("ConversationSummarySaga event bus closed; subscriber exiting");
-                    break;
-                }
+                    // Slow consumer dropped events. Channel still live.
+                    Err(RecvError::Lagged(n)) => {
+                        warn!(
+                            dropped = n,
+                            "ConversationSummarySaga lagged behind producer; events dropped"
+                        );
+                    }
+                    // Producer side closed. MUST break or we spin a
+                    // CPU core at 100% — recv() returns immediately.
+                    Err(RecvError::Closed) => {
+                        info!("ConversationSummarySaga event bus closed; subscriber exiting");
+                        return;
+                    }
+                },
             }
         }
     }

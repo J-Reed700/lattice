@@ -10,6 +10,7 @@ use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -52,35 +53,45 @@ impl DownloadSaga {
         }
     }
 
-    pub async fn start(&self) {
+    /// Run the saga until either the event bus closes or `cancel`
+    /// fires. See ConversationSummarySaga::start for the rationale on
+    /// the select! biased shape.
+    pub async fn start(&self, cancel: CancellationToken) {
         let mut receiver = self.event_bus.subscribe();
 
         loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    if let Err(e) = self.handle_event(event).await {
-                        error!("Saga error handling event: {}", e);
+            tokio::select! {
+                biased;
+
+                _ = cancel.cancelled() => {
+                    info!("DownloadSaga cancelled; subscriber exiting");
+                    return;
+                }
+
+                recv = receiver.recv() => match recv {
+                    Ok(event) => {
+                        if let Err(e) = self.handle_event(event).await {
+                            error!("Saga error handling event: {}", e);
+                        }
                     }
-                }
-                // Slow consumer dropped events. We've lost N events but
-                // the channel is still live — log and keep going. THIS
-                // IS DANGEROUS for download state events: a dropped
-                // FileDownloadCompleted leaves the model "Downloading"
-                // forever in the DB. Tracked as a P1 follow-up: split
-                // high-volume Progress events off this bus so state
-                // events never get evicted.
-                Err(RecvError::Lagged(n)) => {
-                    warn!(
-                        dropped = n,
-                        "DownloadSaga lagged behind producer; events dropped — model state may be inconsistent"
-                    );
-                }
-                // Producer side closed (app shutdown). MUST break or we
-                // spin a CPU core at 100% — recv() returns immediately.
-                Err(RecvError::Closed) => {
-                    info!("DownloadSaga event bus closed; subscriber exiting");
-                    break;
-                }
+                    // Slow consumer dropped events. Channel still live.
+                    // Eviction risk for state events is now mitigated
+                    // (see P1 fix that filters Progress out at publish
+                    // time) but we still log loudly because in-flight
+                    // download-complete is critical state.
+                    Err(RecvError::Lagged(n)) => {
+                        warn!(
+                            dropped = n,
+                            "DownloadSaga lagged behind producer; events dropped — model state may be inconsistent"
+                        );
+                    }
+                    // Producer side closed. MUST break or spin a CPU
+                    // core at 100%.
+                    Err(RecvError::Closed) => {
+                        info!("DownloadSaga event bus closed; subscriber exiting");
+                        return;
+                    }
+                },
             }
         }
     }

@@ -103,6 +103,10 @@ rust-stemmers = "1.2"
 async-trait = "0.1"
 ollama-rs = "0.2"
 tokio-stream = "0.1"
+# CancellationToken for graceful shutdown signaling. Sagas race their
+# `recv()` against the token so app-wide shutdown can preempt a pending
+# event-bus poll instead of waiting for RecvError::Closed.
+tokio-util = "0.7"
 # fastembed removed: see ORT note above.
 # Candle — pure-Rust ML framework for embedding model inference.
 # Metal acceleration is enabled on macOS via the `metal` feature on `candle-core`.

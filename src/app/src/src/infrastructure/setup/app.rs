@@ -15,7 +15,8 @@ use crate::features::search::mocks::MockSearchService;
 use crate::infrastructure::services::traits::{
     FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
 };
-use crate::shared::utils::supervise;
+use crate::shared::utils::supervised_task::supervise_cancellable;
+use tokio_util::sync::CancellationToken;
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
@@ -506,6 +507,14 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         }
     });
 
+    // App-wide shutdown signal. Cloned into every supervised task so
+    // app shutdown (Tauri window close, OS signal, test teardown) can
+    // preempt long-running event loops that would otherwise wait
+    // passively for the bus to close. Stored in Tauri state so command
+    // handlers / shutdown hooks can fire it.
+    let shutdown_token = CancellationToken::new();
+    app_handle.manage(shutdown_token.clone());
+
     tracing::info!("Initializing conversation summary saga...");
     let summary_repo = Arc::new(SummaryRepository::new(container.db_pool().clone()));
     let conversation_summary_saga = Arc::new(ConversationSummarySaga::new(
@@ -513,13 +522,19 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         summary_repo,
     ));
     let summary_saga_listener = Arc::clone(&conversation_summary_saga);
-    supervise("conversation_summary_saga", move || {
-        let saga = Arc::clone(&summary_saga_listener);
-        async move {
-            tracing::info!("ConversationSummarySaga event listener started");
-            saga.start().await;
-        }
-    });
+    let summary_saga_cancel = shutdown_token.clone();
+    supervise_cancellable(
+        "conversation_summary_saga",
+        shutdown_token.clone(),
+        move || {
+            let saga = Arc::clone(&summary_saga_listener);
+            let cancel = summary_saga_cancel.clone();
+            async move {
+                tracing::info!("ConversationSummarySaga event listener started");
+                saga.start(cancel).await;
+            }
+        },
+    );
     tracing::info!("Conversation summary saga initialized");
 
     // === Wire DownloadSaga into application initialization ===
@@ -562,13 +577,19 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     tracing::info!("DownloadSaga initialized");
 
     let saga_for_listener = Arc::clone(&download_saga);
-    supervise("download_saga", move || {
-        let saga = Arc::clone(&saga_for_listener);
-        async move {
-            tracing::info!("DownloadSaga event listener started");
-            saga.start().await;
-        }
-    });
+    let download_saga_cancel = shutdown_token.clone();
+    supervise_cancellable(
+        "download_saga",
+        shutdown_token.clone(),
+        move || {
+            let saga = Arc::clone(&saga_for_listener);
+            let cancel = download_saga_cancel.clone();
+            async move {
+                tracing::info!("DownloadSaga event listener started");
+                saga.start(cancel).await;
+            }
+        },
+    );
 
     tracing::info!("Starting download event bridge...");
     let event_rx_arc = download_manager.subscribe_to_events();

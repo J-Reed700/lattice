@@ -11,7 +11,11 @@
 //!   the task is restarted after exponential backoff (capped).
 //! - Clean exit (the future returns) is logged and the task NOT
 //!   restarted — this is normal shutdown.
-//! - The supervisor itself runs forever as a tokio task.
+//! - A `CancellationToken` (when provided) lets app-wide shutdown
+//!   preempt a backoff sleep AND skip restart on a panic that happens
+//!   during shutdown.
+//! - The supervisor itself runs forever as a tokio task (until
+//!   cancelled or the wrapped future exits cleanly).
 //!
 //! Backoff: 1s → 2s → 4s → 8s → 16s → 30s (cap), reset to 1s after a
 //! restart that survives 60s without panicking.
@@ -21,24 +25,49 @@ use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const RESET_HEALTHY_DURATION: Duration = Duration::from_secs(60);
 
-/// Spawn a supervised tokio task that restarts on panic.
+/// Spawn a supervised tokio task that restarts on panic, with no
+/// shutdown cancellation hook. Equivalent to
+/// `supervise_cancellable(name, CancellationToken::new(), make_future)`
+/// passing a token that's never cancelled.
+///
+/// Prefer `supervise_cancellable` for code paths where graceful
+/// shutdown matters (sagas, long-running workers).
+pub fn supervise<F, Fut>(name: &'static str, make_future: F) -> JoinHandle<()>
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    supervise_cancellable(name, CancellationToken::new(), make_future)
+}
+
+/// Spawn a supervised tokio task that restarts on panic and exits
+/// promptly when `cancel` is triggered.
 ///
 /// `name` is used for log lines; pick something searchable.
+///
+/// `cancel` is the app-wide (or scoped) shutdown token. When fired:
+/// - if the wrapped future is currently running, it continues to run
+///   (callers should propagate the same token into the future so it
+///   can react), but the supervisor will not restart it on a
+///   subsequent panic.
+/// - if the supervisor is sleeping in backoff between restarts, the
+///   sleep is cancelled and the supervisor exits immediately.
 ///
 /// `make_future` is a closure that produces the task's future. It is
 /// called once per restart, so the closure must be idempotent and
 /// must capture all the state the task needs.
-///
-/// Returns a `JoinHandle` for the supervisor task itself. Dropping the
-/// handle does NOT stop the task; that's a feature for fire-and-forget
-/// background workers. Use `JoinHandle::abort()` to stop it.
-pub fn supervise<F, Fut>(name: &'static str, mut make_future: F) -> JoinHandle<()>
+pub fn supervise_cancellable<F, Fut>(
+    name: &'static str,
+    cancel: CancellationToken,
+    mut make_future: F,
+) -> JoinHandle<()>
 where
     F: FnMut() -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -46,6 +75,11 @@ where
     tokio::spawn(async move {
         let mut backoff = INITIAL_BACKOFF;
         loop {
+            if cancel.is_cancelled() {
+                info!(task = name, "Supervisor exiting on cancellation");
+                return;
+            }
+
             let started_at = Instant::now();
 
             // AssertUnwindSafe: the future may capture mutable state but
@@ -58,7 +92,8 @@ where
             match result {
                 Ok(()) => {
                     // Normal completion — saga shut down cleanly, e.g.
-                    // because the event bus closed. Don't restart.
+                    // because the event bus closed or the cancel token
+                    // fired and the saga exited gracefully. Don't restart.
                     info!(
                         task = name,
                         ran_for_secs = ran_for.as_secs(),
@@ -72,6 +107,17 @@ where
                         .map(|s| (*s).to_string())
                         .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                         .unwrap_or_else(|| "<non-string panic payload>".to_string());
+
+                    // If we're shutting down anyway, don't bother
+                    // restarting a panicked task.
+                    if cancel.is_cancelled() {
+                        info!(
+                            task = name,
+                            panic = %panic_msg,
+                            "Supervised task panicked during shutdown; not restarting"
+                        );
+                        return;
+                    }
 
                     // Reset backoff if the task ran long enough to count
                     // as 'healthy' before the panic.
@@ -87,7 +133,15 @@ where
                         "Supervised task panicked; restarting after backoff"
                     );
 
-                    tokio::time::sleep(backoff).await;
+                    // Sleep with cancellation so app shutdown preempts
+                    // a long backoff window.
+                    tokio::select! {
+                        _ = tokio::time::sleep(backoff) => {}
+                        _ = cancel.cancelled() => {
+                            info!(task = name, "Supervisor cancelled during backoff");
+                            return;
+                        }
+                    }
 
                     // Exponential backoff up to MAX_BACKOFF.
                     backoff = (backoff * 2).min(MAX_BACKOFF);
@@ -152,5 +206,45 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
 
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn cancel_during_backoff_exits_supervisor_promptly() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_clone = Arc::clone(&attempts);
+        let cancel = CancellationToken::new();
+
+        let handle = supervise_cancellable(
+            "test_cancel_during_backoff",
+            cancel.clone(),
+            move || {
+                attempts_clone.fetch_add(1, Ordering::SeqCst);
+                async {
+                    panic!("force backoff");
+                }
+            },
+        );
+
+        // Let the first attempt panic and the supervisor enter the
+        // 1s backoff sleep.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        // Fire the token while the supervisor is sleeping; it should
+        // exit before the 1s backoff completes.
+        cancel.cancel();
+
+        let started = std::time::Instant::now();
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        let elapsed = started.elapsed();
+
+        // Should exit well before the 1s backoff would have finished.
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "supervisor took {:?} to react to cancellation",
+            elapsed
+        );
+        // No restart attempted after cancel.
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 }
