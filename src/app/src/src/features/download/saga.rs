@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, Instrument};
 use uuid::Uuid;
 
 pub struct DownloadSaga {
@@ -69,8 +69,18 @@ impl DownloadSaga {
                 }
 
                 recv = receiver.recv() => match recv {
-                    Ok(event) => {
-                        if let Err(e) = self.handle_event(event).await {
+                    Ok(envelope) => {
+                        // Instrument under the publish-time span so the
+                        // saga's DB writes appear in the same trace as
+                        // the originating download manager event.
+                        let span = envelope.span.clone();
+                        let payload = envelope.payload;
+                        let result = async {
+                            self.handle_event(payload).await
+                        }
+                        .instrument(span)
+                        .await;
+                        if let Err(e) = result {
                             error!("Saga error handling event: {}", e);
                         }
                     }

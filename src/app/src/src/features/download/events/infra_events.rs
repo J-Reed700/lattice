@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, RwLock};
+use tracing::Instrument;
 
 /// Download event with state snapshot payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,8 +181,18 @@ impl DownloadEventBridge {
                     }
                 } => {
                     match domain_recv {
-                        Ok(domain_event) => {
-                            self.handle_domain_event(domain_event).await;
+                        Ok(envelope) => {
+                            // Instrument under the publish-time span so
+                            // any tracing inside handle_domain_event
+                            // (and the Tauri emit it triggers) joins
+                            // the originating trace.
+                            let span = envelope.span.clone();
+                            let payload = envelope.payload;
+                            async {
+                                self.handle_domain_event(payload).await;
+                            }
+                            .instrument(span)
+                            .await;
                         }
                         // Slow consumer dropped events. Critical events
                         // like ModelDownloadCompleted may be among them —

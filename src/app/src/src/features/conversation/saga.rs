@@ -6,7 +6,7 @@ use crate::shared::error::Result;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, Instrument};
 
 /// Background worker that processes conversation summary events.
 pub struct ConversationSummarySaga {
@@ -46,8 +46,21 @@ impl ConversationSummarySaga {
                 }
 
                 recv = receiver.recv() => match recv {
-                    Ok(event) => {
-                        if let Err(e) = self.handle_event(event).await {
+                    Ok(envelope) => {
+                        // Instrument the handler under the publish-time
+                        // span so any #[tracing::instrument] inside
+                        // handle_event inherits this trace context.
+                        // Net effect: a single user click produces one
+                        // contiguous trace across chat.rs → publish →
+                        // saga handler → DB write.
+                        let span = envelope.span.clone();
+                        let payload = envelope.payload;
+                        let result = async {
+                            self.handle_event(payload).await
+                        }
+                        .instrument(span)
+                        .await;
+                        if let Err(e) = result {
                             error!("ConversationSummarySaga error: {}", e);
                         }
                     }
