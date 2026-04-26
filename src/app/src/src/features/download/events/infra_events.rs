@@ -277,8 +277,8 @@ impl DownloadEventBridge {
         manager_event: &crate::features::download::manager::DownloadEvent,
     ) -> Result<(), String> {
         use crate::domain::events::model_download_events::{
-            FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadProgressEvent,
-            FileDownloadStartedEvent, ModelDownloadEvent,
+            FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadStartedEvent,
+            ModelDownloadEvent,
         };
         use crate::features::download::manager::DownloadEvent as ME;
 
@@ -286,13 +286,25 @@ impl DownloadEventBridge {
             return Ok(());
         };
 
+        // STATE-ONLY POLICY: do not republish high-volume Progress
+        // events to the domain bus. The bus is reserved for low-rate
+        // state transitions (Started / Completed / Failed) so a slow
+        // subscriber cannot evict a critical state event from the
+        // 1000-cap broadcast channel.
+        //
+        // Progress is still surfaced to the UI — `handle_infrastructure_event`
+        // converts manager events directly into snapshots and emits
+        // them on the `download:progress` Tauri channel without going
+        // through the bus.
+        //
+        // Paused/Resumed are also bus-irrelevant; the saga doesn't act
+        // on them and the UI is driven by snapshots.
         let session_id = match manager_event {
             ME::Started { id }
-            | ME::Progress { id, .. }
             | ME::Completed { id }
             | ME::Failed { id, .. }
             | ME::Cancelled { id } => id,
-            ME::Paused { .. } | ME::Resumed { .. } => return Ok(()),
+            ME::Progress { .. } | ME::Paused { .. } | ME::Resumed { .. } => return Ok(()),
         };
 
         let Some(session) = self
@@ -327,6 +339,8 @@ impl DownloadEventBridge {
             .total_bytes()
             .unwrap_or_else(|| session.progress().bytes_downloaded());
 
+        // Progress / Paused / Resumed already returned early above —
+        // they are not bus-eligible.
         let event = match manager_event {
             ME::Started { .. } => {
                 ModelDownloadEvent::FileDownloadStarted(FileDownloadStartedEvent {
@@ -337,16 +351,6 @@ impl DownloadEventBridge {
                     timestamp: chrono::Utc::now(),
                 })
             }
-            ME::Progress {
-                bytes_downloaded, ..
-            } => ModelDownloadEvent::FileDownloadProgress(FileDownloadProgressEvent {
-                model_id,
-                file_id: session_id.clone(),
-                file_name,
-                bytes_downloaded: *bytes_downloaded,
-                total_bytes,
-                timestamp: chrono::Utc::now(),
-            }),
             ME::Completed { .. } => {
                 ModelDownloadEvent::FileDownloadCompleted(FileDownloadCompletedEvent {
                     model_id,
@@ -374,7 +378,12 @@ impl DownloadEventBridge {
                     timestamp: chrono::Utc::now(),
                 })
             }
-            ME::Paused { .. } | ME::Resumed { .. } => return Ok(()),
+            ME::Progress { .. } | ME::Paused { .. } | ME::Resumed { .. } => {
+                // Filtered out by the session_id match above. This arm
+                // exists only to satisfy match exhaustiveness; the
+                // early `return Ok(())` ensures we never reach here.
+                return Ok(());
+            }
         };
 
         if let Err(e) = event_bus.publish(event) {

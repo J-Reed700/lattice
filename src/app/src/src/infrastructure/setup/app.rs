@@ -15,6 +15,7 @@ use crate::features::search::mocks::MockSearchService;
 use crate::infrastructure::services::traits::{
     FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
 };
+use crate::shared::utils::supervise;
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
@@ -512,9 +513,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         summary_repo,
     ));
     let summary_saga_listener = Arc::clone(&conversation_summary_saga);
-    tokio::spawn(async move {
-        tracing::info!("ConversationSummarySaga event listener started");
-        summary_saga_listener.start().await;
+    supervise("conversation_summary_saga", move || {
+        let saga = Arc::clone(&summary_saga_listener);
+        async move {
+            tracing::info!("ConversationSummarySaga event listener started");
+            saga.start().await;
+        }
     });
     tracing::info!("Conversation summary saga initialized");
 
@@ -558,9 +562,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     tracing::info!("DownloadSaga initialized");
 
     let saga_for_listener = Arc::clone(&download_saga);
-    tokio::spawn(async move {
-        tracing::info!("DownloadSaga event listener started");
-        saga_for_listener.start().await;
+    supervise("download_saga", move || {
+        let saga = Arc::clone(&saga_for_listener);
+        async move {
+            tracing::info!("DownloadSaga event listener started");
+            saga.start().await;
+        }
     });
 
     tracing::info!("Starting download event bridge...");
@@ -573,9 +580,18 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         Some(downloaded_model_repository),
         Some(event_bus),
     );
-    tokio::spawn(async move {
+    // NOT supervised. The bridge's `start(self)` consumes self and
+    // takes the manager-event receiver via `.take()` on first call —
+    // a restart would find the receiver gone and exit immediately.
+    // The recv loops inside the bridge now handle Lagged/Closed
+    // correctly (see P0 fix in this file's git log), so panics during
+    // steady-state operation are unlikely. Refactoring the bridge to
+    // be restartable is a separate task.
+    let bridge_handle = tokio::spawn(async move {
         event_bridge.start().await;
     });
+    // Detach explicitly to make the fire-and-forget intent loud.
+    drop(bridge_handle);
     tracing::info!("Download event bridge started with EventBus integration");
 
     let download_state =
