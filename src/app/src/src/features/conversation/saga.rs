@@ -4,6 +4,7 @@ use crate::infrastructure::events::{ConversationEvent, SummaryRefreshRequestedEv
 use crate::infrastructure::persistence::repositories::summary_repository::SummaryRepository;
 use crate::shared::error::Result;
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 use tracing::{error, info, warn};
 
 /// Background worker that processes conversation summary events.
@@ -32,8 +33,19 @@ impl ConversationSummarySaga {
                         error!("ConversationSummarySaga error: {}", e);
                     }
                 }
-                Err(e) => {
-                    warn!("ConversationSummarySaga receiver error: {}", e);
+                // Slow consumer dropped events. We've lost N events but
+                // the channel is still live — log and keep going.
+                Err(RecvError::Lagged(n)) => {
+                    warn!(
+                        dropped = n,
+                        "ConversationSummarySaga lagged behind producer; events dropped"
+                    );
+                }
+                // Producer side closed (app shutdown). MUST break or we
+                // spin a CPU core at 100% — recv() returns immediately.
+                Err(RecvError::Closed) => {
+                    info!("ConversationSummarySaga event bus closed; subscriber exiting");
+                    break;
                 }
             }
         }

@@ -124,30 +124,89 @@ impl DownloadEventBridge {
             }
         };
 
-        // Subscribe to domain events from EventBus if available
+        // Subscribe to domain events from EventBus if available.
         let mut domain_subscriber = self.event_bus.as_ref().map(|bus| bus.subscribe());
 
         // Run two concurrent event loops:
-        // STREAM A: Infrastructure events from DownloadManager
-        // STREAM B: Domain events from EventBus (ModelDownloadCompleted)
+        // STREAM A: Infrastructure events from DownloadManager (mpsc).
+        // STREAM B: Domain events from EventBus (broadcast).
+        //
+        // Why this is structured carefully:
+        //
+        // The previous version used `Some(Ok(domain_event)) = async { ... }`
+        // as the select! pattern. That had two latent bugs:
+        //
+        //  1. If `domain_subscriber` was None (no event_bus configured),
+        //     the async block resolved to None, the pattern failed, the
+        //     `else` arm fired and silently killed the entire bridge —
+        //     including STREAM A.
+        //  2. If recv() returned `Err(RecvError::Lagged)` (slow consumer
+        //     dropped events), the pattern Some(Ok(_)) failed, again
+        //     hitting the else arm and killing the bridge forever. UI
+        //     would stop receiving download updates after the first
+        //     burst that overflowed the broadcast channel.
+        //
+        // Fix: STREAM B's async block always yields a `Result<T, RecvError>`
+        // (or pends forever when there's no subscriber). The arm body
+        // matches the Result explicitly. The select! pattern itself
+        // cannot fail-and-break-the-bridge.
         loop {
             tokio::select! {
-                // STREAM A: Infrastructure events (file-level progress, started, etc.)
-                Some(manager_event) = event_rx.recv() => {
-                    self.handle_infrastructure_event(manager_event).await;
+                // STREAM A: file-level mpsc events from DownloadManager.
+                maybe_event = event_rx.recv() => {
+                    match maybe_event {
+                        Some(manager_event) => {
+                            self.handle_infrastructure_event(manager_event).await;
+                        }
+                        None => {
+                            // mpsc Sender side has dropped — the manager
+                            // is gone, nothing more will arrive on STREAM A.
+                            // Domain stream may still be live, but in
+                            // practice the app shuts down at this point.
+                            tracing::info!(
+                                "Download manager event stream closed; bridge exiting"
+                            );
+                            break;
+                        }
+                    }
                 }
-                // STREAM B: Domain events from EventBus (aggregated model-level events)
-                Some(Ok(domain_event)) = async {
+
+                // STREAM B: broadcast domain events. The async block always
+                // resolves to a Result (or blocks forever when no subscriber).
+                domain_recv = async {
                     match &mut domain_subscriber {
-                        Some(rx) => Some(rx.recv().await),
-                        None => None,
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
                     }
                 } => {
-                    self.handle_domain_event(domain_event).await;
-                }
-                else => {
-                    // Both streams closed
-                    break;
+                    match domain_recv {
+                        Ok(domain_event) => {
+                            self.handle_domain_event(domain_event).await;
+                        }
+                        // Slow consumer dropped events. Critical events
+                        // like ModelDownloadCompleted may be among them —
+                        // log loudly. Tracked as a P1 follow-up: split
+                        // high-volume Progress events off this bus so
+                        // critical state events never get evicted.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(
+                                dropped = n,
+                                "DownloadEventBridge lagged behind producer on domain bus; \
+                                 events dropped — frontend may miss state transitions"
+                            );
+                        }
+                        // Domain bus closed — STREAM B is gone for good
+                        // but STREAM A may still have work. Stop polling
+                        // STREAM B by clearing the subscriber; the async
+                        // block will then `pending()` forever instead.
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::info!(
+                                "Domain event bus closed; bridge will continue forwarding \
+                                 manager events only"
+                            );
+                            domain_subscriber = None;
+                        }
+                    }
                 }
             }
         }

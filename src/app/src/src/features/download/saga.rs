@@ -9,6 +9,7 @@ use crate::persistence::repositories::model_file::SqliteModelFileRepository;
 use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -61,8 +62,24 @@ impl DownloadSaga {
                         error!("Saga error handling event: {}", e);
                     }
                 }
-                Err(e) => {
-                    warn!("Saga event receiver error: {}", e);
+                // Slow consumer dropped events. We've lost N events but
+                // the channel is still live — log and keep going. THIS
+                // IS DANGEROUS for download state events: a dropped
+                // FileDownloadCompleted leaves the model "Downloading"
+                // forever in the DB. Tracked as a P1 follow-up: split
+                // high-volume Progress events off this bus so state
+                // events never get evicted.
+                Err(RecvError::Lagged(n)) => {
+                    warn!(
+                        dropped = n,
+                        "DownloadSaga lagged behind producer; events dropped — model state may be inconsistent"
+                    );
+                }
+                // Producer side closed (app shutdown). MUST break or we
+                // spin a CPU core at 100% — recv() returns immediately.
+                Err(RecvError::Closed) => {
+                    info!("DownloadSaga event bus closed; subscriber exiting");
+                    break;
                 }
             }
         }
