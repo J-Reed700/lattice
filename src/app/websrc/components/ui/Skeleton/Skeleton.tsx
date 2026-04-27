@@ -186,4 +186,3 @@ export function SkeletonTable({ rows = 5, columns = 4, className = '' }: Skeleto
   );
 }
 
-export default Skeleton;

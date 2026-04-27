@@ -196,5 +196,3 @@ export function createLogger(component: string): ScopedLogger {
   return logger.scope(component);
 }
 
-// Default export
-export default logger;

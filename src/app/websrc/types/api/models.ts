@@ -4,7 +4,7 @@
  * Type definitions for model management, downloads, and catalog operations.
  */
 
-import type { CpuArchitecture, GpuType, GpuAcceleration } from '../modelCatalog';
+import type { CpuArchitecture, GpuType, GpuAcceleration } from '../modelCatalogPrimitives';
 
 export interface SystemCapabilities {
   /** Total system RAM in gigabytes */

@@ -816,5 +816,3 @@ const StatusIcon: React.FC<{ status: ItemStatus }> = ({ status }) => {
 
   return <Icon className={cn('w-5 h-5', variant.className)} />;
 };
-
-export default BatchUrlImport;

@@ -445,5 +445,3 @@ const JobStatusIcon: FC<{ status: BatchJobSummary['status'] }> = ({ status }) =>
     </div>
   );
 };
-
-export default ImportHistory;

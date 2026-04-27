@@ -419,5 +419,3 @@ export const Dashboard = (_props: DashboardProps) => {
     </main>
   );
 };
-
-export default Dashboard;

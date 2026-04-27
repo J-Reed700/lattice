@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 
-import type { SearchResult } from './index';
+import type { SearchResult } from './searchResult';
 
 /**
  * SourceWithMetadata - Rich source metadata for citations

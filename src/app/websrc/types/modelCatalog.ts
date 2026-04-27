@@ -6,24 +6,26 @@
  */
 
 // ============================================================================
-// Enumerations
+// Enumerations (re-exported from leaf file to avoid cycle with api/models.ts)
 // ============================================================================
 
-export type ModelCategory = 'LLM' | 'Embedding' | 'OCR';
+import type {
+  ModelCategory,
+  PerformanceTier,
+  CompatibilityLevel,
+  ModelSource,
+} from './modelCatalogPrimitives';
 
-export type PerformanceTier = 'Fast' | 'Balanced' | 'Accurate';
-
-export type GpuType = 'AppleSilicon' | 'Nvidia' | 'AMD' | 'Intel' | 'None';
-
-export type GpuAcceleration = 'Metal' | 'CUDA' | 'ROCm' | 'Vulkan' | 'None';
-
-export type CpuArchitecture = 'ARM64' | 'X86_64';
-
-export type CompatibilityLevel = 'Incompatible' | 'Poor' | 'Good' | 'Excellent';
-
-export type ModelSource = 'Curated' | 'External';
-
-export type ModelSortBy = 'recommended' | 'popularity' | 'likes' | 'size_asc' | 'size_desc' | 'name';
+export type {
+  ModelCategory,
+  PerformanceTier,
+  GpuType,
+  GpuAcceleration,
+  CpuArchitecture,
+  CompatibilityLevel,
+  ModelSource,
+  ModelSortBy,
+} from './modelCatalogPrimitives';
 
 // ============================================================================
 // Value Objects
@@ -32,11 +34,6 @@ export type ModelSortBy = 'recommended' | 'popularity' | 'likes' | 'size_asc' | 
 /**
  * System hardware capabilities detected from the user's machine.
  *
- * Used for compatibility scoring and model recommendations.
- * Re-exported from api/models.ts to ensure consistency.
- */
-export type { SystemCapabilities } from './api/models';
-
 /**
  * Complete metadata for an AI model.
  *

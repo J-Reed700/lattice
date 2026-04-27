@@ -4581,12 +4581,6 @@
           "markdownDescription": "Enables the set_active_utility_model command without any pre-configured scope."
         },
         {
-          "description": "Enables the sync_ollama_models command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:allow-sync-ollama-models",
-          "markdownDescription": "Enables the sync_ollama_models command without any pre-configured scope."
-        },
-        {
           "description": "Enables the validate_model_compatibility command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-validate-model-compatibility",
@@ -4771,12 +4765,6 @@
           "type": "string",
           "const": "model:deny-set-active-utility-model",
           "markdownDescription": "Denies the set_active_utility_model command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the sync_ollama_models command without any pre-configured scope.",
-          "type": "string",
-          "const": "model:deny-sync-ollama-models",
-          "markdownDescription": "Denies the sync_ollama_models command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_model_compatibility command without any pre-configured scope.",

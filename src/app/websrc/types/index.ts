@@ -1,30 +1,15 @@
 import type { ApiError } from './api/result';
-import type { SearchResultMetadata, SearchFilter } from './metadata';
+import type { SearchFilter } from './metadata';
 
 
 export type { SearchResultMetadata, SearchFilter, PerformanceStats, PerformanceReport } from './metadata';
+export type { SearchResult } from './searchResult';
 
 export interface SearchOptions {
   query: string;
   limit?: number;
   filter?: SearchFilter;
   searchMode?: 'semantic' | 'keyword' | 'hybrid';
-}
-
-export interface SearchResult {
-  id: string;
-  title: string;           // Direct field from Rust SearchResultDto
-  content: string;
-  highlights?: string[];
-  score: number;
-  path: string | null | undefined;           // Rust Option<String> serializes to null
-  documentId: string | null | undefined;
-  position: number | null | undefined;       // Rust Option<usize> serializes to null
-  vectorScore: number | null | undefined;
-  bm25Score: number | null | undefined;
-  vectorRank: number | null | undefined;
-  bm25Rank: number | null | undefined;
-  metadata: SearchResultMetadata | any;      // Allow both typed and untyped metadata
 }
 
 // Add RecentDocument type to match backend
