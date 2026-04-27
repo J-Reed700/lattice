@@ -6,12 +6,56 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::domain::model_type_classifier::ModelTypeClassifier;
 
 // Re-export ModelType from model_metadata for backward compatibility
 pub use crate::domain::model_metadata::ModelType;
+
+/// Backend that serves a model: a local file on disk vs. a remote Ollama server.
+///
+/// This is orthogonal to role flags (chat / utility / embedding) — a model
+/// can be `Local` and active for chat, or `Ollama` and active for utility, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelBackend {
+    Local,
+    Ollama,
+}
+
+impl ModelBackend {
+    /// Stable lowercase string used as the SQL `backend` column value.
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            ModelBackend::Local => "local",
+            ModelBackend::Ollama => "ollama",
+        }
+    }
+}
+
+impl fmt::Display for ModelBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_db_str())
+    }
+}
+
+impl FromStr for ModelBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "local" => Ok(ModelBackend::Local),
+            "ollama" => Ok(ModelBackend::Ollama),
+            other => Err(format!(
+                "Invalid model backend '{}': expected 'local' or 'ollama'",
+                other
+            )),
+        }
+    }
+}
 
 /// Domain entity for a downloaded model
 ///
@@ -77,6 +121,13 @@ pub struct DownloadedModel {
     /// Additional metadata about the model (provider, version, capabilities, etc.)
     /// Stored as JSON for flexibility
     metadata: Option<JsonValue>,
+
+    /// Backend that serves this model (local file vs. remote Ollama)
+    backend: ModelBackend,
+
+    /// Whether this model is currently active for the utility role
+    /// (HyDE expansion, router, intent classification)
+    is_active_for_utility: bool,
 }
 
 impl DownloadedModel {
@@ -116,6 +167,7 @@ impl DownloadedModel {
         file_size_bytes: i64,
         architecture: String,
         metadata: Option<JsonValue>,
+        backend: ModelBackend,
     ) -> Result<Self, String> {
         // Validate inputs
         if model_id.trim().is_empty() {
@@ -130,7 +182,10 @@ impl DownloadedModel {
             return Err("architecture cannot be empty".to_string());
         }
 
-        if file_size_bytes <= 0 {
+        // Ollama-served models are remote: there is no local file to size, so
+        // the synthetic registry row carries `total_size_bytes = 0`. The
+        // size>0 invariant only applies to locally-downloaded files.
+        if backend == ModelBackend::Local && file_size_bytes <= 0 {
             return Err("file_size_bytes must be greater than 0".to_string());
         }
 
@@ -163,6 +218,8 @@ impl DownloadedModel {
             is_active_for_chat: false,
             is_active_for_embedding: false,
             metadata,
+            backend,
+            is_active_for_utility: false,
         })
     }
 
@@ -185,6 +242,8 @@ impl DownloadedModel {
         is_active_for_chat: bool,
         is_active_for_embedding: bool,
         metadata: Option<JsonValue>,
+        backend: ModelBackend,
+        is_active_for_utility: bool,
     ) -> Self {
         Self {
             id,
@@ -200,6 +259,8 @@ impl DownloadedModel {
             is_active_for_chat,
             is_active_for_embedding,
             metadata,
+            backend,
+            is_active_for_utility,
         }
     }
 
@@ -243,6 +304,20 @@ impl DownloadedModel {
     /// - This just updates the field; trigger handles deactivating others
     pub fn set_active_for_embedding(&mut self, active: bool) {
         self.is_active_for_embedding = active;
+    }
+
+    /// Set whether this model is active for the utility role
+    ///
+    /// # Arguments
+    ///
+    /// * `active` - True to set as active utility model, false otherwise
+    ///
+    /// # Business Logic
+    ///
+    /// - Database trigger ensures only one model can be active for utility
+    /// - This just updates the field; trigger handles deactivating others
+    pub fn set_active_for_utility(&mut self, active: bool) {
+        self.is_active_for_utility = active;
     }
 
     /// Serialize metadata to JSON string
@@ -365,5 +440,78 @@ impl DownloadedModel {
 
     pub fn metadata(&self) -> Option<&JsonValue> {
         self.metadata.as_ref()
+    }
+
+    pub fn backend(&self) -> ModelBackend {
+        self.backend
+    }
+
+    pub fn is_active_for_utility(&self) -> bool {
+        self.is_active_for_utility
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::str::FromStr;
+
+    #[test]
+    fn ollama_backend_allows_zero_size() {
+        let result = DownloadedModel::new(
+            "id-1".to_string(),
+            "Ollama Server".to_string(),
+            "__ollama_server__".to_string(),
+            PathBuf::from(""),
+            0,
+            "ollama".to_string(),
+            None,
+            ModelBackend::Ollama,
+        );
+        assert!(
+            result.is_ok(),
+            "Ollama backend must permit zero-byte size, got: {:?}",
+            result.err()
+        );
+        let model = result.unwrap();
+        assert_eq!(model.backend(), ModelBackend::Ollama);
+        assert_eq!(model.file_size_bytes(), 0);
+        assert!(!model.is_active_for_utility());
+    }
+
+    #[test]
+    fn local_backend_rejects_zero_size() {
+        let result = DownloadedModel::new(
+            "id-2".to_string(),
+            "Local Model".to_string(),
+            "local-model".to_string(),
+            PathBuf::from("/tmp/m.gguf"),
+            0,
+            "llama".to_string(),
+            None,
+            ModelBackend::Local,
+        );
+        assert!(
+            result.is_err(),
+            "Local backend must reject zero-byte size"
+        );
+    }
+
+    #[test]
+    fn model_backend_roundtrips_via_fromstr_display() {
+        for backend in [ModelBackend::Local, ModelBackend::Ollama] {
+            let serialized = backend.to_string();
+            let parsed = ModelBackend::from_str(&serialized).expect("roundtrip parse");
+            assert_eq!(parsed, backend);
+            assert_eq!(serialized, backend.as_db_str());
+        }
+    }
+
+    #[test]
+    fn model_backend_fromstr_rejects_unknown() {
+        let err = "remote".parse::<ModelBackend>();
+        assert!(err.is_err(), "unknown backend variant must be rejected");
     }
 }

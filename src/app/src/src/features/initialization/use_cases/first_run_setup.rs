@@ -4,20 +4,19 @@
 //!
 //! # Purpose
 //!
-//! Checks if any .onnx embedding models exist in the models directory.
-//! If none exist, recommends downloading the default model (DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME).
+//! Checks the model registry (DB) for any completed embedding model. If none exist,
+//! recommends downloading the default model (DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME).
 //!
 //! # Business Logic
 //!
-//! 1. Check if models directory exists
-//! 2. Search for .onnx files in models directory
-//! 3. If no models found, return needs_setup=true with recommendation
-//! 4. If models exist, return needs_setup=false
+//! 1. Query the model registry for any embedding model with status='completed'.
+//! 2. If none found, return needs_setup=true with recommendation.
+//! 3. If at least one exists, return needs_setup=false.
 //!
 //! # Example
 //!
-//! ```rust
-//! let use_case = CheckFirstRunStatusUseCase::new(models_path);
+//! ```rust,ignore
+//! let use_case = CheckFirstRunStatusUseCase::new(repository);
 //! let response = use_case.execute().await?;
 //!
 //! if response.needs_setup {
@@ -26,9 +25,9 @@
 //! ```
 
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME;
-use crate::shared::error::{AppError, Result};
+use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::shared::error::Result;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use tracing::{debug, info};
 
 // =============================================================================
@@ -54,8 +53,8 @@ pub struct FirstRunStatusResponse {
 
 /// Check first-run status use case
 pub struct CheckFirstRunStatusUseCase {
-    /// Path to models directory
-    models_path: PathBuf,
+    /// Repository used to query the model registry
+    repository: DownloadedModelRepository,
 }
 
 impl CheckFirstRunStatusUseCase {
@@ -63,9 +62,9 @@ impl CheckFirstRunStatusUseCase {
     ///
     /// # Arguments
     ///
-    /// * `models_path` - Path to models directory (e.g., ~/.lattice/models)
-    pub fn new(models_path: PathBuf) -> Self {
-        Self { models_path }
+    /// * `repository` - Downloaded model repository (registry source of truth)
+    pub fn new(repository: DownloadedModelRepository) -> Self {
+        Self { repository }
     }
 
     /// Execute the use case
@@ -76,59 +75,26 @@ impl CheckFirstRunStatusUseCase {
     ///
     /// # Errors
     ///
-    /// Returns error if filesystem operations fail
+    /// Returns error if the registry query fails
     pub async fn execute(&self) -> Result<FirstRunStatusResponse> {
-        debug!(
-            path = %self.models_path.display(),
-            "Checking first-run status"
-        );
-
-        // Check if models directory exists
-        if !self.models_path.exists() {
-            info!("Models directory does not exist - first run detected");
-            return Ok(Self::needs_setup_response());
-        }
-
-        // Search for .onnx files
-        let has_models = self.has_onnx_models().await?;
-
-        if !has_models {
-            info!("No .onnx models found - first run detected");
-            Ok(Self::needs_setup_response())
-        } else {
-            debug!("Existing models found - not first run");
+        // Registry is the source of truth — filesystem heuristics drift and miss
+        // models stored in subdirs (see Phase 3 fix: the welcome modal never
+        // dismissed because a non-recursive top-level .onnx scan never matched
+        // the per-model subdirectory layout).
+        debug!("Checking first-run status via model registry");
+        let has_embedding = self.repository.has_any_embedding_model().await?;
+        if has_embedding {
+            debug!("Embedding model present — not first run");
             Ok(FirstRunStatusResponse {
                 needs_setup: false,
                 recommended_model_id: None,
                 recommended_model_name: None,
                 estimated_size_bytes: None,
             })
+        } else {
+            info!("No embedding model in registry — first run detected");
+            Ok(Self::needs_setup_response())
         }
-    }
-
-    /// Check if directory contains any .onnx files
-    async fn has_onnx_models(&self) -> Result<bool> {
-        let mut entries = tokio::fs::read_dir(&self.models_path)
-            .await
-            .map_err(|e| AppError::FileSystem(format!("Failed to read models directory: {}", e)))?;
-
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| AppError::FileSystem(format!("Failed to read directory entry: {}", e)))?
-        {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "onnx" {
-                        debug!(file = %path.display(), "Found .onnx model");
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-
-        Ok(false)
     }
 
     /// Create response for first-run setup needed
@@ -151,75 +117,155 @@ impl CheckFirstRunStatusUseCase {
 // =============================================================================
 
 #[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-    use tokio::fs;
+    use crate::domain::downloaded_model::{DownloadedModel, ModelBackend};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_repo() -> DownloadedModelRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("create in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        DownloadedModelRepository::new(pool)
+    }
+
+    fn make_local_embedding_model(model_id: &str) -> DownloadedModel {
+        DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            format!("Embed {}", model_id),
+            model_id.to_string(),
+            std::path::PathBuf::from(format!("/tmp/{}.onnx", model_id)),
+            512,
+            "bge".to_string(),
+            None,
+            ModelBackend::Local,
+        )
+        .expect("create local embedding model")
+    }
+
+    fn make_local_chat_model(model_id: &str) -> DownloadedModel {
+        DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            format!("Chat {}", model_id),
+            model_id.to_string(),
+            std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            1024,
+            "llama".to_string(),
+            None,
+            ModelBackend::Local,
+        )
+        .expect("create local chat model")
+    }
 
     #[tokio::test]
-    async fn test_first_run_no_directory() {
-        let temp_dir = TempDir::new().unwrap();
-        let models_path = temp_dir.path().join("nonexistent");
+    async fn test_first_run_when_registry_empty_needs_setup() {
+        let repo = setup_repo().await;
+        let use_case = CheckFirstRunStatusUseCase::new(repo);
 
-        let use_case = CheckFirstRunStatusUseCase::new(models_path);
-        let result = use_case.execute().await.unwrap();
+        let response = use_case.execute().await.expect("execute should succeed");
 
-        assert!(result.needs_setup);
-        assert!(result.recommended_model_id.is_some());
+        assert!(response.needs_setup);
         assert_eq!(
-            result.recommended_model_id.unwrap(),
-            DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME
+            response.recommended_model_id.as_deref(),
+            Some(DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME)
+        );
+        assert!(response.recommended_model_name.is_some());
+        assert!(response.estimated_size_bytes.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_not_first_run_when_embedding_model_in_registry() {
+        let repo = setup_repo().await;
+        let embedding = make_local_embedding_model("test-embed-1");
+        repo.save(&embedding).await.expect("save embedding model");
+
+        let use_case = CheckFirstRunStatusUseCase::new(repo);
+        let response = use_case.execute().await.expect("execute should succeed");
+
+        assert!(!response.needs_setup);
+        assert!(response.recommended_model_id.is_none());
+        assert!(response.recommended_model_name.is_none());
+        assert!(response.estimated_size_bytes.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_first_run_when_only_non_embedding_models_in_registry() {
+        let repo = setup_repo().await;
+        let chat = make_local_chat_model("test-chat-1");
+        repo.save(&chat).await.expect("save chat model");
+
+        let use_case = CheckFirstRunStatusUseCase::new(repo);
+        let response = use_case.execute().await.expect("execute should succeed");
+
+        assert!(response.needs_setup);
+        assert_eq!(
+            response.recommended_model_id.as_deref(),
+            Some(DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME)
         );
     }
 
     #[tokio::test]
-    async fn test_first_run_empty_directory() {
-        let temp_dir = TempDir::new().unwrap();
-        let models_path = temp_dir.path().join("models");
-        fs::create_dir(&models_path).await.unwrap();
+    async fn test_first_run_when_embedding_model_present_but_status_not_completed() {
+        // Validates that has_any_embedding_model filters by status='completed'.
+        // We bypass save() (which forces 'completed') and insert a row with status='downloading'.
+        let repo = setup_repo().await;
 
-        let use_case = CheckFirstRunStatusUseCase::new(models_path);
-        let result = use_case.execute().await.unwrap();
+        let pool = {
+            let p = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect(":memory:")
+                .await
+                .expect("create in-memory pool");
+            sqlx::migrate!("./migrations")
+                .run(&p)
+                .await
+                .expect("run migrations");
+            p
+        };
 
-        assert!(result.needs_setup);
-        assert!(result.recommended_model_id.is_some());
-    }
+        sqlx::query(
+            r#"
+            INSERT INTO models (
+                id, model_name, model_id, base_path, total_size_bytes, status,
+                model_type, architecture
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, 'downloading', 'embedding', 'bge')
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind("Pending Embed")
+        .bind("pending-embed-1")
+        .bind("/tmp/pending-embed-1")
+        .bind(512_i64)
+        .execute(&pool)
+        .await
+        .expect("insert pending embedding row");
 
-    #[tokio::test]
-    async fn test_not_first_run_has_onnx() {
-        let temp_dir = TempDir::new().unwrap();
-        let models_path = temp_dir.path().join("models");
-        fs::create_dir(&models_path).await.unwrap();
+        let pending_repo = DownloadedModelRepository::new(pool);
+        let use_case = CheckFirstRunStatusUseCase::new(pending_repo);
+        let response = use_case.execute().await.expect("execute should succeed");
 
-        // Create a dummy .onnx file
-        let model_file = models_path.join("model.onnx");
-        fs::write(&model_file, b"dummy onnx content").await.unwrap();
+        assert!(
+            response.needs_setup,
+            "embedding row with status='downloading' must not satisfy first-run check"
+        );
+        assert_eq!(
+            response.recommended_model_id.as_deref(),
+            Some(DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME)
+        );
 
-        let use_case = CheckFirstRunStatusUseCase::new(models_path);
-        let result = use_case.execute().await.unwrap();
-
-        assert!(!result.needs_setup);
-        assert!(result.recommended_model_id.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_first_run_only_non_onnx_files() {
-        let temp_dir = TempDir::new().unwrap();
-        let models_path = temp_dir.path().join("models");
-        fs::create_dir(&models_path).await.unwrap();
-
-        // Create non-.onnx files
-        fs::write(models_path.join("config.json"), b"{}")
+        // Sanity: empty `repo` still also reports needs_setup.
+        let baseline = CheckFirstRunStatusUseCase::new(repo)
+            .execute()
             .await
-            .unwrap();
-        fs::write(models_path.join("tokenizer.json"), b"{}")
-            .await
-            .unwrap();
-
-        let use_case = CheckFirstRunStatusUseCase::new(models_path);
-        let result = use_case.execute().await.unwrap();
-
-        assert!(result.needs_setup);
-        assert!(result.recommended_model_id.is_some());
+            .expect("baseline execute");
+        assert!(baseline.needs_setup);
     }
 }

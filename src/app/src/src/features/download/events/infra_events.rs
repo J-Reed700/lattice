@@ -331,19 +331,12 @@ impl DownloadEventBridge {
             return Ok(());
         };
 
-        // Extract relative filename from URL (e.g., "onnx/model.onnx" from
-        // "https://huggingface.co/repo/resolve/main/onnx/model.onnx").
-        // This must match the file_name stored in model_files DB records.
-        // Falling back to destination basename for non-HF URLs.
-        let file_name = extract_relative_filename_from_url(session.url())
-            .unwrap_or_else(|| {
-                session
-                    .destination()
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            });
+        let file_name = session
+            .destination()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         let total_bytes = session
             .progress()
@@ -883,53 +876,14 @@ impl DownloadEventBridge {
     }
 }
 
-/// Extract the relative filename from a HuggingFace download URL.
-///
-/// Given `https://huggingface.co/org/repo/resolve/main/onnx/model.onnx`,
-/// returns `Some("onnx/model.onnx")`.
-/// Returns `None` for non-HF URLs or if the pattern is not found.
-fn extract_relative_filename_from_url(url: &str) -> Option<String> {
-    let marker = "/resolve/main/";
-    let idx = url.find(marker)?;
-    let relative = &url[idx + marker.len()..];
-    if relative.is_empty() {
-        None
-    } else {
-        // URL-decode percent-encoded characters (spaces, etc.)
-        Some(
-            percent_decode_simple(relative)
-                .trim_end_matches('/')
-                .to_string(),
-        )
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn destination_basename_used_for_file_name_when_url_has_subdirectory() {
+        let dest = std::path::PathBuf::from(
+            "/home/u/.cache/lattice/models/all-mpnet-base-v2/model.onnx",
+        );
+        let basename = dest.file_name().and_then(|s| s.to_str()).unwrap();
+        assert_eq!(basename, "model.onnx");
     }
-}
-
-/// Minimal percent-decoding for common URL characters.
-fn percent_decode_simple(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
-        if b == b'%' {
-            let hi = chars.next();
-            let lo = chars.next();
-            if let (Some(h), Some(l)) = (hi, lo) {
-                let hex = [h, l];
-                if let Ok(s) = std::str::from_utf8(&hex) {
-                    if let Ok(byte) = u8::from_str_radix(s, 16) {
-                        result.push(byte as char);
-                        continue;
-                    }
-                }
-                // Couldn't decode — emit raw
-                result.push('%');
-                result.push(h as char);
-                result.push(l as char);
-            } else {
-                result.push('%');
-            }
-        } else {
-            result.push(b as char);
-        }
-    }
-    result
 }

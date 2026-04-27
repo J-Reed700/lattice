@@ -1,4 +1,4 @@
-use crate::domain::downloaded_model::DownloadedModel;
+use crate::domain::downloaded_model::{DownloadedModel, ModelBackend};
 use crate::domain::events::model_download_events::*;
 use crate::domain::repositories::unit_of_work::ModelFileRepositoryPort;
 use crate::domain::repositories::UnitOfWorkFactory;
@@ -145,8 +145,11 @@ impl DownloadSaga {
         let mut uow = self.uow_factory.create().await?;
         let file_size = event.file_size as i64;
 
-        // CRITICAL: Check completion WITHIN transaction to avoid isolation bug
-        let tx_result: Result<bool, Box<dyn std::error::Error + Send + Sync>> = {
+        // CRITICAL: Check completion WITHIN transaction to avoid isolation bug.
+        // Wrap in async block so `?` short-circuits to tx_result, not out of
+        // the function — otherwise we'd skip the rollback arm below and drop
+        // `uow` with an open transaction.
+        let tx_result: Result<bool, Box<dyn std::error::Error + Send + Sync>> = async {
             let model_file_repo = uow.model_file_repository()?;
             model_file_repo
                 .update_file_status_by_model_and_name(
@@ -182,7 +185,8 @@ impl DownloadSaga {
             }
 
             Ok(is_complete)
-        };
+        }
+        .await;
 
         let should_complete_model = match tx_result {
             Ok(is_complete) => is_complete,
@@ -257,6 +261,7 @@ impl DownloadSaga {
                 total_size as i64,
                 model.architecture.clone(),
                 model.metadata.clone(),
+                ModelBackend::Local,
             )
             .map_err(|e| format!("Failed to create DownloadedModel: {}", e))?;
 
@@ -306,7 +311,10 @@ impl DownloadSaga {
 
         let mut uow = self.uow_factory.create().await?;
 
-        let tx_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = {
+        // Wrap in async block so `?` short-circuits to tx_result, not out of
+        // the function — otherwise we'd skip the rollback arm below and drop
+        // `uow` with an open transaction.
+        let tx_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
             let model_file_repo = uow.model_file_repository()?;
             model_file_repo
                 .update_file_status_by_model_and_name(
@@ -320,7 +328,8 @@ impl DownloadSaga {
             let model_repo = uow.model_repository()?;
             model_repo.update_status_failed(&event.model_id).await?;
             Ok(())
-        };
+        }
+        .await;
 
         if let Err(err) = tx_result {
             if let Err(rollback_err) = uow.rollback().await {

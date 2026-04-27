@@ -43,8 +43,8 @@ pub async fn check_first_run_status_impl(
 ) -> std::result::Result<String, String> {
     tracing::info!("Command: check_first_run_status - ENTRY");
 
-    let models_path = container.models_path();
-    let use_case = CheckFirstRunStatusUseCase::new(models_path);
+    let repository = (*container.downloaded_model_repository()).clone();
+    let use_case = CheckFirstRunStatusUseCase::new(repository);
     let response = use_case
         .execute()
         .await
@@ -194,14 +194,12 @@ mod tests {
     async fn test_check_first_run_status_command() {
         let (container, _temp_dir) = create_test_container().await;
 
-        // Get models path from Container (proper DI)
-        let models_path = container.models_path();
-
-        // Create and execute use case directly (bypassing Tauri State wrapper)
-        let use_case = CheckFirstRunStatusUseCase::new(models_path);
+        // Resolve the repository from the container (proper DI) and run the use case.
+        let repository = (*container.downloaded_model_repository()).clone();
+        let use_case = CheckFirstRunStatusUseCase::new(repository);
         let response = use_case.execute().await.unwrap();
 
-        // Should need setup (no models in temp directory)
+        // Should need setup (no embedding models in fresh registry)
         assert!(response.needs_setup);
     }
 

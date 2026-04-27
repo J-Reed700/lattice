@@ -2,7 +2,8 @@
 //!
 //! Manages persistence of downloaded model records in SQLite.
 
-use crate::domain::downloaded_model::{DownloadedModel, ModelType};
+use crate::domain::downloaded_model::{DownloadedModel, ModelBackend, ModelType};
+use std::str::FromStr;
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value as JsonValue;
@@ -26,6 +27,8 @@ struct DownloadedModelRecord {
     is_active_for_chat: i64,
     is_active_for_embedding: i64,
     metadata: Option<String>,
+    backend: String,
+    is_active_for_utility: i64,
 }
 
 const MODEL_FILE_SUMMARY_CTE: &str = r#"
@@ -73,7 +76,9 @@ SELECT
     m.use_count,
     m.is_active_for_chat,
     m.is_active_for_embedding,
-    m.metadata
+    m.metadata,
+    m.backend,
+    m.is_active_for_utility
 FROM models m
 LEFT JOIN primary_model_files pmf ON pmf.model_id = m.model_id
 LEFT JOIN model_file_totals mft ON mft.model_id = m.model_id
@@ -122,6 +127,14 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
         // Convert is_active flags from integer to bool
         let is_active_chat = record.is_active_for_chat != 0;
         let is_active_embedding = record.is_active_for_embedding != 0;
+        let is_active_utility = record.is_active_for_utility != 0;
+
+        let backend = ModelBackend::from_str(&record.backend).map_err(|e| {
+            AppError::InvalidData(format!(
+                "Invalid backend '{}' for model_id '{}': {}",
+                record.backend, record.model_id, e
+            ))
+        })?;
 
         Ok(DownloadedModel::from_db(
             record.id,
@@ -137,6 +150,8 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
             is_active_chat,
             is_active_embedding,
             metadata_val,
+            backend,
+            is_active_utility,
         ))
     }
 }
@@ -198,6 +213,8 @@ impl DownloadedModelRepository {
         } else {
             0
         };
+        let is_active_utility = if model.is_active_for_utility() { 1i64 } else { 0i64 };
+        let backend_str = model.backend().as_db_str().to_string();
         let metadata_json = model.metadata_to_json();
         let total_size_bytes = model.file_size_bytes();
 
@@ -210,9 +227,10 @@ impl DownloadedModelRepository {
             r#"
             INSERT INTO models (
                 id, model_name, model_id, base_path, total_size_bytes, status, model_type, architecture,
-                downloaded_at, last_used_at, use_count, is_active_for_chat, is_active_for_embedding, metadata
+                downloaded_at, last_used_at, use_count, is_active_for_chat, is_active_for_embedding, metadata,
+                backend, is_active_for_utility
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(model_id) DO UPDATE SET
                 model_name = excluded.model_name,
                 base_path = excluded.base_path,
@@ -225,7 +243,9 @@ impl DownloadedModelRepository {
                 use_count = excluded.use_count,
                 is_active_for_chat = excluded.is_active_for_chat,
                 is_active_for_embedding = excluded.is_active_for_embedding,
-                metadata = excluded.metadata
+                metadata = excluded.metadata,
+                backend = excluded.backend,
+                is_active_for_utility = excluded.is_active_for_utility
             "#,
         )
         .bind(id)
@@ -241,6 +261,8 @@ impl DownloadedModelRepository {
         .bind(is_active_chat)
         .bind(is_active_embedding)
         .bind(metadata_json)
+        .bind(backend_str)
+        .bind(is_active_utility)
         .execute(&mut *tx)
         .await
         .map_err(|e| {
@@ -420,7 +442,11 @@ impl DownloadedModelRepository {
         match record {
             Some(row) => {
                 let model: DownloadedModel = row.try_into()?;
-                if self.is_downloaded(model.model_id()).await? {
+                // Ollama-served models live remotely; there is no local file
+                // for `is_downloaded` to verify. Skip the FS check for them.
+                if model.backend() == ModelBackend::Ollama
+                    || self.is_downloaded(model.model_id()).await?
+                {
                     Ok(Some(model))
                 } else {
                     warn!(
@@ -457,7 +483,11 @@ impl DownloadedModelRepository {
         match record {
             Some(row) => {
                 let model: DownloadedModel = row.try_into()?;
-                if self.is_downloaded(model.model_id()).await? {
+                // Ollama-served models live remotely; there is no local file
+                // for `is_downloaded` to verify. Skip the FS check for them.
+                if model.backend() == ModelBackend::Ollama
+                    || self.is_downloaded(model.model_id()).await?
+                {
                     Ok(Some(model))
                 } else {
                     warn!(
@@ -589,6 +619,118 @@ impl DownloadedModelRepository {
         Ok(())
     }
 
+    /// Set a model as the active utility model
+    ///
+    /// # Business Logic
+    ///
+    /// - Sets is_active_for_utility=1 for the specified model
+    /// - Database trigger (`ensure_single_active_utility_model`) automatically
+    ///   sets is_active_for_utility=0 for all other rows
+    /// - Fails if model_id doesn't exist
+    pub async fn set_active_utility_model(&self, model_id: &str) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+            UPDATE models
+            SET is_active_for_utility = 1
+            WHERE model_id = ?1
+            "#,
+        )
+        .bind(model_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, model_id = %model_id, "Failed to set active utility model");
+            AppError::Database(format!("Failed to set active utility model: {}", e))
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
+        }
+
+        info!(model_id = %model_id, "Set active utility model");
+        Ok(())
+    }
+
+    /// Clear the active utility model (set all to inactive)
+    pub async fn clear_active_utility_model(&self) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE models
+            SET is_active_for_utility = 0
+            WHERE is_active_for_utility = 1
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to clear active utility model");
+            AppError::Database(format!("Failed to clear active utility model: {}", e))
+        })?;
+
+        info!("Active utility model cleared");
+        Ok(())
+    }
+
+    /// Get the currently active utility model
+    ///
+    /// # Returns
+    ///
+    /// Some(DownloadedModel) if an active utility model exists, None otherwise.
+    /// For Ollama-backed rows the local-file `is_downloaded` check is skipped
+    /// because the model lives on a remote server.
+    pub async fn get_active_utility_model(&self) -> Result<Option<DownloadedModel>> {
+        let query = build_model_select_query("WHERE m.is_active_for_utility = 1 LIMIT 1");
+        let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "Failed to get active utility model");
+                AppError::Database(format!("Failed to get active utility model: {}", e))
+            })?;
+
+        match record {
+            Some(row) => {
+                let model: DownloadedModel = row.try_into()?;
+                if model.backend() == ModelBackend::Ollama
+                    || self.is_downloaded(model.model_id()).await?
+                {
+                    Ok(Some(model))
+                } else {
+                    warn!(
+                        model_id = %model.model_id(),
+                        "Active utility model is not fully downloaded; ignoring active selection"
+                    );
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Whether any embedding model is registered and downloaded.
+    ///
+    /// Used by first-run setup to decide whether the embedding pipeline can
+    /// initialize without prompting the user to pick a model.
+    pub async fn has_any_embedding_model(&self) -> Result<bool> {
+        let exists: i64 = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM models
+                WHERE model_type = 'embedding'
+                  AND status = 'completed'
+            )
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to check for any embedding model");
+            AppError::Database(format!("Failed to check for embedding models: {}", e))
+        })?;
+
+        Ok(exists != 0)
+    }
+
     /// Atomically deletes a model ONLY if it is NOT active
     ///
     /// # Arguments
@@ -633,7 +775,9 @@ impl DownloadedModelRepository {
               use_count,
               is_active_for_chat,
               is_active_for_embedding,
-              metadata
+              metadata,
+              backend,
+              is_active_for_utility
             "#,
         )
         .bind(id)
@@ -1009,8 +1153,10 @@ fn parse_db_timestamp(value: &str) -> Option<DateTime<Utc>> {
 }
 
 #[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
-    use super::parse_optional_db_timestamp;
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
     fn parse_optional_timestamp_accepts_sqlite_format() {
@@ -1030,5 +1176,140 @@ mod tests {
         let parsed =
             parse_optional_db_timestamp(Some("not-a-timestamp")).expect("expected no error");
         assert!(parsed.is_none());
+    }
+
+    async fn setup_repo() -> DownloadedModelRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("create in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        DownloadedModelRepository::new(pool)
+    }
+
+    fn make_local_chat_model(model_id: &str) -> DownloadedModel {
+        DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            format!("Test Model {}", model_id),
+            model_id.to_string(),
+            std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            1024,
+            "llama".to_string(),
+            None,
+            ModelBackend::Local,
+        )
+        .expect("create local chat model")
+    }
+
+    fn make_local_embedding_model(model_id: &str) -> DownloadedModel {
+        DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            format!("Embed {}", model_id),
+            model_id.to_string(),
+            std::path::PathBuf::from(format!("/tmp/{}.onnx", model_id)),
+            512,
+            "bge".to_string(),
+            None,
+            ModelBackend::Local,
+        )
+        .expect("create local embedding model")
+    }
+
+    #[tokio::test]
+    async fn synthetic_ollama_row_loads_via_find_by_model_id() {
+        let repo = setup_repo().await;
+        let model = repo
+            .find_by_model_id("__ollama_server__")
+            .await
+            .expect("find by model id")
+            .expect("synthetic ollama row missing after migrations");
+
+        assert_eq!(model.backend(), ModelBackend::Ollama);
+        assert_eq!(model.file_size_bytes(), 0);
+        assert_eq!(model.model_id(), "__ollama_server__");
+    }
+
+    #[tokio::test]
+    async fn set_and_get_active_utility_model_roundtrip() {
+        let repo = setup_repo().await;
+
+        // Activate the synthetic ollama row for utility (no FS check).
+        repo.set_active_utility_model("__ollama_server__")
+            .await
+            .expect("set active utility");
+
+        let active = repo
+            .get_active_utility_model()
+            .await
+            .expect("get active utility");
+        let active = active.expect("expected active utility model");
+        assert_eq!(active.model_id(), "__ollama_server__");
+        assert!(active.is_active_for_utility());
+
+        repo.clear_active_utility_model()
+            .await
+            .expect("clear active utility");
+        let after_clear = repo
+            .get_active_utility_model()
+            .await
+            .expect("get active utility post-clear");
+        assert!(after_clear.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_active_chat_model_returns_ollama_row_without_filesystem_check() {
+        let repo = setup_repo().await;
+
+        repo.set_active_chat_model("__ollama_server__")
+            .await
+            .expect("set active chat to ollama");
+
+        let active = repo
+            .get_active_chat_model()
+            .await
+            .expect("get active chat model");
+        let active = active.expect("expected ollama row to be returned despite no local file");
+        assert_eq!(active.backend(), ModelBackend::Ollama);
+        assert_eq!(active.model_id(), "__ollama_server__");
+    }
+
+    #[tokio::test]
+    async fn has_any_embedding_model_false_on_empty_then_true_after_save() {
+        let repo = setup_repo().await;
+
+        // Synthetic ollama row is model_type='chat', so initially no embedding rows.
+        let before = repo
+            .has_any_embedding_model()
+            .await
+            .expect("check embedding presence pre-save");
+        assert!(!before, "no embedding model expected before save");
+
+        let embedding = make_local_embedding_model("test-embed-1");
+        repo.save(&embedding).await.expect("save embedding model");
+
+        let after = repo
+            .has_any_embedding_model()
+            .await
+            .expect("check embedding presence post-save");
+        assert!(after, "embedding model should be detected after save");
+    }
+
+    #[tokio::test]
+    async fn save_and_load_local_model_preserves_backend() {
+        let repo = setup_repo().await;
+        let model = make_local_chat_model("local-chat-1");
+        repo.save(&model).await.expect("save local chat model");
+
+        let loaded = repo
+            .find_by_model_id("local-chat-1")
+            .await
+            .expect("find local model")
+            .expect("local model missing after save");
+        assert_eq!(loaded.backend(), ModelBackend::Local);
+        assert!(!loaded.is_active_for_utility());
     }
 }

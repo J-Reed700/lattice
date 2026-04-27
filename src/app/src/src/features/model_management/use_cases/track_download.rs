@@ -2,7 +2,7 @@
 //!
 //! Records a model download completion in the models table.
 
-use crate::domain::downloaded_model::DownloadedModel;
+use crate::domain::downloaded_model::{DownloadedModel, ModelBackend};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::Result;
 use serde_json::Value as JsonValue;
@@ -59,6 +59,7 @@ impl TrackDownloadUseCase {
             file_size_bytes,
             architecture,
             metadata,
+            ModelBackend::Local,
         )?;
 
         // Save to repository
