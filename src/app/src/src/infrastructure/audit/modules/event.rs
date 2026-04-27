@@ -71,15 +71,6 @@ pub enum AuditAction {
     /// Active chat model set
     ModelSetActive,
 
-    /// Custom model added
-    AddCustomModel,
-
-    /// Custom model validated
-    ValidateCustomModel,
-
-    /// Custom model deleted
-    DeleteCustomModel,
-
     /// Models viewed/listed
     ModelViewed,
 
@@ -225,9 +216,6 @@ impl AuditAction {
             AuditAction::ModelDownloaded => "LLM model downloaded",
             AuditAction::ModelDeleted => "LLM model deleted",
             AuditAction::ModelSetActive => "Active chat model set",
-            AuditAction::AddCustomModel => "Custom model added",
-            AuditAction::ValidateCustomModel => "Custom model validated",
-            AuditAction::DeleteCustomModel => "Custom model deleted",
             AuditAction::ModelViewed => "Models viewed",
             AuditAction::DownloadStarted => "Download started",
             AuditAction::DownloadPaused => "Download paused",

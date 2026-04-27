@@ -12,6 +12,7 @@ mod get_active_embedding_model;
 mod get_models_with_metadata;
 mod set_active_chat_model;
 mod set_active_embedding_model;
+mod set_active_utility_model;
 mod track_download;
 
 pub use check_is_downloaded::CheckIsDownloadedUseCase;
@@ -24,4 +25,5 @@ pub use get_active_embedding_model::GetActiveEmbeddingModelUseCase;
 pub use get_models_with_metadata::GetDownloadedModelsWithMetadataUseCase;
 pub use set_active_chat_model::SetActiveChatModelUseCase;
 pub use set_active_embedding_model::SetActiveEmbeddingModelUseCase;
+pub use set_active_utility_model::SetActiveUtilityModelUseCase;
 pub use track_download::TrackDownloadUseCase;

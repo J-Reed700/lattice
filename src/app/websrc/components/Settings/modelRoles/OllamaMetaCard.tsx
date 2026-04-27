@@ -44,15 +44,11 @@ export function OllamaMetaCard() {
     (async () => {
       const result = await VaultAPI.getSettings();
       if (!alive || !result.ok) return;
-      const llm = result.data.llm as {
-        ollamaUrl?: string;
-        model?: string;
-        ollamaUtilityModel?: string;
-      };
+      const llm = result.data.llm;
       setConfig({
-        url: (llm.ollamaUrl ?? '').trim(),
-        chatTag: (llm.model ?? '').trim(),
-        utilityTag: (llm.ollamaUtilityModel ?? '').trim(),
+        url: llm.ollamaUrl.trim(),
+        chatTag: llm.model.trim(),
+        utilityTag: llm.ollamaUtilityModel.trim(),
       });
     })();
     return () => {

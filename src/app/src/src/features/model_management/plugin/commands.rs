@@ -12,10 +12,10 @@ use tauri::State;
 use crate::features::model_management::commands::get_all_recommended_models as get_all_recommended_models_impl;
 use crate::features::model_management::commands_extra::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
-    delete_downloaded_model_and_file_impl, get_active_chat_model_impl,
-    get_active_embedding_model_impl, get_models_with_metadata_impl,
+    clear_active_utility_model_impl, delete_downloaded_model_and_file_impl,
+    get_active_chat_model_impl, get_active_embedding_model_impl, get_models_with_metadata_impl,
     is_model_already_downloaded_impl, set_active_chat_model_impl, set_active_embedding_model_impl,
-    warm_up_active_chat_model_impl,
+    set_active_utility_model_impl, warm_up_active_chat_model_impl,
 };
 use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl,
@@ -346,6 +346,35 @@ pub async fn clear_active_chat_model(container: State<'_, Container>) -> Result<
 #[specta::specta]
 pub async fn clear_active_embedding_model(container: State<'_, Container>) -> Result<(), ApiError> {
     clear_active_embedding_model_impl(container.inner())
+        .await
+        .map_err(|e| ApiError {
+            code: ErrorCode::InternalError,
+            message: e,
+            details: None,
+        })
+}
+
+/// Set the active utility model (HyDE / router / intent classification).
+#[tauri::command]
+#[specta::specta]
+pub async fn set_active_utility_model(
+    model_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    set_active_utility_model_impl(container.inner(), &model_id)
+        .await
+        .map_err(|e| ApiError {
+            code: ErrorCode::InternalError,
+            message: e,
+            details: None,
+        })
+}
+
+/// Clear the active utility model — reverts HyDE/router back to the chat model.
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_active_utility_model(container: State<'_, Container>) -> Result<(), ApiError> {
+    clear_active_utility_model_impl(container.inner())
         .await
         .map_err(|e| ApiError {
             code: ErrorCode::InternalError,

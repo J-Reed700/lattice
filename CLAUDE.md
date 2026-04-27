@@ -1,4 +1,37 @@
-# CLAUDE.md - AI Assistant Guide for Recall
+# CLAUDE.md - AI Assistant Guide for Lattice
+
+## 🟦 ARCHITECTURAL RULE: Repository Barrier (SSOT)
+
+**The feature's Repository is the absolute Single Source of Truth for that feature's state. No exceptions.**
+
+This rule exists because we hit a "split brain" bug cluster (April 2026) where models had four parallel sources of truth (SQL, Rust entity, filesystem walks, frontend Zustand). One bug per source-of-truth, all in the same week.
+
+### Rules
+
+1. **No `use_case` or `domain` code may import `std::fs` / `tokio::fs`** to make state decisions. Filesystem walks for "do we have X?" are forbidden — ask the repository instead.
+   - ✅ `repository.has_any_embedding_model().await?`
+   - ❌ `tokio::fs::read_dir(models_path).await?` to check if a model exists
+
+2. **No use case may issue raw SQL.** Use the repository's typed methods. If the repository lacks the method you need, add it there — don't reach around it.
+
+3. **Frontend Zustand stores must be read-only mirrors** of backend state, updated via Tauri events or React Query. Never `localStorage`-only state that the backend can't see (with rare exceptions for pure UI prefs: theme, sort order, last-active tab).
+
+4. **No two tables/structs/types may describe the same conceptual entity.** When tempted to add `custom_models` alongside `models`, or `LLMSettings` in TS that doesn't match `LLMSettingsDto` in Rust — STOP. Unify or generate.
+
+5. **TS types for backend DTOs should be generated, not hand-written.** When manually maintained, they drift. (Codegen via `ts-rs` or `specta` — tracked as a follow-up.)
+
+### When you suspect split-brain
+
+Run the audit: `oracle ask "audit <feature> for split-brain"` with the relevant files. The pattern: same conceptual entity described in ≥2 places that don't sync.
+
+### Examples in this codebase
+
+- ✅ `DownloadedModelRepository` is the SSOT for model state. `first_run_setup.rs` queries it (Phase 3 fix).
+- ❌ (fixed) `first_run_setup.rs` used to walk `~/.cache/lattice/models/` non-recursively, missed all subdirectory models.
+- ❌ (deleted Phase 5) `custom_models` table was a parallel registry to `models` — orphaned dead code, removed.
+- ⚠️ (deferred Phase 4b) `useSettingsStore` Zustand store mutates localStorage without round-tripping to Rust. Migration in progress.
+
+---
 
 ## AI Assistant Guidelines
 

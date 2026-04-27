@@ -77,6 +77,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_active_models,
             commands::clear_active_chat_model,
             commands::clear_active_embedding_model,
+            commands::set_active_utility_model,
+            commands::clear_active_utility_model,
             commands::warm_up_active_chat_model,
             commands::validate_model_compatibility,
             commands::get_model_info,

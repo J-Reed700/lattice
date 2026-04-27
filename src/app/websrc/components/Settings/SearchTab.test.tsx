@@ -61,6 +61,7 @@ const baseSettings: AppSettings = {
     maxTokens: 2048,
     contextWindow: 8192,
     ollamaUrl: 'http://localhost:11434',
+    ollamaUtilityModel: '',
     ollamaAuthHeaderName: '',
     ollamaAuthHeaderValue: '',
     timeoutSeconds: 30,

@@ -144,6 +144,34 @@ export const useDownloadedModels = () => {
     }
   }, [fetchDownloadedModels, setActiveEmbeddingModel]);
 
+  const setActiveUtilityModel = useCallback(async (model_id: string): Promise<void> => {
+    try {
+      const result = await VaultAPI.setActiveUtilityModel(model_id);
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+
+      await fetchDownloadedModels();
+    } catch (error) {
+      console.error('[useDownloadedModels] Failed to set active utility model:', error);
+      throw new Error(`Failed to set active utility model: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [fetchDownloadedModels]);
+
+  const clearActiveUtilityModel = useCallback(async (): Promise<void> => {
+    try {
+      const result = await VaultAPI.clearActiveUtilityModel();
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+
+      await fetchDownloadedModels();
+    } catch (error) {
+      console.error('[useDownloadedModels] Failed to clear active utility model:', error);
+      throw new Error(`Failed to clear active utility model: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [fetchDownloadedModels]);
+
   const getActiveEmbeddingModel = useCallback(async (): Promise<DownloadedModel | null> => {
     try {
       const result = await VaultAPI.getActiveModels();
@@ -238,6 +266,8 @@ export const useDownloadedModels = () => {
     setActiveChatModel,
     warmUpActiveChatModel,
     setActiveEmbeddingModel: setActiveEmbeddingModelById,
+    setActiveUtilityModel,
+    clearActiveUtilityModel,
     deleteDownloadedModel,
     getActiveModel,
     getActiveEmbeddingModel,

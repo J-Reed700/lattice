@@ -179,6 +179,11 @@ pub struct LLMSettingsDto {
     /// Ollama server URL
     pub ollama_url: String,
 
+    /// Optional Ollama tag used for utility/router calls.
+    /// Empty string means "fall back to `model`".
+    #[serde(default)]
+    pub ollama_utility_model: String,
+
     /// Optional Ollama auth header name (e.g., "Authorization")
     #[serde(default)]
     pub ollama_auth_header_name: String,
@@ -759,6 +764,7 @@ impl Default for LLMSettingsDto {
             max_tokens: 131072,
             context_window: 131072,
             ollama_url: "http://localhost:11434".to_string(),
+            ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),
             ollama_auth_header_value: String::new(),
             timeout_seconds: 30,

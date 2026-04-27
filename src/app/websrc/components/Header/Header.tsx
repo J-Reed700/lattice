@@ -17,7 +17,7 @@
 import { Search, HelpCircle, Moon, Sun } from 'lucide-react';
 
 import { useEffectiveTheme } from '../../hooks/useApplyTheme';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { useUpdateSettingsMutation } from '../../hooks/queries/useSettingsQuery';
 
 export interface HeaderProps {
   /** Current view title */
@@ -62,13 +62,12 @@ export function Header({
   breadcrumbs,
   className = '',
 }: HeaderProps) {
-  const updateDisplay = useSettingsStore((state) => state.updateDisplay);
+  const updateSettings = useUpdateSettingsMutation();
   const effectiveTheme = useEffectiveTheme();
 
   const toggleTheme = () => {
-    // Toggle between light and dark (skip system for simplicity)
     const newTheme = effectiveTheme === 'dark' ? 'light' : 'dark';
-    updateDisplay({ theme: newTheme });
+    updateSettings.mutate({ category: 'ui', updates: { theme: newTheme } });
   };
 
   return (

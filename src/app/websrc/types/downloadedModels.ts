@@ -9,6 +9,8 @@ export interface DownloadedModel {
   use_count: number;
   is_active_for_chat: boolean;
   is_active_for_embedding: boolean;
+  is_active_for_utility: boolean;
+  backend: 'local' | 'ollama';
   model_type: string; // "text_embeddings" | "vision" | "reranker" | "language_model"
   metadata: Record<string, unknown> | null;
 }

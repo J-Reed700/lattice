@@ -72,6 +72,7 @@ export interface LLMSettings {
   maxTokens: number;           // Matches Rust max_tokens with camelCase
   contextWindow: number;       // Matches Rust context_window with camelCase
   ollamaUrl: string;           // Matches Rust ollama_url with camelCase
+  ollamaUtilityModel: string;  // Matches Rust ollama_utility_model with camelCase
   ollamaAuthHeaderName: string;  // Matches Rust ollama_auth_header_name with camelCase
   ollamaAuthHeaderValue: string; // Matches Rust ollama_auth_header_value with camelCase
   timeoutSeconds: number;      // Matches Rust timeout_seconds with camelCase

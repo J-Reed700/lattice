@@ -16,9 +16,9 @@ use crate::features::model_management::use_cases::{
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
-    SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase,
+    SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase, SetActiveUtilityModelUseCase,
 };
-use crate::domain::downloaded_model::{DownloadedModel, ModelType};
+use crate::domain::downloaded_model::{DownloadedModel, ModelBackend, ModelType};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::interfaces::di::Container;
@@ -316,6 +316,8 @@ async fn sync_external_model_directories(
             false,
             false,
             Some(metadata),
+            ModelBackend::Local,
+            false,
         );
 
         if let Err(e) = repository.save(&external_model).await {
@@ -803,6 +805,115 @@ pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(),
     );
 
     Ok(())
+}
+
+/// Set the active utility model.
+///
+/// Utility = HyDE expansion / router / intent classification — a chat-style
+/// generation role. Only one model can be active at a time. The use-case
+/// gates the local-only download check by backend, so Ollama-backed models
+/// (which have no on-disk files) can be activated without false-positive
+/// "not downloaded" errors. Called by gateway - async dispatch.
+pub async fn set_active_utility_model_impl(
+    container: &Container,
+    model_id: &str,
+) -> Result<(), String> {
+    let repository = (*container.downloaded_model_repository()).clone();
+    let security_arc = Arc::clone(container.security_context());
+    let rate_limiters = security_arc.rate_limiters();
+    let input_validator = security_arc.input_validator();
+
+    rate_limiters
+        .model_management
+        .check_rate_limit("model_management")
+        .await
+        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+
+    let validated_model_id = input_validator
+        .validate_model_name(model_id)
+        .map_err(|e| format!("Invalid model ID: {}", e))?;
+
+    let logger = get_audit_logger();
+    let use_case = SetActiveUtilityModelUseCase::new(repository);
+
+    match use_case.execute(&validated_model_id).await {
+        Ok(()) => {
+            info!(model_id = %validated_model_id, "Active utility model set");
+            audit_success!(
+                logger,
+                AuditAction::ModelSetActive,
+                "active_utility_model",
+                "model_id" => validated_model_id.as_str()
+            )
+            .await
+            .ok();
+
+            // Utility shares the LLM resolution path with chat, so invalidate the
+            // LLM cache to force re-resolution on next HyDE/router invocation.
+            container.invalidate_llm_cache();
+            info!("LLM cache invalidated - utility role updated");
+            Ok(())
+        }
+        Err(e) => {
+            error!(error = %e, model_id = %validated_model_id, "Failed to set active utility model");
+            audit_failure!(
+                logger,
+                AuditAction::ModelSetActive,
+                "active_utility_model",
+                format!("Failed: {}", e),
+                "model_id" => validated_model_id.as_str()
+            )
+            .await
+            .ok();
+            Err(format!("Failed to set active utility model: {}", e))
+        }
+    }
+}
+
+/// Clear the active utility model — reverts HyDE/router back to the chat model.
+pub async fn clear_active_utility_model_impl(container: &Container) -> Result<(), String> {
+    let repository = (*container.downloaded_model_repository()).clone();
+    let security_arc = Arc::clone(container.security_context());
+    let rate_limiters = security_arc.rate_limiters();
+
+    rate_limiters
+        .model_management
+        .check_rate_limit("model_management")
+        .await
+        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+
+    let logger = get_audit_logger();
+    let use_case = SetActiveUtilityModelUseCase::new(repository);
+
+    match use_case.clear().await {
+        Ok(()) => {
+            info!("Active utility model cleared");
+            audit_success!(
+                logger,
+                AuditAction::ModelSetActive,
+                "active_utility_model",
+                "action" => "cleared"
+            )
+            .await
+            .ok();
+
+            container.invalidate_llm_cache();
+            info!("LLM cache invalidated after clearing utility model");
+            Ok(())
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to clear active utility model");
+            audit_failure!(
+                logger,
+                AuditAction::ModelSetActive,
+                "active_utility_model",
+                format!("Failed to clear: {}", e)
+            )
+            .await
+            .ok();
+            Err(format!("Failed to clear active utility model: {}", e))
+        }
+    }
 }
 
 /// Set the active embedding model

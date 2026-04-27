@@ -23,6 +23,7 @@ export function ChatTab() {
 
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState('');
   const [ollamaModelDraft, setOllamaModelDraft] = useState('');
+  const [ollamaUtilityModelDraft, setOllamaUtilityModelDraft] = useState('');
   const [ollamaHeaderNameDraft, setOllamaHeaderNameDraft] = useState('');
   const [ollamaHeaderValueDraft, setOllamaHeaderValueDraft] = useState('');
   const [ollamaBasicUserDraft, setOllamaBasicUserDraft] = useState('');
@@ -40,6 +41,7 @@ export function ChatTab() {
     if (!llmSettings) return;
     setOllamaUrlDraft(llmSettings.ollamaUrl);
     setOllamaModelDraft(llmSettings.model);
+    setOllamaUtilityModelDraft(llmSettings.ollamaUtilityModel || '');
     setOllamaHeaderNameDraft(llmSettings.ollamaAuthHeaderName || '');
     setOllamaHeaderValueDraft(llmSettings.ollamaAuthHeaderValue || '');
     if (llmSettings.ollamaAuthHeaderName || llmSettings.ollamaAuthHeaderValue) {
@@ -231,6 +233,32 @@ export function ChatTab() {
                       ))}
                     </select>
                   </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="ollamaUtilityModel"
+                    className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
+                  >
+                    Utility model tag (optional)
+                  </label>
+                  <input
+                    id="ollamaUtilityModel"
+                    type="text"
+                    value={ollamaUtilityModelDraft}
+                    onChange={(e) => setOllamaUtilityModelDraft(e.target.value)}
+                    onBlur={() => {
+                      const trimmed = ollamaUtilityModelDraft.trim();
+                      if (trimmed !== (llmSettings.ollamaUtilityModel || '')) {
+                        saveLlmUpdates({ ollamaUtilityModel: trimmed });
+                      }
+                    }}
+                    placeholder="e.g. phi3:mini — falls back to chat model when empty"
+                    className={INPUT_CLASS}
+                  />
+                  <p className="text-[10px] text-[hsl(var(--text-tertiary))] leading-snug">
+                    Used for routing and short utility calls. Leave blank to reuse the chat model.
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-3">

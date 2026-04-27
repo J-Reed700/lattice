@@ -1,4 +1,35 @@
-import { VALIDATION_RULES } from '../types/settings';
+export const VALIDATION_RULES = {
+  indexing: {
+    chunkSize: { min: 100, max: 5000 },
+    chunkOverlap: { min: 0, max: 1000 },
+    batchSize: { min: 1, max: 128 },
+  },
+  search: {
+    maxResults: { min: 1, max: 100 },
+    similarityThreshold: { min: 0.0, max: 1.0 },
+    hybridSearchAlpha: { min: 0.0, max: 1.0 },
+    vectorWeight: { min: 0.0, max: 1.0 },
+    textWeight: { min: 0.0, max: 1.0 },
+    recencyWeight: { min: 0.0, max: 1.0 },
+    maxAgeDays: { min: 30, max: 3650 },
+  },
+  llm: {
+    temperature: { min: 0.0, max: 2.0 },
+    maxTokens: { min: 100, max: 262144 },
+    contextWindow: { min: 1024, max: 262144 },
+    timeoutSeconds: { min: 10, max: 300 },
+  },
+  ui: {
+    fontSize: { min: 10, max: 24 },
+    resultsPerPage: { min: 5, max: 50 },
+  },
+  sync: {
+    syncIntervalMinutes: { min: 1, max: 1440 },
+  },
+  backup: {
+    backupRetentionDays: { min: 1, max: 365 },
+  },
+} as const;
 
 export interface ValidationError {
   field: string;
