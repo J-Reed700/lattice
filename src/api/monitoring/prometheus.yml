@@ -1,0 +1,76 @@
+# Prometheus configuration for Vault monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'vault'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager:9093'
+
+# Rule files
+rule_files:
+  - '/etc/prometheus/alerts/*.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Vault Backend API
+  - job_name: 'vault-backend'
+    metrics_path: '/monitoring/metrics'
+    static_configs:
+      - targets:
+          - 'vault-backend:8000'
+        labels:
+          service: 'backend'
+          component: 'api'
+
+  # PostgreSQL (using postgres_exporter)
+  - job_name: 'postgresql'
+    static_configs:
+      - targets:
+          - 'postgres-exporter:9187'
+        labels:
+          service: 'database'
+          component: 'postgres'
+
+  # Redis (using redis_exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets:
+          - 'redis-exporter:9121'
+        labels:
+          service: 'cache'
+          component: 'redis'
+
+  # Node Exporter (system metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets:
+          - 'node-exporter:9100'
+        labels:
+          service: 'system'
+          component: 'node'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets:
+          - 'localhost:9090'
+        labels:
+          service: 'monitoring'
+          component: 'prometheus'
+
+  # Grafana
+  - job_name: 'grafana'
+    static_configs:
+      - targets:
+          - 'grafana:3000'
+        labels:
+          service: 'monitoring'
+          component: 'grafana'

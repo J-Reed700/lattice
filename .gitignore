@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+.env
+.env.local
+.env.development
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Test coverage
+coverage/
+htmlcov/
+.coverage
+*.coverage
+coverage.xml
+coverage-final.json
+.pytest_cache/
+
+# Models and cache
+models/
+.cache/
+.fastembed_cache/
+
+# Compiled test binaries
+test_context_manager
+mock_http
+src/app/src/test_web_archive_security
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Rust temp schema artifacts
+src/app/src/src/crates/recall/infrastructure/persistence/database/schema.rs.tmp*
+
+# Runtime artifacts
+src/app/src/crashes/
+src/app/src/test_output.txt
+src/app/src/build_output.txt
+src/app/src/build_error.txt
+src/app/build_output.txt
+src/app/CHAT_QA_TEST_REPORT.md
+src/app/SEARCH_E2E_TEST_REPORT.md
+test_list_all_documents.html
+
+# Audit reports (generated artifacts)
+docs/audit/
+
+# Rust build artifacts
+target/
+
+# Node
+node_modules/
+
+.github/

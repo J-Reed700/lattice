@@ -1,0 +1,253 @@
+{
+  "documents.py": {
+    "total_mutations": 2,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "upload_document",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "upload_documents",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "files.py": {
+    "total_mutations": 3,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "upload_file",
+        "requires_auth": true,
+        "has_csrf": false,
+        "status": "VULNERABLE"
+      },
+      {
+        "method": "PATCH",
+        "function": "update_file_metadata",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "DELETE",
+        "function": "delete_file",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "search.py": {
+    "total_mutations": 4,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "search",
+        "requires_auth": true,
+        "has_csrf": false,
+        "status": "VULNERABLE"
+      }
+    ]
+  },
+  "llm.py": {
+    "total_mutations": 2,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "ask_question_stream",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "export.py": {
+    "total_mutations": 3,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "export_full",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "export_selected",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "DELETE",
+        "function": "cancel_export",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "storage.py": {
+    "total_mutations": 3,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "perform_cleanup",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "vacuum_database",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "set_storage_quota",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "watch.py": {
+    "total_mutations": 5,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "add_watch_directory",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "DELETE",
+        "function": "remove_watch_directory",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "trigger_reindex",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "pause_watch",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "resume_watch",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "links.py": {
+    "total_mutations": 2,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "extract_links",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "update_unresolved_links",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "clusters.py": {
+    "total_mutations": 1,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "create_clusters",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "summarize.py": {
+    "total_mutations": 5,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "summarize_text",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "summarize_document",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "summarize_batch",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "download_model",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "DELETE",
+        "function": "delete_summary",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  },
+  "tags.py": {
+    "total_mutations": 2,
+    "endpoints": [
+      {
+        "method": "POST",
+        "function": "auto_tag_document",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      },
+      {
+        "method": "POST",
+        "function": "batch_auto_tag",
+        "requires_auth": true,
+        "has_csrf": true,
+        "status": "SECURED"
+      }
+    ]
+  }
+}

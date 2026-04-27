@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE models\n            SET is_active_for_chat = 1\n            WHERE model_id = ?1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "37c691af339dd96fe25ccf0dd554fb5bbbfd14f60c0ac94fa76e5e1ba6041741"
+}

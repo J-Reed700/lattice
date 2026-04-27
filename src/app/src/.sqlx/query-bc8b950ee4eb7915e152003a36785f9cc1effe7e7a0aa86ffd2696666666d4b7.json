@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT t.id as \"id!\", t.name as \"name!\", t.color as \"color!\", t.created_at as \"created_at!\", t.updated_at as \"updated_at!\"\n            FROM tags t\n            INNER JOIN document_tags dt ON t.id = dt.tag_id\n            WHERE dt.document_id = ?\n            ORDER BY t.name ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "color!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at!",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bc8b950ee4eb7915e152003a36785f9cc1effe7e7a0aa86ffd2696666666d4b7"
+}

@@ -1,0 +1,54 @@
+File Storage Module Structure
+==============================
+
+Directory: src/services/file_storage/
+
+Files:
+------
+ 39 lines - models.rs      [Data structures]
+ 41 lines - fs_ops.rs      [File system operations]
+ 49 lines - mod.rs         [Public interface]
+ 95 lines - hash.rs        [SHA256 hashing]
+245 lines - tests.rs       [Test suite]
+268 lines - queries.rs     [Database operations]
+357 lines - service.rs     [Main service logic]
+---
+1094 lines TOTAL
+
+Original: 707 lines (single file)
+Refactored: 1094 lines (7 modules with extensive docs)
+Largest file reduction: 707 → 357 lines (-49%)
+
+Module Dependency Graph:
+------------------------
+          mod.rs (Public API)
+             │
+             ├─→ models.rs (FileRecord, constants)
+             │
+             └─→ service.rs (FileStorageService)
+                  │
+                  ├─→ hash.rs (compute, validate)
+                  ├─→ fs_ops.rs (copy_file_atomic)
+                  └─→ queries.rs (DB operations)
+                       │
+                       └─→ models.rs
+
+Public Exports:
+---------------
+- FileStorageService (main service)
+- FileRecord (data model)
+- DEFAULT_MAX_FILE_SIZE (constant)
+
+Internal APIs (pub(crate)):
+---------------------------
+- hash::compute_hash()
+- hash::validate_hash()
+- hash::get_storage_path()
+- fs_ops::copy_file_atomic()
+- queries::* (all DB operations)
+
+Backward Compatibility:
+-----------------------
+✅ All existing imports unchanged
+✅ Public API preserved 100%
+✅ No breaking changes

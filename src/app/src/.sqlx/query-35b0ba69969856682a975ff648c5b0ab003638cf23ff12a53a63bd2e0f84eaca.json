@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO batch_job_items (id, job_id, item_url, status)\n            VALUES (?1, ?2, ?3, 'pending')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "35b0ba69969856682a975ff648c5b0ab003638cf23ff12a53a63bd2e0f84eaca"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO documents (\n            id, file_path, file_name, mime_type,\n            size_bytes, modified_at, indexed_at,\n            checksum, status\n        )\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed')\n        ON CONFLICT(file_path) DO UPDATE SET\n            indexed_at = excluded.indexed_at,\n            checksum = excluded.checksum,\n            status = 'indexed',\n            updated_at = CURRENT_TIMESTAMP\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "d0666d70a1d93e8804a755cd25ab8b52cfe04aa58e417e52d9f5603dd3dfd6e4"
+}

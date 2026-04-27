@@ -1,0 +1,37 @@
+[
+  {
+    "source_path": "test-note.md",
+    "target": "simple link",
+    "display_text": null,
+    "header": null,
+    "line_number": 3
+  },
+  {
+    "source_path": "test-note.md",
+    "target": "link with",
+    "display_text": "display text",
+    "header": null,
+    "line_number": 3
+  },
+  {
+    "source_path": "test-note.md",
+    "target": "list link",
+    "display_text": null,
+    "header": null,
+    "line_number": 7
+  },
+  {
+    "source_path": "test-note.md",
+    "target": "path/to/note",
+    "display_text": null,
+    "header": null,
+    "line_number": 8
+  },
+  {
+    "source_path": "test-note.md",
+    "target": "reference",
+    "display_text": null,
+    "header": "section",
+    "line_number": 10
+  }
+]

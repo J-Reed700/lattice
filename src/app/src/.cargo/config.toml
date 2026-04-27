@@ -1,0 +1,37 @@
+# Cargo configuration for snapshot tests
+
+[alias]
+# Snapshot test aliases
+snap-test = "test --test search_results_test --test indexing_output_test --test audit_events_test"
+snap-review = "insta review"
+snap-accept = "insta accept"
+snap-reject = "insta reject"
+snap-check = "insta test --check"
+
+# Stack size optimization for macOS
+# Increases stack size from default 2MB to 8MB to prevent overflow during:
+# - ONNX Runtime 2.0 model initialization (heavy ML dependencies)
+# - Deep async call chains in tokio worker threads
+# - Complex HTML parsing (e.g., Reddit pages) with scraper/html5ever
+# - Recursive content extraction algorithms in article extractor
+# Note: Using RUST_MIN_STACK environment variable instead of linker flags
+# to avoid applying -stack_size to library dependencies
+
+[env]
+RUST_MIN_STACK = "33554432"  # 32MB (Oracle Phase 5 fix - increased from 16MB for window creation)
+# Enable SQLx offline mode - use pre-generated query metadata from .sqlx/ directory
+# This allows compilation without a database connection
+# RESTORED: Oracle Phase 4 - Safety Net established
+SQLX_OFFLINE = "true"
+
+[target.'cfg(test)']
+rustflags = [
+    # Allow unwraps in tests
+    "-A", "clippy::unwrap_used",
+    "-A", "clippy::expect_used",
+]
+
+# Oracle Phase 5 Fix: Increase stack size for all threads (including tokio workers)
+# RUST_MIN_STACK only affects main thread - must use BOTH approaches:
+# 1. RUST_MIN_STACK for main thread (already set above)
+# 2. Tokio thread pool config in code (see setup/app.rs)

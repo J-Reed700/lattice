@@ -1,0 +1,139 @@
+{
+  "app": {
+    "name": "Lattice Desktop",
+    "identifier": "com.lattice.app",
+    "version": "1.0.0"
+  },
+  "components": {
+    "backend_server": {
+      "enabled": false,
+      "description": "FastAPI backend server (for multi-device sync)",
+      "path": "../backend",
+      "docker": true,
+      "services": ["postgres", "redis", "minio", "electric", "backend", "celery"]
+    },
+    "python_sidecar": {
+      "enabled": true,
+      "description": "Python ML sidecar bundled with Tauri",
+      "path": "python_backend",
+      "bundle": true,
+      "requirements": "python_backend/requirements.txt"
+    },
+    "frontend": {
+      "enabled": true,
+      "description": "React frontend for Tauri app",
+      "path": "src",
+      "framework": "vite"
+    },
+    "tauri_backend": {
+      "enabled": true,
+      "description": "Rust backend for Tauri app",
+      "path": "src-tauri",
+      "language": "rust"
+    }
+  },
+  "build_steps": {
+    "backend_server": {
+      "order": 1,
+      "commands": {
+        "docker": [
+          "cd ../backend",
+          "docker compose -f docker/docker-compose.dev.yml up -d --build"
+        ],
+        "standalone": [
+          "cd ../backend",
+          "poetry install",
+          "poetry run alembic upgrade head",
+          "poetry run uvicorn src.main:app --reload"
+        ]
+      }
+    },
+    "python_sidecar": {
+      "order": 2,
+      "commands": {
+        "install": [
+          "cd python_backend",
+          "python -m venv venv",
+          "venv/Scripts/activate",
+          "pip install -r requirements.txt"
+        ],
+        "bundle": [
+          "python scripts/bundle_python.py"
+        ],
+        "copy": [
+          "mkdir -p src-tauri/resources/python_backend",
+          "cp -r python_backend/* src-tauri/resources/python_backend/"
+        ]
+      }
+    },
+    "frontend": {
+      "order": 3,
+      "commands": {
+        "install": ["npm install"],
+        "build": ["npm run build"]
+      }
+    },
+    "tauri_backend": {
+      "order": 4,
+      "commands": {
+        "build": ["cargo build --release"],
+        "bundle": ["npm run tauri:build"]
+      }
+    }
+  },
+  "platforms": {
+    "windows": {
+      "enabled": true,
+      "targets": ["x86_64-pc-windows-msvc"],
+      "bundle": ["msi", "nsis"],
+      "icon": "icons/icon.ico"
+    },
+    "macos": {
+      "enabled": true,
+      "targets": ["x86_64-apple-darwin", "aarch64-apple-darwin"],
+      "bundle": ["dmg", "app"],
+      "icon": "icons/icon.icns"
+    },
+    "linux": {
+      "enabled": true,
+      "targets": ["x86_64-unknown-linux-gnu"],
+      "bundle": ["deb", "appimage"],
+      "icon": "icons/icon.png"
+    }
+  },
+  "features": {
+    "embeddings": {
+      "enabled": true,
+      "description": "Enable ML embeddings and semantic search"
+    },
+    "file_watcher": {
+      "enabled": true,
+      "description": "Enable automatic file watching"
+    },
+    "sync": {
+      "enabled": false,
+      "description": "Enable cloud sync (requires backend server)"
+    },
+    "telemetry": {
+      "enabled": false,
+      "description": "Enable OpenTelemetry observability"
+    }
+  },
+  "build": {
+    "clean": false,
+    "skipTests": false,
+    "verbose": false,
+    "parallel": true,
+    "optimization": "release",
+    "bundle": true,
+    "checksums": true
+  },
+  "paths": {
+    "dist": "dist",
+    "logs": "build-logs",
+    "cache": ".build-cache",
+    "python_venv": "python_backend/venv",
+    "backend_root": "../backend"
+  }
+}
+

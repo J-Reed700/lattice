@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    DELETE FROM recent_documents\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "1f31bad568c07e7d0ea4e3eb1b08c87d1a0ed69c91dceca1a5edc5e396817fc8"
+}

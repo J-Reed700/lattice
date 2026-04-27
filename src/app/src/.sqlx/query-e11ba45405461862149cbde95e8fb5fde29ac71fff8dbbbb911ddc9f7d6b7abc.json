@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO models (\n            id, model_id, model_name, description, base_path, total_size_bytes, status, model_type,\n            architecture, downloaded_at, last_used_at, use_count, is_active_for_chat, is_active_for_embedding,\n            metadata, created_at, updated_at\n        )\n        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)\n        ON CONFLICT(model_id) DO UPDATE SET\n            model_name = excluded.model_name,\n            description = excluded.description,\n            base_path = excluded.base_path,\n            total_size_bytes = excluded.total_size_bytes,\n            status = excluded.status,\n            model_type = excluded.model_type,\n            architecture = excluded.architecture,\n            downloaded_at = excluded.downloaded_at,\n            last_used_at = excluded.last_used_at,\n            use_count = excluded.use_count,\n            is_active_for_chat = excluded.is_active_for_chat,\n            is_active_for_embedding = excluded.is_active_for_embedding,\n            metadata = excluded.metadata,\n            updated_at = excluded.updated_at\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": []
+  },
+  "hash": "e11ba45405461862149cbde95e8fb5fde29ac71fff8dbbbb911ddc9f7d6b7abc"
+}

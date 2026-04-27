@@ -1,0 +1,1 @@
+export { JournalWorkspace } from './JournalWorkspace';

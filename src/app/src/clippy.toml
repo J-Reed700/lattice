@@ -1,0 +1,10 @@
+# Clippy Configuration
+#
+# Oracle Guidance: Async functions store state on HEAP (in Future objects), not stack.
+# Deep async call chains don't cause stack overflow - tokio::spawn is safe to use.
+#
+# The CoreRuntime workaround was removed as unnecessary technical debt.
+
+# Standard Clippy settings
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 10

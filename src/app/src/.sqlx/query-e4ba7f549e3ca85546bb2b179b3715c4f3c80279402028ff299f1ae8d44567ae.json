@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO document_mentions (id, document_id, mention_id, context, position, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "e4ba7f549e3ca85546bb2b179b3715c4f3c80279402028ff299f1ae8d44567ae"
+}

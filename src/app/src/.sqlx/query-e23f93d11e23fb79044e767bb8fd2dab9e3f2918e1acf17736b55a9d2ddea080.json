@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE documents SET status = ?, updated_at = CURRENT_TIMESTAMP\n        WHERE file_path = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e23f93d11e23fb79044e767bb8fd2dab9e3f2918e1acf17736b55a9d2ddea080"
+}

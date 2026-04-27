@@ -1,0 +1,67 @@
+{
+  "project": {
+    "name": "Vault Backend",
+    "version": "0.1.0",
+    "description": "Personal knowledge recall system with semantic search",
+    "license": "MIT"
+  },
+  "features": [
+    {
+      "id": 1,
+      "name": "Document Indexing",
+      "status": "implemented",
+      "description": "Extract and index content from multiple file formats",
+      "supported_formats": ["pdf", "txt", "md", "docx", "json"]
+    },
+    {
+      "id": 2,
+      "name": "Semantic Search",
+      "status": "implemented",
+      "description": "Vector-based similarity search using embeddings",
+      "technologies": ["sentence-transformers", "pgvector", "postgresql"]
+    },
+    {
+      "id": 3,
+      "name": "Full-Text Search",
+      "status": "implemented",
+      "description": "Traditional keyword-based search with ranking",
+      "technologies": ["postgresql", "tsvector", "tsquery"]
+    },
+    {
+      "id": 4,
+      "name": "Hybrid Search",
+      "status": "implemented",
+      "description": "Combines vector and text search for optimal results",
+      "weight_config": {
+        "vector_weight": 0.7,
+        "text_weight": 0.3
+      }
+    }
+  ],
+  "test_data": {
+    "sample_queries": [
+      "machine learning algorithms",
+      "document retrieval systems",
+      "vector embeddings",
+      "knowledge management"
+    ],
+    "expected_results": {
+      "precision": 0.85,
+      "recall": 0.90,
+      "f1_score": 0.87
+    }
+  },
+  "configuration": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_dimension": 384,
+    "chunk_size": 512,
+    "chunk_overlap": 50,
+    "max_file_size_mb": 500
+  },
+  "performance_targets": {
+    "indexing_time_ms": 500,
+    "search_time_ms": 200,
+    "embedding_time_ms": 100,
+    "max_concurrent_uploads": 10
+  }
+}

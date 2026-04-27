@@ -1,0 +1,21 @@
+# Cargo audit configuration
+# See: https://docs.rs/cargo-audit/latest/cargo_audit/
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: RSA Marvin Attack (false positive)
+    # The `rsa` crate appears in Cargo.lock due to a Cargo limitation with weak dependencies
+    # (see rust-lang/cargo#10801), but it is NOT actually compiled or used in our binary.
+    #
+    # Dependency chain: rsa ← sqlx-mysql ← sqlx-macros-core
+    # We use SQLx with `default-features = false` and only `sqlite` feature enabled.
+    # The mysql driver is NOT enabled, and `cargo tree` confirms it's not in the dep tree.
+    # No rsa or sqlx-mysql artifacts exist in target/debug/deps.
+    #
+    # This is a known Cargo bug: https://github.com/launchbadge/sqlx/issues/2579
+    # The crate appears in Cargo.lock but is not compiled. Verified by:
+    # 1. cargo tree shows no mysql or rsa dependencies
+    # 2. No rsa-*.rlib artifacts in target/
+    # 3. Binary does not link against rsa
+    "RUSTSEC-2023-0071",
+]

@@ -1,0 +1,11 @@
+# E2E Test Results
+e2e-results/
+playwright-report/
+test-results/
+
+# Playwright
+.playwright/
+
+# Screenshots and videos
+e2e/screenshots/
+e2e/videos/

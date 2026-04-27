@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE batch_jobs\n            SET status = ?1,\n                started_at = COALESCE(?2, started_at),\n                completed_at = COALESCE(?3, completed_at)\n            WHERE id = ?4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "bc301e908b42deebd2a4a0f6429dcd1a8b5d3e32e303bf30fc6d2a8509ab7e7e"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO text_embeddings (\n                id, chunk_id, embedding, model_name, dimension\n            )\n            VALUES (?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "5de4d8ed2b83a113f42c120cfbc3cc44ef253bdfcd7439afa7352cf977274cf3"
+}

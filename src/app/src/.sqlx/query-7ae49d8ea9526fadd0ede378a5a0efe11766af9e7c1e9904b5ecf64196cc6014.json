@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        DELETE FROM models\n        WHERE model_id = ?1\n          AND is_active_for_chat = 0\n          AND is_active_for_embedding = 0\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "7ae49d8ea9526fadd0ede378a5a0efe11766af9e7c1e9904b5ecf64196cc6014"
+}
