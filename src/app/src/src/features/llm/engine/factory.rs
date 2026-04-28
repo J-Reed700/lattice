@@ -39,7 +39,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::application::ports::LLMPort;
-use crate::llm::models::{ModelFamily, Quantization};
+use crate::llm::models::{ModelFamily, ModelFormat, Quantization};
 use crate::llm::traits::LLMClient;
 use crate::llm::types::LLMError;
 use crate::llm::{GenerationConfig, InferenceConfig, LocalLLMClient, ModelInfo, OllamaClient};
@@ -310,16 +310,103 @@ fn infer_model_info(path: &Path) -> ModelInfo {
         None
     };
 
-    // Estimate file size in MB
-    let size_mb = std::fs::metadata(path)
-        .map(|m| m.len() / 1_048_576)
-        .unwrap_or(4000); // Default to 4GB
+    // Detect on-disk format. A directory with config.json + safetensors
+    // shards is the HF safetensors layout; anything else is treated as
+    // GGUF (single-file blob).
+    let format = detect_model_format(path);
+
+    // Estimate size. For GGUF, the file size; for safetensors, walk the
+    // directory and sum every .safetensors shard. Defaults to 4 GB if
+    // neither path resolves cleanly.
+    let size_mb = match format {
+        ModelFormat::Gguf => std::fs::metadata(path)
+            .map(|m| m.len() / 1_048_576)
+            .unwrap_or(4000),
+        ModelFormat::Safetensors => sum_safetensors_dir_size_mb(path).unwrap_or(8000),
+    };
 
     ModelInfo {
         name: filename.to_string(),
         family,
         quantization,
         size_mb,
+        format,
+    }
+}
+
+/// Decide whether a model path on disk is GGUF or safetensors.
+///
+/// Rules:
+/// - File ending in `.gguf` (case-insensitive) → `Gguf`
+/// - Directory containing `config.json` AND at least one `*.safetensors`
+///   shard → `Safetensors`
+/// - Anything else → `Gguf` (the conservative default; downstream
+///   loader will surface a clean error if it's neither)
+///
+/// Public so call sites that have a `DownloadedModel` (which doesn't
+/// yet carry an explicit `format` field — schema migration follow-up)
+/// can resolve the format right before handing the path to
+/// `InferenceEngine::from_path`. Once `DownloadedModel.format` lands,
+/// most callers will read the field directly and this helper falls
+/// back to detecting at the catalog/import boundary only.
+pub fn detect_model_format(path: &Path) -> ModelFormat {
+    if path.is_file() {
+        let lower = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        if lower.as_deref() == Some("gguf") {
+            return ModelFormat::Gguf;
+        }
+        // Files that aren't .gguf fall through to GGUF default; the
+        // loader's pre-flight magic-bytes check will reject anything
+        // that isn't actually GGUF with a clean error.
+        return ModelFormat::Gguf;
+    }
+
+    if path.is_dir() {
+        let has_config = path.join("config.json").is_file();
+        let has_safetensors = std::fs::read_dir(path)
+            .map(|entries| {
+                entries.flatten().any(|e| {
+                    e.path()
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .is_some_and(|x| x.eq_ignore_ascii_case("safetensors"))
+                })
+            })
+            .unwrap_or(false);
+        if has_config && has_safetensors {
+            return ModelFormat::Safetensors;
+        }
+    }
+
+    ModelFormat::Gguf
+}
+
+/// Sum the size of every `.safetensors` shard in a HF model directory.
+/// Returns size in MiB. Used for the memory pre-flight check before
+/// loading. Errors during traversal collapse to `None` so the caller
+/// can fall back to a conservative default.
+fn sum_safetensors_dir_size_mb(dir: &Path) -> Option<u64> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut total: u64 = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_shard = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("safetensors"));
+        if is_shard {
+            if let Ok(meta) = std::fs::metadata(&path) {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    if total == 0 {
+        None
+    } else {
+        Some(total / 1_048_576)
     }
 }
 
@@ -746,6 +833,76 @@ mod tests {
 
         assert!(matches!(info.family, ModelFamily::Mistral));
         assert_eq!(info.quantization, None);
+    }
+
+    // === ModelFormat detection ===
+
+    #[test]
+    fn test_detect_format_gguf_file_extension() {
+        // Doesn't have to exist on disk — extension is the gating signal.
+        let path = PathBuf::from("/some/where/llama-3.1-8b-Q4_K_M.gguf");
+        assert_eq!(detect_model_format(&path), ModelFormat::Gguf);
+    }
+
+    #[test]
+    fn test_detect_format_safetensors_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("model.safetensors"), &[0u8; 16]).unwrap();
+        assert_eq!(detect_model_format(dir.path()), ModelFormat::Safetensors);
+    }
+
+    #[test]
+    fn test_detect_format_safetensors_sharded() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("model-00001-of-00002.safetensors"), &[0u8; 16]).unwrap();
+        std::fs::write(dir.path().join("model-00002-of-00002.safetensors"), &[0u8; 16]).unwrap();
+        assert_eq!(detect_model_format(dir.path()), ModelFormat::Safetensors);
+    }
+
+    #[test]
+    fn test_detect_format_directory_missing_config_falls_back_to_gguf() {
+        // No config.json — not a valid HF safetensors layout.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.safetensors"), &[0u8; 16]).unwrap();
+        assert_eq!(detect_model_format(dir.path()), ModelFormat::Gguf);
+    }
+
+    #[test]
+    fn test_detect_format_directory_missing_safetensors_falls_back_to_gguf() {
+        // config.json present but no shard — not a valid HF layout.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        assert_eq!(detect_model_format(dir.path()), ModelFormat::Gguf);
+    }
+
+    #[test]
+    fn test_sum_safetensors_dir_sums_all_shards() {
+        let dir = tempfile::tempdir().unwrap();
+        // 1 MiB + 2 MiB total
+        std::fs::write(
+            dir.path().join("model-00001-of-00002.safetensors"),
+            vec![0u8; 1_048_576],
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("model-00002-of-00002.safetensors"),
+            vec![0u8; 2 * 1_048_576],
+        )
+        .unwrap();
+        // Files that aren't shards should be ignored.
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+
+        let mb = sum_safetensors_dir_size_mb(dir.path()).unwrap();
+        assert_eq!(mb, 3);
+    }
+
+    #[test]
+    fn test_sum_safetensors_dir_returns_none_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(sum_safetensors_dir_size_mb(dir.path()).is_none());
     }
 
     #[test]

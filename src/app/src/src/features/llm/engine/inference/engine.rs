@@ -15,6 +15,7 @@ use mistralrs::{Model, RequestBuilder, SamplingParams, TextMessageRole};
 
 use super::config::InferenceConfig;
 use super::loader::ModelLoader;
+use crate::llm::models::ModelFormat;
 use crate::llm::traits::GenerationConfig;
 use crate::llm::types::LLMError;
 
@@ -116,22 +117,27 @@ pub struct InferenceEngine {
 }
 
 impl InferenceEngine {
-    /// Create inference engine from GGUF model file.
+    /// Create inference engine from a model on disk.
     ///
     /// # Arguments
-    /// * `model_path` - Path to GGUF model file
+    /// * `model_path` - For `Gguf`, a `.gguf` file. For `Safetensors`,
+    ///   the HF directory containing `config.json` + shards.
+    /// * `format` - Explicit format selector. Callers determine this
+    ///   from their own metadata; the loader does not sniff.
     /// * `config` - Inference configuration
     ///
     /// # Errors
-    /// Returns `LLMError::ModelNotLoaded` if file doesn't exist
-    /// Returns `LLMError::GenerationFailed` if model loading fails
+    /// Returns `LLMError::ModelNotLoaded` if path doesn't exist
+    /// Returns `LLMError::InsufficientMemory` if a safetensors model
+    ///   would exceed available RAM
+    /// Returns `LLMError::GenerationFailed` on mistralrs builder errors
     pub async fn from_path<P: AsRef<Path>>(
         model_path: P,
+        format: ModelFormat,
         config: InferenceConfig,
     ) -> Result<Self, LLMError> {
-        // Use ModelLoader to load the model (eliminates code duplication)
         let loader = ModelLoader::new(config.clone());
-        let model = loader.load(model_path).await?;
+        let model = loader.load(model_path, format).await?;
 
         Ok(Self {
             model: Arc::new(model),

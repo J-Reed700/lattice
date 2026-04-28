@@ -33,7 +33,10 @@ impl LocalLLMClient {
         inference_config: InferenceConfig,
         generation_config: GenerationConfig,
     ) -> Result<Self, LLMError> {
-        let engine = InferenceEngine::from_path(model_path, inference_config).await?;
+        // Format is part of ModelInfo — the loader doesn't sniff disk
+        // layout, callers tell it explicitly. See ModelFormat docs.
+        let format = model_info.format;
+        let engine = InferenceEngine::from_path(model_path, format, inference_config).await?;
 
         Ok(Self {
             engine: Arc::new(engine),
@@ -163,7 +166,7 @@ impl LLMClient for LocalLLMClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::models::{ModelFamily, Quantization};
+    use crate::llm::models::{ModelFamily, ModelFormat, Quantization};
 
     fn create_test_model_info() -> ModelInfo {
         ModelInfo {
@@ -171,6 +174,7 @@ mod tests {
             family: ModelFamily::Llama,
             quantization: Some(Quantization::Q4),
             size_mb: 4096,
+            format: ModelFormat::Gguf,
         }
     }
 

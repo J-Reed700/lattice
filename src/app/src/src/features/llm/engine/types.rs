@@ -211,6 +211,14 @@ pub enum LLMError {
     #[error("Timeout: operation took too long")]
     Timeout,
 
+    /// Returned by the safetensors loader when the model's on-disk size
+    /// would exceed available system memory by more than a safe margin.
+    /// Loading anyway would cause an OS-level OOM kill that looks like
+    /// a Lattice crash to the user. The message includes the specific
+    /// model + RAM numbers so the UI can render a clean warning.
+    #[error("Insufficient memory: {0}")]
+    InsufficientMemory(String),
+
     #[error(transparent)]
     #[serde(serialize_with = "serialize_io_error")]
     Io(#[from] std::io::Error),
