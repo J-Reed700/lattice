@@ -204,6 +204,7 @@ impl IndexDirectoryUseCase {
         include_extensions: Option<&Vec<String>>,
         files: &mut Vec<PathBuf>,
     ) -> Result<()> {
+        // repository-barrier-allow: walking user-provided ingestion directory to discover files for indexing.
         let entries = std::fs::read_dir(path)?;
 
         for entry in entries {

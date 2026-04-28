@@ -225,6 +225,7 @@ impl DeleteDocumentUseCase {
                     // Also try to remove the parent directory if it's now empty
                     // (content-addressed storage uses {hash}/ directories)
                     if let Some(parent) = file_path.parent() {
+                        // repository-barrier-allow: cleaning up parent dir of just-deleted file, not a state query.
                         if let Ok(mut entries) = tokio::fs::read_dir(parent).await {
                             let mut is_empty = true;
                             if entries.next_entry().await.ok().flatten().is_some() {

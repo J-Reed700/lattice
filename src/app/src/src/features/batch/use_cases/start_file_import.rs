@@ -1205,6 +1205,9 @@ mod tests {
             async fn delete(&self, _document_id: &str) -> Result<()> {
                 Ok(())
             }
+            async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
+                Ok(vec![])
+            }
         }
 
         struct MockEmbeddingRepo;

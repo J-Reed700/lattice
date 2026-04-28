@@ -208,6 +208,42 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>
     Ok(DocumentMapper::to_entities(&db_models))
 }
 
+pub async fn find_all_paginated(
+    conn: &mut SqliteConnection,
+    limit: usize,
+) -> Result<Vec<DocumentEntity>> {
+    let db_models: Vec<DocumentModel> = sqlx::query_as::<_, DocumentModel>(
+        r#"
+        SELECT
+            id,
+            file_path,
+            file_name,
+            file_type,
+            mime_type,
+            size_bytes,
+            modified_at,
+            indexed_at,
+            checksum,
+            status,
+            language,
+            category,
+            quality_score,
+            access_count,
+            last_accessed_at,
+            word_count
+        FROM documents
+        ORDER BY indexed_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit as i64)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to list documents (paginated): {}", e)))?;
+
+    Ok(DocumentMapper::to_entities(&db_models))
+}
+
 pub async fn exists_by_path(conn: &mut SqliteConnection, file_path: &str) -> Result<bool> {
     sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM documents WHERE file_path = ?)")
         .bind(file_path)

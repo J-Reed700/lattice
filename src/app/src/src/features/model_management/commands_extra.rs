@@ -48,6 +48,8 @@ pub struct DownloadedModelResponse {
     pub use_count: i64,
     pub is_active_for_chat: bool,
     pub is_active_for_embedding: bool,
+    pub is_active_for_utility: bool,
+    pub backend: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[specta(skip)]
     pub metadata: Option<serde_json::Value>,
@@ -67,6 +69,8 @@ impl From<DownloadedModel> for DownloadedModelResponse {
             use_count: model.use_count(),
             is_active_for_chat: model.is_active_for_chat(),
             is_active_for_embedding: model.is_active_for_embedding(),
+            is_active_for_utility: model.is_active_for_utility(),
+            backend: model.backend().as_db_str().to_string(),
             metadata: model.metadata().cloned(),
         }
     }

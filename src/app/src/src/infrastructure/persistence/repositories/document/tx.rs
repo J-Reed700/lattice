@@ -251,6 +251,12 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
             .await?;
         Ok(count.0)
     }
+
+    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<DocumentEntity>> {
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::find_all_paginated(&mut tx, limit).await
+    }
 }
 
 impl crate::application::ports::DocumentRepository for SqliteDocumentRepositoryTx {}

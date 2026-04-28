@@ -1662,6 +1662,10 @@ mod tests {
         async fn count_chunks(&self) -> Result<i64> {
             Ok(self.document.chunks().len() as i64)
         }
+
+        async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>> {
+            Ok(vec![self.document.clone()].into_iter().take(limit).collect())
+        }
     }
 
     impl crate::application::ports::DocumentRepository for SingleDocumentRepository {}

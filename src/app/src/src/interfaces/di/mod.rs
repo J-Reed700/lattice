@@ -634,7 +634,7 @@ mod tests_basic {
             .embed_single("Test content")
             .await?;
 
-        assert_eq!(embedding.len(), 768);
+        assert_eq!(embedding.len(), crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM);
 
         // Store embedding
         let emb_id = container

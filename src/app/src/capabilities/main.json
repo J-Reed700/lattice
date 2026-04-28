@@ -60,6 +60,8 @@
     "model:allow-get-active-embedding-model",
     "model:allow-clear-active-chat-model",
     "model:allow-clear-active-embedding-model",
+    "model:allow-set-active-utility-model",
+    "model:allow-clear-active-utility-model",
     "model:allow-validate-model-compatibility",
     "model:allow-get-model-info",
     "model:allow-export-model",

@@ -116,16 +116,15 @@ pub async fn list_all_documents(
     // 2. Get document repository from container
     let repo = container.document_repository();
 
-    // 3. Query all documents (source of truth)
+    // 3. Query documents with SQL-level LIMIT (avoids loading entire table)
     let documents = repo
-        .find_all()
+        .find_all_paginated(limit)
         .await
         .context("Failed to query documents table")?;
 
     // 4. Map domain entities to DTOs
     let dtos: Vec<DocumentMetadataDto> = documents
         .into_iter()
-        .take(limit)
         .map(|doc| DocumentMetadataDto {
             id: doc.id().as_str().to_string(),
             file_name: doc.file_name().to_string(),

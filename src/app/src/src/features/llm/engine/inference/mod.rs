@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod engine;
+pub mod gguf_arch;
 pub mod loader;
 
 pub use config::InferenceConfig;

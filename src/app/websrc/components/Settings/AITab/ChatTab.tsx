@@ -240,22 +240,32 @@ export function ChatTab() {
                     htmlFor="ollamaUtilityModel"
                     className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
                   >
-                    Utility model tag (optional)
+                    Utility model (optional)
                   </label>
-                  <input
+                  <select
                     id="ollamaUtilityModel"
-                    type="text"
                     value={ollamaUtilityModelDraft}
-                    onChange={(e) => setOllamaUtilityModelDraft(e.target.value)}
-                    onBlur={() => {
-                      const trimmed = ollamaUtilityModelDraft.trim();
-                      if (trimmed !== (llmSettings.ollamaUtilityModel || '')) {
-                        saveLlmUpdates({ ollamaUtilityModel: trimmed });
+                    onChange={(e) => {
+                      const selected = e.target.value;
+                      setOllamaUtilityModelDraft(selected);
+                      if (selected !== (llmSettings.ollamaUtilityModel || '')) {
+                        saveLlmUpdates({ ollamaUtilityModel: selected });
                       }
                     }}
-                    placeholder="e.g. phi3:mini — falls back to chat model when empty"
+                    disabled={ollamaAvailableModels.length === 0}
                     className={INPUT_CLASS}
-                  />
+                  >
+                    <option value="">
+                      {ollamaAvailableModels.length === 0
+                        ? 'Test connection first'
+                        : 'Falls back to chat model'}
+                    </option>
+                    {ollamaAvailableModels.map((modelName) => (
+                      <option key={modelName} value={modelName}>
+                        {modelName}
+                      </option>
+                    ))}
+                  </select>
                   <p className="text-[10px] text-[hsl(var(--text-tertiary))] leading-snug">
                     Used for routing and short utility calls. Leave blank to reuse the chat model.
                   </p>

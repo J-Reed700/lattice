@@ -1,6 +1,7 @@
 //! Model loading and initialization using mistral.rs.
 
 use super::config::InferenceConfig;
+use super::gguf_arch;
 use crate::llm::types::LLMError;
 use mistralrs::{GgufModelBuilder, Model, PagedAttentionMetaBuilder};
 use std::path::Path;
@@ -47,6 +48,45 @@ impl ModelLoader {
         if !model_path.exists() {
             return Err(LLMError::ModelNotLoaded);
         }
+
+        // Pre-flight: peek the GGUF header for `general.architecture` and
+        // reject anything mistralrs is known to choke on. mistralrs panics
+        // (`.unwrap()` in `gguf/content.rs:151`) on unknown architectures
+        // and takes the whole Tauri process down with it; we cannot patch
+        // the vendored crate, so we gate at the door instead.
+        //
+        // Run on a blocking thread: GGUFs frequently live on slow external
+        // drives or NAS mounts, where even reading 1 MB can stall the
+        // tokio executor for hundreds of milliseconds.
+        let arch_path = model_path.to_path_buf();
+        let arch = tokio::task::spawn_blocking(move || gguf_arch::read_architecture(&arch_path))
+            .await
+            .map_err(|e| LLMError::Other(format!("GGUF peek task panicked: {e}")))?
+            .map_err(|e| {
+                LLMError::Other(format!(
+                    "Cannot read GGUF metadata for {}: {}",
+                    model_path.display(),
+                    e
+                ))
+            })?;
+
+        if !gguf_arch::is_supported_architecture(&arch) {
+            // Prefer a quant-source-specific hint for non-standard tags
+            // (e.g. unsloth's "qwen35"), falling back to the generic
+            // unsupported-arch message.
+            let detail = gguf_arch::nonstandard_alias_hint(&arch).map_or_else(
+                || format!(
+                    "Supported architectures: {}. To use this model, configure Ollama in Settings → Chat instead.",
+                    gguf_arch::SUPPORTED_ARCHITECTURES.join(", ")
+                ),
+                |h| h.to_string(),
+            );
+            return Err(LLMError::Other(format!(
+                "Model architecture '{arch}' is not supported by the local LLM runtime. {detail}"
+            )));
+        }
+
+        tracing::info!(arch = %arch, "GGUF architecture validated as supported");
 
         // Extract directory and filename
         let model_dir = model_path

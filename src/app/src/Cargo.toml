@@ -110,12 +110,12 @@ tokio-util = "0.7"
 # fastembed removed: see ORT note above.
 # Candle — pure-Rust ML framework for embedding model inference.
 # Metal acceleration is enabled on macOS via the `metal` feature on `candle-core`.
-# Pinned to 0.10.1 (the most recent tagged release; 0.10.2 was published to
-# crates.io but never tagged on Github). 0.10.x adds qwen3, qwen3_moe,
-# qwen3_vl, and nomic_bert which 0.8/0.9 lack.
-candle-core = { version = "=0.10.1", features = ["metal"] }
-candle-nn = { version = "=0.10.1", features = ["metal"] }
-candle-transformers = { version = "=0.10.1", features = ["metal"] }
+# Pinned to 0.10.2 (matches mistralrs rev 2d4ba4f's dep). 0.10.x adds qwen3,
+# qwen3_moe, qwen3_vl, and nomic_bert which 0.8/0.9 lack. 0.10.2 is on
+# crates.io but lacks a matching Git tag; this is a known upstream quirk.
+candle-core = { version = "=0.10.2", features = ["metal"] }
+candle-nn = { version = "=0.10.2", features = ["metal"] }
+candle-transformers = { version = "=0.10.2", features = ["metal"] }
 hf-hub = { version = "0.3", features = ["tokio"] }
 safetensors = "0.4"
 # Rust modernization dependencies
@@ -135,14 +135,14 @@ readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extract
 
 # Platform-specific Metal GPU support for macOS (M-series chips)
 [target.'cfg(target_os = "macos")'.dependencies]
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "97708f2", features = ["metal"] }
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2d4ba4f", features = ["metal"] }
 
 # Uncomment to enable CUDA on Windows/Linux
 # [target.'cfg(target_os = "windows")'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "97708f2", features = ["cuda"] }
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2d4ba4f", features = ["cuda"] }
 #
 # [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "97708f2", features = ["cuda"] }
+# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2d4ba4f", features = ["cuda"] }
 
 
 [target.'cfg(windows)'.dependencies]

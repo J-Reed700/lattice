@@ -579,6 +579,13 @@ impl DocumentRepositoryPort for MockDocumentRepository {
         let total: usize = docs.values().map(|doc| doc.chunks().len()).sum();
         Ok(total as i64)
     }
+
+    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>> {
+        let mut docs: Vec<_> = self.documents.read().values().cloned().collect();
+        docs.sort_by(|a, b| a.file_path().cmp(b.file_path()));
+        docs.truncate(limit);
+        Ok(docs)
+    }
 }
 
 #[async_trait]

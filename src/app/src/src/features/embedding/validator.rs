@@ -119,12 +119,14 @@ mod tests {
     #[test]
     fn test_validate_compatibility_failure() {
         let config = ModelConfig::Unset;
-        let result = validate_embedding_compatibility(DEFAULT_EMBEDDING_DIM, 384, &config);
+        let mismatched_dim = DEFAULT_EMBEDDING_DIM + 1;
+        let result =
+            validate_embedding_compatibility(DEFAULT_EMBEDDING_DIM, mismatched_dim, &config);
         assert!(result.is_err());
 
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("CRITICAL"));
-        assert!(err_msg.contains("384"));
+        assert!(err_msg.contains(&mismatched_dim.to_string()));
         assert!(err_msg.contains(&DEFAULT_EMBEDDING_DIM.to_string()));
     }
 }

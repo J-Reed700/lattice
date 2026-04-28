@@ -12,7 +12,7 @@
 import { useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
-import { Calendar, HardDrive, Trash2, TrendingUp } from 'lucide-react';
+import { Calendar, Flame, HardDrive, Trash2, TrendingUp } from 'lucide-react';
 
 import Card from '../../ui/Card/Card';
 import { Button } from '../../ui/button';
@@ -22,6 +22,7 @@ import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
 import { useModelRoles } from './ModelRolesContext';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
+import { VaultAPI } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 
 import type { DownloadedModel } from '../../../types/downloadedModels';
@@ -50,6 +51,24 @@ export function LocalModelCard({ model }: Props) {
   const { deleteDownloadedModel } = useDownloadedModels();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isWarming, setIsWarming] = useState(false);
+
+  const handleWarmUp = async () => {
+    setIsWarming(true);
+    try {
+      const result = await VaultAPI.warmUpActiveChatModel();
+      if (!result.ok) throw new Error(result.error);
+      toast.success(`${model.model_name} warmed up`, {
+        message: 'Loaded into memory and ready for fast first response.',
+      });
+    } catch (error) {
+      toast.error('Failed to warm up model', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsWarming(false);
+    }
+  };
 
   const handleDelete = async () => {
     setIsDeleting(true);
@@ -110,16 +129,31 @@ export function LocalModelCard({ model }: Props) {
                 <RoleButton key={role.id} model={model} role={role} />
               ))}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={isDeleting}
-              className="text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] self-end text-xs"
-              title="Delete this model"
-            >
-              <Icon as={Trash2} size={12} />
-            </Button>
+            <div className="flex items-center justify-end gap-1">
+              {model.is_active_for_chat && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleWarmUp}
+                  disabled={isWarming}
+                  className="text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] text-xs gap-1"
+                  title="Pre-load into memory for fast first response"
+                >
+                  <Icon as={Flame} size={12} />
+                  {isWarming ? 'Warming…' : 'Warm up'}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={isDeleting}
+                className="text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] text-xs"
+                title="Delete this model"
+              >
+                <Icon as={Trash2} size={12} />
+              </Button>
+            </div>
           </div>
         </div>
       </Card>

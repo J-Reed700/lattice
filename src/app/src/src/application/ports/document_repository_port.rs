@@ -188,4 +188,24 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
     ///
     /// - `AppError::Database` if query fails
     async fn count_chunks(&self) -> Result<i64>;
+
+    /// Find documents with a SQL-level LIMIT applied.
+    ///
+    /// Preferred over `find_all` when the caller doesn't need the entire table;
+    /// the LIMIT is applied at the SQL level so the database doesn't materialize
+    /// rows that will be discarded. Documents are returned in the same order as
+    /// `find_all` (most recently indexed first).
+    ///
+    /// # Arguments
+    ///
+    /// * `limit` - Maximum number of documents to return.
+    ///
+    /// # Returns
+    ///
+    /// Up to `limit` documents, ordered by `indexed_at DESC`.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if query fails
+    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>>;
 }

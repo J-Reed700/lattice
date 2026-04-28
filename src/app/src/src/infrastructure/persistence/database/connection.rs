@@ -146,8 +146,7 @@ impl DatabaseConnection {
         Ok(())
     }
 
-    // Issue #5: Fix Transaction Isolation (P0 - Race Conditions)
-    // Retry on database locked errors (SQLITE_BUSY, SQLITE_LOCKED)
+
     pub async fn begin_immediate(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>> {
         tracing::info!("→ begin_immediate: Starting transaction acquisition...");
         let pool = self.pool.clone();

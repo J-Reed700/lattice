@@ -190,6 +190,13 @@ mod tests {
         async fn count_chunks(&self) -> Result<i64> {
             Ok(0)
         }
+
+        async fn find_all_paginated(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<crate::domain::entities::Document>> {
+            Ok(vec![])
+        }
     }
 
     struct MockFileStorage {

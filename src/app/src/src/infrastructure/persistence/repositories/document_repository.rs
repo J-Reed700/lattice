@@ -859,6 +859,50 @@ impl DocumentRepositoryPort for DocumentRepository {
             .await?;
         Ok(count.0)
     }
+
+    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<DocumentEntity>> {
+        let pool = self.pool.clone();
+        let limit_i64 = limit as i64;
+
+        let db_models: Vec<crate::infrastructure::persistence::mappers::DocumentModel> =
+            query_with_quick_timeout(|| async {
+                sqlx::query_as::<_, crate::infrastructure::persistence::mappers::DocumentModel>(
+                    r#"
+                    SELECT
+                        id,
+                        file_path,
+                        file_name,
+                        file_type,
+                        mime_type,
+                        size_bytes,
+                        modified_at,
+                        indexed_at,
+                        checksum,
+                        status,
+                        language,
+                        category,
+                        quality_score,
+                        access_count,
+                        last_accessed_at,
+                        word_count
+                    FROM documents
+                    ORDER BY indexed_at DESC
+                    LIMIT ?
+                    "#,
+                )
+                .bind(limit_i64)
+                .fetch_all(&pool)
+                .await
+            })
+            .await
+            .map_err(|e| {
+                AppError::Database(format!("Failed to list documents (paginated): {}", e))
+            })?;
+
+        Ok(
+            crate::infrastructure::persistence::mappers::DocumentMapper::to_entities(&db_models),
+        )
+    }
 }
 
 /// Implementation of `RepositoryPort<Document>` for DDD compliance.

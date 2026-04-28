@@ -11,9 +11,9 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { Settings as SettingsIcon, Search, Database, MessageSquare, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive, FileText, Settings2, Wrench } from 'lucide-react';
 
+import { AIModelsTab } from './AIModelsTab';
 import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
 import { DisplayTab } from './DisplayTab';
-import { DownloadedModelsTab } from './DownloadedModelsTab';
 import { IndexingTab } from './IndexingTab';
 import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
@@ -49,7 +49,7 @@ const tabGroups: TabGroup[] = [
     tabs: [
       { id: 'chat', label: 'Chat', icon: MessageSquare, component: ChatTab },
       { id: 'models', label: 'Models', icon: Brain, component: ModelsTab },
-      { id: 'downloaded-models', label: 'Downloaded', icon: HardDrive, component: DownloadedModelsTab },
+      { id: 'downloaded-models', label: 'Downloaded', icon: HardDrive, component: AIModelsTab },
       { id: 'prompts', label: 'Prompts', icon: FileText, component: PromptsTab },
       { id: 'tuning', label: 'Tuning', icon: Settings2, component: TuningTab },
       { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },

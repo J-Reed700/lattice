@@ -137,16 +137,22 @@ impl ConversationRepository {
             return Ok(0);
         }
 
-        let mut total_deleted = 0;
+        let placeholders = vec!["?"; message_ids.len()].join(",");
+        let sql = format!(
+            "DELETE FROM conversation_messages WHERE id IN ({})",
+            placeholders
+        );
 
+        let mut query = sqlx::query(&sql);
         for message_id in message_ids {
-            let result = sqlx::query!("DELETE FROM conversation_messages WHERE id = ?", message_id)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| AppError::Database(format!("Failed to delete message: {}", e)))?;
-
-            total_deleted += result.rows_affected();
+            query = query.bind(message_id);
         }
+
+        let total_deleted = query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to delete messages: {}", e)))?
+            .rows_affected();
 
         // Recount messages and tokens for the conversation
         #[derive(sqlx::FromRow)]

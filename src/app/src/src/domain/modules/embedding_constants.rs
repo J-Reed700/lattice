@@ -3,10 +3,10 @@
 //! These are the canonical defaults for embedding configuration.
 
 /// Default embedding dimension for the standard model.
-pub const DEFAULT_EMBEDDING_DIM: usize = 768;
+pub const DEFAULT_EMBEDDING_DIM: usize = 384;
 
 /// Default embedding model identifier (Hugging Face).
-pub const DEFAULT_EMBEDDING_MODEL_NAME: &str = "sentence-transformers/all-mpnet-base-v2";
+pub const DEFAULT_EMBEDDING_MODEL_NAME: &str = "sentence-transformers/all-MiniLM-L6-v2";
 
 /// Default embedding model display name (human-friendly).
-pub const DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME: &str = "all-mpnet-base-v2";
+pub const DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME: &str = "all-MiniLM-L6-v2";

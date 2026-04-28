@@ -141,6 +141,9 @@ impl CredentialsPort for CredentialsAdapter {
     }
 
     async fn clear_all_credentials(&self) -> Result<(), AppError> {
+        // Hardcoded list — keep in sync when a new credential service is added.
+        // The OS keyring API doesn't support enumeration, so we can't discover
+        // entries dynamically.
         let known_services = vec!["anthropic_api_key", "openai_api_key"];
 
         for service in known_services {

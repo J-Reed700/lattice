@@ -25,9 +25,6 @@
 //! }
 //! ```
 
-use super::embedding_constants::{
-    DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
-};
 use crate::features::model_management::domain::{ModelCategory, ModelMetadata, PerformanceTier};
 
 // ============================================================================
@@ -236,67 +233,13 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
 /// Get curated list of embedding models for semantic search.
 ///
 /// Returns models optimized for:
-/// - **BGE-M3**: Multilingual, hybrid dense/sparse retrieval
-/// - **DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME**: Higher-quality, general-purpose embeddings
-/// - **instructor-xl**: Instruction-aware embeddings
+/// - **BGE-M3**: Multilingual, hybrid dense/sparse retrieval (1024 dim)
+/// - **all-MiniLM-L6-v2**: Compact, fast general-purpose embeddings (384 dim)
 ///
 /// These models generate vector representations for semantic similarity.
+/// All entries use safetensors files compatible with the Candle runtime.
 pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
     vec![
-        ModelMetadata {
-            id: DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.into(),
-            name: DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.into(),
-            category: ModelCategory::Embedding,
-            description: format!(
-                "General-purpose embedding model ({} dimensions). Strong semantic retrieval quality.",
-                DEFAULT_EMBEDDING_DIM
-            ),
-            size_gb: 0.5,
-            minimum_ram_gb: 2.0,
-            recommended_ram_gb: 4.0,
-            context_length: 512,
-            performance_tier: PerformanceTier::Balanced,
-            supported_quantizations: vec!["F16".into(), "F32".into()],
-            capabilities: vec!["embedding".into(), "retrieval".into()],
-            download_url: Some(format!(
-                "https://huggingface.co/{}",
-                DEFAULT_EMBEDDING_MODEL_NAME
-            )),
-            license: "Apache-2.0".into(),
-            requires_auth: false,
-            model_id: Some(DEFAULT_EMBEDDING_MODEL_NAME.into()),
-            default_filename: None, // Multi-file model bundle (ONNX + tokenizer metadata)
-            files: vec![
-                super::model_metadata::ModelFileMetadata::new(
-                    "model.onnx".to_string(),
-                    "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/onnx/model.onnx".to_string(),
-                    420_000_000, // Approximate size
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "tokenizer.json".to_string(),
-                    "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/tokenizer.json".to_string(),
-                    8_000_000, // Approximate size
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "config.json".to_string(),
-                    "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/config.json".to_string(),
-                    1_024, // Approximate size
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "special_tokens_map.json".to_string(),
-                    "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/special_tokens_map.json".to_string(),
-                    1_024, // Approximate size
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "tokenizer_config.json".to_string(),
-                    "https://huggingface.co/Xenova/all-mpnet-base-v2/resolve/main/tokenizer_config.json".to_string(),
-                    2_048, // Approximate size
-                ),
-            ],
-            total_size_bytes: 428_004_096,
-            embedding_dimensions: Some(768),
-            embedding_compatibility: None,
-        },
         ModelMetadata {
             id: "bge-m3".into(),
             name: "BGE-M3".into(),
@@ -316,48 +259,22 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             default_filename: None, // Multi-file model - no single default file
             files: vec![
                 super::model_metadata::ModelFileMetadata::new(
-                    "model.onnx".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx".to_string(),
-                    725_000,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "model.onnx_data".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx_data".to_string(),
+                    "model.safetensors".to_string(),
+                    "https://huggingface.co/BAAI/bge-m3/resolve/main/model.safetensors".to_string(),
                     2_270_000_000,
                 ),
                 super::model_metadata::ModelFileMetadata::new(
-                    "Constant_7_attr__value".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/Constant_7_attr__value".to_string(),
-                    65_600,
+                    "tokenizer.json".to_string(),
+                    "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json".to_string(),
+                    17_000_000,
                 ),
                 super::model_metadata::ModelFileMetadata::new(
                     "config.json".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/config.json".to_string(),
-                    698,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "sentencepiece.bpe.model".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/sentencepiece.bpe.model".to_string(),
-                    5_070_000,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "special_tokens_map.json".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/special_tokens_map.json".to_string(),
-                    964,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "tokenizer.json".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/tokenizer.json".to_string(),
-                    17_100_000,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "tokenizer_config.json".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/tokenizer_config.json".to_string(),
-                    1_170,
+                    "https://huggingface.co/BAAI/bge-m3/resolve/main/config.json".to_string(),
+                    700,
                 ),
             ],
-            // Total size: model.onnx (725KB) + model.onnx_data (2.27GB) + other files (22.8MB) ≈ 2.29GB
-            total_size_bytes: 725_000_u64 + 2_270_000_000_u64 + 65_600_u64 + 698_u64 + 5_070_000_u64 + 964_u64 + 17_100_000_u64 + 1_170_u64,
+            total_size_bytes: 2_287_000_000,
             embedding_dimensions: Some(1024),
             embedding_compatibility: None,
         },
@@ -380,58 +297,23 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             default_filename: None, // Multi-file model bundle (ONNX + tokenizer metadata)
             files: vec![
                 super::model_metadata::ModelFileMetadata::new(
-                    "model.onnx".to_string(),
-                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx".to_string(),
-                    90_000_000, // Approximate size
+                    "model.safetensors".to_string(),
+                    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.safetensors".to_string(),
+                    90_900_000,
                 ),
                 super::model_metadata::ModelFileMetadata::new(
                     "tokenizer.json".to_string(),
-                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/tokenizer.json".to_string(),
-                    700_000, // Approximate size
+                    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json".to_string(),
+                    700_000,
                 ),
                 super::model_metadata::ModelFileMetadata::new(
                     "config.json".to_string(),
-                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/config.json".to_string(),
-                    1_024, // Approximate size
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "special_tokens_map.json".to_string(),
-                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/special_tokens_map.json".to_string(),
-                    1_024, // Approximate size
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "tokenizer_config.json".to_string(),
-                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json".to_string(),
-                    2_048, // Approximate size
+                    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json".to_string(),
+                    1_000,
                 ),
             ],
-            total_size_bytes: 90_704_096,
+            total_size_bytes: 91_700_000,
             embedding_dimensions: Some(384),
-            embedding_compatibility: None,
-        },
-        ModelMetadata {
-            id: "instructor-xl".into(),
-            name: "Instructor-XL".into(),
-            category: ModelCategory::Embedding,
-            description: format!(
-                "Instruction-aware embeddings ({} dimensions). Best quality, customizable with instructions.",
-                DEFAULT_EMBEDDING_DIM
-            ),
-            size_gb: 4.9,
-            minimum_ram_gb: 8.0,
-            recommended_ram_gb: 12.0,
-            context_length: 512,
-            performance_tier: PerformanceTier::Accurate,
-            supported_quantizations: vec!["F16".into(), "F32".into()],
-            capabilities: vec!["embedding".into(), "retrieval".into(), "instruction-aware".into()],
-            download_url: Some("https://huggingface.co/hkunlp/instructor-xl".into()),
-            license: "Apache-2.0".into(),
-            requires_auth: false,
-            model_id: Some("hkunlp/instructor-xl".into()),
-            default_filename: Some("onnx/model.onnx".into()),
-            files: vec![],
-            total_size_bytes: 0,
-            embedding_dimensions: Some(768),
             embedding_compatibility: None,
         },
     ]
@@ -582,7 +464,7 @@ mod tests {
     #[test]
     fn test_embedding_models_count() {
         let models = get_curated_embedding_models();
-        assert_eq!(models.len(), 4);
+        assert_eq!(models.len(), 2);
     }
 
     #[test]
@@ -594,7 +476,7 @@ mod tests {
     #[test]
     fn test_all_models_count() {
         let models = get_all_curated_models();
-        assert_eq!(models.len(), 14);
+        assert_eq!(models.len(), 12);
     }
 
     #[test]
@@ -603,7 +485,7 @@ mod tests {
         assert_eq!(llms.len(), 8);
 
         let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
-        assert_eq!(embeddings.len(), 4);
+        assert_eq!(embeddings.len(), 2);
 
         let ocr = get_curated_models_by_category(ModelCategory::OCR);
         assert_eq!(ocr.len(), 2);
@@ -725,5 +607,30 @@ mod tests {
     fn test_lookup_nonexistent_model() {
         let category = get_model_category_by_id("nonexistent-model-xyz-123");
         assert_eq!(category, None);
+    }
+
+    #[test]
+    fn embedding_models_use_safetensors_not_onnx() {
+        let models = get_curated_embedding_models();
+        for model in &models {
+            for file in &model.files {
+                assert!(
+                    !file.filename.ends_with(".onnx") && !file.filename.ends_with(".onnx_data"),
+                    "Embedding model '{}' file '{}' is ONNX; runtime is candle/safetensors only",
+                    model.id, file.filename,
+                );
+                assert!(
+                    !file.url.contains("/onnx/"),
+                    "Embedding model '{}' URL '{}' contains /onnx/ subdir; use the root safetensors path",
+                    model.id, file.url,
+                );
+            }
+            let has_safetensors = model.files.iter().any(|f| f.filename == "model.safetensors");
+            assert!(
+                has_safetensors,
+                "Embedding model '{}' is missing model.safetensors",
+                model.id,
+            );
+        }
     }
 }

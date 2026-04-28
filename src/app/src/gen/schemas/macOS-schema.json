@@ -4347,6 +4347,12 @@
           "markdownDescription": "Enables the clear_active_embedding_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the clear_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-clear-active-utility-model",
+          "markdownDescription": "Enables the clear_active_utility_model command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear_model_catalog_cache command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-clear-model-catalog-cache",
@@ -4485,6 +4491,12 @@
           "markdownDescription": "Enables the set_active_inference_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-set-active-utility-model",
+          "markdownDescription": "Enables the set_active_utility_model command without any pre-configured scope."
+        },
+        {
           "description": "Enables the validate_model_compatibility command without any pre-configured scope.",
           "type": "string",
           "const": "model:allow-validate-model-compatibility",
@@ -4519,6 +4531,12 @@
           "type": "string",
           "const": "model:deny-clear-active-embedding-model",
           "markdownDescription": "Denies the clear_active_embedding_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-clear-active-utility-model",
+          "markdownDescription": "Denies the clear_active_utility_model command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_model_catalog_cache command without any pre-configured scope.",
@@ -4657,6 +4675,12 @@
           "type": "string",
           "const": "model:deny-set-active-inference-model",
           "markdownDescription": "Denies the set_active_inference_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-set-active-utility-model",
+          "markdownDescription": "Denies the set_active_utility_model command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_model_compatibility command without any pre-configured scope.",

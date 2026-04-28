@@ -20,6 +20,34 @@ This rule exists because we hit a "split brain" bug cluster (April 2026) where m
 
 5. **TS types for backend DTOs should be generated, not hand-written.** When manually maintained, they drift. (Codegen via `ts-rs` or `specta` — tracked as a follow-up.)
 
+### Tauri command checklist (3 spots, easy to miss)
+
+When adding a new `#[tauri::command]`, ALL THREE must be updated or the frontend gets `Command not found`:
+
+1. **`#[tauri::command]` impl** — in `features/<slice>/plugin/commands.rs`
+2. **`tauri::generate_handler![]` registration** — in `features/<slice>/plugin/mod.rs`
+3. **`tauri_build::InlinedPlugin::commands(&[...])`** — in `src/build.rs` (this is the one that gets forgotten — it generates the ACL permissions)
+4. **`capabilities/main.json`** — add `"<slice>:allow-<command-with-dashes>"` to the permission list
+
+If you skip step 3, the per-command `_<command>.toml` permission file isn't generated, and step 4 fails the build with "Permission not found".
+
+### Enforcement
+
+Run before any PR touching `features/*/use_cases/`:
+
+```bash
+bash scripts/check-repository-barrier.sh
+```
+
+This grep-based guard fails when a `use_cases/*.rs` file calls `*::read_dir` without an inline justification comment. Legitimate filesystem use (cleaning up artifacts, walking user-provided ingest paths) requires:
+
+```rust
+// repository-barrier-allow: <one-sentence reason>
+let entries = tokio::fs::read_dir(path).await?;
+```
+
+If you find yourself adding the allow comment with a reason like "checking if X exists" — STOP. That's the bug we're trying to prevent. Add a repository method instead.
+
 ### When you suspect split-brain
 
 Run the audit: `oracle ask "audit <feature> for split-brain"` with the relevant files. The pattern: same conceptual entity described in ≥2 places that don't sync.
