@@ -14,7 +14,15 @@ This rule exists because we hit a "split brain" bug cluster (April 2026) where m
 
 2. **No use case may issue raw SQL.** Use the repository's typed methods. If the repository lacks the method you need, add it there — don't reach around it.
 
-3. **Frontend Zustand stores must be read-only mirrors** of backend state, updated via Tauri events or React Query. Never `localStorage`-only state that the backend can't see (with rare exceptions for pure UI prefs: theme, sort order, last-active tab).
+3. **Zustand is for pure UI preferences ONLY.** Anything the backend reads — settings, indexing config, downloaded model state, conversation drafts, etc. — must use React Query (`useQuery` for reads, `useMutation` for writes) against the Rust repository. The repository is the SSOT; React Query is the read-only mirror. Zustand is reserved exclusively for client-only UI prefs that the backend genuinely doesn't need to know about: theme, sort order, last-active tab, panel collapse state, etc.
+
+   ❌ Don't write a Zustand store that "mirrors" backend state with setter actions and manual rollback — that's paper compliance with the SSOT rule. The store will drift.
+
+   ❌ Don't fall back to `localStorage` for state the backend acts on, even with optimistic-update setters and "we'll save on blur" intentions.
+
+   ✅ Read with `useQuery`, write with `useMutation`. On mutation success, React Query invalidates the cache and refetches the canonical state — no rollback ceremony, no drift.
+
+   See `hooks/queries/useSettingsQuery.ts` and `hooks/queries/useConfigQuery.ts` for the canonical pattern.
 
 4. **No two tables/structs/types may describe the same conceptual entity.** When tempted to add `custom_models` alongside `models`, or `LLMSettings` in TS that doesn't match `LLMSettingsDto` in Rust — STOP. Unify or generate.
 
@@ -57,7 +65,8 @@ Run the audit: `oracle ask "audit <feature> for split-brain"` with the relevant 
 - ✅ `DownloadedModelRepository` is the SSOT for model state. `first_run_setup.rs` queries it (Phase 3 fix).
 - ❌ (fixed) `first_run_setup.rs` used to walk `~/.cache/lattice/models/` non-recursively, missed all subdirectory models.
 - ❌ (deleted Phase 5) `custom_models` table was a parallel registry to `models` — orphaned dead code, removed.
-- ⚠️ (deferred Phase 4b) `useSettingsStore` Zustand store mutates localStorage without round-tripping to Rust. Migration in progress.
+- ✅ (Phase 4b) `useSettingsStore` shrunk to display-only. `IndexingTab` + `PrivacyTab` now use React Query (`useSettingsQuery`/`useConfigQuery`). Privacy flags moved into Rust `SettingsRepository` with a `privacy_gate` helper that future telemetry/crash code MUST consult. Dead toggles (`useQuantization`, `enableAgenticRAG`) deleted — they were decorative, gated nothing.
+- ⚠️ (deferred) `AppConfig` (indexedPaths/excludePatterns/autoIndex) and `Settings.indexing` are two parallel backend stores with overlapping fields. They need unifying — `IndexingTab` currently has to mirror the same change into both via `saveConfig` + `updateSettings`. Track as follow-up.
 
 ---
 
