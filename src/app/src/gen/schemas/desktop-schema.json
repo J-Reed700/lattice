@@ -681,66 +681,6 @@
           "markdownDescription": "Denies the get_cache_stats command without any pre-configured scope."
         },
         {
-          "description": "Enables the add_watch_folder command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:allow-add-watch-folder",
-          "markdownDescription": "Enables the add_watch_folder command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_config command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:allow-get-config",
-          "markdownDescription": "Enables the get_config command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_watch_folders command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:allow-get-watch-folders",
-          "markdownDescription": "Enables the get_watch_folders command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the remove_watch_folder command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:allow-remove-watch-folder",
-          "markdownDescription": "Enables the remove_watch_folder command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the save_config command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:allow-save-config",
-          "markdownDescription": "Enables the save_config command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the add_watch_folder command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:deny-add-watch-folder",
-          "markdownDescription": "Denies the add_watch_folder command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_config command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:deny-get-config",
-          "markdownDescription": "Denies the get_config command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_watch_folders command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:deny-get-watch-folders",
-          "markdownDescription": "Denies the get_watch_folders command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the remove_watch_folder command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:deny-remove-watch-folder",
-          "markdownDescription": "Denies the remove_watch_folder command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the save_config command without any pre-configured scope.",
-          "type": "string",
-          "const": "config:deny-save-config",
-          "markdownDescription": "Denies the save_config command without any pre-configured scope."
-        },
-        {
           "description": "Enables the add_conversation_to_journal command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-add-conversation-to-journal",
@@ -4827,6 +4767,12 @@
           "markdownDescription": "Denies the semantic_search command without any pre-configured scope."
         },
         {
+          "description": "Enables the add_watch_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:allow-add-watch-folder",
+          "markdownDescription": "Enables the add_watch_folder command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_settings command without any pre-configured scope.",
           "type": "string",
           "const": "settings:allow-export-settings",
@@ -4857,6 +4803,12 @@
           "markdownDescription": "Enables the import_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_watch_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:allow-remove-watch-folder",
+          "markdownDescription": "Enables the remove_watch_folder command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reset_settings command without any pre-configured scope.",
           "type": "string",
           "const": "settings:allow-reset-settings",
@@ -4879,6 +4831,12 @@
           "type": "string",
           "const": "settings:allow-validate-folder-path",
           "markdownDescription": "Enables the validate_folder_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_watch_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:deny-add-watch-folder",
+          "markdownDescription": "Denies the add_watch_folder command without any pre-configured scope."
         },
         {
           "description": "Denies the export_settings command without any pre-configured scope.",
@@ -4909,6 +4867,12 @@
           "type": "string",
           "const": "settings:deny-import-settings",
           "markdownDescription": "Denies the import_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_watch_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:deny-remove-watch-folder",
+          "markdownDescription": "Denies the remove_watch_folder command without any pre-configured scope."
         },
         {
           "description": "Denies the reset_settings command without any pre-configured scope.",

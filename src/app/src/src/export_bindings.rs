@@ -82,12 +82,6 @@ fn main() {
             lattice::features::file::plugin::commands::resume_indexing,
             lattice::features::file::plugin::commands::reindex_file,
             lattice::features::file::plugin::commands::validate_file_path,
-            // Config Plugin (5 commands)
-            lattice::features::config::plugin::commands::get_config,
-            lattice::features::config::plugin::commands::save_config,
-            lattice::features::config::plugin::commands::get_watch_folders,
-            lattice::features::config::plugin::commands::add_watch_folder,
-            lattice::features::config::plugin::commands::remove_watch_folder,
             // Credentials Plugin (7 commands)
             lattice::features::credentials::plugin::commands::credentials_store,
             lattice::features::credentials::plugin::commands::credentials_get,

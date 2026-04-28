@@ -11,7 +11,6 @@
 pub mod backup;
 pub mod batch;
 pub mod cache;
-pub mod config;
 pub mod conversation;
 pub mod credentials;
 pub mod daily_notes;

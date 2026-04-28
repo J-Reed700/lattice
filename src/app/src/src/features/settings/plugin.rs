@@ -531,6 +531,117 @@ pub async fn validate_folder_path(
     Ok(use_case.validate_folder_path(&path))
 }
 
+/// Adds a folder to the indexed-paths watch list.
+///
+/// Thin wrapper around `UpdateSettingsUseCase` — read current
+/// indexed_paths, append, replay through update. The use case enforces
+/// CWE-22 path validation on the resulting array, so a malicious
+/// frontend cannot bypass via a raw `update_settings` call either.
+///
+/// Idempotent: adding a path that's already present is a no-op (no
+/// duplicate entry).
+#[tauri::command]
+#[specta::specta]
+pub async fn add_watch_folder(
+    path: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    let trimmed = path.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "watch folder path cannot be empty".to_string(),
+        )));
+    }
+
+    // Read current indexed_paths from the SSOT.
+    let current = container
+        .get_settings_use_case()
+        .execute()
+        .await
+        .map_err(ApiError::from)?;
+
+    if current.indexing.indexed_paths.contains(&trimmed) {
+        // Already present — idempotent no-op.
+        return Ok(());
+    }
+
+    let mut next_paths = current.indexing.indexed_paths.clone();
+    next_paths.push(trimmed);
+
+    let mut updates = HashMap::new();
+    updates.insert(
+        "indexedPaths".to_string(),
+        serde_json::to_value(next_paths).map_err(|e| {
+            ApiError::from(AppError::Serialization(format!(
+                "Failed to serialize indexedPaths: {e}"
+            )))
+        })?,
+    );
+
+    container
+        .update_settings_use_case()
+        .update_category(SettingsCategory::Indexing, updates)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(())
+}
+
+/// Removes a folder from the indexed-paths watch list.
+///
+/// Thin wrapper around `UpdateSettingsUseCase`. Idempotent: removing a
+/// path that isn't in the list is a no-op (no error).
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_watch_folder(
+    path: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    let trimmed = path.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "watch folder path cannot be empty".to_string(),
+        )));
+    }
+
+    let current = container
+        .get_settings_use_case()
+        .execute()
+        .await
+        .map_err(ApiError::from)?;
+
+    if !current.indexing.indexed_paths.contains(&trimmed) {
+        // Not present — idempotent no-op.
+        return Ok(());
+    }
+
+    let next_paths: Vec<String> = current
+        .indexing
+        .indexed_paths
+        .iter()
+        .filter(|p| **p != trimmed)
+        .cloned()
+        .collect();
+
+    let mut updates = HashMap::new();
+    updates.insert(
+        "indexedPaths".to_string(),
+        serde_json::to_value(next_paths).map_err(|e| {
+            ApiError::from(AppError::Serialization(format!(
+                "Failed to serialize indexedPaths: {e}"
+            )))
+        })?,
+    );
+
+    container
+        .update_settings_use_case()
+        .update_category(SettingsCategory::Indexing, updates)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(())
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("settings")
         .invoke_handler(tauri::generate_handler![
@@ -544,6 +655,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             validate_folder_path,
             test_ollama_connection,
             test_custom_tool,
+            add_watch_folder,
+            remove_watch_folder,
         ])
         .build()
 }

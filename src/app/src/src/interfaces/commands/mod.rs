@@ -1,8 +1,6 @@
 // Single-file command modules grouped under domains/ for filesystem organization.
 #[path = "domains/api_boundary.rs"]
 pub mod api_boundary;
-#[path = "domains/config.rs"]
-pub mod config;
 #[path = "domains/consolidated.rs"]
 pub mod consolidated;
 #[path = "domains/document_list.rs"]
