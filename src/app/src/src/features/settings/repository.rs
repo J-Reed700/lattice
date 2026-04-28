@@ -906,6 +906,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             SettingsCategory::Ui => serde_json::to_value(&settings.ui)?,
             SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
             SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
+            SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
         };
 
         Ok(value)
@@ -946,6 +947,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Ui => serde_json::to_value(&settings.ui)?,
                     SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
                     SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
+                    SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
                 };
 
                 let merged = self.merge_category_updates(category_value, &updates)?;
@@ -969,6 +971,9 @@ impl SettingsRepositoryPort for SettingsRepository {
                     }
                     SettingsCategory::Backup => {
                         settings.backup = serde_json::from_value(merged)?;
+                    }
+                    SettingsCategory::Privacy => {
+                        settings.privacy = serde_json::from_value(merged)?;
                     }
                 }
             }
@@ -1006,6 +1011,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Ui => settings.ui = Default::default(),
                     SettingsCategory::Sync => settings.sync = Default::default(),
                     SettingsCategory::Backup => settings.backup = Default::default(),
+                    SettingsCategory::Privacy => settings.privacy = Default::default(),
                 }
             }
             None => {
@@ -1066,6 +1072,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             existing.ui = imported_settings.ui;
             existing.sync = imported_settings.sync;
             existing.backup = imported_settings.backup;
+            existing.privacy = imported_settings.privacy;
 
             existing
         } else {

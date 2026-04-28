@@ -22,5 +22,6 @@ pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod plugin;
+pub mod privacy_gate;
 pub mod repository;
 pub mod use_cases;

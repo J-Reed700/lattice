@@ -36,6 +36,10 @@ pub struct SettingsDto {
 
     /// Backup configuration
     pub backup: BackupSettingsDto,
+
+    /// Privacy configuration (telemetry, crash reporting)
+    #[serde(default)]
+    pub privacy: PrivacySettingsDto,
 }
 
 /// Indexing settings.
@@ -419,6 +423,21 @@ pub struct BackupSettingsDto {
     pub compress_backups: bool,
 }
 
+/// Privacy settings — defaults to opt-out for both flags.
+///
+/// These flags must be read by the backend before emitting telemetry or
+/// crash reports. Source of truth lives here, not in the frontend
+/// localStorage. Phase 4b moved them out of the Zustand `privacy` slice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivacySettingsDto {
+    /// Send anonymous usage statistics. Off by default.
+    pub telemetry_enabled: bool,
+
+    /// Send crash reports. Off by default.
+    pub crash_reporting: bool,
+}
+
 // ============================================================================
 // Settings Category Enum
 // ============================================================================
@@ -439,6 +458,8 @@ pub enum SettingsCategory {
     Sync,
     /// Backup settings
     Backup,
+    /// Privacy settings (telemetry + crash reporting)
+    Privacy,
 }
 
 impl SettingsCategory {
@@ -451,6 +472,7 @@ impl SettingsCategory {
             SettingsCategory::Ui,
             SettingsCategory::Sync,
             SettingsCategory::Backup,
+            SettingsCategory::Privacy,
         ]
     }
 
@@ -463,6 +485,7 @@ impl SettingsCategory {
             SettingsCategory::Ui => "ui",
             SettingsCategory::Sync => "sync",
             SettingsCategory::Backup => "backup",
+            SettingsCategory::Privacy => "privacy",
         }
     }
 }
@@ -478,6 +501,7 @@ impl FromStr for SettingsCategory {
             "ui" => Ok(SettingsCategory::Ui),
             "sync" => Ok(SettingsCategory::Sync),
             "backup" => Ok(SettingsCategory::Backup),
+            "privacy" => Ok(SettingsCategory::Privacy),
             _ => Err(format!("Unknown settings category: {}", s)),
         }
     }
@@ -851,6 +875,17 @@ impl Default for BackupSettingsDto {
             backup_retention_days: 30,
             backup_path: String::new(),
             compress_backups: true,
+        }
+    }
+}
+
+impl Default for PrivacySettingsDto {
+    fn default() -> Self {
+        // Both flags default OFF. Users must opt in. Don't change these defaults
+        // without thinking carefully — they're a trust signal in a local-first app.
+        Self {
+            telemetry_enabled: false,
+            crash_reporting: false,
         }
     }
 }
