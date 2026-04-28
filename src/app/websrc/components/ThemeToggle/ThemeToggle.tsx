@@ -12,7 +12,7 @@ interface ThemeOption {
 }
 
 export function ThemeToggle() {
-  const theme = useSettingsStore((state) => state.settings.display.theme);
+  const theme = useSettingsStore((state) => state.display.theme);
   const updateDisplay = useSettingsStore((state) => state.updateDisplay);
 
   const options: ThemeOption[] = [

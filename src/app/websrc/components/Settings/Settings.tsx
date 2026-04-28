@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { Settings as SettingsIcon, Search, Database, MessageSquare, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive, FileText, Settings2, Wrench } from 'lucide-react';
@@ -17,7 +18,9 @@ import { DisplayTab } from './DisplayTab';
 import { IndexingTab } from './IndexingTab';
 import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { CONFIG_QUERY_KEY } from '../../hooks/queries/useConfigQuery';
+import { SETTINGS_QUERY_KEY } from '../../hooks/queries/useSettingsQuery';
+import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 
 type SettingsTab = 'search' | 'indexing' | 'chat' | 'models' | 'downloaded-models' | 'prompts' | 'tuning' | 'tools' | 'display' | 'privacy';
@@ -64,16 +67,29 @@ export function Settings() {
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
-  const settings = useSettingsStore((state) => state.settings);
-  const resetToDefaults = useSettingsStore((state) => state.resetToDefaults);
-  const exportSettings = useSettingsStore((state) => state.exportSettings);
-  const importSettings = useSettingsStore((state) => state.importSettings);
+  const queryClient = useQueryClient();
 
-  const handleReset = () => {
-    resetToDefaults();
+  // Invalidate React Query caches whenever settings change on the backend
+  // (reset/import). Tabs that consume those caches refetch automatically.
+  const invalidateSettingsCaches = () => {
+    void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: CONFIG_QUERY_KEY });
+  };
+
+  const handleReset = async () => {
+    setIsResetting(true);
+    const result = await VaultAPI.resetSettings();
+    setIsResetting(false);
     setShowResetDialog(false);
-    toast.success('Settings reset to defaults', { duration: 3000 });
+
+    if (result.ok) {
+      invalidateSettingsCaches();
+      toast.success('Settings reset to defaults', { duration: 3000 });
+    } else {
+      toast.error("Couldn't reset settings", { message: result.error, duration: 5000 });
+    }
   };
 
   const handleExport = async () => {
@@ -90,8 +106,11 @@ export function Settings() {
       });
 
       if (path) {
-        const json = exportSettings();
-        await writeTextFile(path, json);
+        const result = await VaultAPI.exportSettings();
+        if (!result.ok) {
+          throw new Error(result.error);
+        }
+        await writeTextFile(path, result.data);
         toast.success('Settings exported successfully', { duration: 3000 });
       }
     } catch (error) {
@@ -117,12 +136,13 @@ export function Settings() {
 
       if (path && typeof path === 'string') {
         const json = await readTextFile(path);
-        const success = importSettings(json);
+        const result = await VaultAPI.importSettings(json, false);
 
-        if (success) {
+        if (result.ok) {
+          invalidateSettingsCaches();
           toast.success('Settings imported successfully', { duration: 3000 });
         } else {
-          toast.error('Invalid settings file', { duration: 5000 });
+          toast.error('Invalid settings file', { message: result.error, duration: 5000 });
         }
       }
     } catch (error) {
@@ -148,7 +168,6 @@ export function Settings() {
             </div>
             <div>
               <h1 className="text-lg font-semibold text-[hsl(var(--text-primary))]">Settings</h1>
-              <p className="text-xs text-[hsl(var(--text-tertiary))]">v{settings.version}</p>
             </div>
           </div>
         </div>
@@ -257,10 +276,13 @@ export function Settings() {
                 Cancel
               </button>
               <button
-                onClick={handleReset}
-                className="px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] bg-[hsl(var(--danger))] hover:opacity-90 rounded-md transition-opacity duration-fast"
+                onClick={() => {
+                  void handleReset();
+                }}
+                disabled={isResetting}
+                className="px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] bg-[hsl(var(--danger))] hover:opacity-90 rounded-md transition-opacity duration-fast disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Reset settings
+                {isResetting ? 'Resetting...' : 'Reset settings'}
               </button>
             </div>
           </div>
