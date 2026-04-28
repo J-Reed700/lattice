@@ -26,6 +26,7 @@
 //! ```
 
 use crate::features::model_management::domain::{ModelCategory, ModelMetadata, PerformanceTier};
+use crate::llm::models::ModelFormat;
 
 // ============================================================================
 // LLM Models - GGUF Quantized for Local Inference
@@ -64,6 +65,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "phi-3-mini-4k-instruct-q4_k_m".into(),
@@ -86,6 +88,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "phi-3.5-mini-instruct-q4_k_m".into(),
@@ -108,6 +111,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
 
         // === Medium Models (2-8GB) ===
@@ -132,6 +136,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "llama-3.2-7b-instruct-q4_k_m".into(),
@@ -154,6 +159,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "qwen2.5-7b-instruct-q4_k_m".into(),
@@ -176,6 +182,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
 
         // === Large Models (8-16GB) ===
@@ -200,6 +207,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "mixtral-8x7b-instruct-v0.1-q4_k_m".into(),
@@ -222,6 +230,91 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
+        },
+
+        // === Safetensors Models (HF native format, no quantization) ===
+        // These load via mistralrs::ModelBuilder which auto-detects text
+        // vs multimodal from config.json. They're significantly larger
+        // on disk than GGUF (no quantization) and require correspondingly
+        // more RAM. Gated by the loader's RAM pre-flight check.
+        ModelMetadata {
+            id: "gemma-2-9b-it-safetensors".into(),
+            name: "Gemma 2 9B Instruct".into(),
+            category: ModelCategory::LLM,
+            description: "Google's Gemma 2 9B instruction-tuned model in HF safetensors format. \
+                          Strong reasoning + multilingual; unquantized fp16 — needs ~22 GB RAM.".into(),
+            size_gb: 18.5,
+            minimum_ram_gb: 22.0,
+            recommended_ram_gb: 32.0,
+            context_length: 8192,
+            performance_tier: PerformanceTier::Accurate,
+            supported_quantizations: vec![], // Native fp16 only via this path
+            capabilities: vec!["chat".into(), "reasoning".into(), "multilingual".into()],
+            download_url: Some("https://huggingface.co/google/gemma-2-9b-it".into()),
+            license: "Gemma".into(),
+            requires_auth: true, // Gemma is gated on HF
+            model_id: Some("google/gemma-2-9b-it".into()),
+            default_filename: None, // Multi-shard; download walks the repo
+            files: vec![],
+            total_size_bytes: 0,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Safetensors,
+        },
+        ModelMetadata {
+            id: "gemma-4-e4b-it-safetensors".into(),
+            name: "Gemma 4 E4B IT (multimodal)".into(),
+            category: ModelCategory::LLM,
+            description: "Google's Gemma 4 E4B instruction-tuned multimodal model (text + vision). \
+                          HF safetensors format only; not available as GGUF. Needs ~16 GB RAM.".into(),
+            size_gb: 14.0,
+            minimum_ram_gb: 16.0,
+            recommended_ram_gb: 24.0,
+            context_length: 32768,
+            performance_tier: PerformanceTier::Accurate,
+            supported_quantizations: vec![],
+            capabilities: vec![
+                "chat".into(),
+                "vision".into(),
+                "reasoning".into(),
+                "multilingual".into(),
+            ],
+            download_url: Some("https://huggingface.co/google/gemma-4-E4B-it".into()),
+            license: "Gemma".into(),
+            requires_auth: true,
+            model_id: Some("google/gemma-4-E4B-it".into()),
+            default_filename: None,
+            files: vec![],
+            total_size_bytes: 0,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Safetensors,
+        },
+        ModelMetadata {
+            id: "mistral-7b-instruct-v03-safetensors".into(),
+            name: "Mistral 7B Instruct v0.3".into(),
+            category: ModelCategory::LLM,
+            description: "Mistral 7B v0.3 instruction-tuned model in HF safetensors format. \
+                          Useful when you want non-quantized weights for finetuning compatibility \
+                          or just maximum quality. Needs ~16 GB RAM.".into(),
+            size_gb: 14.5,
+            minimum_ram_gb: 16.0,
+            recommended_ram_gb: 24.0,
+            context_length: 32768,
+            performance_tier: PerformanceTier::Accurate,
+            supported_quantizations: vec![],
+            capabilities: vec!["chat".into(), "reasoning".into(), "code".into()],
+            download_url: Some("https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3".into()),
+            license: "Apache-2.0".into(),
+            requires_auth: true, // Mistral models are gated on HF
+            model_id: Some("mistralai/Mistral-7B-Instruct-v0.3".into()),
+            default_filename: None,
+            files: vec![],
+            total_size_bytes: 0,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Safetensors,
         },
     ]
 }
@@ -277,6 +370,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             total_size_bytes: 2_287_000_000,
             embedding_dimensions: Some(1024),
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "all-minilm-l6-v2".into(),
@@ -315,6 +409,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             total_size_bytes: 91_700_000,
             embedding_dimensions: Some(384),
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
     ]
 }
@@ -353,6 +448,7 @@ pub fn get_curated_ocr_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
         ModelMetadata {
             id: "florence-2-large".into(),
@@ -375,6 +471,7 @@ pub fn get_curated_ocr_models() -> Vec<ModelMetadata> {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: ModelFormat::Gguf,
         },
     ]
 }
@@ -457,8 +554,9 @@ mod tests {
 
     #[test]
     fn test_llm_models_count() {
+        // 8 GGUF + 3 safetensors (Gemma 2 9B, Gemma 4 E4B, Mistral 7B v0.3)
         let models = get_curated_llm_models();
-        assert_eq!(models.len(), 8);
+        assert_eq!(models.len(), 11);
     }
 
     #[test]
@@ -476,19 +574,59 @@ mod tests {
     #[test]
     fn test_all_models_count() {
         let models = get_all_curated_models();
-        assert_eq!(models.len(), 12);
+        assert_eq!(models.len(), 15);
     }
 
     #[test]
     fn test_get_by_category() {
         let llms = get_curated_models_by_category(ModelCategory::LLM);
-        assert_eq!(llms.len(), 8);
+        assert_eq!(llms.len(), 11);
 
         let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
         assert_eq!(embeddings.len(), 2);
 
         let ocr = get_curated_models_by_category(ModelCategory::OCR);
         assert_eq!(ocr.len(), 2);
+    }
+
+    #[test]
+    fn test_safetensors_entries_have_correct_format() {
+        let models = get_curated_llm_models();
+        let safetensors_models: Vec<_> = models
+            .iter()
+            .filter(|m| m.format == ModelFormat::Safetensors)
+            .collect();
+        assert_eq!(safetensors_models.len(), 3);
+
+        // All safetensors entries are gated (Gemma + Mistral) — surface
+        // it correctly so the UI can prompt for HF token before download.
+        for m in &safetensors_models {
+            assert!(
+                m.requires_auth,
+                "safetensors entry '{}' should require HF auth (Gemma/Mistral are gated)",
+                m.id
+            );
+        }
+
+        // No safetensors entry should pretend to support quantizations:
+        // they all ship native fp16 weights.
+        for m in &safetensors_models {
+            assert!(
+                m.supported_quantizations.is_empty(),
+                "safetensors entry '{}' should not advertise quantizations",
+                m.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_existing_gguf_entries_default_to_gguf_format() {
+        let models = get_curated_llm_models();
+        let gguf_count = models
+            .iter()
+            .filter(|m| m.format == ModelFormat::Gguf)
+            .count();
+        assert_eq!(gguf_count, 8, "expected 8 GGUF entries unchanged");
     }
 
     #[test]

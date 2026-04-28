@@ -408,6 +408,7 @@ mod tests {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: crate::llm::models::ModelFormat::Gguf,
         }
     }
 
