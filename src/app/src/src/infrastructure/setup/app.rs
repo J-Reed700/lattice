@@ -1,4 +1,6 @@
-use crate::application::ports::{DocumentRepository, MentionRepositoryPort, RepositoryPort};
+use crate::application::ports::{
+    DocumentRepository, MentionRepositoryPort, RepositoryPort, SettingsRepositoryPort,
+};
 use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::domain::entities::Document;
 use crate::domain::events::model_download_events::ModelDownloadEvent;
@@ -185,7 +187,8 @@ async fn create_container(
     security_context: Arc<crate::security::SecurityContext>,
     model_dir: PathBuf,
     data_dir: PathBuf,
-    config: commands::config::AppConfig,
+    ollama_endpoint: String,
+    ollama_model: String,
 ) -> Result<crate::interfaces::di::Container, String> {
     use crate::interfaces::di::Container;
 
@@ -207,8 +210,8 @@ async fn create_container(
         pool,
         db_conn,
         embedding_model_path_opt,
-        &config.ollama_endpoint,
-        &config.ollama_model,
+        &ollama_endpoint,
+        &ollama_model,
         data_dir,
     )
     .await
@@ -319,11 +322,11 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     };
 
     let db_path = app_dir.join("lattice.db");
+    // Legacy ConfigService still managed by Tauri (until task 7.6 deletes it).
+    // Keep these path values around until the ConfigService.manage(...) block
+    // below is removed.
     let config_path = app_dir.join("config.json");
     let config_file_path = app_dir.join("config.json");
-
-    // Load configuration (synchronous)
-    let config = load_config(config_path.clone());
 
     let model_dir_for_init = model_dir.clone();
 
@@ -350,6 +353,25 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
 
+        // Read Ollama endpoint + model from the unified Settings store. This
+        // also runs the one-shot migration of any leftover legacy config.json
+        // (see SettingsRepository::new) so by the time we read here the
+        // user's prior choices have been ported into settings.json.
+        //
+        // This bootstrap repo is an idempotent reader of the same JSON file
+        // the DI container's SettingsRepository instance will own — both
+        // resolve to the same on-disk state, no split-brain.
+        let bootstrap_settings_repo =
+            crate::features::settings::repository::SettingsRepository::new(app_dir.clone())
+                .await
+                .map_err(|e| format!("Failed to read settings during startup: {e}"))?;
+        let bootstrap_settings = bootstrap_settings_repo
+            .get_all()
+            .await
+            .map_err(|e| format!("Failed to load settings during startup: {e}"))?;
+        let ollama_endpoint = bootstrap_settings.llm.ollama_url.clone();
+        let ollama_model = bootstrap_settings.llm.model.clone();
+
         // Create unified DI Container
         let container = create_container(
             conn.pool().clone(),
@@ -357,7 +379,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
             security_context,
             model_dir_for_init.clone(),
             app_dir.clone(),
-            config,
+            ollama_endpoint,
+            ollama_model,
         )
         .await?;
 

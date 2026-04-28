@@ -61,8 +61,17 @@ pub struct IndexingSettingsDto {
     /// Supported file types
     pub file_types: Vec<String>,
 
-    /// Paths to exclude from indexing
-    pub excluded_paths: Vec<String>,
+    /// Folders being watched / indexed (the user's watch list).
+    /// Migrated from the legacy AppConfig.indexed_paths in Phase 4b/7.
+    /// Mutated only via the dedicated `add_watch_folder` / `remove_watch_folder`
+    /// commands so backend can run path validation (CWE-22 / CWE-158).
+    #[serde(default)]
+    pub indexed_paths: Vec<String>,
+
+    /// File patterns to ignore during indexing (e.g. `*.tmp`, `node_modules`).
+    /// Renamed from `excluded_paths` in the AppConfig→Settings unification.
+    #[serde(default, alias = "excludedPaths")]
+    pub exclude_patterns: Vec<String>,
 }
 
 /// Search settings.
@@ -725,7 +734,13 @@ impl Default for IndexingSettingsDto {
                 "pdf".to_string(),
                 "docx".to_string(),
             ],
-            excluded_paths: vec![],
+            indexed_paths: vec![],
+            exclude_patterns: vec![
+                "*.tmp".to_string(),
+                "*.log".to_string(),
+                "node_modules".to_string(),
+                ".git".to_string(),
+            ],
         }
     }
 }
