@@ -3,41 +3,38 @@
  *
  * Configure file watching, indexing behavior, and exclusion patterns.
  *
- * Backend is the SSOT: state comes from React Query (`useConfigQuery` for
- * AppConfig, `useSettingsQuery` for the indexing slice's batchSize).
- * Per Phase 4b: Zustand is intentionally not involved — backend-backed
- * state must use React Query, not a mirroring store.
+ * Backend is the SSOT (Rust SettingsRepository). React Query is the
+ * read-only mirror. Per the post-Phase-4b/Task-7 cleanup, this tab
+ * uses only `useSettingsQuery` — the previous duality with AppConfig
+ * is gone.
+ *
+ * Watch folder add/remove still go through dedicated Tauri commands
+ * (`VaultAPI.addWatchFolder` / `removeWatchFolder`) so the backend can
+ * run path validation (CWE-22 / CWE-158) and serialize concurrent
+ * mutations. Both commands invalidate the SETTINGS query cache on
+ * success — React Query refetches the canonical state.
  */
 
 import { useEffect, useState } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Database, FolderPlus, X, Plus } from 'lucide-react';
 
 import {
-  useConfigQuery,
-  useSaveConfigMutation,
-  useAddWatchFolderMutation,
-  useRemoveWatchFolderMutation,
-} from '../../hooks/queries/useConfigQuery';
-import {
+  SETTINGS_QUERY_KEY,
   useSettingsQuery,
   useUpdateSettingsMutation,
 } from '../../hooks/queries/useSettingsQuery';
+import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
-
-import type { AppConfig } from '../../types';
 
 const DEFAULT_BATCH_SIZE = 32;
 
 export function IndexingTab() {
-  const { data: config, isLoading: isConfigLoading } = useConfigQuery();
-  const { data: settings, isLoading: isSettingsLoading } = useSettingsQuery();
-
-  const saveConfigMutation = useSaveConfigMutation();
-  const addFolderMutation = useAddWatchFolderMutation();
-  const removeFolderMutation = useRemoveWatchFolderMutation();
+  const { data: settings, isLoading } = useSettingsQuery();
   const updateSettingsMutation = useUpdateSettingsMutation();
+  const queryClient = useQueryClient();
 
   const [newPattern, setNewPattern] = useState('');
   const [isAddingFolder, setIsAddingFolder] = useState(false);
@@ -48,44 +45,26 @@ export function IndexingTab() {
   const [batchSizeDraft, setBatchSizeDraft] = useState(backendBatchSize);
 
   useEffect(() => {
-    // Sync the slider draft when backend state changes (initial load,
-    // background refetch, or another tab writing to settings).
     setBatchSizeDraft(backendBatchSize);
   }, [backendBatchSize]);
 
-  const isSyncing = isConfigLoading || isSettingsLoading;
+  const isSyncing = isLoading;
   const isSavingBatchSize = updateSettingsMutation.isPending;
 
-  const watchFolders = config?.indexedPaths ?? [];
-  const excludePatterns = config?.excludePatterns ?? [];
-  const autoIndex = config?.autoIndex ?? true;
+  const watchFolders = settings?.indexing.indexedPaths ?? [];
+  const excludePatterns = settings?.indexing.excludePatterns ?? [];
+  const autoIndex = settings?.indexing.autoIndexNewFiles ?? true;
 
-  const persistConfig = async (nextConfig: AppConfig) => {
-    try {
-      await saveConfigMutation.mutateAsync(nextConfig);
-      return true;
-    } catch (error) {
-      toast.error("Couldn't save indexing config", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
+  const invalidateSettings = () => {
+    void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
   };
 
-  const handleAutoIndexChange = async (checked: boolean) => {
-    if (!config) return;
-
-    const nextConfig: AppConfig = { ...config, autoIndex: checked };
-    const configSaved = await persistConfig(nextConfig);
-    if (!configSaved) return;
-
-    // Mirror the change in the Settings system too — these two stores
-    // partially overlap and need to stay aligned until they're unified.
+  const handleAutoIndexChange = (checked: boolean) => {
     updateSettingsMutation.mutate(
       { category: 'indexing', updates: { autoIndexNewFiles: checked } },
       {
         onError: (error) => {
-          toast.error("Couldn't sync auto-index setting", { message: error.message });
+          toast.error("Couldn't save auto-index setting", { message: error.message });
         },
       }
     );
@@ -103,11 +82,12 @@ export function IndexingTab() {
       if (selected && typeof selected === 'string') {
         if (watchFolders.includes(selected)) return;
 
-        addFolderMutation.mutate(selected, {
-          onError: (error) => {
-            toast.error("Couldn't add watch folder", { message: error.message });
-          },
-        });
+        const result = await VaultAPI.addWatchFolder(selected);
+        if (!result.ok) {
+          toast.error("Couldn't add watch folder", { message: result.error });
+          return;
+        }
+        invalidateSettings();
       }
     } catch (error) {
       console.error("Couldn't select folder:", error);
@@ -116,39 +96,46 @@ export function IndexingTab() {
     }
   };
 
-  const handleRemoveFolder = (folder: string) => {
-    removeFolderMutation.mutate(folder, {
-      onError: (error) => {
-        toast.error("Couldn't remove watch folder", { message: error.message });
-      },
-    });
+  const handleRemoveFolder = async (folder: string) => {
+    const result = await VaultAPI.removeWatchFolder(folder);
+    if (!result.ok) {
+      toast.error("Couldn't remove watch folder", { message: result.error });
+      return;
+    }
+    invalidateSettings();
   };
 
   const handleAddPattern = async () => {
     const trimmedPattern = newPattern.trim();
-    if (!trimmedPattern || !config) return;
+    if (!trimmedPattern) return;
 
     if (excludePatterns.includes(trimmedPattern)) {
       setNewPattern('');
       return;
     }
 
-    const nextConfig: AppConfig = {
-      ...config,
-      excludePatterns: [...excludePatterns, trimmedPattern],
-    };
+    const next = [...excludePatterns, trimmedPattern];
     setNewPattern('');
-    await persistConfig(nextConfig);
+    updateSettingsMutation.mutate(
+      { category: 'indexing', updates: { excludePatterns: next } },
+      {
+        onError: (error) => {
+          toast.error("Couldn't add exclude pattern", { message: error.message });
+        },
+      }
+    );
   };
 
   const handleRemovePattern = async (pattern: string) => {
-    if (!config) return;
-
-    const nextConfig: AppConfig = {
-      ...config,
-      excludePatterns: excludePatterns.filter((existing) => existing !== pattern),
-    };
-    await persistConfig(nextConfig);
+    const next = excludePatterns.filter((existing) => existing !== pattern);
+    updateSettingsMutation.mutate(
+      { category: 'indexing', updates: { excludePatterns: next } },
+      {
+        onError: (error) => {
+          toast.error("Couldn't remove exclude pattern", { message: error.message });
+        },
+      }
+    );
   };
 
   const commitBatchSize = () => {
@@ -189,9 +176,7 @@ export function IndexingTab() {
           id="autoIndex"
           type="checkbox"
           checked={autoIndex}
-          onChange={(e) => {
-            void handleAutoIndexChange(e.target.checked);
-          }}
+          onChange={(e) => handleAutoIndexChange(e.target.checked)}
           disabled={isSyncing}
           className="mt-1 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
         />
@@ -278,7 +263,9 @@ export function IndexingTab() {
                   </p>
                 </div>
                 <button
-                  onClick={() => handleRemoveFolder(folder)}
+                  onClick={() => {
+                    void handleRemoveFolder(folder);
+                  }}
                   disabled={isSyncing}
                   className="ml-3 p-1.5 text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] rounded transition-colors"
                   title="Remove folder"

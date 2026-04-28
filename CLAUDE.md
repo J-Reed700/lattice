@@ -65,8 +65,8 @@ Run the audit: `oracle ask "audit <feature> for split-brain"` with the relevant 
 - ✅ `DownloadedModelRepository` is the SSOT for model state. `first_run_setup.rs` queries it (Phase 3 fix).
 - ❌ (fixed) `first_run_setup.rs` used to walk `~/.cache/lattice/models/` non-recursively, missed all subdirectory models.
 - ❌ (deleted Phase 5) `custom_models` table was a parallel registry to `models` — orphaned dead code, removed.
-- ✅ (Phase 4b) `useSettingsStore` shrunk to display-only. `IndexingTab` + `PrivacyTab` now use React Query (`useSettingsQuery`/`useConfigQuery`). Privacy flags moved into Rust `SettingsRepository` with a `privacy_gate` helper that future telemetry/crash code MUST consult. Dead toggles (`useQuantization`, `enableAgenticRAG`) deleted — they were decorative, gated nothing.
-- ⚠️ (deferred) `AppConfig` (indexedPaths/excludePatterns/autoIndex) and `Settings.indexing` are two parallel backend stores with overlapping fields. They need unifying — `IndexingTab` currently has to mirror the same change into both via `saveConfig` + `updateSettings`. Track as follow-up.
+- ✅ (Phase 4b) `useSettingsStore` shrunk to display-only. `IndexingTab` + `PrivacyTab` now use React Query against the unified `SettingsRepository`. Privacy flags moved into Rust with a `privacy_gate` helper that future telemetry/crash code MUST consult. Dead toggles (`useQuantization`, `enableAgenticRAG`) deleted — they were decorative, gated nothing.
+- ✅ (Task 7) `AppConfig`/`ConfigService` deleted entirely. The 5 fields it owned were either dead (indexed_paths, exclude_patterns, auto_index — no Rust consumers) or duplicated in `LLMSettingsDto` (ollama_endpoint, ollama_model). One-shot migration in `SettingsRepository::new()` ports any leftover `config.json` into `settings.json` at startup, then deletes the legacy file. SSRF validation + path traversal protection moved to `UpdateSettingsUseCase` so a hostile frontend can't bypass via raw `update_settings({category: 'indexing', updates: {indexedPaths: ['/etc/shadow']}})`. Watch folder commands kept as thin wrappers that round-trip through the use case for serialized writes + validation in one place.
 
 ---
 

@@ -7,16 +7,19 @@ import { IndexingTab } from './IndexingTab';
 
 import type { ReactNode } from 'react';
 
-const { mockDialogOpen, mockGetConfig, mockGetSettings, mockSaveConfig, mockAddWatchFolder, mockRemoveWatchFolder, mockUpdateSettings } =
-  vi.hoisted(() => ({
-    mockDialogOpen: vi.fn(),
-    mockGetConfig: vi.fn(),
-    mockGetSettings: vi.fn(),
-    mockSaveConfig: vi.fn(),
-    mockAddWatchFolder: vi.fn(),
-    mockRemoveWatchFolder: vi.fn(),
-    mockUpdateSettings: vi.fn(),
-  }));
+const {
+  mockDialogOpen,
+  mockGetSettings,
+  mockUpdateSettings,
+  mockAddWatchFolder,
+  mockRemoveWatchFolder,
+} = vi.hoisted(() => ({
+  mockDialogOpen: vi.fn(),
+  mockGetSettings: vi.fn(),
+  mockUpdateSettings: vi.fn(),
+  mockAddWatchFolder: vi.fn(),
+  mockRemoveWatchFolder: vi.fn(),
+}));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: mockDialogOpen,
@@ -25,22 +28,12 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 vi.mock('@/lib/api', () => ({
   __esModule: true,
   default: {
-    getConfig: mockGetConfig,
     getSettings: mockGetSettings,
-    saveConfig: mockSaveConfig,
+    updateSettings: mockUpdateSettings,
     addWatchFolder: mockAddWatchFolder,
     removeWatchFolder: mockRemoveWatchFolder,
-    updateSettings: mockUpdateSettings,
   },
 }));
-
-const baseConfig = {
-  indexedPaths: ['/home/user/documents', '/home/user/downloads'],
-  excludePatterns: ['*.git', 'node_modules', '*.tmp'],
-  autoIndex: true,
-  ollamaEndpoint: 'http://localhost:11434',
-  ollamaModel: '',
-};
 
 const baseSettings = {
   indexing: {
@@ -49,12 +42,12 @@ const baseSettings = {
     batchSize: 32,
     autoIndexNewFiles: true,
     fileTypes: ['txt', 'md'],
-    excludedPaths: [],
+    indexedPaths: ['/home/user/documents', '/home/user/downloads'],
+    excludePatterns: ['*.git', 'node_modules', '*.tmp'],
   },
 };
 
 function renderTab() {
-  // Each test gets a fresh client so cached query data doesn't leak between tests.
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -67,12 +60,10 @@ function renderTab() {
 describe('IndexingTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetConfig.mockResolvedValue({ ok: true, data: baseConfig });
     mockGetSettings.mockResolvedValue({ ok: true, data: baseSettings });
-    mockSaveConfig.mockResolvedValue({ ok: true, data: undefined });
+    mockUpdateSettings.mockResolvedValue({ ok: true, data: baseSettings });
     mockAddWatchFolder.mockResolvedValue({ ok: true, data: undefined });
     mockRemoveWatchFolder.mockResolvedValue({ ok: true, data: undefined });
-    mockUpdateSettings.mockResolvedValue({ ok: true, data: baseSettings });
   });
 
   it('renders indexing settings header', async () => {
@@ -83,11 +74,11 @@ describe('IndexingTab', () => {
 
   it('displays auto-index checkbox with current state', async () => {
     renderTab();
-    const checkbox = await screen.findByLabelText('Auto-index New Files') as HTMLInputElement;
+    const checkbox = (await screen.findByLabelText('Auto-index New Files')) as HTMLInputElement;
     await waitFor(() => expect(checkbox).toBeChecked());
   });
 
-  it('toggles auto-index when checkbox clicked', async () => {
+  it('toggles auto-index by calling updateSettings', async () => {
     const user = userEvent.setup();
     renderTab();
     const checkbox = await screen.findByLabelText('Auto-index New Files');
@@ -96,7 +87,12 @@ describe('IndexingTab', () => {
     await user.click(checkbox);
 
     await waitFor(() => {
-      expect(mockSaveConfig).toHaveBeenCalledWith({ ...baseConfig, autoIndex: false });
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'indexing',
+          updates: { autoIndexNewFiles: false },
+        })
+      );
     });
   });
 
@@ -113,15 +109,17 @@ describe('IndexingTab', () => {
     });
 
     it('shows empty state when no folders watched', async () => {
-      mockGetConfig.mockResolvedValue({
+      mockGetSettings.mockResolvedValue({
         ok: true,
-        data: { ...baseConfig, indexedPaths: [] },
+        data: {
+          indexing: { ...baseSettings.indexing, indexedPaths: [] },
+        },
       });
       renderTab();
       expect(await screen.findByText('No folders are being watched')).toBeInTheDocument();
     });
 
-    it('adds folder via Tauri dialog', async () => {
+    it('adds folder via Tauri dialog + addWatchFolder command', async () => {
       const user = userEvent.setup();
       mockDialogOpen.mockResolvedValue('/home/user/projects');
       renderTab();
@@ -150,7 +148,7 @@ describe('IndexingTab', () => {
       });
     });
 
-    it('removes folder when remove button clicked', async () => {
+    it('removes folder via removeWatchFolder command', async () => {
       const user = userEvent.setup();
       renderTab();
 
@@ -171,11 +169,13 @@ describe('IndexingTab', () => {
       expect(screen.getByText('*.tmp')).toBeInTheDocument();
     });
 
-    it('adds pattern via add button', async () => {
+    it('adds pattern via updateSettings', async () => {
       const user = userEvent.setup();
-      mockGetConfig.mockResolvedValue({
+      mockGetSettings.mockResolvedValue({
         ok: true,
-        data: { ...baseConfig, excludePatterns: [] },
+        data: {
+          indexing: { ...baseSettings.indexing, excludePatterns: [] },
+        },
       });
       renderTab();
 
@@ -187,16 +187,21 @@ describe('IndexingTab', () => {
       await user.click(addButton);
 
       await waitFor(() => {
-        expect(mockSaveConfig).toHaveBeenCalledWith(
-          expect.objectContaining({ excludePatterns: ['*.log'] })
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            category: 'indexing',
+            updates: { excludePatterns: ['*.log'] },
+          })
         );
       });
     });
 
     it('does not add empty pattern (button disabled)', async () => {
-      mockGetConfig.mockResolvedValue({
+      mockGetSettings.mockResolvedValue({
         ok: true,
-        data: { ...baseConfig, excludePatterns: [] },
+        data: {
+          indexing: { ...baseSettings.indexing, excludePatterns: [] },
+        },
       });
       const user = userEvent.setup();
       renderTab();
@@ -208,7 +213,7 @@ describe('IndexingTab', () => {
       expect(addButton).toBeDisabled();
     });
 
-    it('removes pattern when remove button clicked', async () => {
+    it('removes pattern via updateSettings', async () => {
       const user = userEvent.setup();
       renderTab();
 
@@ -216,8 +221,11 @@ describe('IndexingTab', () => {
       await user.click(removeButtons[0]);
 
       await waitFor(() => {
-        expect(mockSaveConfig).toHaveBeenCalledWith(
-          expect.objectContaining({ excludePatterns: ['node_modules', '*.tmp'] })
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            category: 'indexing',
+            updates: { excludePatterns: ['node_modules', '*.tmp'] },
+          })
         );
       });
     });

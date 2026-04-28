@@ -34,7 +34,14 @@ export interface IndexingSettings {
   batchSize: number;           // Matches Rust batch_size with camelCase
   autoIndexNewFiles: boolean;  // Matches Rust auto_index_new_files with camelCase
   fileTypes: string[];         // Matches Rust file_types with camelCase
-  excludedPaths: string[];     // Matches Rust excluded_paths with camelCase
+  // Watch list — folders the user wants monitored. Mutated only via the
+  // dedicated VaultAPI.addWatchFolder / removeWatchFolder commands so
+  // the backend can run path validation (CWE-22 / CWE-158).
+  indexedPaths: string[];      // Matches Rust indexed_paths with camelCase
+  // File patterns to ignore during indexing (e.g. *.tmp, node_modules).
+  // Renamed from excluded_paths in the AppConfig→Settings unification;
+  // Rust still accepts the old name via #[serde(alias)].
+  excludePatterns: string[];   // Matches Rust exclude_patterns with camelCase
 }
 
 export interface SearchSettings {

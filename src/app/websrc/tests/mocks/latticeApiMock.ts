@@ -167,13 +167,6 @@ export function createVaultAPIMock() {
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
-    getConfig: vi.fn().mockResolvedValue({
-      indexedPaths: [],
-      excludePatterns: [],
-      autoIndex: true,
-      ollamaEndpoint: 'http://localhost:11434',
-      ollamaModel: 'llama3.1:8b',
-    }),
 
     // Stats operations
     getStats: vi.fn().mockResolvedValue({

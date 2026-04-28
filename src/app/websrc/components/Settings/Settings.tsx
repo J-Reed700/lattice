@@ -18,7 +18,6 @@ import { DisplayTab } from './DisplayTab';
 import { IndexingTab } from './IndexingTab';
 import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
-import { CONFIG_QUERY_KEY } from '../../hooks/queries/useConfigQuery';
 import { SETTINGS_QUERY_KEY } from '../../hooks/queries/useSettingsQuery';
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -72,10 +71,9 @@ export function Settings() {
   const queryClient = useQueryClient();
 
   // Invalidate React Query caches whenever settings change on the backend
-  // (reset/import). Tabs that consume those caches refetch automatically.
+  // (reset/import). Tabs that consume that cache refetch automatically.
   const invalidateSettingsCaches = () => {
     void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    void queryClient.invalidateQueries({ queryKey: CONFIG_QUERY_KEY });
   };
 
   const handleReset = async () => {
