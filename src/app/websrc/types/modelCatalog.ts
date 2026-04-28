@@ -87,7 +87,22 @@ export interface ModelMetadata {
   embedding_dimensions: number | null;
   /** Compatibility verdict for embedding models. Null for non-embedding models. */
   embedding_compatibility: EmbeddingCompatibility | null;
+  /**
+   * On-disk storage format. Drives which mistralrs builder is used at
+   * load time. Backwards-compat default = 'gguf' if missing.
+   * - 'gguf': single-file quantized blob (llama.cpp ecosystem)
+   * - 'safetensors': HF directory with config.json + sharded weights;
+   *   loaded via mistralrs::ModelBuilder which auto-detects text vs
+   *   multimodal. Unquantized — significantly larger on disk + RAM.
+   */
+  format?: ModelFormat;
 }
+
+/**
+ * On-disk model format. Matches Rust ModelFormat enum (lowercase serde
+ * serialization).
+ */
+export type ModelFormat = 'gguf' | 'safetensors';
 
 /**
  * Whether the local CandleEmbeddingService can actually load a given
