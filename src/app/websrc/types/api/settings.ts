@@ -12,6 +12,19 @@ export interface AppSettings {
   ui: UISettings;
   sync: SyncSettings;
   backup: BackupSettings;
+  privacy: PrivacySettings;
+}
+
+/**
+ * Privacy settings (Phase 4b SSOT).
+ *
+ * Both flags default to OFF. Backend code that sends telemetry or
+ * crash reports upstream MUST gate on these via `privacy_gate` helpers
+ * in features/settings/privacy_gate.rs.
+ */
+export interface PrivacySettings {
+  telemetryEnabled: boolean;  // Matches Rust telemetry_enabled with camelCase
+  crashReporting: boolean;    // Matches Rust crash_reporting with camelCase
 }
 
 // All field names use camelCase to match Rust #[serde(rename_all = "camelCase")]

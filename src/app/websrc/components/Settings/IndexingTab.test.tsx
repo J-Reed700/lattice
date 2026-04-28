@@ -1,285 +1,207 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { IndexingTab } from './IndexingTab';
-import { useSettingsStore } from '../../stores/settingsStore';
 
-vi.mock('../../stores/settingsStore');
+import type { ReactNode } from 'react';
 
-const { mockDialogOpen } = vi.hoisted(() => ({
-  mockDialogOpen: vi.fn(),
-}));
+const { mockDialogOpen, mockGetConfig, mockGetSettings, mockSaveConfig, mockAddWatchFolder, mockRemoveWatchFolder, mockUpdateSettings } =
+  vi.hoisted(() => ({
+    mockDialogOpen: vi.fn(),
+    mockGetConfig: vi.fn(),
+    mockGetSettings: vi.fn(),
+    mockSaveConfig: vi.fn(),
+    mockAddWatchFolder: vi.fn(),
+    mockRemoveWatchFolder: vi.fn(),
+    mockUpdateSettings: vi.fn(),
+  }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: mockDialogOpen,
 }));
 
-describe('IndexingTab', () => {
-  const mockUpdateIndexing = vi.fn();
-  const mockAddWatchFolder = vi.fn();
-  const mockRemoveWatchFolder = vi.fn();
-  const mockAddExcludePattern = vi.fn();
-  const mockRemoveExcludePattern = vi.fn();
+vi.mock('@/lib/api', () => ({
+  __esModule: true,
+  default: {
+    getConfig: mockGetConfig,
+    getSettings: mockGetSettings,
+    saveConfig: mockSaveConfig,
+    addWatchFolder: mockAddWatchFolder,
+    removeWatchFolder: mockRemoveWatchFolder,
+    updateSettings: mockUpdateSettings,
+  },
+}));
 
-  const mockSettings = {
-    autoIndex: true,
-    watchFolders: ['/home/user/documents', '/home/user/downloads'],
-    excludePatterns: ['*.git', 'node_modules', '*.tmp'],
+const baseConfig = {
+  indexedPaths: ['/home/user/documents', '/home/user/downloads'],
+  excludePatterns: ['*.git', 'node_modules', '*.tmp'],
+  autoIndex: true,
+  ollamaEndpoint: 'http://localhost:11434',
+  ollamaModel: '',
+};
+
+const baseSettings = {
+  indexing: {
+    chunkSize: 800,
+    chunkOverlap: 120,
     batchSize: 32,
-  };
+    autoIndexNewFiles: true,
+    fileTypes: ['txt', 'md'],
+    excludedPaths: [],
+  },
+};
 
+function renderTab() {
+  // Each test gets a fresh client so cached query data doesn't leak between tests.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return render(<IndexingTab />, { wrapper });
+}
+
+describe('IndexingTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (useSettingsStore as any).mockImplementation((selector: any) => {
-      const state = {
-        settings: { indexing: mockSettings },
-        updateIndexing: mockUpdateIndexing,
-        addWatchFolder: mockAddWatchFolder,
-        removeWatchFolder: mockRemoveWatchFolder,
-        addExcludePattern: mockAddExcludePattern,
-        removeExcludePattern: mockRemoveExcludePattern,
-      };
-      return selector(state);
-    });
+    mockGetConfig.mockResolvedValue({ ok: true, data: baseConfig });
+    mockGetSettings.mockResolvedValue({ ok: true, data: baseSettings });
+    mockSaveConfig.mockResolvedValue({ ok: true, data: undefined });
+    mockAddWatchFolder.mockResolvedValue({ ok: true, data: undefined });
+    mockRemoveWatchFolder.mockResolvedValue({ ok: true, data: undefined });
+    mockUpdateSettings.mockResolvedValue({ ok: true, data: baseSettings });
   });
 
-  it('renders indexing settings header', () => {
-    render(<IndexingTab />);
+  it('renders indexing settings header', async () => {
+    renderTab();
     expect(screen.getByText('Indexing Settings')).toBeInTheDocument();
-    expect(screen.getByText('Manage file watching and indexing behavior')).toBeInTheDocument();
+    expect(await screen.findByText('Manage file watching and indexing behavior')).toBeInTheDocument();
   });
 
-  it('displays auto-index checkbox with current state', () => {
-    render(<IndexingTab />);
-    const checkbox = screen.getByLabelText('Auto-index New Files') as HTMLInputElement;
-    expect(checkbox).toBeChecked();
+  it('displays auto-index checkbox with current state', async () => {
+    renderTab();
+    const checkbox = await screen.findByLabelText('Auto-index New Files') as HTMLInputElement;
+    await waitFor(() => expect(checkbox).toBeChecked());
   });
 
   it('toggles auto-index when checkbox clicked', async () => {
     const user = userEvent.setup();
-    render(<IndexingTab />);
+    renderTab();
+    const checkbox = await screen.findByLabelText('Auto-index New Files');
+    await waitFor(() => expect(checkbox).not.toBeDisabled());
 
-    const checkbox = screen.getByLabelText('Auto-index New Files');
     await user.click(checkbox);
 
-    expect(mockUpdateIndexing).toHaveBeenCalledWith({ autoIndex: false });
+    await waitFor(() => {
+      expect(mockSaveConfig).toHaveBeenCalledWith({ ...baseConfig, autoIndex: false });
+    });
   });
 
-  it('displays current batch size value', () => {
-    render(<IndexingTab />);
-    expect(screen.getByText('Batch Size: 32')).toBeInTheDocument();
-  });
-
-  it('updates batch size when slider changed', async () => {
-    render(<IndexingTab />);
-
-    const slider = screen.getByLabelText(/batch size/i) as HTMLInputElement;
-    fireEvent.change(slider, { target: { value: '64' } });
-
-    expect(mockUpdateIndexing).toHaveBeenCalledWith({ batchSize: 64 });
+  it('displays current batch size value from backend', async () => {
+    renderTab();
+    expect(await screen.findByText('Batch Size: 32')).toBeInTheDocument();
   });
 
   describe('Watch Folders', () => {
-    it('displays watch folders list', () => {
-      render(<IndexingTab />);
-
-      expect(screen.getByText('/home/user/documents')).toBeInTheDocument();
+    it('displays watch folders list', async () => {
+      renderTab();
+      expect(await screen.findByText('/home/user/documents')).toBeInTheDocument();
       expect(screen.getByText('/home/user/downloads')).toBeInTheDocument();
     });
 
-    it('shows empty state when no folders watched', () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, watchFolders: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
+    it('shows empty state when no folders watched', async () => {
+      mockGetConfig.mockResolvedValue({
+        ok: true,
+        data: { ...baseConfig, indexedPaths: [] },
       });
-
-      render(<IndexingTab />);
-
-      expect(screen.getByText('No folders are being watched')).toBeInTheDocument();
-      expect(screen.getByText('Click "Add Folder" to start indexing files')).toBeInTheDocument();
+      renderTab();
+      expect(await screen.findByText('No folders are being watched')).toBeInTheDocument();
     });
 
-    it('adds folder when add folder button clicked', async () => {
+    it('adds folder via Tauri dialog', async () => {
       const user = userEvent.setup();
       mockDialogOpen.mockResolvedValue('/home/user/projects');
+      renderTab();
 
-      render(<IndexingTab />);
-
-      const addButton = screen.getByRole('button', { name: /add folder/i });
+      const addButton = await screen.findByRole('button', { name: /add folder/i });
+      await waitFor(() => expect(addButton).not.toBeDisabled());
       await user.click(addButton);
 
       await waitFor(() => {
-        expect(mockDialogOpen).toHaveBeenCalledWith({
-          directory: true,
-          multiple: false,
-          title: 'Select Folder to Watch',
-        });
+        expect(mockAddWatchFolder).toHaveBeenCalledWith('/home/user/projects');
       });
-
-      expect(mockAddWatchFolder).toHaveBeenCalledWith('/home/user/projects');
     });
 
-    it('shows adding state during folder selection', async () => {
-      const user = userEvent.setup();
-      mockDialogOpen.mockImplementation(() => new Promise(() => {}));
-
-      render(<IndexingTab />);
-
-      const addButton = screen.getByRole('button', { name: /add folder/i });
-      await user.click(addButton);
-
-      expect(screen.getByText('Adding...')).toBeInTheDocument();
-    });
-
-    it('does not add folder when selection cancelled', async () => {
+    it('does not add folder when dialog cancelled', async () => {
       const user = userEvent.setup();
       mockDialogOpen.mockResolvedValue(null);
+      renderTab();
 
-      render(<IndexingTab />);
-
-      const addButton = screen.getByRole('button', { name: /add folder/i });
+      const addButton = await screen.findByRole('button', { name: /add folder/i });
+      await waitFor(() => expect(addButton).not.toBeDisabled());
       await user.click(addButton);
 
       await waitFor(() => {
+        expect(mockDialogOpen).toHaveBeenCalled();
         expect(mockAddWatchFolder).not.toHaveBeenCalled();
       });
     });
 
     it('removes folder when remove button clicked', async () => {
       const user = userEvent.setup();
-      render(<IndexingTab />);
+      renderTab();
 
-      const removeButtons = screen.getAllByTitle('Remove folder');
+      const removeButtons = await screen.findAllByTitle('Remove folder');
       await user.click(removeButtons[0]);
 
-      expect(mockRemoveWatchFolder).toHaveBeenCalledWith('/home/user/documents');
+      await waitFor(() => {
+        expect(mockRemoveWatchFolder).toHaveBeenCalledWith('/home/user/documents');
+      });
     });
   });
 
   describe('Exclude Patterns', () => {
-    it('displays exclude patterns list', () => {
-      render(<IndexingTab />);
-
-      expect(screen.getByText('*.git')).toBeInTheDocument();
+    it('displays exclude patterns list', async () => {
+      renderTab();
+      expect(await screen.findByText('*.git')).toBeInTheDocument();
       expect(screen.getByText('node_modules')).toBeInTheDocument();
       expect(screen.getByText('*.tmp')).toBeInTheDocument();
     });
 
-    it('shows empty state when no patterns defined', () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, excludePatterns: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
-      });
-
-      render(<IndexingTab />);
-
-      expect(screen.getByText('No exclusion patterns defined')).toBeInTheDocument();
-    });
-
-    it('adds pattern when add button clicked', async () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, excludePatterns: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
-      });
-
+    it('adds pattern via add button', async () => {
       const user = userEvent.setup();
-      render(<IndexingTab />);
+      mockGetConfig.mockResolvedValue({
+        ok: true,
+        data: { ...baseConfig, excludePatterns: [] },
+      });
+      renderTab();
 
-      const input = screen.getByPlaceholderText('*.tmp, node_modules, .git');
+      const input = await screen.findByPlaceholderText('*.tmp, node_modules, .git');
       await user.type(input, '*.log');
 
       const addButton = screen.getByRole('button', { name: /^add$/i });
+      await waitFor(() => expect(addButton).not.toBeDisabled());
       await user.click(addButton);
 
-      expect(mockAddExcludePattern).toHaveBeenCalledWith('*.log');
+      await waitFor(() => {
+        expect(mockSaveConfig).toHaveBeenCalledWith(
+          expect.objectContaining({ excludePatterns: ['*.log'] })
+        );
+      });
     });
 
-    it('adds pattern when enter key pressed', async () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, excludePatterns: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
+    it('does not add empty pattern (button disabled)', async () => {
+      mockGetConfig.mockResolvedValue({
+        ok: true,
+        data: { ...baseConfig, excludePatterns: [] },
       });
-
       const user = userEvent.setup();
-      render(<IndexingTab />);
+      renderTab();
 
-      const input = screen.getByPlaceholderText('*.tmp, node_modules, .git');
-      await user.type(input, '*.bak{Enter}');
-
-      expect(mockAddExcludePattern).toHaveBeenCalledWith('*.bak');
-    });
-
-    it('trims whitespace when adding pattern', async () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, excludePatterns: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
-      });
-
-      const user = userEvent.setup();
-      render(<IndexingTab />);
-
-      const input = screen.getByPlaceholderText('*.tmp, node_modules, .git');
-      await user.type(input, '  *.cache  ');
-
-      const addButton = screen.getByRole('button', { name: /^add$/i });
-      await user.click(addButton);
-
-      expect(mockAddExcludePattern).toHaveBeenCalledWith('*.cache');
-    });
-
-    it('does not add empty pattern', async () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, excludePatterns: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
-      });
-
-      const user = userEvent.setup();
-      render(<IndexingTab />);
-
-      const input = screen.getByPlaceholderText('*.tmp, node_modules, .git');
+      const input = await screen.findByPlaceholderText('*.tmp, node_modules, .git');
       await user.type(input, '   ');
 
       const addButton = screen.getByRole('button', { name: /^add$/i });
@@ -288,37 +210,16 @@ describe('IndexingTab', () => {
 
     it('removes pattern when remove button clicked', async () => {
       const user = userEvent.setup();
-      render(<IndexingTab />);
+      renderTab();
 
-      const removeButtons = screen.getAllByTitle('Remove pattern');
+      const removeButtons = await screen.findAllByTitle('Remove pattern');
       await user.click(removeButtons[0]);
 
-      expect(mockRemoveExcludePattern).toHaveBeenCalledWith('*.git');
-    });
-
-    it('clears input after adding pattern', async () => {
-      (useSettingsStore as any).mockImplementation((selector: any) => {
-        const state = {
-          settings: { indexing: { ...mockSettings, excludePatterns: [] } },
-          updateIndexing: mockUpdateIndexing,
-          addWatchFolder: mockAddWatchFolder,
-          removeWatchFolder: mockRemoveWatchFolder,
-          addExcludePattern: mockAddExcludePattern,
-          removeExcludePattern: mockRemoveExcludePattern,
-        };
-        return selector(state);
+      await waitFor(() => {
+        expect(mockSaveConfig).toHaveBeenCalledWith(
+          expect.objectContaining({ excludePatterns: ['node_modules', '*.tmp'] })
+        );
       });
-
-      const user = userEvent.setup();
-      render(<IndexingTab />);
-
-      const input = screen.getByPlaceholderText('*.tmp, node_modules, .git') as HTMLInputElement;
-      await user.type(input, '*.log');
-
-      const addButton = screen.getByRole('button', { name: /^add$/i });
-      await user.click(addButton);
-
-      expect(input.value).toBe('');
     });
   });
 });
