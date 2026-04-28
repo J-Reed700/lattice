@@ -83,34 +83,6 @@ describe('settingsStore', () => {
     });
   });
 
-  describe('updateAI', () => {
-    it('updates AI settings', () => {
-      const { updateAI } = useSettingsStore.getState();
-
-      act(() => {
-        updateAI({
-          embeddingModel: 'mpnet',
-          useQuantization: false,
-        });
-      });
-
-      const { settings } = useSettingsStore.getState();
-      expect(settings.ai.embeddingModel).toBe('mpnet');
-      expect(settings.ai.useQuantization).toBe(false);
-    });
-
-    it('updates OCR model', () => {
-      const { updateAI } = useSettingsStore.getState();
-
-      act(() => {
-        updateAI({ ocrModel: 'florence-2' });
-      });
-
-      const { settings } = useSettingsStore.getState();
-      expect(settings.ai.ocrModel).toBe('florence-2');
-    });
-  });
-
   describe('updateDisplay', () => {
     it('updates display settings', () => {
       const { updateDisplay } = useSettingsStore.getState();

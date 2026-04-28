@@ -47,12 +47,6 @@ describe('Settings', () => {
       excludePatterns: [],
       batchSize: 32,
     },
-    ai: {
-      embeddingModel: 'bge-m3',
-      ocrModel: 'qwen2.5-vl-2b',
-      useQuantization: true,
-      enableAgenticRAG: false,
-    },
     display: {
       theme: 'system',
       fontSize: 'medium',

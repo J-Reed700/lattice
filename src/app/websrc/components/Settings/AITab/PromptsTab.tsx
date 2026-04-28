@@ -1,5 +1,5 @@
 /**
- * Prompts Tab - System prompts, prompt templates, verification, and agentic RAG.
+ * Prompts Tab - System prompts, prompt templates, and verification.
  */
 
 import { useEffect, useState } from 'react';
@@ -8,15 +8,12 @@ import { ChevronDown, ChevronRight, FileText, ShieldCheck, ShieldOff } from 'luc
 
 import { useLlmSettings } from './useLlmSettings';
 import { TEXTAREA_CLASS } from './shared';
-import { useSettingsStore } from '../../../stores/settingsStore';
 import { toast } from '../../../stores/toastStore';
 
 import type { LLMSettings as ApiLLMSettings } from '../../../types/api/settings';
 
 export function PromptsTab() {
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
-  const aiSettings = useSettingsStore((state) => state.settings.ai);
-  const updateAI = useSettingsStore((state) => state.updateAI);
 
   const [systemPromptDraft, setSystemPromptDraft] = useState('');
   const [greetingPromptDraft, setGreetingPromptDraft] = useState('');
@@ -77,7 +74,7 @@ export function PromptsTab() {
         <div>
           <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Prompts</h2>
           <p className="text-sm text-[hsl(var(--text-secondary))]">
-            System prompts, templates, verification, and retrieval behavior
+            System prompts, templates, and verification behavior
           </p>
         </div>
       </div>
@@ -159,35 +156,6 @@ export function PromptsTab() {
                   <li>Turn it back on any time from this panel.</li>
                 </ul>
               )}
-            </div>
-          </section>
-
-          {/* Agentic RAG */}
-          <section className="space-y-4">
-            <div className="p-4 bg-[hsl(var(--surface))] rounded-lg">
-              <div className="flex items-start gap-3">
-                <input
-                  id="enableAgenticRAG"
-                  type="checkbox"
-                  checked={aiSettings.enableAgenticRAG}
-                  onChange={(e) => updateAI({ enableAgenticRAG: e.target.checked })}
-                  className="mt-0.5 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
-                />
-                <label htmlFor="enableAgenticRAG" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-[hsl(var(--text-primary))]">
-                      Agentic RAG
-                    </span>
-                    <span className="text-xs bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))] px-1.5 py-0.5 rounded">
-                      Experimental
-                    </span>
-                  </div>
-                  <p className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
-                    AI agents autonomously refine searches and gather information. May increase
-                    processing time.
-                  </p>
-                </label>
-              </div>
             </div>
           </section>
 

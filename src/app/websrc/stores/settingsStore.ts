@@ -26,13 +26,6 @@ export const IndexingSettingsSchema = z.object({
   batchSize: z.number().min(1).max(128),
 });
 
-export const AISettingsSchema = z.object({
-  embeddingModel: z.enum(['bge-m3', 'mpnet']),
-  ocrModel: z.enum(['qwen2.5-vl-2b', 'qwen2.5-vl-7b', 'florence-2']),
-  useQuantization: z.boolean(),
-  enableAgenticRAG: z.boolean(),
-});
-
 export const DisplaySettingsSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']),
   fontSize: z.enum(['small', 'medium', 'large']),
@@ -49,7 +42,6 @@ export const SettingsSchema = z.object({
   version: z.number(),
   search: SearchSettingsSchema,
   indexing: IndexingSettingsSchema,
-  ai: AISettingsSchema,
   display: DisplaySettingsSchema,
   privacy: PrivacySettingsSchema,
 });
@@ -58,7 +50,6 @@ export const SettingsSchema = z.object({
 
 export type SearchSettings = z.infer<typeof SearchSettingsSchema>;
 export type IndexingSettings = z.infer<typeof IndexingSettingsSchema>;
-export type AISettings = z.infer<typeof AISettingsSchema>;
 export type DisplaySettings = z.infer<typeof DisplaySettingsSchema>;
 export type PrivacySettings = z.infer<typeof PrivacySettingsSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -88,12 +79,6 @@ export const DEFAULT_SETTINGS: Settings = {
       '*Thumbs.db',
     ],
     batchSize: 32,
-  },
-  ai: {
-    embeddingModel: 'bge-m3',
-    ocrModel: 'qwen2.5-vl-2b',
-    useQuantization: true,
-    enableAgenticRAG: false,
   },
   display: {
     theme: 'system',
@@ -157,7 +142,6 @@ interface SettingsStore {
   // Actions
   updateSearch: (_updates: Partial<SearchSettings>) => void;
   updateIndexing: (_updates: Partial<IndexingSettings>) => void;
-  updateAI: (_updates: Partial<AISettings>) => void;
   updateDisplay: (_updates: Partial<DisplaySettings>) => void;
   updatePrivacy: (_updates: Partial<PrivacySettings>) => void;
 
@@ -215,24 +199,6 @@ export const useSettingsStore = create<SettingsStore>()(
             };
           } catch (error) {
             console.error('[Settings] Invalid indexing settings:', error);
-            return state;
-          }
-        });
-      },
-
-      updateAI: (updates) => {
-        set((state) => {
-          const newAI = { ...state.settings.ai, ...updates };
-          try {
-            AISettingsSchema.parse(newAI);
-            return {
-              settings: {
-                ...state.settings,
-                ai: newAI,
-              },
-            };
-          } catch (error) {
-            console.error('[Settings] Invalid AI settings:', error);
             return state;
           }
         });
@@ -373,7 +339,9 @@ export const useSettingsStore = create<SettingsStore>()(
     {
       name: 'lattice-settings',
       storage: createJSONStorage(() => localStorage),
-      version: 1,
+      // Bumped to v2 in Phase 4b: removed `ai` slice (decorative toggles
+      // useQuantization + enableAgenticRAG had zero backend readers).
+      version: 2,
       migrate: (persistedState: unknown, version: number) => {
         console.log('[Settings] Migrating from version', version);
         // The migrateSettings function already handles frozen objects
@@ -388,7 +356,6 @@ export const useSettingsStore = create<SettingsStore>()(
 
 export const selectSearchSettings = (state: SettingsStore) => state.settings.search;
 export const selectIndexingSettings = (state: SettingsStore) => state.settings.indexing;
-export const selectAISettings = (state: SettingsStore) => state.settings.ai;
 export const selectDisplaySettings = (state: SettingsStore) => state.settings.display;
 export const selectPrivacySettings = (state: SettingsStore) => state.settings.privacy;
 export const selectTheme = (state: SettingsStore) => state.settings.display.theme;

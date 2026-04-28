@@ -148,44 +148,6 @@ describe('Settings Store', () => {
     });
   });
 
-  describe('AI Settings', () => {
-    it('should update embedding model', () => {
-      const { updateAI } = useSettingsStore.getState();
-
-      updateAI({ embeddingModel: 'mpnet' });
-
-      const updated = useSettingsStore.getState().settings;
-      expect(updated.ai.embeddingModel).toBe('mpnet');
-    });
-
-    it('should update OCR model', () => {
-      const { updateAI } = useSettingsStore.getState();
-
-      updateAI({ ocrModel: 'florence-2' });
-
-      const updated = useSettingsStore.getState().settings;
-      expect(updated.ai.ocrModel).toBe('florence-2');
-    });
-
-    it('should toggle quantization', () => {
-      const { updateAI } = useSettingsStore.getState();
-
-      updateAI({ useQuantization: false });
-
-      const updated = useSettingsStore.getState().settings;
-      expect(updated.ai.useQuantization).toBe(false);
-    });
-
-    it('should toggle agentic RAG', () => {
-      const { updateAI } = useSettingsStore.getState();
-
-      updateAI({ enableAgenticRAG: true });
-
-      const updated = useSettingsStore.getState().settings;
-      expect(updated.ai.enableAgenticRAG).toBe(true);
-    });
-  });
-
   describe('Display Settings', () => {
     it('should update theme', () => {
       const { updateDisplay } = useSettingsStore.getState();
