@@ -23,12 +23,14 @@
  * - Anyone with filesystem access can read localStorage
  * - OS keyring is encrypted and protected by OS security
  * 
- * **CURRENT USAGE AUDIT** (2025-11-15):
+ * **CURRENT USAGE AUDIT** (2026-04-28, post-Phase-4b):
  * All localStorage usage has been audited and confirmed to store only non-sensitive data:
  * - Error logs (errorLogger.ts) ✅
  * - Onboarding state (useFirstRun.ts) ✅
  * - UI preferences (command palette, shortcuts, recent docs) ✅
- * - Settings (settingsStore.ts) ✅ - NO sensitive data
+ * - Display settings (settingsStore.ts) ✅ - theme/fontSize/compactMode/showPreviews ONLY
+ *   (other settings live in the Rust SettingsRepository per the SSOT rule;
+ *    privacy/telemetry flags moved to backend in Phase 4b step 2)
  * 
  * **MIGRATION STATUS**:
  * ✅ API keys -> Moved to OS keyring (src-tauri/src/commands/credentials.rs)

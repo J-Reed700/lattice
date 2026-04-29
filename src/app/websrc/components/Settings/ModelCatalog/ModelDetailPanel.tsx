@@ -396,6 +396,14 @@ export function ModelDetailPanel({
                     Requires Token
                   </span>
                 )}
+                {metadata.format === 'safetensors' && (
+                  <span
+                    className="px-2 py-1 bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent-fg))] rounded"
+                    title="HF safetensors format (unquantized). Larger on disk + RAM than a GGUF quant of the same model. Loaded via mistralrs auto-detect."
+                  >
+                    Safetensors
+                  </span>
+                )}
                 {isEmbeddingArchIncompatible && (
                   <span
                     className="px-2 py-1 bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))] rounded flex items-center gap-1"

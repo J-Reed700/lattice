@@ -539,10 +539,11 @@ fn best_device() -> Device {
 }
 
 
-/// Read pooling strategy from `1_Pooling/config.json` if present.
-/// Defaults to CLS — that's what BGE/mxbai/UAE use, and it's the safer default
-/// for "I don't know" cases (mean-pool of a model expecting CLS produces noise
-/// rather than a clear failure mode).
+/// Read pooling strategy. Tries in order:
+/// 1. `1_Pooling/config.json` (sentence-transformers explicit config)
+/// 2. `config.json` for a sentence-transformers heuristic (`_name_or_path`
+///    pointing at a known mean-pooled architecture)
+/// 3. CLS default — what BGE/mxbai/UAE use.
 fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
     let pooling_path = model_dir.join("1_Pooling").join("config.json");
     if let Ok(bytes) = std::fs::read(&pooling_path) {
@@ -555,6 +556,30 @@ fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
             }
         }
     }
+
+    let main_config = model_dir.join("config.json");
+    if let Ok(bytes) = std::fs::read(&main_config) {
+        if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            let name = cfg
+                .get("_name_or_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if name.contains("sentence-transformers")
+                || name.contains("all-minilm")
+                || name.contains("all-mpnet")
+                || name.contains("paraphrase-")
+                || name.contains("multi-qa-")
+            {
+                tracing::info!(
+                    name = %name,
+                    "Detected sentence-transformers model from config.json; defaulting to mean pooling"
+                );
+                return PoolingStrategy::Mean;
+            }
+        }
+    }
+
     PoolingStrategy::Cls
 }
 
@@ -608,3 +633,60 @@ fn tensor_to_vec_of_vec(t: &Tensor) -> std::result::Result<Vec<Vec<f32>>, candle
 
 // Tensor indexing helper trait (candle uses an extension-trait pattern for `i`).
 use candle_core::IndexOp;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn pooling_defaults_to_cls_when_no_hints() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type":"bert","hidden_size":768}"#,
+        )
+        .unwrap();
+        assert_eq!(read_pooling_strategy(dir.path()), PoolingStrategy::Cls);
+    }
+
+    #[test]
+    fn pooling_reads_explicit_1_pooling_config() {
+        let dir = TempDir::new().unwrap();
+        let pooling_dir = dir.path().join("1_Pooling");
+        std::fs::create_dir(&pooling_dir).unwrap();
+        std::fs::write(
+            pooling_dir.join("config.json"),
+            r#"{"pooling_mode_mean_tokens":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type":"bert","hidden_size":384}"#,
+        )
+        .unwrap();
+        assert_eq!(read_pooling_strategy(dir.path()), PoolingStrategy::Mean);
+    }
+
+    #[test]
+    fn pooling_infers_mean_for_sentence_transformers() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type":"bert","hidden_size":384,"_name_or_path":"sentence-transformers/all-MiniLM-L6-v2"}"#,
+        )
+        .unwrap();
+        assert_eq!(read_pooling_strategy(dir.path()), PoolingStrategy::Mean);
+    }
+
+    #[test]
+    fn pooling_keeps_cls_for_bge() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type":"bert","hidden_size":1024,"_name_or_path":"BAAI/bge-m3"}"#,
+        )
+        .unwrap();
+        assert_eq!(read_pooling_strategy(dir.path()), PoolingStrategy::Cls);
+    }
+}

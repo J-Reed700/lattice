@@ -753,6 +753,12 @@ impl From<crate::infrastructure::llm::types::LLMError> for AppError {
             LLMError::Network(msg) => AppError::Network(msg),
             LLMError::InvalidConfig(msg) => AppError::InvalidConfig(msg),
             LLMError::Timeout => AppError::Other("LLM request timed out".to_string()),
+            LLMError::InsufficientMemory(msg) => {
+                // Surface the safetensors RAM pre-flight error as a load
+                // failure with the user-friendly message preserved
+                // intact (already explains how to proceed).
+                AppError::ModelLoadFailed(msg)
+            }
             LLMError::Io(e) => AppError::Io {
                 message: e.to_string(),
                 kind: format!("{:?}", e.kind()),

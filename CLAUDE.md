@@ -14,7 +14,15 @@ This rule exists because we hit a "split brain" bug cluster (April 2026) where m
 
 2. **No use case may issue raw SQL.** Use the repository's typed methods. If the repository lacks the method you need, add it there — don't reach around it.
 
-3. **Frontend Zustand stores must be read-only mirrors** of backend state, updated via Tauri events or React Query. Never `localStorage`-only state that the backend can't see (with rare exceptions for pure UI prefs: theme, sort order, last-active tab).
+3. **Zustand is for pure UI preferences ONLY.** Anything the backend reads — settings, indexing config, downloaded model state, conversation drafts, etc. — must use React Query (`useQuery` for reads, `useMutation` for writes) against the Rust repository. The repository is the SSOT; React Query is the read-only mirror. Zustand is reserved exclusively for client-only UI prefs that the backend genuinely doesn't need to know about: theme, sort order, last-active tab, panel collapse state, etc.
+
+   ❌ Don't write a Zustand store that "mirrors" backend state with setter actions and manual rollback — that's paper compliance with the SSOT rule. The store will drift.
+
+   ❌ Don't fall back to `localStorage` for state the backend acts on, even with optimistic-update setters and "we'll save on blur" intentions.
+
+   ✅ Read with `useQuery`, write with `useMutation`. On mutation success, React Query invalidates the cache and refetches the canonical state — no rollback ceremony, no drift.
+
+   See `hooks/queries/useSettingsQuery.ts` and `hooks/queries/useConfigQuery.ts` for the canonical pattern.
 
 4. **No two tables/structs/types may describe the same conceptual entity.** When tempted to add `custom_models` alongside `models`, or `LLMSettings` in TS that doesn't match `LLMSettingsDto` in Rust — STOP. Unify or generate.
 
@@ -57,7 +65,9 @@ Run the audit: `oracle ask "audit <feature> for split-brain"` with the relevant 
 - ✅ `DownloadedModelRepository` is the SSOT for model state. `first_run_setup.rs` queries it (Phase 3 fix).
 - ❌ (fixed) `first_run_setup.rs` used to walk `~/.cache/lattice/models/` non-recursively, missed all subdirectory models.
 - ❌ (deleted Phase 5) `custom_models` table was a parallel registry to `models` — orphaned dead code, removed.
-- ⚠️ (deferred Phase 4b) `useSettingsStore` Zustand store mutates localStorage without round-tripping to Rust. Migration in progress.
+- ✅ (Phase 4b) `useSettingsStore` shrunk to display-only. `IndexingTab` + `PrivacyTab` now use React Query against the unified `SettingsRepository`. Privacy flags moved into Rust with a `privacy_gate` helper that future telemetry/crash code MUST consult. Dead toggles (`useQuantization`, `enableAgenticRAG`) deleted — they were decorative, gated nothing.
+- ✅ (Task 7) `AppConfig`/`ConfigService` deleted entirely. The 5 fields it owned were either dead (indexed_paths, exclude_patterns, auto_index — no Rust consumers) or duplicated in `LLMSettingsDto` (ollama_endpoint, ollama_model). One-shot migration in `SettingsRepository::new()` ports any leftover `config.json` into `settings.json` at startup, then deletes the legacy file. SSRF validation + path traversal protection moved to `UpdateSettingsUseCase` so a hostile frontend can't bypass via raw `update_settings({category: 'indexing', updates: {indexedPaths: ['/etc/shadow']}})`. Watch folder commands kept as thin wrappers that round-trip through the use case for serialized writes + validation in one place.
+- ✅ (Task 1) Safetensors loader path. `ModelFormat::{Gguf, Safetensors}` plumbed through `ModelInfo`/`ModelMetadata`. `ModelLoader::load(path, format)` dispatches to `GgufModelBuilder` (existing) or `mistralrs::ModelBuilder` (new — auto-detects text/multimodal/embedding from `config.json`). Safetensors path adds a sysinfo-backed RAM pre-flight (`LLMError::InsufficientMemory`) so a too-big model fails clean instead of OOM-killing the Tauri process. Multi-shard download via HF `model.safetensors.index.json` lookup. `DownloadedModel.file_path` stores the directory for safetensors layouts, the file for GGUF. Curated catalog gained Gemma 2 9B, Gemma 4 E4B (multimodal), and Mistral 7B v0.3 entries — all gated, all flagged with the new `Safetensors` badge in ModelCatalog UI.
 
 ---
 

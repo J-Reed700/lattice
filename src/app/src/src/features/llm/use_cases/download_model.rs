@@ -168,12 +168,12 @@ impl DownloadModelUseCase {
     /// Absent is fine: `CandleEmbeddingService` defaults to CLS.
     async fn build_safetensors_embedding_file_list(
         repo_id: &str,
-        auth_token: Option<&str>,
+        _auth_token: Option<&str>,
     ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
         use crate::domain::model_metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
-        let mut files = vec![
+        vec![
             ModelFileMetadata::new(
                 "model.safetensors".to_string(),
                 format!("{}/model.safetensors", base_url),
@@ -189,20 +189,7 @@ impl DownloadModelUseCase {
                 format!("{}/config.json", base_url),
                 0,
             ),
-        ];
-
-        // Optional pooling config — only present on sentence-transformers
-        // repos. Pass auth so probes against gated repos succeed.
-        let pooling_url = format!("{}/1_Pooling/config.json", base_url);
-        if Self::remote_file_exists(&pooling_url, auth_token).await {
-            files.push(ModelFileMetadata::new(
-                "1_Pooling/config.json".to_string(),
-                pooling_url,
-                0,
-            ));
-        }
-
-        files
+        ]
     }
 
     /// Build a file list for ONNX embedding models with required companion files.
@@ -264,6 +251,141 @@ impl DownloadModelUseCase {
         files
     }
 
+    /// Build a file list for HF safetensors LLM models (Gemma, Mistral,
+    /// Llama, etc.). Multi-shard repos publish a `model.safetensors.index.json`
+    /// that maps every weight tensor to its shard filename — read it,
+    /// dedupe, and return one entry per shard plus the obligatory
+    /// `config.json` and `tokenizer.json`.
+    ///
+    /// Single-shard repos don't have an index file; in that case we fall
+    /// back to a fixed `model.safetensors` filename (and HEAD-probe to
+    /// confirm).
+    ///
+    /// This is the LLM analog of `build_safetensors_embedding_file_list`
+    /// — different from embedding because LLMs are typically multi-shard
+    /// (often 5+ files for 7B+ models).
+    async fn build_safetensors_llm_file_list(
+        repo_id: &str,
+        auth_token: Option<&str>,
+    ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
+        use crate::domain::model_metadata::ModelFileMetadata;
+
+        let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
+        let mut files = vec![
+            ModelFileMetadata::new(
+                "config.json".to_string(),
+                format!("{}/config.json", base_url),
+                0,
+            ),
+            ModelFileMetadata::new(
+                "tokenizer.json".to_string(),
+                format!("{}/tokenizer.json", base_url),
+                0,
+            ),
+        ];
+
+        // Some HF repos also ship a tokenizer_config.json with chat template
+        // data (Gemma, Mistral). It's not always present but adds it when it
+        // is — without it, mistralrs sometimes can't apply the chat template.
+        let tok_cfg_url = format!("{}/tokenizer_config.json", base_url);
+        if Self::remote_file_exists(&tok_cfg_url, auth_token).await {
+            files.push(ModelFileMetadata::new(
+                "tokenizer_config.json".to_string(),
+                tok_cfg_url,
+                0,
+            ));
+        }
+
+        // Generation config (rope scaling, eos_token_id, etc.). Optional but
+        // usually present.
+        let gen_cfg_url = format!("{}/generation_config.json", base_url);
+        if Self::remote_file_exists(&gen_cfg_url, auth_token).await {
+            files.push(ModelFileMetadata::new(
+                "generation_config.json".to_string(),
+                gen_cfg_url,
+                0,
+            ));
+        }
+
+        // Try the multi-shard index first.
+        let index_url = format!("{}/model.safetensors.index.json", base_url);
+        if let Some(shards) =
+            Self::fetch_safetensors_shard_filenames(&index_url, auth_token).await
+        {
+            for shard_name in shards {
+                files.push(ModelFileMetadata::new(
+                    shard_name.clone(),
+                    format!("{}/{}", base_url, shard_name),
+                    0,
+                ));
+            }
+        } else {
+            // Fall back to single-shard. Confirm it exists before adding;
+            // if neither single nor multi is present we'll fail at download
+            // time with a clearer error.
+            let single_url = format!("{}/model.safetensors", base_url);
+            if Self::remote_file_exists(&single_url, auth_token).await {
+                files.push(ModelFileMetadata::new(
+                    "model.safetensors".to_string(),
+                    single_url,
+                    0,
+                ));
+            }
+        }
+
+        files
+    }
+
+    /// Fetch the HF `model.safetensors.index.json` for a repo and extract
+    /// the deduplicated set of shard filenames it references.
+    ///
+    /// The file structure is:
+    /// ```json
+    /// {
+    ///   "metadata": { "total_size": 18540462080 },
+    ///   "weight_map": {
+    ///     "model.embed_tokens.weight": "model-00001-of-00004.safetensors",
+    ///     ...
+    ///   }
+    /// }
+    /// ```
+    /// Returns `None` on network error, 404 (single-shard repo), or
+    /// JSON parse failure — caller handles the fallback.
+    async fn fetch_safetensors_shard_filenames(
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Option<Vec<String>> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .ok()?;
+
+        let mut req = client.get(url);
+        if let Some(tok) = auth_token {
+            req = req.bearer_auth(tok);
+        }
+
+        let resp = req.send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+
+        let body: serde_json::Value = resp.json().await.ok()?;
+        let weight_map = body.get("weight_map")?.as_object()?;
+
+        let mut shards = std::collections::BTreeSet::new();
+        for value in weight_map.values() {
+            if let Some(filename) = value.as_str() {
+                shards.insert(filename.to_string());
+            }
+        }
+        if shards.is_empty() {
+            None
+        } else {
+            Some(shards.into_iter().collect())
+        }
+    }
+
     /// HEAD-check a URL on Hugging Face to confirm a file exists before adding
     /// it to the download list. HF returns 200 on HEAD (after redirects) for
     /// existing files and 404 otherwise.
@@ -299,10 +421,41 @@ impl DownloadModelUseCase {
         model_id: &str,
     ) -> Result<crate::features::model_management::domain::ModelMetadata, AppError> {
         // 1) Curated model IDs are still supported for backward compatibility.
-        if let Some(curated) = get_all_curated_models()
+        if let Some(mut curated) = get_all_curated_models()
             .into_iter()
             .find(|m| m.id == model_id)
         {
+            // Curated GGUF entries carry a single default_filename; the
+            // existing single-file download path handles them.
+            // Curated safetensors entries are multi-file by construction —
+            // we discover the shards from HF's index.json at resolution
+            // time and populate `files` so the multi-file download path
+            // takes over.
+            if curated.format == crate::llm::models::ModelFormat::Safetensors
+                && curated.category
+                    == crate::features::model_management::domain::ModelCategory::LLM
+                && curated.files.is_empty()
+            {
+                if let Some(repo) = curated.model_id.clone() {
+                    let auth_token: Option<String> = if curated.requires_auth {
+                        self.credentials
+                            .get_api_key("huggingface_token")
+                            .await
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
+                    curated.files = Self::build_safetensors_llm_file_list(
+                        &repo,
+                        auth_token.as_deref(),
+                    )
+                    .await;
+                    // Multi-file downloads don't use default_filename;
+                    // null it so downstream code uses files[] instead.
+                    curated.default_filename = None;
+                }
+            }
             return Ok(curated);
         }
 
@@ -331,6 +484,7 @@ impl DownloadModelUseCase {
                     total_size_bytes: 0,
                     embedding_dimensions: None,
                     embedding_compatibility: None,
+                    format: crate::llm::models::ModelFormat::Gguf,
                 },
             };
 

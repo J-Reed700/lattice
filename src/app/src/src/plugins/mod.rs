@@ -13,7 +13,6 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::model_management::plugin::init(),
         crate::features::search::plugin::init(),
         crate::features::file::plugin::init(),
-        crate::features::config::plugin::init(),
         crate::features::credentials::plugin::init(),
         crate::features::health::plugin::init(),
         crate::features::settings::plugin::init(),

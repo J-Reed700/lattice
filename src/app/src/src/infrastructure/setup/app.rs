@@ -1,4 +1,6 @@
-use crate::application::ports::{DocumentRepository, MentionRepositoryPort, RepositoryPort};
+use crate::application::ports::{
+    DocumentRepository, MentionRepositoryPort, RepositoryPort, SettingsRepositoryPort,
+};
 use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::domain::entities::Document;
 use crate::domain::events::model_download_events::ModelDownloadEvent;
@@ -37,23 +39,6 @@ use tauri::Manager;
 /// Creates a default configuration if the file doesn't exist or is invalid.
 ///
 /// # Arguments
-/// * `config_path` - Path to the config.json file
-///
-/// # Returns
-/// * `AppConfig` - The loaded or default configuration
-fn load_config(config_path: PathBuf) -> commands::config::AppConfig {
-    if config_path.exists() {
-        match std::fs::read_to_string(&config_path) {
-            Ok(contents) => {
-                serde_json::from_str::<commands::config::AppConfig>(&contents).unwrap_or_default()
-            }
-            Err(_) => commands::config::AppConfig::default(),
-        }
-    } else {
-        commands::config::AppConfig::default()
-    }
-}
-
 /// Initializes the database layer with the specified database path.
 ///
 /// # Arguments
@@ -185,7 +170,8 @@ async fn create_container(
     security_context: Arc<crate::security::SecurityContext>,
     model_dir: PathBuf,
     data_dir: PathBuf,
-    config: commands::config::AppConfig,
+    ollama_endpoint: String,
+    ollama_model: String,
 ) -> Result<crate::interfaces::di::Container, String> {
     use crate::interfaces::di::Container;
 
@@ -207,48 +193,12 @@ async fn create_container(
         pool,
         db_conn,
         embedding_model_path_opt,
-        &config.ollama_endpoint,
-        &config.ollama_model,
+        &ollama_endpoint,
+        &ollama_model,
         data_dir,
     )
     .await
     .map_err(|e| format!("Failed to create container: {}", e))
-}
-
-/// Initializes the configuration service layer.
-///
-/// # Arguments
-/// * `config_path` - Path to the config.json file
-/// * `fallback_path` - Fallback path if primary fails
-///
-/// # Returns
-/// * `Result<ConfigService, String>` - Config service or error with troubleshooting info
-fn initialize_config_service(
-    config_path: PathBuf,
-    fallback_path: PathBuf,
-) -> Result<commands::config::ConfigService, String> {
-    match commands::config::ConfigService::new(config_path.clone()) {
-        Ok(service) => Ok(service),
-        Err(e) => {
-            tracing::warn!(
-                "Failed to initialize config service: {}. Creating new config at fallback path.",
-                e
-            );
-            match commands::config::ConfigService::new(fallback_path) {
-                Ok(service) => Ok(service),
-                Err(e2) => Err(format!(
-                    "Failed to initialize config service.\n\n\
-                         Possible causes:\n\
-                         - Cannot write to config directory\n\
-                         - Disk full or read-only\n\
-                         - Permission denied\n\n\
-                         Error 1: {}\n\
-                         Error 2: {}",
-                    e, e2
-                )),
-            }
-        }
-    }
 }
 
 /// Orchestrates the sequential initialization of all application layers.
@@ -319,11 +269,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     };
 
     let db_path = app_dir.join("lattice.db");
-    let config_path = app_dir.join("config.json");
-    let config_file_path = app_dir.join("config.json");
-
-    // Load configuration (synchronous)
-    let config = load_config(config_path.clone());
 
     let model_dir_for_init = model_dir.clone();
 
@@ -350,6 +295,25 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
         tracing::info!("🔧 Initializing DI Container (pure DDD architecture)");
 
+        // Read Ollama endpoint + model from the unified Settings store. This
+        // also runs the one-shot migration of any leftover legacy config.json
+        // (see SettingsRepository::new) so by the time we read here the
+        // user's prior choices have been ported into settings.json.
+        //
+        // This bootstrap repo is an idempotent reader of the same JSON file
+        // the DI container's SettingsRepository instance will own — both
+        // resolve to the same on-disk state, no split-brain.
+        let bootstrap_settings_repo =
+            crate::features::settings::repository::SettingsRepository::new(app_dir.clone())
+                .await
+                .map_err(|e| format!("Failed to read settings during startup: {e}"))?;
+        let bootstrap_settings = bootstrap_settings_repo
+            .get_all()
+            .await
+            .map_err(|e| format!("Failed to load settings during startup: {e}"))?;
+        let ollama_endpoint = bootstrap_settings.llm.ollama_url.clone();
+        let ollama_model = bootstrap_settings.llm.model.clone();
+
         // Create unified DI Container
         let container = create_container(
             conn.pool().clone(),
@@ -357,7 +321,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
             security_context,
             model_dir_for_init.clone(),
             app_dir.clone(),
-            config,
+            ollama_endpoint,
+            ollama_model,
         )
         .await?;
 
@@ -633,45 +598,12 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     app_handle.manage(download_state);
 
-    // Initialize config service
-    let config_service = match initialize_config_service(config_path, config_file_path) {
-        Ok(service) => service,
-        Err(e) => {
-            super::show_error_dialog(&app_handle, "Config Service Failed", &e);
-            return Err(e);
-        }
-    };
-    app_handle.manage(config_service);
-
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_load_config_default_when_missing() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("nonexistent.json");
-
-        let config = load_config(config_path);
-
-        // Should return default config without panicking
-        assert_eq!(config.ollama_endpoint, "http://localhost:11434");
-    }
-
-    #[test]
-    fn test_load_config_default_when_invalid() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("invalid.json");
-        std::fs::write(&config_path, "invalid json content").unwrap();
-
-        let config = load_config(config_path);
-
-        // Should return default config when JSON is invalid
-        assert_eq!(config.ollama_endpoint, "http://localhost:11434");
-    }
 
     #[tokio::test]
     async fn test_initialize_database_layer() {

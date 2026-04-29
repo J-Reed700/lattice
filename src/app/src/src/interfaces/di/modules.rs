@@ -898,8 +898,7 @@ impl SystemModule {
     ) -> crate::shared::error::Result<Self> {
         use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 
-        let settings_path = core.data_dir().join("settings.json");
-        let settings = crate::features::settings::di::build(&settings_path).await?;
+        let settings = crate::features::settings::di::build(core.data_dir()).await?;
 
         let db_path = core.data_dir().join("lattice.db");
         let backup = crate::features::backup::di::build(

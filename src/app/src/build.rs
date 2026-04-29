@@ -133,16 +133,6 @@ fn main() {
                 ]),
             )
             .plugin(
-                "config",
-                tauri_build::InlinedPlugin::new().commands(&[
-                    "get_config",
-                    "save_config",
-                    "get_watch_folders",
-                    "add_watch_folder",
-                    "remove_watch_folder",
-                ]),
-            )
-            .plugin(
                 "settings",
                 tauri_build::InlinedPlugin::new().commands(&[
                     "get_settings",
@@ -154,6 +144,8 @@ fn main() {
                     "get_system_theme",
                     "validate_folder_path",
                     "test_ollama_connection",
+                    "add_watch_folder",
+                    "remove_watch_folder",
                 ]),
             )
             .plugin(

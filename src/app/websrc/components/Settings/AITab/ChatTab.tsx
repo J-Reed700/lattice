@@ -4,22 +4,19 @@
 
 import { useEffect, useState } from 'react';
 
-import { Brain, MessageSquare, Server, Settings2 } from 'lucide-react';
+import { Brain, MessageSquare, Server } from 'lucide-react';
 
 import { useLlmSettings } from './useLlmSettings';
 import { INPUT_CLASS } from './shared';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../../lib/api';
 import { useDownloadedModelsStore } from '../../../stores/downloadedModelsStore';
-import { useSettingsStore } from '../../../stores/settingsStore';
 import { toast } from '../../../stores/toastStore';
 
 import type { LLMSettings as ApiLLMSettings } from '../../../types/api/settings';
 
 export function ChatTab() {
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
-  const aiSettings = useSettingsStore((state) => state.settings.ai);
-  const updateAI = useSettingsStore((state) => state.updateAI);
 
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState('');
   const [ollamaModelDraft, setOllamaModelDraft] = useState('');
@@ -418,31 +415,6 @@ export function ChatTab() {
         </div>
       </section>
 
-      {/* Options */}
-      <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Settings2 className="w-4 h-4 text-[hsl(var(--accent))]" />
-          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Options</h3>
-        </div>
-
-        <div className="p-4 bg-[hsl(var(--surface))] rounded-lg space-y-4">
-          <div className="flex items-start gap-3">
-            <input
-              id="useQuantization"
-              type="checkbox"
-              checked={aiSettings.useQuantization}
-              onChange={(e) => updateAI({ useQuantization: e.target.checked })}
-              className="mt-0.5 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface-raised))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
-            />
-            <label htmlFor="useQuantization" className="flex-1 cursor-pointer">
-              <div className="text-sm font-medium text-[hsl(var(--text-primary))]">Use Quantization</div>
-              <p className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
-                Reduce model size and improve speed with minimal quality loss.
-              </p>
-            </label>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

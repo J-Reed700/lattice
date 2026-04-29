@@ -295,6 +295,10 @@ impl ExternalModelMetadata {
                 .unwrap_or((size_gb * 1_000_000_000.0) as u64),
             embedding_dimensions: None,
             embedding_compatibility: self.embedding_compatibility.clone(),
+            // Default to GGUF here. Catalog DTOs from external sources
+            // don't carry a format field today; the curated entries set
+            // it explicitly. Detection at download time can override.
+            format: crate::llm::models::ModelFormat::Gguf,
         })
     }
 

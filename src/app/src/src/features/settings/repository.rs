@@ -43,6 +43,20 @@ struct SettingsFile {
     settings: SettingsDto,
 }
 
+/// Local mirror of the legacy `AppConfig` shape, used solely to deserialize
+/// a leftover `config.json` from before the AppConfig→Settings unification.
+/// Defined here so we don't have to keep AppConfig the type around just for
+/// reading the legacy file.
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct LegacyAppConfig {
+    indexed_paths: Vec<String>,
+    exclude_patterns: Vec<String>,
+    auto_index: bool,
+    ollama_endpoint: String,
+    ollama_model: String,
+}
+
 impl Default for SettingsFile {
     fn default() -> Self {
         Self {
@@ -106,6 +120,32 @@ impl SettingsRepository {
         }
 
         let settings_path = app_data_dir.join(SETTINGS_FILE_NAME);
+        let legacy_config_path = app_data_dir.join("config.json");
+
+        // Salvage stale data from a prior DI bug that wrote
+        // settings.json/settings.json instead of settings.json.
+        if settings_path.is_dir() {
+            tracing::warn!(
+                "Found stray settings.json directory at {}; salvaging",
+                settings_path.display()
+            );
+            let nested = settings_path.join(SETTINGS_FILE_NAME);
+            let salvaged_contents = if nested.is_file() {
+                fs::read_to_string(&nested).await.ok()
+            } else {
+                None
+            };
+
+            if let Err(e) = fs::remove_dir_all(&settings_path).await {
+                tracing::warn!("Could not remove stray dir: {e}; renaming aside");
+                let aside = app_data_dir.join("settings.json.legacy-dir");
+                let _ = fs::rename(&settings_path, &aside).await;
+            }
+
+            if let Some(contents) = salvaged_contents {
+                let _ = fs::write(&settings_path, contents.as_bytes()).await;
+            }
+        }
 
         let repository = Self { settings_path };
 
@@ -116,7 +156,112 @@ impl SettingsRepository {
                 .await?;
         }
 
+        // One-shot migration of the legacy AppConfig (config.json) into the
+        // unified Settings store. Idempotent: deletes config.json on success
+        // so subsequent boots are no-ops. Failure to migrate is logged but
+        // not fatal — better to start with stale config.json than refuse to
+        // boot the app.
+        if legacy_config_path.exists() {
+            if let Err(err) = repository.migrate_legacy_app_config(&legacy_config_path).await {
+                tracing::warn!(
+                    "Legacy config.json migration failed (non-fatal): {err}. \
+                     The file will remain on disk; settings.json defaults are in use."
+                );
+            }
+        }
+
         Ok(repository)
+    }
+
+    /// Migrate the legacy `config.json` (AppConfig) into the unified
+    /// settings.json store. Maps:
+    ///
+    /// - `indexed_paths`     → `settings.indexing.indexed_paths`
+    /// - `exclude_patterns`  → `settings.indexing.exclude_patterns`
+    /// - `auto_index`        → `settings.indexing.auto_index_new_files`
+    /// - `ollama_endpoint`   → `settings.llm.ollama_url`
+    /// - `ollama_model`      → `settings.llm.model`
+    ///
+    /// Existing settings.json values are preserved if non-default — we only
+    /// fill in the legacy values where the unified store still has its
+    /// startup defaults. This avoids clobbering anything the user already
+    /// set via the new Settings UI.
+    ///
+    /// On success, the legacy `config.json` is deleted so the migration
+    /// runs once and only once.
+    async fn migrate_legacy_app_config(&self, legacy_path: &Path) -> Result<()> {
+        let raw = fs::read_to_string(legacy_path).await.map_err(|e| {
+            AppError::Storage(format!("Failed to read legacy config.json: {e}"))
+        })?;
+
+        // Use the same JsonValidator the old ConfigService used for
+        // consistency on size/depth limits.
+        let legacy: LegacyAppConfig =
+            crate::security::json_validator::JsonValidator::safe_deserialize::<LegacyAppConfig>(
+                &raw,
+                10_000_000, // 10 MB
+                50,         // max depth
+            )
+            .map_err(|e| {
+                AppError::Deserialization(format!("Failed to parse legacy config.json: {e}"))
+            })?;
+
+        let mut settings_file = self.read_settings_file().await?;
+        let defaults = SettingsDto::default();
+
+        // Indexing migration. Always copy `indexed_paths` (this list lived
+        // ONLY in AppConfig — settings.indexing.indexed_paths starts empty).
+        if !legacy.indexed_paths.is_empty()
+            && settings_file.settings.indexing.indexed_paths.is_empty()
+        {
+            settings_file.settings.indexing.indexed_paths = legacy.indexed_paths;
+        }
+
+        // Exclude patterns: only overwrite if settings.json still has the
+        // unmodified default. Avoids clobbering user customizations.
+        if settings_file.settings.indexing.exclude_patterns
+            == defaults.indexing.exclude_patterns
+            && !legacy.exclude_patterns.is_empty()
+        {
+            settings_file.settings.indexing.exclude_patterns = legacy.exclude_patterns;
+        }
+
+        // auto_index: AppConfig default was false, Settings default is true.
+        // Only copy when AppConfig's value is `false` (a non-default in
+        // AppConfig — meaning the user explicitly disabled it). Otherwise
+        // keep settings.json's value.
+        if !legacy.auto_index {
+            settings_file.settings.indexing.auto_index_new_files = false;
+        }
+
+        // LLM endpoint + model: only fill if settings.json still has its
+        // own defaults — same reasoning as above (don't clobber).
+        if settings_file.settings.llm.ollama_url == defaults.llm.ollama_url
+            && !legacy.ollama_endpoint.is_empty()
+        {
+            settings_file.settings.llm.ollama_url = legacy.ollama_endpoint;
+        }
+        if settings_file.settings.llm.model == defaults.llm.model
+            && !legacy.ollama_model.is_empty()
+        {
+            settings_file.settings.llm.model = legacy.ollama_model;
+        }
+
+        self.write_settings_file(&settings_file).await?;
+
+        // Delete the legacy file last — only after the new state is durable.
+        if let Err(e) = fs::remove_file(legacy_path).await {
+            tracing::warn!(
+                "Migrated legacy config.json successfully but failed to delete it: {e}. \
+                 The next boot will retry the (now no-op) migration."
+            );
+        } else {
+            tracing::info!(
+                "Migrated legacy config.json into settings.json and deleted the old file."
+            );
+        }
+
+        Ok(())
     }
 
     /// Read settings file from disk.
@@ -906,6 +1051,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             SettingsCategory::Ui => serde_json::to_value(&settings.ui)?,
             SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
             SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
+            SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
         };
 
         Ok(value)
@@ -946,6 +1092,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Ui => serde_json::to_value(&settings.ui)?,
                     SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
                     SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
+                    SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
                 };
 
                 let merged = self.merge_category_updates(category_value, &updates)?;
@@ -969,6 +1116,9 @@ impl SettingsRepositoryPort for SettingsRepository {
                     }
                     SettingsCategory::Backup => {
                         settings.backup = serde_json::from_value(merged)?;
+                    }
+                    SettingsCategory::Privacy => {
+                        settings.privacy = serde_json::from_value(merged)?;
                     }
                 }
             }
@@ -1006,6 +1156,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Ui => settings.ui = Default::default(),
                     SettingsCategory::Sync => settings.sync = Default::default(),
                     SettingsCategory::Backup => settings.backup = Default::default(),
+                    SettingsCategory::Privacy => settings.privacy = Default::default(),
                 }
             }
             None => {
@@ -1066,6 +1217,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             existing.ui = imported_settings.ui;
             existing.sync = imported_settings.sync;
             existing.backup = imported_settings.backup;
+            existing.privacy = imported_settings.privacy;
 
             existing
         } else {
@@ -1429,5 +1581,198 @@ mod tests {
         assert_eq!(settings.search.retrieval_tuning.kb_search_min_limit, 20);
         assert_eq!(settings.search.retrieval_tuning.kb_search_max_limit, 60);
         assert_eq!(settings.search.retrieval_tuning.rerank_max_candidates, 64);
+    }
+
+    // === AppConfig → Settings migration (Phase 4b/7) ===
+
+    async fn write_legacy_config(dir: &Path, contents: &str) {
+        fs::write(dir.join("config.json"), contents).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_legacy_config_migration_copies_indexed_paths() {
+        let temp_dir = TempDir::new().unwrap();
+        let legacy = serde_json::json!({
+            "indexedPaths": ["/Users/josh/Documents", "/Users/josh/Projects"],
+            "excludePatterns": ["*.tmp", "node_modules"],
+            "autoIndex": true,
+            "ollamaEndpoint": "http://localhost:11434",
+            "ollamaModel": "llama3.2:latest",
+        });
+        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let settings = repo.get_all().await.unwrap();
+
+        assert_eq!(
+            settings.indexing.indexed_paths,
+            vec!["/Users/josh/Documents", "/Users/josh/Projects"]
+        );
+
+        // Legacy config should be deleted after successful migration.
+        assert!(!temp_dir.path().join("config.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_legacy_config_migration_overrides_auto_index_only_when_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        // AppConfig had auto_index=false explicitly. Settings default is true.
+        // We honor the user's explicit opt-out.
+        let legacy = serde_json::json!({
+            "indexedPaths": [],
+            "excludePatterns": [],
+            "autoIndex": false,
+            "ollamaEndpoint": "",
+            "ollamaModel": "",
+        });
+        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let settings = repo.get_all().await.unwrap();
+        assert!(!settings.indexing.auto_index_new_files);
+    }
+
+    #[tokio::test]
+    async fn test_legacy_config_migration_does_not_clobber_custom_ollama_url() {
+        let temp_dir = TempDir::new().unwrap();
+        // settings.json already has a non-default ollama_url; legacy config
+        // points somewhere else. The legacy value must NOT win.
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let mut settings = repo.get_all().await.unwrap();
+        settings.llm.ollama_url = "https://my-custom-ollama.example.com".to_string();
+        repo.save_all(&settings).await.unwrap();
+
+        // Now drop a legacy config.json with a different URL.
+        let legacy = serde_json::json!({
+            "indexedPaths": [],
+            "excludePatterns": [],
+            "autoIndex": true,
+            "ollamaEndpoint": "http://different-ollama:11434",
+            "ollamaModel": "",
+        });
+        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
+
+        // Re-instantiate the repo to trigger migration.
+        let repo2 = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let settings2 = repo2.get_all().await.unwrap();
+
+        assert_eq!(
+            settings2.llm.ollama_url,
+            "https://my-custom-ollama.example.com",
+            "user customization must survive the migration"
+        );
+        assert!(!temp_dir.path().join("config.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_legacy_config_migration_corrupt_file_is_non_fatal() {
+        let temp_dir = TempDir::new().unwrap();
+        write_legacy_config(temp_dir.path(), "{ this is not json").await;
+
+        // Must NOT panic / return an error — corrupt legacy config should
+        // log a warning and proceed with defaults.
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("startup must succeed even if legacy config is corrupt");
+        let settings = repo.get_all().await.unwrap();
+
+        // Defaults intact.
+        assert_eq!(settings.indexing.chunk_size, 800);
+        // Corrupt file remains on disk (we only delete on successful migration).
+        assert!(temp_dir.path().join("config.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_legacy_config_migration_is_idempotent() {
+        let temp_dir = TempDir::new().unwrap();
+        let legacy = serde_json::json!({
+            "indexedPaths": ["/some/path"],
+            "excludePatterns": [],
+            "autoIndex": true,
+            "ollamaEndpoint": "",
+            "ollamaModel": "",
+        });
+        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
+
+        let _repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        // Second `new()` — config.json is already gone; must not panic or
+        // break.
+        let repo2 = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let settings = repo2.get_all().await.unwrap();
+        assert_eq!(settings.indexing.indexed_paths, vec!["/some/path"]);
+    }
+
+    // === Self-heal for the legacy DI bug ===
+    //
+    // Pre-fix, `interfaces/di/modules.rs` passed `data_dir/settings.json`
+    // as the dir arg to SettingsRepository::new, which then joined
+    // `settings.json` again. The result on disk was a directory at
+    // `data_dir/settings.json/` containing a nested `settings.json`
+    // file. Once the DI bug is fixed, the constructor still has to
+    // cope with the stale on-disk state from prior runs, otherwise it
+    // crashes startup with `Is a directory (os error 21)`.
+
+    #[tokio::test]
+    async fn test_self_heal_removes_stray_settings_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let stray = temp_dir.path().join("settings.json");
+        fs::create_dir(&stray).await.unwrap();
+
+        // Constructor must not error out on the stray directory.
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("constructor should self-heal stray settings.json directory");
+
+        // Now `settings.json` must be a regular file.
+        let meta = std::fs::metadata(&stray).unwrap();
+        assert!(meta.is_file(), "settings.json must be a file after self-heal");
+
+        // get_all should work — defaults applied since no salvage was
+        // possible (empty stray dir).
+        let settings = repo.get_all().await.unwrap();
+        assert_eq!(settings.indexing.chunk_size, 800);
+    }
+
+    #[tokio::test]
+    async fn test_self_heal_salvages_nested_settings_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let stray = temp_dir.path().join("settings.json");
+        fs::create_dir(&stray).await.unwrap();
+
+        // Drop a real settings file inside the stray directory — this
+        // is the layout the buggy DI produced. Self-heal should salvage
+        // its contents.
+        let nested = stray.join("settings.json");
+        let mut nested_settings = SettingsDto::default();
+        nested_settings.indexing.batch_size = 99;
+        let nested_file = SettingsFile {
+            version: SETTINGS_VERSION,
+            settings: nested_settings,
+        };
+        let payload = serde_json::to_string_pretty(&nested_file).unwrap();
+        fs::write(&nested, payload).await.unwrap();
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("self-heal should salvage nested settings.json");
+
+        let meta = std::fs::metadata(&stray).unwrap();
+        assert!(meta.is_file(), "settings.json must be a file after salvage");
+
+        // Salvaged value preserved.
+        let settings = repo.get_all().await.unwrap();
+        assert_eq!(settings.indexing.batch_size, 99);
     }
 }

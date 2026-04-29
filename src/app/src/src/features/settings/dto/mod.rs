@@ -36,6 +36,10 @@ pub struct SettingsDto {
 
     /// Backup configuration
     pub backup: BackupSettingsDto,
+
+    /// Privacy configuration (telemetry, crash reporting)
+    #[serde(default)]
+    pub privacy: PrivacySettingsDto,
 }
 
 /// Indexing settings.
@@ -57,8 +61,17 @@ pub struct IndexingSettingsDto {
     /// Supported file types
     pub file_types: Vec<String>,
 
-    /// Paths to exclude from indexing
-    pub excluded_paths: Vec<String>,
+    /// Folders being watched / indexed (the user's watch list).
+    /// Migrated from the legacy AppConfig.indexed_paths in Phase 4b/7.
+    /// Mutated only via the dedicated `add_watch_folder` / `remove_watch_folder`
+    /// commands so backend can run path validation (CWE-22 / CWE-158).
+    #[serde(default)]
+    pub indexed_paths: Vec<String>,
+
+    /// File patterns to ignore during indexing (e.g. `*.tmp`, `node_modules`).
+    /// Renamed from `excluded_paths` in the AppConfig→Settings unification.
+    #[serde(default, alias = "excludedPaths")]
+    pub exclude_patterns: Vec<String>,
 }
 
 /// Search settings.
@@ -419,6 +432,21 @@ pub struct BackupSettingsDto {
     pub compress_backups: bool,
 }
 
+/// Privacy settings — defaults to opt-out for both flags.
+///
+/// These flags must be read by the backend before emitting telemetry or
+/// crash reports. Source of truth lives here, not in the frontend
+/// localStorage. Phase 4b moved them out of the Zustand `privacy` slice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivacySettingsDto {
+    /// Send anonymous usage statistics. Off by default.
+    pub telemetry_enabled: bool,
+
+    /// Send crash reports. Off by default.
+    pub crash_reporting: bool,
+}
+
 // ============================================================================
 // Settings Category Enum
 // ============================================================================
@@ -439,6 +467,8 @@ pub enum SettingsCategory {
     Sync,
     /// Backup settings
     Backup,
+    /// Privacy settings (telemetry + crash reporting)
+    Privacy,
 }
 
 impl SettingsCategory {
@@ -451,6 +481,7 @@ impl SettingsCategory {
             SettingsCategory::Ui,
             SettingsCategory::Sync,
             SettingsCategory::Backup,
+            SettingsCategory::Privacy,
         ]
     }
 
@@ -463,6 +494,7 @@ impl SettingsCategory {
             SettingsCategory::Ui => "ui",
             SettingsCategory::Sync => "sync",
             SettingsCategory::Backup => "backup",
+            SettingsCategory::Privacy => "privacy",
         }
     }
 }
@@ -478,6 +510,7 @@ impl FromStr for SettingsCategory {
             "ui" => Ok(SettingsCategory::Ui),
             "sync" => Ok(SettingsCategory::Sync),
             "backup" => Ok(SettingsCategory::Backup),
+            "privacy" => Ok(SettingsCategory::Privacy),
             _ => Err(format!("Unknown settings category: {}", s)),
         }
     }
@@ -701,7 +734,13 @@ impl Default for IndexingSettingsDto {
                 "pdf".to_string(),
                 "docx".to_string(),
             ],
-            excluded_paths: vec![],
+            indexed_paths: vec![],
+            exclude_patterns: vec![
+                "*.tmp".to_string(),
+                "*.log".to_string(),
+                "node_modules".to_string(),
+                ".git".to_string(),
+            ],
         }
     }
 }
@@ -851,6 +890,17 @@ impl Default for BackupSettingsDto {
             backup_retention_days: 30,
             backup_path: String::new(),
             compress_backups: true,
+        }
+    }
+}
+
+impl Default for PrivacySettingsDto {
+    fn default() -> Self {
+        // Both flags default OFF. Users must opt in. Don't change these defaults
+        // without thinking carefully — they're a trust signal in a local-first app.
+        Self {
+            telemetry_enabled: false,
+            crash_reporting: false,
         }
     }
 }

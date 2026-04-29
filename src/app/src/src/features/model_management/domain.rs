@@ -355,6 +355,12 @@ pub struct ModelMetadata {
     #[serde(default)]
     pub embedding_compatibility:
         Option<crate::features::embedding::compatibility::EmbeddingCompatibility>,
+    /// On-disk storage format. Drives which mistralrs builder is used
+    /// at load time and gates which loader-side pre-flight checks run
+    /// (GGUF arch validation vs safetensors RAM check). Defaults to
+    /// GGUF for backwards compat with existing catalog entries.
+    #[serde(default)]
+    pub format: crate::llm::models::ModelFormat,
 }
 
 impl ModelMetadata {
@@ -864,6 +870,7 @@ mod tests {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
+            format: crate::llm::models::ModelFormat::Gguf,
         }
     }
 

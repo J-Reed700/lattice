@@ -12,6 +12,19 @@ export interface AppSettings {
   ui: UISettings;
   sync: SyncSettings;
   backup: BackupSettings;
+  privacy: PrivacySettings;
+}
+
+/**
+ * Privacy settings (Phase 4b SSOT).
+ *
+ * Both flags default to OFF. Backend code that sends telemetry or
+ * crash reports upstream MUST gate on these via `privacy_gate` helpers
+ * in features/settings/privacy_gate.rs.
+ */
+export interface PrivacySettings {
+  telemetryEnabled: boolean;  // Matches Rust telemetry_enabled with camelCase
+  crashReporting: boolean;    // Matches Rust crash_reporting with camelCase
 }
 
 // All field names use camelCase to match Rust #[serde(rename_all = "camelCase")]
@@ -21,7 +34,14 @@ export interface IndexingSettings {
   batchSize: number;           // Matches Rust batch_size with camelCase
   autoIndexNewFiles: boolean;  // Matches Rust auto_index_new_files with camelCase
   fileTypes: string[];         // Matches Rust file_types with camelCase
-  excludedPaths: string[];     // Matches Rust excluded_paths with camelCase
+  // Watch list — folders the user wants monitored. Mutated only via the
+  // dedicated VaultAPI.addWatchFolder / removeWatchFolder commands so
+  // the backend can run path validation (CWE-22 / CWE-158).
+  indexedPaths: string[];      // Matches Rust indexed_paths with camelCase
+  // File patterns to ignore during indexing (e.g. *.tmp, node_modules).
+  // Renamed from excluded_paths in the AppConfig→Settings unification;
+  // Rust still accepts the old name via #[serde(alias)].
+  excludePatterns: string[];   // Matches Rust exclude_patterns with camelCase
 }
 
 export interface SearchSettings {

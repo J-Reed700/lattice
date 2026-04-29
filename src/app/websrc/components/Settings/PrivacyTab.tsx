@@ -2,15 +2,38 @@
  * Privacy Settings Tab
  *
  * Configure telemetry, crash reporting, and data privacy options.
+ *
+ * Reads from + writes to the backend Privacy settings slice via React Query.
+ * The Rust SettingsRepository is the SSOT — Zustand is intentionally not
+ * involved (per Phase 4b: backend-backed state must use React Query).
  */
 
 import { Shield, Activity, AlertTriangle, Lock } from 'lucide-react';
 
-import { useSettingsStore } from '../../stores/settingsStore';
+import { useSettingsQuery, useUpdateSettingsMutation } from '../../hooks/queries/useSettingsQuery';
+import { toast } from '../../stores/toastStore';
+
+const DEFAULT_PRIVACY = {
+  telemetryEnabled: false,
+  crashReporting: false,
+};
 
 export function PrivacyTab() {
-  const privacySettings = useSettingsStore((state) => state.settings.privacy);
-  const updatePrivacy = useSettingsStore((state) => state.updatePrivacy);
+  const { data: settings, isLoading } = useSettingsQuery();
+  const updateMutation = useUpdateSettingsMutation();
+  const privacySettings = settings?.privacy ?? DEFAULT_PRIVACY;
+  const isSaving = updateMutation.isPending;
+
+  const updatePrivacy = (updates: Partial<typeof DEFAULT_PRIVACY>) => {
+    updateMutation.mutate(
+      { category: 'privacy', updates },
+      {
+        onError: (error) => {
+          toast.error("Couldn't save privacy setting", { message: error.message });
+        },
+      }
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -59,7 +82,8 @@ export function PrivacyTab() {
               type="checkbox"
               checked={privacySettings.telemetryEnabled}
               onChange={(e) => updatePrivacy({ telemetryEnabled: e.target.checked })}
-              className="mt-1 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
+              disabled={isLoading || isSaving}
+              className="mt-1 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))] disabled:opacity-50"
             />
             <div className="flex-1">
               <label
@@ -108,7 +132,8 @@ export function PrivacyTab() {
               type="checkbox"
               checked={privacySettings.crashReporting}
               onChange={(e) => updatePrivacy({ crashReporting: e.target.checked })}
-              className="mt-1 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))]"
+              disabled={isLoading || isSaving}
+              className="mt-1 w-4 h-4 text-[hsl(var(--accent))] bg-[hsl(var(--surface))] border-[hsl(var(--border-subtle))] rounded focus:ring-2 focus:ring-[hsl(var(--accent))] disabled:opacity-50"
             />
             <div className="flex-1">
               <label

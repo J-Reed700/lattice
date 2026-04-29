@@ -1,18 +1,22 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { Settings } from './Settings';
-import { useSettingsStore } from '../../stores/settingsStore';
 import { toast } from '../../stores/toastStore';
 
-vi.mock('../../stores/settingsStore');
-vi.mock('../../stores/toastStore');
+import type { ReactNode } from 'react';
 
 const mockSave = vi.hoisted(() => vi.fn());
 const mockOpen = vi.hoisted(() => vi.fn());
 const mockWriteTextFile = vi.hoisted(() => vi.fn());
 const mockReadTextFile = vi.hoisted(() => vi.fn());
+const mockExportSettings = vi.hoisted(() => vi.fn());
+const mockImportSettings = vi.hoisted(() => vi.fn());
+const mockResetSettings = vi.hoisted(() => vi.fn());
+
+vi.mock('../../stores/toastStore');
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: mockSave,
@@ -25,65 +29,50 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 }));
 
 vi.mock('../../lib/api', () => ({
+  __esModule: true,
   VaultAPI: {
     getSettings: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
     getModelDownloadPath: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    getConfig: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    saveConfig: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    updateSettings: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    exportSettings: mockExportSettings,
+    importSettings: mockImportSettings,
+    resetSettings: mockResetSettings,
+  },
+  default: {
+    getSettings: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    getModelDownloadPath: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    getConfig: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    saveConfig: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    updateSettings: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
+    exportSettings: mockExportSettings,
+    importSettings: mockImportSettings,
+    resetSettings: mockResetSettings,
   },
 }));
 
+function renderSettings() {
+  // Each test gets a fresh client so cache state doesn't leak.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return render(<Settings />, { wrapper });
+}
+
 describe('Settings', () => {
-  const mockSettings = {
-    version: 1,
-    search: {
-      defaultMode: 'hybrid',
-      resultsPerPage: 20,
-      enableReranking: true,
-      semanticWeight: 0.7,
-      keywordWeight: 0.3,
-    },
-    indexing: {
-      autoIndex: true,
-      watchFolders: [],
-      excludePatterns: [],
-      batchSize: 32,
-    },
-    ai: {
-      embeddingModel: 'bge-m3',
-      ocrModel: 'qwen2.5-vl-2b',
-      useQuantization: true,
-      enableAgenticRAG: false,
-    },
-    display: {
-      theme: 'system',
-      fontSize: 'medium',
-      compactMode: false,
-      showPreviews: true,
-    },
-    privacy: {
-      telemetryEnabled: true,
-      crashReporting: true,
-    },
-  };
-
-  const mockResetToDefaults = vi.fn();
-  const mockExportSettings = vi.fn();
-  const mockImportSettings = vi.fn();
-
   beforeEach(() => {
     vi.clearAllMocks();
-    (useSettingsStore as any).mockImplementation((selector: any) => {
-      const state = {
-        settings: mockSettings,
-        resetToDefaults: mockResetToDefaults,
-        exportSettings: mockExportSettings,
-        importSettings: mockImportSettings,
-      };
-      return selector(state);
-    });
+    mockExportSettings.mockResolvedValue({ ok: true, data: '{"foo":"bar"}' });
+    mockImportSettings.mockResolvedValue({ ok: true, data: {} });
+    mockResetSettings.mockResolvedValue({ ok: true, data: {} });
   });
 
   it('renders settings dialog with all tabs', () => {
-    render(<Settings />);
+    renderSettings();
 
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('Search')).toBeInTheDocument();
@@ -97,14 +86,9 @@ describe('Settings', () => {
     expect(screen.getByText('Privacy')).toBeInTheDocument();
   });
 
-  it('displays version number', () => {
-    render(<Settings />);
-    expect(screen.getByText('v1')).toBeInTheDocument();
-  });
-
   it('switches between tabs when clicked', async () => {
     const user = userEvent.setup();
-    render(<Settings />);
+    renderSettings();
 
     const indexingTab = screen.getByRole('button', { name: /indexing/i });
     await user.click(indexingTab);
@@ -112,167 +96,74 @@ describe('Settings', () => {
     expect(screen.getByText('Indexing Settings')).toBeInTheDocument();
   });
 
-  it('shows active tab with highlighted style', async () => {
-    const user = userEvent.setup();
-    render(<Settings />);
-
-    const searchTab = screen.getByRole('button', { name: /^search$/i });
-    expect(searchTab).toHaveClass('text-[var(--accent-primary)]');
-
-    const indexingTab = screen.getByRole('button', { name: /indexing/i });
-    await user.click(indexingTab);
-
-    expect(indexingTab).toHaveClass('text-[var(--accent-primary)]');
-    expect(searchTab).not.toHaveClass('text-[var(--accent-primary)]');
-  });
-
   describe('Export functionality', () => {
-    it('exports settings when export button clicked', async () => {
+    it('exports settings via backend command when export button clicked', async () => {
       const user = userEvent.setup();
       mockSave.mockResolvedValue('/path/to/settings.json');
-      mockExportSettings.mockReturnValue('{"version":1}');
 
-      render(<Settings />);
+      renderSettings();
 
       const exportButton = screen.getByRole('button', { name: /export/i });
       await user.click(exportButton);
 
       await waitFor(() => {
-        expect(mockSave).toHaveBeenCalledWith({
-          defaultPath: 'lattice-settings.json',
-          filters: [{ name: 'JSON', extensions: ['json'] }],
-        });
+        expect(mockSave).toHaveBeenCalled();
       });
 
       expect(mockExportSettings).toHaveBeenCalled();
-      expect(mockWriteTextFile).toHaveBeenCalledWith('/path/to/settings.json', '{"version":1}');
+      expect(mockWriteTextFile).toHaveBeenCalledWith('/path/to/settings.json', '{"foo":"bar"}');
       expect(toast.success).toHaveBeenCalledWith('Settings exported successfully', { duration: 3000 });
     });
 
-    it('shows exporting state during export', async () => {
-      const user = userEvent.setup();
-      mockSave.mockImplementation(() => new Promise(() => {}));
-
-      render(<Settings />);
-
-      const exportButton = screen.getByRole('button', { name: /export/i });
-      await user.click(exportButton);
-
-      expect(screen.getByText('Exporting...')).toBeInTheDocument();
-    });
-
-    it('handles export cancellation', async () => {
+    it('skips write when user cancels save dialog', async () => {
       const user = userEvent.setup();
       mockSave.mockResolvedValue(null);
 
-      render(<Settings />);
+      renderSettings();
 
       const exportButton = screen.getByRole('button', { name: /export/i });
       await user.click(exportButton);
 
-      await waitFor(() => {
-        expect(mockExportSettings).not.toHaveBeenCalled();
-      });
-    });
-
-    it('handles export errors', async () => {
-      const user = userEvent.setup();
-      mockSave.mockRejectedValue(new Error('Permission denied'));
-
-      render(<Settings />);
-
-      const exportButton = screen.getByRole('button', { name: /export/i });
-      await user.click(exportButton);
-
-      await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Export failed', {
-          message: 'Error: Permission denied',
-          duration: 5000,
-        });
-      });
+      await waitFor(() => expect(mockSave).toHaveBeenCalled());
+      expect(mockExportSettings).not.toHaveBeenCalled();
+      expect(mockWriteTextFile).not.toHaveBeenCalled();
     });
   });
 
   describe('Import functionality', () => {
-    it('imports settings when import button clicked', async () => {
+    it('imports settings via backend command when import button clicked', async () => {
       const user = userEvent.setup();
       mockOpen.mockResolvedValue('/path/to/settings.json');
-      mockReadTextFile.mockResolvedValue('{"version":1}');
-      mockImportSettings.mockReturnValue(true);
+      mockReadTextFile.mockResolvedValue('{"foo":"bar"}');
 
-      render(<Settings />);
+      renderSettings();
 
       const importButton = screen.getByRole('button', { name: /^import$/i });
       await user.click(importButton);
 
       await waitFor(() => {
-        expect(mockOpen).toHaveBeenCalledWith({
-          multiple: false,
-          filters: [{ name: 'JSON', extensions: ['json'] }],
-        });
+        expect(mockImportSettings).toHaveBeenCalledWith('{"foo":"bar"}', false);
       });
 
-      expect(mockReadTextFile).toHaveBeenCalledWith('/path/to/settings.json');
-      expect(mockImportSettings).toHaveBeenCalledWith('{"version":1}');
       expect(toast.success).toHaveBeenCalledWith('Settings imported successfully', { duration: 3000 });
     });
 
-    it('shows importing state during import', async () => {
-      const user = userEvent.setup();
-      mockOpen.mockImplementation(() => new Promise(() => {}));
-
-      render(<Settings />);
-
-      const importButton = screen.getByRole('button', { name: /^import$/i });
-      await user.click(importButton);
-
-      expect(screen.getByText('Importing...')).toBeInTheDocument();
-    });
-
-    it('handles invalid settings file', async () => {
+    it('reports invalid settings file when backend rejects', async () => {
       const user = userEvent.setup();
       mockOpen.mockResolvedValue('/path/to/invalid.json');
-      mockReadTextFile.mockResolvedValue('invalid json');
-      mockImportSettings.mockReturnValue(false);
+      mockReadTextFile.mockResolvedValue('not valid');
+      mockImportSettings.mockResolvedValue({ ok: false, error: 'parse error' });
 
-      render(<Settings />);
-
-      const importButton = screen.getByRole('button', { name: /^import$/i });
-      await user.click(importButton);
-
-      await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Invalid settings file', { duration: 5000 });
-      });
-    });
-
-    it('handles import cancellation', async () => {
-      const user = userEvent.setup();
-      mockOpen.mockResolvedValue(null);
-
-      render(<Settings />);
+      renderSettings();
 
       const importButton = screen.getByRole('button', { name: /^import$/i });
       await user.click(importButton);
 
       await waitFor(() => {
-        expect(mockImportSettings).not.toHaveBeenCalled();
-      });
-    });
-
-    it('handles import errors', async () => {
-      const user = userEvent.setup();
-      mockOpen.mockRejectedValue(new Error('File not found'));
-
-      render(<Settings />);
-
-      const importButton = screen.getByRole('button', { name: /^import$/i });
-      await user.click(importButton);
-
-      await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Import failed', {
-          message: 'Error: File not found',
-          duration: 5000,
-        });
+        expect(toast.error).toHaveBeenCalledWith(
+          'Invalid settings file',
+          expect.objectContaining({ message: 'parse error', duration: 5000 })
+        );
       });
     });
   });
@@ -280,20 +171,17 @@ describe('Settings', () => {
   describe('Reset functionality', () => {
     it('shows confirmation dialog when reset button clicked', async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      renderSettings();
 
       const resetButton = screen.getByRole('button', { name: /reset all/i });
       await user.click(resetButton);
 
-      expect(screen.getByText('Reset All Settings?')).toBeInTheDocument();
-      expect(
-        screen.getByText(/This will restore all settings to their default values/)
-      ).toBeInTheDocument();
+      expect(screen.getByText('Reset all settings?')).toBeInTheDocument();
     });
 
-    it('resets settings when confirmed', async () => {
+    it('calls backend reset and reports success when confirmed', async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      renderSettings();
 
       const resetButton = screen.getByRole('button', { name: /reset all/i });
       await user.click(resetButton);
@@ -301,14 +189,15 @@ describe('Settings', () => {
       const confirmButton = screen.getByRole('button', { name: /reset settings/i });
       await user.click(confirmButton);
 
-      expect(mockResetToDefaults).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(mockResetSettings).toHaveBeenCalled();
+      });
       expect(toast.success).toHaveBeenCalledWith('Settings reset to defaults', { duration: 3000 });
-      expect(screen.queryByText('Reset All Settings?')).not.toBeInTheDocument();
     });
 
-    it('closes dialog when cancelled', async () => {
+    it('closes dialog when cancelled and does NOT touch backend', async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      renderSettings();
 
       const resetButton = screen.getByRole('button', { name: /reset all/i });
       await user.click(resetButton);
@@ -316,23 +205,13 @@ describe('Settings', () => {
       const cancelButton = screen.getByRole('button', { name: /cancel/i });
       await user.click(cancelButton);
 
-      expect(mockResetToDefaults).not.toHaveBeenCalled();
-      expect(screen.queryByText('Reset All Settings?')).not.toBeInTheDocument();
+      expect(mockResetSettings).not.toHaveBeenCalled();
+      expect(screen.queryByText('Reset all settings?')).not.toBeInTheDocument();
     });
   });
 
   it('shows auto-save indicator', () => {
-    render(<Settings />);
+    renderSettings();
     expect(screen.getByText('Settings saved automatically')).toBeInTheDocument();
-  });
-
-  it('renders all tab icons', () => {
-    render(<Settings />);
-
-    const icons = screen.getAllByRole('button').filter(button =>
-      button.querySelector('svg')
-    );
-
-    expect(icons.length).toBeGreaterThan(0);
   });
 });

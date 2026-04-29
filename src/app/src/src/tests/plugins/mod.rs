@@ -4,7 +4,6 @@
 //! Each module tests one plugin domain's commands.
 
 pub mod batch;
-pub mod config;
 pub mod credentials;
 pub mod embeddings;
 pub mod file;

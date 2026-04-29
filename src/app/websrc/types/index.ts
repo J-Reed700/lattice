@@ -63,14 +63,6 @@ export interface IndexingStats {
 // Import types from API definitions (use snake_case to match Rust backend)
 export type { IndexedFolder, IndexingActivity, IndexFileResponse } from './api/files';
 
-export interface AppConfig {
-  indexedPaths: string[];
-  excludePatterns: string[];
-  autoIndex: boolean;
-  ollamaEndpoint: string;
-  ollamaModel: string;
-}
-
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; details?: ApiError };

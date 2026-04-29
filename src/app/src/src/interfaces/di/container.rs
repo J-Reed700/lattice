@@ -1023,8 +1023,15 @@ impl Container {
             active_model.file_path().display()
         );
 
+        // DownloadedModel doesn't yet carry an explicit ModelFormat field
+        // (schema migration is a follow-up). For now, sniff the format
+        // at the call site via the centralized helper. Once
+        // DownloadedModel.format lands this becomes a direct read.
+        let format =
+            crate::llm::factory::detect_model_format(active_model.file_path());
+
         let config = InferenceConfig::default();
-        let engine = InferenceEngine::from_path(active_model.file_path(), config)
+        let engine = InferenceEngine::from_path(active_model.file_path(), format, config)
             .await
             .map_err(|e| {
                 AppError::ModelLoadFailed(format!("Failed to load inference engine: {}", e))

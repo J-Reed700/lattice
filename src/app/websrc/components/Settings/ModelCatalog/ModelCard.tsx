@@ -117,6 +117,20 @@ export function ModelCard({ model, onClick, isSelected = false }: ModelCardProps
                   Unsupported
                 </span>
               )}
+            {/* Format badge — only surfaced for non-default (non-GGUF)
+                entries, since GGUF is the implicit norm for the catalog. */}
+            {metadata.format === 'safetensors' && (
+              <span
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent-fg))]"
+                title={
+                  `Safetensors format (HF native, unquantized). Loads via mistralrs ` +
+                  `auto-detect. Needs ~${metadata.recommended_ram_gb} GB RAM — ` +
+                  `significantly more than a GGUF quant of the same model.`
+                }
+              >
+                Safetensors
+              </span>
+            )}
           </div>
         </div>
         <div className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${compatStyle.bg} ${compatStyle.text}`}>

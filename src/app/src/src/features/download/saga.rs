@@ -36,7 +36,30 @@ impl DownloadSaga {
                 })
             })
             .or_else(|| files.iter().find(|file| file.file_name.ends_with(".gguf")))
+            // Safetensors LLM repos contain a `config.json`. Treat it as
+            // the canonical primary file — the loader takes the parent
+            // directory anyway, and config.json is the only file
+            // guaranteed to be present in every safetensors layout
+            // (single- or multi-shard).
+            .or_else(|| files.iter().find(|file| file.file_name == "config.json"))
             .or_else(|| files.first())
+    }
+
+    /// Resolve the path to store on `DownloadedModel.file_path`. For
+    /// single-file formats (GGUF, ONNX) this is the file path itself.
+    /// For safetensors LLM/multimodal layouts (config.json + shards),
+    /// the loader expects the *directory* — return the parent of
+    /// `config.json`. Returns `None` if the primary file has no parent
+    /// (shouldn't happen for valid downloads).
+    fn primary_path_for_downloaded_model(
+        primary: &crate::domain::entities::model_file::ModelFile,
+    ) -> Option<PathBuf> {
+        let path = PathBuf::from(&primary.file_path);
+        if primary.file_name == "config.json" {
+            path.parent().map(|p| p.to_path_buf())
+        } else {
+            Some(path)
+        }
     }
 
     pub fn new(
@@ -251,7 +274,9 @@ impl DownloadSaga {
             let main_file = Self::select_primary_model_file(&files)
                 .ok_or_else(|| format!("No files found for model {}", event.model_id))?;
 
-            let file_path = PathBuf::from(&main_file.file_path);
+            let file_path = Self::primary_path_for_downloaded_model(main_file).ok_or_else(
+                || format!("Primary file has no parent for model {}", event.model_id),
+            )?;
 
             let downloaded_model = DownloadedModel::new(
                 Uuid::new_v4().to_string(),
@@ -441,5 +466,46 @@ mod tests {
 
         let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
         assert_eq!(selected.file_name, "phi.gguf");
+    }
+
+    #[test]
+    fn select_primary_picks_config_for_safetensors_layout() {
+        // No GGUF/ONNX present; HF safetensors LLM layout. config.json
+        // should win over a random shard so the downstream
+        // `primary_path_for_downloaded_model` helper can derive the
+        // directory path.
+        let files = vec![
+            make_file(
+                "model-00001-of-00004.safetensors",
+                "/tmp/m/model-00001-of-00004.safetensors",
+            ),
+            make_file(
+                "model-00002-of-00004.safetensors",
+                "/tmp/m/model-00002-of-00004.safetensors",
+            ),
+            make_file("config.json", "/tmp/m/config.json"),
+            make_file("tokenizer.json", "/tmp/m/tokenizer.json"),
+        ];
+
+        let selected = DownloadSaga::select_primary_model_file(&files).expect("file selected");
+        assert_eq!(selected.file_name, "config.json");
+    }
+
+    #[test]
+    fn primary_path_returns_directory_for_config_json() {
+        // For safetensors, DownloadedModel.file_path should point at
+        // the model directory (parent of config.json), because that's
+        // what mistralrs::ModelBuilder takes as input.
+        let primary = make_file("config.json", "/tmp/gemma-2-9b-it/config.json");
+        let path = DownloadSaga::primary_path_for_downloaded_model(&primary).unwrap();
+        assert_eq!(path.to_string_lossy(), "/tmp/gemma-2-9b-it");
+    }
+
+    #[test]
+    fn primary_path_returns_file_path_for_gguf() {
+        // GGUF stays a single-file path.
+        let primary = make_file("phi.gguf", "/tmp/phi/phi.gguf");
+        let path = DownloadSaga::primary_path_for_downloaded_model(&primary).unwrap();
+        assert_eq!(path.to_string_lossy(), "/tmp/phi/phi.gguf");
     }
 }

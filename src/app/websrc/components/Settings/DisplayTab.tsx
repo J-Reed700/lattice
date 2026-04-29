@@ -11,7 +11,7 @@ import { useSettingsStore, type DisplaySettings } from '../../stores/settingsSto
 import type { LucideIcon } from 'lucide-react';
 
 export function DisplayTab() {
-  const displaySettings = useSettingsStore((state) => state.settings.display);
+  const displaySettings = useSettingsStore((state) => state.display);
   const updateDisplay = useSettingsStore((state) => state.updateDisplay);
 
   const themes: Array<{

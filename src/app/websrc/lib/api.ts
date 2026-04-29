@@ -20,7 +20,6 @@ import type {
   IndexedFolder,
   IndexingActivity,
   IndexFileResponse,
-  AppConfig,
   RecentDocument,
   DocumentMetadata,
   ApiResult,
@@ -194,10 +193,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   health_check: { domain: 'health', command: 'health_check' },
   get_system_stats: { domain: 'health', command: 'get_system_stats' },
   get_version: { domain: 'health', command: 'get_version' },
-
-  // Config domain
-  get_config: { domain: 'config', command: 'get_config' },
-  save_config: { domain: 'config', command: 'save_config' },
 
   // Database/initialization domain (routes to health for now)
   initialize_database: { domain: 'health', command: 'initialize_database' },
@@ -391,9 +386,8 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   create_workspace_note: { domain: 'dailynotes', command: 'create_workspace_note' },
   update_workspace_note: { domain: 'dailynotes', command: 'update_workspace_note' },
   delete_workspace_note: { domain: 'dailynotes', command: 'delete_workspace_note' },
-  get_watch_folders: { domain: 'config', command: 'get_watch_folders' },
-  add_watch_folder: { domain: 'config', command: 'add_watch_folder' },
-  remove_watch_folder: { domain: 'config', command: 'remove_watch_folder' },
+  add_watch_folder: { domain: 'settings', command: 'add_watch_folder' },
+  remove_watch_folder: { domain: 'settings', command: 'remove_watch_folder' },
   ingest_web_url: { domain: 'web', command: 'ingest_web_url' },
   fetch_url_preview: { domain: 'web', command: 'fetch_url_preview' },
   extract_article: { domain: 'web', command: 'extract_article' },
@@ -1257,31 +1251,6 @@ const VaultAPI = {
   // ============================================================
   // Configuration
   // ============================================================
-
-  /**
-   * Retrieves the current application configuration.
-   * Includes all user preferences, paths, and feature flags.
-   *
-   * @returns AppConfig object with current settings
-   */
-  getConfig: async (): Promise<ApiResult<AppConfig>> => apiCall<AppConfig>('get_config'),
-
-  /**
-   * Saves application configuration to disk.
-   * Persists user preferences and settings for next session.
-   *
-   * @param config - Complete AppConfig object to save
-   * @returns Void on success
-   */
-  saveConfig: async (config: AppConfig): Promise<ApiResult<void>> => apiCall<void>('save_config', { config }),
-
-  /**
-   * Gets list of folders currently being watched for changes.
-   * File watcher automatically reindexes modified files in these folders.
-   *
-   * @returns Array of absolute folder paths being monitored
-   */
-  getWatchFolders: async (): Promise<ApiResult<string[]>> => apiCall<string[]>('get_watch_folders'),
 
   /**
    * Adds a folder to the file watcher.

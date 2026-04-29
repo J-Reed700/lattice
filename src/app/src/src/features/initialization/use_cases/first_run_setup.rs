@@ -99,15 +99,19 @@ impl CheckFirstRunStatusUseCase {
 
     /// Create response for first-run setup needed
     fn needs_setup_response() -> FirstRunStatusResponse {
+        let catalog_size = crate::domain::curated_models::get_curated_embedding_models()
+            .into_iter()
+            .find(|m| m.name == DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME)
+            .map(|m| m.total_size_bytes);
+
         FirstRunStatusResponse {
             needs_setup: true,
-            // Use curated model ID so it matches the model catalog and download flow.
             recommended_model_id: Some(DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.to_string()),
             recommended_model_name: Some(format!(
                 "{} (Embedding Model)",
                 DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME
             )),
-            estimated_size_bytes: Some(420_000_000),
+            estimated_size_bytes: Some(catalog_size.unwrap_or(91_700_000)),
         }
     }
 }
