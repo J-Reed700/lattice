@@ -370,7 +370,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             total_size_bytes: 2_287_000_000,
             embedding_dimensions: Some(1024),
             embedding_compatibility: None,
-            format: ModelFormat::Gguf,
+            format: ModelFormat::Safetensors,
         },
         ModelMetadata {
             id: "all-minilm-l6-v2".into(),
@@ -409,7 +409,7 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             total_size_bytes: 91_700_000,
             embedding_dimensions: Some(384),
             embedding_compatibility: None,
-            format: ModelFormat::Gguf,
+            format: ModelFormat::Safetensors,
         },
     ]
 }

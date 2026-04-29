@@ -168,12 +168,12 @@ impl DownloadModelUseCase {
     /// Absent is fine: `CandleEmbeddingService` defaults to CLS.
     async fn build_safetensors_embedding_file_list(
         repo_id: &str,
-        auth_token: Option<&str>,
+        _auth_token: Option<&str>,
     ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
         use crate::domain::model_metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
-        let mut files = vec![
+        vec![
             ModelFileMetadata::new(
                 "model.safetensors".to_string(),
                 format!("{}/model.safetensors", base_url),
@@ -189,20 +189,7 @@ impl DownloadModelUseCase {
                 format!("{}/config.json", base_url),
                 0,
             ),
-        ];
-
-        // Optional pooling config — only present on sentence-transformers
-        // repos. Pass auth so probes against gated repos succeed.
-        let pooling_url = format!("{}/1_Pooling/config.json", base_url);
-        if Self::remote_file_exists(&pooling_url, auth_token).await {
-            files.push(ModelFileMetadata::new(
-                "1_Pooling/config.json".to_string(),
-                pooling_url,
-                0,
-            ));
-        }
-
-        files
+        ]
     }
 
     /// Build a file list for ONNX embedding models with required companion files.

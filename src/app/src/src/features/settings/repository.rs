@@ -122,47 +122,28 @@ impl SettingsRepository {
         let settings_path = app_data_dir.join(SETTINGS_FILE_NAME);
         let legacy_config_path = app_data_dir.join("config.json");
 
-        // Self-heal: a prior buggy DI wiring (interfaces/di/modules.rs)
-        // passed `data_dir/settings.json` as the dir arg to this
-        // constructor, which then joined `settings.json` again — creating
-        // a stray `settings.json/settings.json` layout on disk. Detect
-        // and recover: if `settings.json` is a directory, salvage any
-        // nested `settings.json` file to take its place, then remove the
-        // wrapper. We never error out here — failure to repair drops
-        // back to defaults rather than blocking app startup.
+        // Salvage stale data from a prior DI bug that wrote
+        // settings.json/settings.json instead of settings.json.
         if settings_path.is_dir() {
             tracing::warn!(
-                "Found stray settings.json directory at {} (legacy DI bug); attempting self-heal",
+                "Found stray settings.json directory at {}; salvaging",
                 settings_path.display()
             );
             let nested = settings_path.join(SETTINGS_FILE_NAME);
             let salvaged_contents = if nested.is_file() {
-                match fs::read_to_string(&nested).await {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        tracing::warn!("Could not read nested settings.json during self-heal: {e}");
-                        None
-                    }
-                }
+                fs::read_to_string(&nested).await.ok()
             } else {
                 None
             };
 
             if let Err(e) = fs::remove_dir_all(&settings_path).await {
-                // Last-ditch fallback: rename it aside so we can write the
-                // file in its place. Don't refuse to boot.
-                tracing::warn!(
-                    "Could not remove stray settings.json directory: {e}. \
-                     Renaming aside so we can write the canonical file."
-                );
+                tracing::warn!("Could not remove stray dir: {e}; renaming aside");
                 let aside = app_data_dir.join("settings.json.legacy-dir");
                 let _ = fs::rename(&settings_path, &aside).await;
             }
 
             if let Some(contents) = salvaged_contents {
-                if let Err(e) = fs::write(&settings_path, contents.as_bytes()).await {
-                    tracing::warn!("Could not write salvaged settings during self-heal: {e}");
-                }
+                let _ = fs::write(&settings_path, contents.as_bytes()).await;
             }
         }
 
