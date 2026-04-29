@@ -898,8 +898,13 @@ impl SystemModule {
     ) -> crate::shared::error::Result<Self> {
         use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 
-        let settings_path = core.data_dir().join("settings.json");
-        let settings = crate::features::settings::di::build(&settings_path).await?;
+        // SettingsRepository::new takes the data DIRECTORY and joins
+        // "settings.json" itself. Passing data_dir/settings.json here
+        // (the bug this replaces) caused the constructor to write to
+        // data_dir/settings.json/settings.json — creating a stray
+        // settings.json directory on disk that broke startup until
+        // task 7.3 surfaced it.
+        let settings = crate::features::settings::di::build(core.data_dir()).await?;
 
         let db_path = core.data_dir().join("lattice.db");
         let backup = crate::features::backup::di::build(

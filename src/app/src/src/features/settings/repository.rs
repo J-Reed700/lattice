@@ -122,6 +122,50 @@ impl SettingsRepository {
         let settings_path = app_data_dir.join(SETTINGS_FILE_NAME);
         let legacy_config_path = app_data_dir.join("config.json");
 
+        // Self-heal: a prior buggy DI wiring (interfaces/di/modules.rs)
+        // passed `data_dir/settings.json` as the dir arg to this
+        // constructor, which then joined `settings.json` again — creating
+        // a stray `settings.json/settings.json` layout on disk. Detect
+        // and recover: if `settings.json` is a directory, salvage any
+        // nested `settings.json` file to take its place, then remove the
+        // wrapper. We never error out here — failure to repair drops
+        // back to defaults rather than blocking app startup.
+        if settings_path.is_dir() {
+            tracing::warn!(
+                "Found stray settings.json directory at {} (legacy DI bug); attempting self-heal",
+                settings_path.display()
+            );
+            let nested = settings_path.join(SETTINGS_FILE_NAME);
+            let salvaged_contents = if nested.is_file() {
+                match fs::read_to_string(&nested).await {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        tracing::warn!("Could not read nested settings.json during self-heal: {e}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            if let Err(e) = fs::remove_dir_all(&settings_path).await {
+                // Last-ditch fallback: rename it aside so we can write the
+                // file in its place. Don't refuse to boot.
+                tracing::warn!(
+                    "Could not remove stray settings.json directory: {e}. \
+                     Renaming aside so we can write the canonical file."
+                );
+                let aside = app_data_dir.join("settings.json.legacy-dir");
+                let _ = fs::rename(&settings_path, &aside).await;
+            }
+
+            if let Some(contents) = salvaged_contents {
+                if let Err(e) = fs::write(&settings_path, contents.as_bytes()).await {
+                    tracing::warn!("Could not write salvaged settings during self-heal: {e}");
+                }
+            }
+        }
+
         let repository = Self { settings_path };
 
         // Initialize with defaults if file doesn't exist
@@ -1687,5 +1731,67 @@ mod tests {
             .unwrap();
         let settings = repo2.get_all().await.unwrap();
         assert_eq!(settings.indexing.indexed_paths, vec!["/some/path"]);
+    }
+
+    // === Self-heal for the legacy DI bug ===
+    //
+    // Pre-fix, `interfaces/di/modules.rs` passed `data_dir/settings.json`
+    // as the dir arg to SettingsRepository::new, which then joined
+    // `settings.json` again. The result on disk was a directory at
+    // `data_dir/settings.json/` containing a nested `settings.json`
+    // file. Once the DI bug is fixed, the constructor still has to
+    // cope with the stale on-disk state from prior runs, otherwise it
+    // crashes startup with `Is a directory (os error 21)`.
+
+    #[tokio::test]
+    async fn test_self_heal_removes_stray_settings_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let stray = temp_dir.path().join("settings.json");
+        fs::create_dir(&stray).await.unwrap();
+
+        // Constructor must not error out on the stray directory.
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("constructor should self-heal stray settings.json directory");
+
+        // Now `settings.json` must be a regular file.
+        let meta = std::fs::metadata(&stray).unwrap();
+        assert!(meta.is_file(), "settings.json must be a file after self-heal");
+
+        // get_all should work — defaults applied since no salvage was
+        // possible (empty stray dir).
+        let settings = repo.get_all().await.unwrap();
+        assert_eq!(settings.indexing.chunk_size, 800);
+    }
+
+    #[tokio::test]
+    async fn test_self_heal_salvages_nested_settings_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let stray = temp_dir.path().join("settings.json");
+        fs::create_dir(&stray).await.unwrap();
+
+        // Drop a real settings file inside the stray directory — this
+        // is the layout the buggy DI produced. Self-heal should salvage
+        // its contents.
+        let nested = stray.join("settings.json");
+        let mut nested_settings = SettingsDto::default();
+        nested_settings.indexing.batch_size = 99;
+        let nested_file = SettingsFile {
+            version: SETTINGS_VERSION,
+            settings: nested_settings,
+        };
+        let payload = serde_json::to_string_pretty(&nested_file).unwrap();
+        fs::write(&nested, payload).await.unwrap();
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("self-heal should salvage nested settings.json");
+
+        let meta = std::fs::metadata(&stray).unwrap();
+        assert!(meta.is_file(), "settings.json must be a file after salvage");
+
+        // Salvaged value preserved.
+        let settings = repo.get_all().await.unwrap();
+        assert_eq!(settings.indexing.batch_size, 99);
     }
 }
