@@ -565,9 +565,11 @@ fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if name.contains("sentence-transformers/") || name.starts_with("sentence-transformers")
-                || name.contains("all-minilm") || name.contains("all-mpnet")
-                || name.contains("paraphrase-") || name.contains("multi-qa-")
+            if name.contains("sentence-transformers")
+                || name.contains("all-minilm")
+                || name.contains("all-mpnet")
+                || name.contains("paraphrase-")
+                || name.contains("multi-qa-")
             {
                 tracing::info!(
                     name = %name,
