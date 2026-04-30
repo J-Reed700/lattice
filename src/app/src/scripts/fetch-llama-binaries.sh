@@ -12,7 +12,15 @@
 # If no tag is given, the script reads the pinned tag from
 # scripts/llama-server-version.txt.
 #
-# Requires: curl, shasum (or sha256sum on Linux).
+# Auth strategy:
+#   - If `gh` (GitHub CLI) is installed and authenticated, use it via
+#     `gh release download`. Works for both public and private repos.
+#   - Otherwise fall back to `curl`, which works for public repos only.
+#
+# The `gh` path is preferred because Lattice's release repo is currently
+# private — anonymous curl gets a 404 even for valid asset URLs.
+#
+# Requires: gh OR curl, plus shasum (or sha256sum on Linux).
 
 set -euo pipefail
 
@@ -56,17 +64,50 @@ FILES=(
   "SHA256SUMS.txt"
 )
 
-for file in "${FILES[@]}"; do
-  dest="$BINARIES_DIR/$file"
-  if [[ -f "$dest" ]]; then
-    echo "  skip (exists): $file"
-    continue
-  fi
-  echo "  download: $file"
-  curl --fail --location --silent --show-error \
-    --output "$dest" \
-    "$BASE_URL/$file"
-done
+# --------------------------------------------------------------------
+# Pick a download backend. `gh release download` handles both public
+# and private repos via the user's existing auth; bare curl works only
+# for public repos. We prefer gh whenever it's installed AND authed.
+# --------------------------------------------------------------------
+USE_GH=0
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  USE_GH=1
+  echo "  using: gh CLI (handles private repos)"
+else
+  echo "  using: curl (public-repo only — install/auth gh CLI for private)"
+fi
+
+if [[ $USE_GH -eq 1 ]]; then
+  # `gh release download` accepts --pattern to filter assets and
+  # downloads to --dir. Skip files that already exist by checking
+  # before each call.
+  cd "$BINARIES_DIR"
+  for file in "${FILES[@]}"; do
+    if [[ -f "$file" ]]; then
+      echo "  skip (exists): $file"
+      continue
+    fi
+    echo "  download: $file"
+    gh release download "$RELEASE_TAG" \
+      --repo "$GH_REPO" \
+      --pattern "$file" \
+      --dir . \
+      --clobber
+  done
+  cd - >/dev/null
+else
+  for file in "${FILES[@]}"; do
+    dest="$BINARIES_DIR/$file"
+    if [[ -f "$dest" ]]; then
+      echo "  skip (exists): $file"
+      continue
+    fi
+    echo "  download: $file"
+    curl --fail --location --silent --show-error \
+      --output "$dest" \
+      "$BASE_URL/$file"
+  done
+fi
 
 # --------------------------------------------------------------------
 # Verify checksums. The SHA256SUMS.txt was generated on Ubuntu (shasum)
