@@ -119,8 +119,8 @@ use crate::application::ports::{
     CredentialsPort, DocumentRepository, DocumentRepositoryPort, EmbeddingPort,
     EmbeddingRepositoryPort, FavoritesRepositoryPort, FileStoragePort, FileSystemPort, LLMPort,
     MentionRepositoryPort, MetricsPort, ModelCatalogPort, RecentDocumentsRepositoryPort,
-    RepositoryPort, SettingsRepositoryPort, SystemInfoPort, TextSearchPort, UpdateCheckerPort,
-    VectorSearchPort,
+    RepositoryPort, SettingsRepositoryPort, SettingsSideEffectsPort, SystemInfoPort,
+    TextSearchPort, UpdateCheckerPort, VectorSearchPort,
 };
 use crate::domain::ports::file_access::ChecksumService;
 use crate::llm::LLMClient;
@@ -267,6 +267,16 @@ pub struct Container {
     /// immediately instead of retrying (and spamming logs).
     embedding_error_cooldown: Arc<parking_lot::RwLock<Option<(Instant, AppError)>>>,
 
+    /// Settings side-effects port (audit P0-3 fix). Built post-AI-module
+    /// so it has access to the LLM cache + router LLM cache + function
+    /// executor. Injected into freshly-constructed
+    /// `UpdateSettingsUseCase` / `ResetSettingsUseCase` instances on
+    /// every `Container::*_settings_use_case()` call so internal
+    /// callers (tests, watch-folder helpers, future migration scripts)
+    /// trigger cache invalidation just like the Tauri command path
+    /// did manually before.
+    settings_side_effects: Arc<dyn SettingsSideEffectsPort>,
+
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
     /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
@@ -282,6 +292,100 @@ pub struct Container {
     /// methods. The long-term cleanup is to split Container into a
     /// wiring layer + a runtime-state layer (audit P1-2).
     app_handle: Option<tauri::AppHandle>,
+}
+
+// ============================================================================
+// SettingsSideEffectsPort impl — audit P0-3 fix
+// ============================================================================
+
+/// Container-bound implementation of `SettingsSideEffectsPort`. Holds
+/// references to the same primitive caches the legacy
+/// `Container::invalidate_*` methods touched, so a settings update or
+/// reset triggered through any code path (Tauri command, internal
+/// helper, test) invalidates the LLM cache, router LLM cache, and
+/// custom-tool runtime configuration.
+///
+/// Each field is the same `Arc` that lives on Container — they share
+/// the same underlying `RwLock`, so this impl observes the same state
+/// the rest of Container does.
+struct ContainerSettingsSideEffects {
+    /// LLM client cache. Same `Arc` as `Container::ai.llm_cache()`.
+    llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
+
+    /// Router LLM cache. Same `Arc` as `Container::router_llm_cache`.
+    router_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
+
+    /// Function executor for refreshing custom-tool runtime config.
+    function_executor: Arc<dyn FunctionExecutorTrait>,
+
+    /// Settings repository for re-reading custom_tools after a write.
+    settings_repository: Arc<dyn SettingsRepositoryPort>,
+}
+
+#[async_trait::async_trait]
+impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
+    async fn on_settings_updated(
+        &self,
+        category: Option<crate::features::settings::dto::SettingsCategory>,
+    ) {
+        use crate::features::settings::dto::SettingsCategory;
+
+        // Invalidate the LLM caches when LLM settings (or a global
+        // / no-category mutation, which could touch anything) changed.
+        // Other categories (Search, Indexing, Display, etc.) don't
+        // affect the LLM cache — skipping the invalidation here means
+        // a search-config change doesn't cause a needless model
+        // reload on the next chat turn.
+        let touched_llm = matches!(category, Some(SettingsCategory::Llm) | None);
+
+        if touched_llm {
+            {
+                let mut cache = self.llm_cache.write().unwrap_or_else(|p| p.into_inner());
+                if cache.is_some() {
+                    tracing::info!(
+                        "Settings update touched LLM category — invalidating LLM cache"
+                    );
+                    *cache = None;
+                }
+            }
+            {
+                let mut cache = self
+                    .router_llm_cache
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner());
+                if cache.is_some() {
+                    tracing::info!(
+                        "Settings update touched LLM category — invalidating router LLM cache"
+                    );
+                    *cache = None;
+                }
+            }
+            // Custom-tool runtime config refresh — re-read settings
+            // and push the active custom_tools map into the function
+            // executor. Best-effort: log but don't fail.
+            match self.settings_repository.get_all().await {
+                Ok(settings) => {
+                    let custom_tool_map: std::collections::HashMap<
+                        String,
+                        crate::features::settings::dto::CustomToolSettingsDto,
+                    > = settings
+                        .llm
+                        .custom_tools
+                        .into_iter()
+                        .filter(|tool| tool.enabled)
+                        .map(|tool| (tool.name.clone(), tool))
+                        .collect();
+                    self.function_executor.set_custom_tools(custom_tool_map);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to refresh custom tools after settings update; \
+                         keeping previous configuration: {error}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 impl Container {
@@ -485,6 +589,19 @@ impl Container {
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
 
+        // === Settings side effects (audit P0-3) ===
+        // Built here, after AI module + function_executor exist,
+        // so Update/Reset settings use cases (constructed fresh on
+        // each access via `*_settings_use_case()` getters) can
+        // invalidate the right caches. See ContainerSettingsSideEffects.
+        let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
+            Arc::new(ContainerSettingsSideEffects {
+                llm_cache: ai.llm_cache().clone(),
+                router_llm_cache: router_llm_cache.clone(),
+                function_executor: function_executor.clone(),
+                settings_repository: system.settings_repo().clone(),
+            });
+
         // === Return Hollow Container ===
         Ok(Self {
             core,
@@ -500,6 +617,7 @@ impl Container {
             conversation_command_tx,
             conversation_command_rx,
             embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
+            settings_side_effects,
             // Populated post-construction via `with_app_handle()`.
             // See field doc.
             app_handle: None,
@@ -1514,12 +1632,33 @@ impl Container {
         Arc::clone(self.system.get_settings_use_case())
     }
 
+    /// Settings update use case, wired with the side-effects port so
+    /// LLM cache invalidation fires after a successful write.
+    ///
+    /// Constructs a fresh use case on each call rather than returning
+    /// the pre-built `Arc` from `SystemModule`. SystemModule's stored
+    /// instance is built before the side-effects port exists
+    /// (bootstrap order: System → AI → side-effects), so it has only
+    /// noop side effects. Production code paths should always go
+    /// through Container, never directly through SystemModule.
+    /// Audit P0-3 fix.
     pub fn update_settings_use_case(&self) -> Arc<UpdateSettingsUseCase> {
-        Arc::clone(self.system.update_settings_use_case())
+        Arc::new(UpdateSettingsUseCase::with_side_effects(
+            self.system.settings_repo().clone(),
+            self.settings_side_effects.clone(),
+        ))
     }
 
+    /// Settings reset use case, wired with the side-effects port. See
+    /// `update_settings_use_case` for the bootstrap-order rationale.
+    /// Audit P0-3 fix: reset previously did NOT invalidate any caches,
+    /// so a "reset to defaults" left stale LLM caches until app
+    /// restart.
     pub fn reset_settings_use_case(&self) -> Arc<ResetSettingsUseCase> {
-        Arc::clone(self.system.reset_settings_use_case())
+        Arc::new(ResetSettingsUseCase::with_side_effects(
+            self.system.settings_repo().clone(),
+            self.settings_side_effects.clone(),
+        ))
     }
 
     pub fn export_settings_use_case(&self) -> Arc<ExportSettingsUseCase> {

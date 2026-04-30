@@ -399,11 +399,13 @@ pub async fn update_settings(
         Some(category) => Some(parse_category(&category).map_err(ApiError::from)?),
         None => None,
     };
-    let invalidate_llm_cache = matches!(
-        category,
-        Some(crate::features::settings::dto::SettingsCategory::Llm)
-    );
 
+    // Audit P0-3 fix: cache invalidation moved into the use case via
+    // `SettingsSideEffectsPort`. The plugin layer is no longer
+    // responsible for it — internal Rust callers
+    // (UpdateSettingsUseCase invoked directly by tests, watch-folder
+    // helpers, etc.) get the same invalidation behavior the IPC
+    // command does.
     let updated = container
         .update_settings_use_case()
         .execute(UpdateSettingsRequestDto {
@@ -412,12 +414,6 @@ pub async fn update_settings(
         })
         .await
         .map_err(ApiError::from)?;
-
-    if invalidate_llm_cache {
-        container.invalidate_llm_cache();
-        container.invalidate_router_llm_cache();
-        container.refresh_custom_tools_from_settings().await;
-    }
 
     serde_json::to_value(updated).map_err(|e| {
         ApiError::from(AppError::Serialization(format!(

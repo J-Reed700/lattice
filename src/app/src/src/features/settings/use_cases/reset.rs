@@ -1,7 +1,9 @@
 //! Reset Settings Use Case
 
+use crate::application::ports::{
+    NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
+};
 use crate::features::settings::dto::{ResetSettingsRequestDto, SettingsCategory, SettingsDto};
-use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::Result;
 use std::sync::Arc;
 
@@ -11,18 +13,34 @@ use std::sync::Arc;
 ///
 /// - Reset all settings or a specific category to default values
 /// - Preserve settings not being reset
+/// - Trigger downstream cache invalidation via
+///   `SettingsSideEffectsPort` (audit P0-3: prior implementation had
+///   no invalidation at all on reset — a "reset to defaults" left
+///   the LLM cache pointing at the old config until app restart).
 pub struct ResetSettingsUseCase {
     repository: Arc<dyn SettingsRepositoryPort>,
+    side_effects: Arc<dyn SettingsSideEffectsPort>,
 }
 
 impl ResetSettingsUseCase {
-    /// Create a new use case instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `repository` - Settings repository port implementation
+    /// Create a use case with no-op side effects. Convenience for
+    /// tests; production code should use `with_side_effects`.
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            side_effects: Arc::new(NoopSettingsSideEffects),
+        }
+    }
+
+    /// Production constructor with side-effects port wired in.
+    pub fn with_side_effects(
+        repository: Arc<dyn SettingsRepositoryPort>,
+        side_effects: Arc<dyn SettingsSideEffectsPort>,
+    ) -> Self {
+        Self {
+            repository,
+            side_effects,
+        }
     }
 
     /// Execute the use case to reset settings.
@@ -55,7 +73,17 @@ impl ResetSettingsUseCase {
     /// let settings = use_case.execute(request).await?;
     /// ```
     pub async fn execute(&self, request: ResetSettingsRequestDto) -> Result<SettingsDto> {
-        self.repository.reset(request.category).await
+        let result = self.repository.reset(request.category).await?;
+
+        // Audit P0-3 fix: a reset is a settings mutation; downstream
+        // caches need invalidation just like an update. The previous
+        // `reset_settings` Tauri command never invalidated anything,
+        // so a "reset to defaults" silently left stale LLM caches.
+        self.side_effects
+            .on_settings_updated(request.category)
+            .await;
+
+        Ok(result)
     }
 
     /// Reset a specific settings category.
