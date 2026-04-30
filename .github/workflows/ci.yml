@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel in-flight runs for the same ref when a new commit lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # -----------------------------------------------------------------
+  # Rust crate (Tauri desktop app)
+  # -----------------------------------------------------------------
+  # Matrix exists specifically to catch P0-1-class regressions: a
+  # macOS-only dep (objc2 via candle metal) leaking onto Windows/Linux
+  # was invisible on macOS dev machines until someone tried to build
+  # for Windows. Building on all three OSes on every PR closes that
+  # door.
+  rust-check:
+    name: cargo check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          # Tauri 2 + webkit dependencies on Ubuntu.
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src/app/src/target/
+          key: cargo-${{ matrix.os }}-${{ hashFiles('src/app/src/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.os }}-
+
+      - name: cargo check
+        working-directory: src/app/src
+        run: cargo check --all-targets
+
+      # Clippy runs the project-defined lints (deny unwrap/expect/panic/
+      # indexing_slicing). We do NOT add `-D warnings` here yet — the
+      # crate currently allows unused_imports/dead_code/deprecated as
+      # "Phase 2 cleanup pending" (see lib.rs). When P1-8 burns those
+      # down, flip on `-D warnings`.
+      - name: cargo clippy
+        working-directory: src/app/src
+        run: cargo clippy --all-targets
+
+      - name: cargo fmt --check
+        working-directory: src/app/src
+        run: cargo fmt --all -- --check
+
+  # -----------------------------------------------------------------
+  # Repository Barrier rule (CLAUDE.md SSOT enforcement)
+  # -----------------------------------------------------------------
+  # The grep-based guard at scripts/check-repository-barrier.sh has
+  # existed in the tree without being wired anywhere. Running it on
+  # every PR is the bare minimum until P1-3 replaces it with
+  # module-system enforcement.
+  repository-barrier:
+    name: repository barrier check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-repository-barrier.sh
+
+  # -----------------------------------------------------------------
+  # Frontend (Tauri webview — React + TypeScript)
+  # -----------------------------------------------------------------
+  frontend:
+    name: frontend (type-check, lint, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/app/package-lock.json
+
+      - run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test -- --run
+
+  # -----------------------------------------------------------------
+  # Sync engine (api-rust)
+  # -----------------------------------------------------------------
+  # Separate job so api-rust failures don't block desktop work and
+  # vice versa.
+  sync-engine:
+    name: api-rust check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            api-rust/target/
+          key: cargo-api-rust-${{ hashFiles('api-rust/Cargo.lock') }}
+          restore-keys: cargo-api-rust-
+      - name: cargo check
+        working-directory: api-rust
+        run: cargo check --all-targets
+      - name: cargo clippy
+        working-directory: api-rust
+        run: cargo clippy --all-targets
+      - name: cargo fmt --check
+        working-directory: api-rust
+        run: cargo fmt --all -- --check
