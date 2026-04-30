@@ -1,3 +1,4 @@
+use crate::llm::sidecar_manager::SidecarRegistry;
 use crate::interfaces::di::Container;
 use std::time::Duration;
 use tauri::Manager;
@@ -8,6 +9,24 @@ const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     tracing::info!("Exit requested, starting graceful shutdown");
+
+    // Sprint 6 PR 6.1: kill llama-server sidecars FIRST, synchronously,
+    // before any async cleanup runs. This is the load-bearing
+    // anti-zombie hook — by the time the tokio runtime starts tearing
+    // down (which makes Drop-based kills race-y), every sidecar PID
+    // is already SIGKILL'd. Survives panics in the rest of shutdown.
+    if let Some(registry) = app_handle.try_state::<SidecarRegistry>() {
+        let killed = registry.kill_all();
+        if killed > 0 {
+            tracing::info!(
+                count = killed,
+                "Killed {} llama-server sidecar(s) during shutdown",
+                killed
+            );
+        }
+    } else {
+        tracing::debug!("SidecarRegistry not managed; skipping sidecar shutdown");
+    }
 
     tauri::async_runtime::block_on(async {
         let shutdown_future = async {
