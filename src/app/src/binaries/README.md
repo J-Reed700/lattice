@@ -25,10 +25,11 @@ This reads `scripts/llama-server-version.txt` for the pinned tag.
 
 ## Bumping the llama.cpp version
 
-1. Edit `scripts/llama-server-version.txt` (single line, e.g. `b4567`).
-2. Manually trigger `.github/workflows/llama-build.yml` from the Actions tab, OR push a tag like `git tag llama/b4567 && git push origin llama/b4567`.
-3. Once the Release is published, run `bash scripts/fetch-llama-binaries.sh` locally and verify.
-4. Commit the version bump.
+1. Edit `scripts/llama-server-version.txt` (single line, e.g. `b8981`).
+2. Edit `.github/workflows/llama-build.yml`'s `LLAMA_CPP_TAG` env to match.
+3. Manually trigger `.github/workflows/llama-build.yml` from the Actions tab, OR push a tag like `git tag llama/b8981 && git push origin llama/b8981`.
+4. Once the Release is published, run `bash scripts/fetch-llama-binaries.sh` locally and verify.
+5. Commit the version bump.
 
 ## Naming convention
 

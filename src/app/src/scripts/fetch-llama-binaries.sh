@@ -4,7 +4,7 @@
 #
 # This script is for local dev and CI. The binaries are produced by
 # .github/workflows/llama-build.yml (separate, manual workflow) and
-# attached to a release tag like `llama/b4567`.
+# attached to a release tag like `llama/b8981`.
 #
 # Usage:
 #   bash scripts/fetch-llama-binaries.sh [<release-tag>]
