@@ -955,6 +955,12 @@ impl SystemModule {
         &self.settings.validate_settings_use_case
     }
 
+    /// Settings repository access. Used by Container to wire the
+    /// settings-side-effects port (audit P0-3).
+    pub fn settings_repo(&self) -> &Arc<dyn SettingsRepositoryPort> {
+        &self.settings.settings_repo
+    }
+
     // (Cache: no use cases — commands operate on the global QUERY_CACHE
     // singleton directly.)
 
