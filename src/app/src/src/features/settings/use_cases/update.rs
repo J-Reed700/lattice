@@ -17,7 +17,9 @@
 //! (Zod-like — non-empty strings, in-range numbers). Domain + security
 //! validation lives at this layer.
 
-use crate::application::ports::SettingsRepositoryPort;
+use crate::application::ports::{
+    NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
+};
 use crate::features::settings::dto::{SettingsCategory, SettingsDto, UpdateSettingsRequestDto};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::infrastructure::security::InputValidator;
@@ -34,14 +36,39 @@ use url::Url;
 /// - Domain + security validation (SSRF, path traversal)
 /// - Audit logging for security-sensitive changes
 /// - Repository-level structural validation
+/// - Trigger downstream side effects (cache invalidation) via the
+///   `SettingsSideEffectsPort`. Audit P0-3 fix: previously the Tauri
+///   command did this directly, leaking when internal callers
+///   bypassed the plugin layer.
 pub struct UpdateSettingsUseCase {
     repository: Arc<dyn SettingsRepositoryPort>,
+    side_effects: Arc<dyn SettingsSideEffectsPort>,
 }
 
 impl UpdateSettingsUseCase {
-    /// Create a new use case instance.
+    /// Create a use case with no-op side effects. Convenience for
+    /// tests and code paths that legitimately don't care about cache
+    /// invalidation. Production code should use `with_side_effects`.
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            side_effects: Arc::new(NoopSettingsSideEffects),
+        }
+    }
+
+    /// Production constructor. Wires the side-effects port so a
+    /// successful update triggers `on_settings_updated(category)` —
+    /// which the Container impl uses to invalidate the LLM cache,
+    /// router LLM cache, and refresh custom-tool runtime
+    /// configuration.
+    pub fn with_side_effects(
+        repository: Arc<dyn SettingsRepositoryPort>,
+        side_effects: Arc<dyn SettingsSideEffectsPort>,
+    ) -> Self {
+        Self {
+            repository,
+            side_effects,
+        }
     }
 
     /// Execute the use case to update settings.
@@ -97,6 +124,16 @@ impl UpdateSettingsUseCase {
                 tracing::warn!("Failed to write audit log for settings update: {}", e);
             }
         }
+
+        // ---------- Downstream side effects ----------
+        // Audit P0-3 fix: trigger cache invalidation here, not in the
+        // Tauri command, so internal callers (tests, watch-folder
+        // helpers, future migration scripts) can't bypass it. The
+        // port impl is best-effort — failures don't roll back the
+        // already-persisted settings.
+        self.side_effects
+            .on_settings_updated(request.category)
+            .await;
 
         Ok(updated_settings)
     }
@@ -506,6 +543,110 @@ mod tests {
         assert!(
             result.is_err(),
             "global update must not bypass SSRF check on nested ollamaUrl"
+        );
+    }
+
+    // ============================================================
+    // Audit P0-3 regression tests: settings updates MUST trigger
+    // SettingsSideEffectsPort, regardless of caller (IPC, internal,
+    // test). These tests pin the invariant so a future refactor that
+    // re-introduces the leak (e.g., moves cache-invalidation back to
+    // the plugin layer) breaks them visibly.
+    // ============================================================
+
+    #[tokio::test]
+    async fn audit_p03_side_effects_fire_on_successful_update() {
+        use crate::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
+
+        let repository = Arc::new(MockSettingsRepository::new());
+        let side_effects = Arc::new(RecordingSettingsSideEffects::new());
+        let use_case = UpdateSettingsUseCase::with_side_effects(
+            repository,
+            side_effects.clone(),
+        );
+
+        let mut updates = HashMap::new();
+        updates.insert("temperature".to_string(), json!(0.5));
+        let request = UpdateSettingsRequestDto {
+            category: Some(SettingsCategory::Llm),
+            updates,
+        };
+
+        use_case.execute(request).await.expect("update should succeed");
+
+        let calls = side_effects.calls();
+        assert_eq!(
+            calls,
+            vec![Some(SettingsCategory::Llm)],
+            "side effect must fire exactly once with the updated category"
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_p03_side_effects_skipped_on_validation_failure() {
+        use crate::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
+
+        let repository = Arc::new(MockSettingsRepository::new());
+        let side_effects = Arc::new(RecordingSettingsSideEffects::new());
+        let use_case = UpdateSettingsUseCase::with_side_effects(
+            repository,
+            side_effects.clone(),
+        );
+
+        // Path-traversal payload — rejected before the repository
+        // write. Side effect MUST NOT fire because nothing changed
+        // on disk; firing it would invalidate the LLM cache for no
+        // reason and force a costly model reload on the next chat
+        // turn.
+        let mut updates = HashMap::new();
+        updates.insert(
+            "indexedPaths".to_string(),
+            json!(["/Users/josh/../../etc"]),
+        );
+        let request = UpdateSettingsRequestDto {
+            category: Some(SettingsCategory::Indexing),
+            updates,
+        };
+
+        let result = use_case.execute(request).await;
+        assert!(result.is_err(), "validation should reject traversal");
+
+        let calls = side_effects.calls();
+        assert!(
+            calls.is_empty(),
+            "side effect must not fire when the write was rejected (got {calls:?})"
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_p03_side_effects_carry_global_category_for_global_update() {
+        use crate::application::ports::settings_side_effects_port::RecordingSettingsSideEffects;
+
+        let repository = Arc::new(MockSettingsRepository::new());
+        let side_effects = Arc::new(RecordingSettingsSideEffects::new());
+        let use_case = UpdateSettingsUseCase::with_side_effects(
+            repository,
+            side_effects.clone(),
+        );
+
+        let mut updates = HashMap::new();
+        updates.insert(
+            "search".to_string(),
+            json!({ "maxResults": 5 }),
+        );
+        let request = UpdateSettingsRequestDto {
+            category: None, // global
+            updates,
+        };
+
+        use_case.execute(request).await.expect("update should succeed");
+
+        let calls = side_effects.calls();
+        assert_eq!(
+            calls,
+            vec![None],
+            "global update should pass None to the side-effects port \
+             so the impl can decide to invalidate everything"
         );
     }
 
