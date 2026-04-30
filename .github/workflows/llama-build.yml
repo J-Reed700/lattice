@@ -88,7 +88,15 @@ jobs:
       - name: Build llama-server
         working-directory: llama.cpp
         run: |
-          cmake --build build --config Release --target llama-server -j
+          # Cap parallelism at 2. Standard GitHub-hosted runners have
+          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
+          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
+          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
+          # parallel g++ processes which collectively OOM the linker
+          # mid-build, killing the job with exit 143. `-j 2` is slower
+          # (~2x build time) but reliable. Bump to `-j 4` once we
+          # migrate to larger runners.
+          cmake --build build --config Release --target llama-server -j 2
 
       - name: Stage binary
         run: |
@@ -156,7 +164,15 @@ jobs:
         working-directory: llama.cpp
         shell: bash
         run: |
-          cmake --build build --config Release --target llama-server -j
+          # Cap parallelism at 2. Standard GitHub-hosted runners have
+          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
+          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
+          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
+          # parallel g++ processes which collectively OOM the linker
+          # mid-build, killing the job with exit 143. `-j 2` is slower
+          # (~2x build time) but reliable. Bump to `-j 4` once we
+          # migrate to larger runners.
+          cmake --build build --config Release --target llama-server -j 2
 
       - name: Stage binary
         shell: bash
@@ -217,7 +233,15 @@ jobs:
         working-directory: llama.cpp
         shell: bash
         run: |
-          cmake --build build --config Release --target llama-server -j
+          # Cap parallelism at 2. Standard GitHub-hosted runners have
+          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
+          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
+          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
+          # parallel g++ processes which collectively OOM the linker
+          # mid-build, killing the job with exit 143. `-j 2` is slower
+          # (~2x build time) but reliable. Bump to `-j 4` once we
+          # migrate to larger runners.
+          cmake --build build --config Release --target llama-server -j 2
 
       - name: Stage binary
         shell: bash
@@ -281,7 +305,15 @@ jobs:
       - name: Build llama-server
         working-directory: llama.cpp
         run: |
-          cmake --build build --config Release --target llama-server -j
+          # Cap parallelism at 2. Standard GitHub-hosted runners have
+          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
+          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
+          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
+          # parallel g++ processes which collectively OOM the linker
+          # mid-build, killing the job with exit 143. `-j 2` is slower
+          # (~2x build time) but reliable. Bump to `-j 4` once we
+          # migrate to larger runners.
+          cmake --build build --config Release --target llama-server -j 2
 
       - name: Stage binary
         run: |
