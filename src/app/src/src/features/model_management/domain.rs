@@ -355,7 +355,7 @@ pub struct ModelMetadata {
     #[serde(default)]
     pub embedding_compatibility:
         Option<crate::features::embedding::compatibility::EmbeddingCompatibility>,
-    /// On-disk storage format. Drives which mistralrs builder is used
+    /// On-disk storage format. Drives which loader path is used
     /// at load time and gates which loader-side pre-flight checks run
     /// (GGUF arch validation vs safetensors RAM check). Defaults to
     /// GGUF for backwards compat with existing catalog entries.

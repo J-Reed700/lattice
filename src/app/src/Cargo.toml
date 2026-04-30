@@ -58,12 +58,13 @@ notify = "6.1"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-# ORT remains only for the search reranker (see features/search/engine/reranker.rs).
-# Embeddings have migrated to Candle. The reranker migration is a separate PR.
-# Bumped rc.10 → rc.12: rc.10 pinned smallvec to =2.0.0-alpha.10 which
-# conflicts with mistralrs needing alpha.12. rc.12 relaxed to smallvec 1.15
-# (different major coexists fine).
-ort = "=2.0.0-rc.12"
+# ort removed in Sprint 5: reranker ported to candle BERT cross-encoder
+# (cross-encoder/ms-marco-MiniLM-L-6-v2). Embeddings already use Candle
+# (see features/embedding/candle_service.rs). With this removal Lattice
+# ships exactly one tensor framework — Candle — for both embedding and
+# reranker inference, with the bundled llama-server sidecar handling
+# the chat LLM. ~50MB removed from the binary; no more two-allocator
+# split between ORT's C++ runtime and Candle's pure-Rust runtime.
 tokenizers = "0.15"
 ndarray = "0.16.1"
 anyhow = "1.0"
@@ -109,13 +110,15 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 # fastembed removed: see ORT note above.
 # Candle — pure-Rust ML framework for embedding model inference.
-# Metal acceleration is enabled on macOS via the `metal` feature on `candle-core`.
-# Pinned to 0.10.2 (matches mistralrs rev 2d4ba4f's dep). 0.10.x adds qwen3,
-# qwen3_moe, qwen3_vl, and nomic_bert which 0.8/0.9 lack. 0.10.2 is on
-# crates.io but lacks a matching Git tag; this is a known upstream quirk.
-candle-core = { version = "=0.10.2", features = ["metal"] }
-candle-nn = { version = "=0.10.2", features = ["metal"] }
-candle-transformers = { version = "=0.10.2", features = ["metal"] }
+# CPU baseline here; the `metal` feature is enabled in the macOS-only
+# target stanza below. Enabling `metal` on Windows/Linux pulls in
+# objc2-foundation/objc2-metal, which fail to compile off Apple targets.
+# Pinned to 0.10.2. 0.10.x adds qwen3, qwen3_moe, qwen3_vl, and
+# nomic_bert which 0.8/0.9 lack. 0.10.2 is on crates.io but lacks a
+# matching Git tag; this is a known upstream quirk.
+candle-core = "=0.10.2"
+candle-nn = "=0.10.2"
+candle-transformers = "=0.10.2"
 hf-hub = { version = "0.3", features = ["tokio"] }
 safetensors = "0.4"
 # Rust modernization dependencies
@@ -133,16 +136,18 @@ ego-tree = "0.6"
 select = "0.6"
 readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extraction
 
-# Platform-specific Metal GPU support for macOS (M-series chips)
+# Platform-specific Metal GPU support for macOS (M-series chips).
+# Cargo unifies feature flags across the dep graph, so re-declaring
+# candle-* here with `metal` enables the feature on macOS without
+# affecting Windows/Linux builds (which would fail compiling objc2-*).
+# Candle is kept for the search reranker (Sprint 5 will port it off
+# ORT). Local LLM inference is handled by the bundled `llama-server`
+# sidecar (see binaries/, scripts/fetch-llama-binaries.sh, and the
+# llama-build.yml CI workflow) — no Rust-side LLM crate is needed.
 [target.'cfg(target_os = "macos")'.dependencies]
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2d4ba4f", features = ["metal"] }
-
-# Uncomment to enable CUDA on Windows/Linux
-# [target.'cfg(target_os = "windows")'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2d4ba4f", features = ["cuda"] }
-#
-# [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-# mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2d4ba4f", features = ["cuda"] }
+candle-core = { version = "=0.10.2", features = ["metal"] }
+candle-nn = { version = "=0.10.2", features = ["metal"] }
+candle-transformers = { version = "=0.10.2", features = ["metal"] }
 
 
 [target.'cfg(windows)'.dependencies]
@@ -172,13 +177,14 @@ qa = []           # Question-answering and LLM integration
 extraction = []   # Content extraction from documents
 test-utils = []   # Testing utilities and mocks
 
+
 # Quarantine features for temporarily disabled tests
 quarantine_download_tests = []  # Download command tests requiring refactoring
 quarantine_function_tests = []  # Function calling integration tests requiring refactoring
 
 
 # Profile configurations for stack size optimization
-# Increases stack size to prevent overflow with heavy ML dependencies (ONNX, mistralrs)
+# Increases stack size to prevent overflow with heavy ML dependencies (ONNX, candle)
 # and complex HTML parsing (e.g., Reddit pages)
 [profile.dev]
 # Increase stack size to 8MB for development (default is ~2MB)

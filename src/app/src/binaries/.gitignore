@@ -1,0 +1,6 @@
+# llama-server sidecar binaries — fetched at build time, not committed.
+# See .github/workflows/llama-build.yml + scripts/fetch-llama-binaries.sh.
+llama-server-*
+SHA256SUMS.txt
+!.gitignore
+!README.md

@@ -148,7 +148,6 @@ use crate::features::tags::TagServiceTrait;
 use crate::features::web::{WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait};
 
 use crate::application::ports::LLMPort;
-use crate::infrastructure::llm::inference::InferenceEngine;
 use crate::infrastructure::services::model_manager::ModelManager;
 
 // ==============================================================================
@@ -523,7 +522,6 @@ impl AIModule {
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
         llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
-        inference_engine_cache: Arc<RwLock<Option<Arc<InferenceEngine>>>>,
         _llm_endpoint: &str,
         _llm_model: &str,
     ) -> crate::shared::error::Result<Self> {
@@ -535,7 +533,6 @@ impl AIModule {
             core.data_dir().clone(),
             core.credentials().clone(),
             llm_cache.clone(),
-            inference_engine_cache,
         )
         .await?;
         let ai_tags = crate::features::tags::di::build_ai(db_pool, llm_cache);
@@ -618,10 +615,6 @@ impl AIModule {
     // Cache getters (for Container lazy loading)
     pub fn llm_cache(&self) -> &Arc<RwLock<Option<Arc<dyn LLMPort>>>> {
         &self.llm.llm_cache
-    }
-
-    pub fn inference_engine_cache(&self) -> &Arc<RwLock<Option<Arc<InferenceEngine>>>> {
-        &self.llm.inference_engine_cache
     }
 
     pub fn model_catalog(&self) -> &Arc<dyn ModelCatalogPort> {

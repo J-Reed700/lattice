@@ -529,7 +529,6 @@ pub async fn import_model(
 pub async fn refresh_model_cache(container: State<'_, Container>) -> Result<(), ApiError> {
     container.invalidate_llm_cache();
     container.invalidate_embedding_cache();
-    container.invalidate_inference_engine_cache();
     Ok(())
 }
 

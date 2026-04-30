@@ -111,7 +111,11 @@ async fn get_or_init_reranker(container: &Container) -> Option<Arc<RerankerServi
         return None;
     }
 
-    let model_path = container.models_path().join("reranker").join("model.onnx");
+
+    let model_path = container
+        .models_path()
+        .join("reranker")
+        .join("model.safetensors");
     if !model_path.exists() {
         return None;
     }

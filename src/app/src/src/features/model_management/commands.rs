@@ -108,14 +108,11 @@ impl SystemCapabilitiesResponse {
 pub async fn detect_system_capabilities(
     container: State<'_, Container>,
 ) -> Result<SystemCapabilitiesResponse> {
-    // Get SystemInfoPort from container
+    
     let system_info_port = container.system_info();
 
-    // Get system info from port
     let system_info = system_info_port.get_system_info().await?;
 
-    // Convert from SystemInfo (port) to SystemCapabilities (domain)
-    // We need to map the port types to domain types
     let capabilities = SystemCapabilities {
         total_ram_gb: system_info.total_ram_gb,
         // available_ram_gb removed from domain - domain uses total_ram_gb only
@@ -263,14 +260,7 @@ pub async fn get_all_recommended_models(
     tracing::info!("get_all_recommended_models: Built system capabilities");
 
     // Get downloadable Hugging Face models. Two passes:
-    //   - GGUF for chat LLMs (mistralrs runtime)
-    //   - safetensors for embeddings (Candle runtime)
-    // The old code searched "onnx embedding" because we used to ship ONNX
-    // for embeddings; that query biased the results toward `onnx-community`
-    // / `Xenova` re-export repos that ONLY ship .onnx (no safetensors).
-    // After the Candle migration we need original sentence-transformer
-    // upstreams that publish `model.safetensors`, so search for that
-    // explicitly.
+    //   - GGUF for chat LLMs (llama-server sidecar)
     tracing::info!("get_all_recommended_models: Getting Hugging Face models");
     let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
 

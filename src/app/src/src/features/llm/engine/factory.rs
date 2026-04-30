@@ -42,7 +42,7 @@ use crate::application::ports::LLMPort;
 use crate::llm::models::{ModelFamily, ModelFormat, Quantization};
 use crate::llm::traits::LLMClient;
 use crate::llm::types::LLMError;
-use crate::llm::{GenerationConfig, InferenceConfig, LocalLLMClient, ModelInfo, OllamaClient};
+use crate::llm::{GenerationConfig, ModelInfo, OllamaClient};
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 
@@ -55,7 +55,10 @@ use crate::shared::result::Result;
 /// Supports multiple backend types with specific configuration for each.
 #[derive(Debug, Clone)]
 pub enum LLMConfig {
-    /// Local LLM using mistral.rs inference
+    /// Local LLM. Routes through the bundled `llama-server` sidecar
+    /// (Sprint 2 migration from in-process mistralrs). Requires
+    /// `app_handle` to be supplied so `tauri-plugin-shell` can spawn
+    /// the child process.
     Local {
         /// Path to GGUF model file
         model_path: PathBuf,
@@ -63,6 +66,12 @@ pub enum LLMConfig {
         n_gpu_layers: i32,
         /// Generation configuration (temperature, top-p, etc.)
         generation_config: GenerationConfig,
+        /// Tauri AppHandle, used to spawn the llama-server child
+        /// process via `tauri-plugin-shell`. Populated by the DI
+        /// Container via `with_app_handle()` at app boot. `None` is
+        /// only acceptable in test fixtures that don't reach the
+        /// sidecar dispatch path.
+        app_handle: Option<tauri::AppHandle>,
     },
     /// Ollama HTTP API
     Ollama {
@@ -120,7 +129,20 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
             model_path,
             n_gpu_layers,
             generation_config,
-        } => create_local_llm(&model_path, n_gpu_layers, generation_config).await,
+            app_handle,
+        } => {
+            // Local LLM is the bundled `llama-server` sidecar
+            // (Sprint 2 migration). Requires the Tauri AppHandle —
+            // populated through Container::with_app_handle.
+            let app = app_handle.ok_or_else(|| {
+                LLMError::InvalidConfig(
+                    "LLMConfig::Local.app_handle is None — Container must be constructed with \
+                     `.with_app_handle(handle)` so the sidecar process can be spawned"
+                        .to_string(),
+                )
+            })?;
+            create_local_llm_sidecar(&app, &model_path, n_gpu_layers, generation_config).await
+        }
         LLMConfig::Ollama {
             endpoint,
             model,
@@ -173,51 +195,174 @@ pub async fn create_llm_with_fallback(config: LLMConfig) -> Arc<dyn LLMPort> {
 // Backend-Specific Creation Functions
 // ============================================================================
 
-/// Create a local LLM client using mistral.rs.
-async fn create_local_llm(
+/// Create a local-LLM client backed by the bundled `llama-server`
+/// sidecar. Spawns the child process (Metal on macOS, Vulkan on
+/// Windows/Linux, CPU on hardware that can't accelerate), waits for
+/// HTTP readiness, wraps the resulting `SidecarHandle` in a
+/// `SidecarLLMClient` and a `SidecarPortAdapter`.
+///
+/// Replaces the in-process `mistralrs` path that was deleted in
+/// Sprint 2 PR 2.3. Sidecar is now the canonical local-inference path
+/// on all platforms; see audit response-sidecar-game-plan.md.
+async fn create_local_llm_sidecar(
+    app: &tauri::AppHandle,
     model_path: &Path,
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
-    info!("Creating local LLM client from: {}", model_path.display());
+    use crate::llm::sidecar_client::SidecarLLMClient;
+    use crate::llm::sidecar_manager::{SidecarConfig, SidecarManager};
+    use crate::llm::system::detect_capabilities;
 
-    // Validate model file exists
+    info!(
+        "Creating local LLM (sidecar) from: {}",
+        model_path.display()
+    );
+
     if !model_path.exists() {
-        error!("Model file not found: {}", model_path.display());
         return Err(LLMError::Other(format!(
             "Model file not found: {}",
             model_path.display()
         )));
     }
 
-    // Infer model info from path
-    let model_info = infer_model_info(model_path);
-    info!(
-        "Detected model: {} ({:?})",
-        model_info.name, model_info.family
+    let format = detect_model_format(model_path);
+    if format == ModelFormat::Safetensors {
+        return Err(LLMError::InvalidConfig(format!(
+            "Safetensors chat models are not supported by the bundled llama-server sidecar. \
+             Download the GGUF version of this model instead. (Path: {})",
+            model_path.display()
+        )));
+    }
+
+    let capabilities = detect_capabilities().await;
+    tracing::info!(
+        "Detected system capabilities for sidecar: {}",
+        capabilities.summary()
     );
 
-    // Configure inference with specified GPU layers
-    let inference_config = if n_gpu_layers == 0 {
-        InferenceConfig::cpu_only()
-    } else {
-        InferenceConfig::with_gpu(n_gpu_layers)
-    };
+    let mut config = SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities);
 
-    // Create client
-    let client = LocalLLMClient::new(model_path, model_info, inference_config, generation_config)
+    if n_gpu_layers >= 0 {
+        let override_ngl = u32::try_from(n_gpu_layers).unwrap_or(99);
+        if override_ngl != config.n_gpu_layers {
+            tracing::info!(
+                "Caller-supplied n_gpu_layers ({}) overrides detected ({})",
+                override_ngl,
+                config.n_gpu_layers
+            );
+            config.n_gpu_layers = override_ngl;
+        }
+    }
+
+    let handle = SidecarManager::start_with_fallback(app, config).await?;
+    let model_name = model_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("local")
+        .to_string();
+
+    let client = SidecarLLMClient::new(Arc::new(handle), model_name, generation_config)?;
+    info!("Local LLM (sidecar) ready");
+
+    Ok(Arc::new(SidecarPortAdapter { client }))
+}
+
+/// Adapts `SidecarLLMClient` (LLMClient trait) to `LLMPort`. The
+/// OpenAI-compat API takes typed messages directly, so this adapter
+/// is simple — context strings get formatted as a single system
+/// message rather than parsed into role-tagged history.
+struct SidecarPortAdapter {
+    client: crate::llm::sidecar_client::SidecarLLMClient,
+}
+
+#[async_trait]
+impl LLMPort for SidecarPortAdapter {
+    async fn generate(
+        &self,
+        prompt: &str,
+        context: &[String],
+        images: Option<Vec<String>>,
+    ) -> Result<String> {
+        let system = if context.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "Use the following context to answer the question:\n\n{}",
+                context.join("\n\n")
+            ))
+        };
+
+        crate::llm::traits::LLMClient::generate(&self.client, prompt, system.as_deref(), images)
+            .await
+            .map_err(|e| {
+                crate::shared::error::AppError::Other(format!("LLM generation failed: {e}"))
+            })
+    }
+
+    async fn generate_streaming(
+        &self,
+        prompt: &str,
+        context: &[String],
+        images: Option<Vec<String>>,
+    ) -> Result<Box<dyn futures::stream::Stream<Item = Result<String>> + Send + Unpin + '_>> {
+        let system = if context.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "Use the following context to answer the question:\n\n{}",
+                context.join("\n\n")
+            ))
+        };
+
+        let stream = crate::llm::traits::LLMClient::generate_stream(
+            &self.client,
+            prompt,
+            system.as_deref(),
+            images,
+        )
         .await
         .map_err(|e| {
-            let mapped_error = map_local_model_load_error(e, model_path);
-            error!("Failed to create local LLM client: {}", mapped_error);
-            mapped_error
+            crate::shared::error::AppError::Other(format!("LLM streaming failed: {e}"))
         })?;
 
-    info!("Local LLM client created successfully");
+        // LLMClient yields Result<String, LLMError>; LLMPort wants
+        // Result<String, AppError>. Map the error type.
+        use futures::StreamExt;
+        let mapped = stream.map(|item| {
+            item.map_err(|e| {
+                crate::shared::error::AppError::Other(format!("Stream error: {e}"))
+            })
+        });
 
-    // Wrap in Arc and cast to LLMPort
-    let client_arc = Arc::new(client);
-    Ok(Arc::new(LocalLLMPortAdapter::new(client_arc)) as Arc<dyn LLMPort>)
+        Ok(Box::new(Box::pin(mapped)))
+    }
+
+    fn model_name(&self) -> &str {
+        crate::llm::traits::LLMClient::model_name(&self.client)
+    }
+
+    fn max_context_tokens(&self) -> usize {
+        8192
+    }
+
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len().div_ceil(4)
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(crate::llm::traits::LLMClient::health_check(&self.client).await)
+    }
+
+    fn supports_tool_calling(&self) -> bool {
+        // keep off until Sprint 4 model catalog cleanup verifies which
+        // shipped GGUFs actually support it.
+        false
+    }
+
+    fn provider_name(&self) -> &str {
+        "local-sidecar"
+    }
 }
 
 /// Create an Ollama LLM client.
@@ -423,7 +568,7 @@ fn map_local_model_load_error(error: LLMError, model_path: &Path) -> LLMError {
         return LLMError::Other(format!(
             "Model '{}' is incompatible with the current GGUF loader (missing tensor metadata). \
              This GGUF variant likely uses tensor names/layout unsupported by this build. \
-             Try a different GGUF for this model family or update to a newer mistral.rs integration. \
+             Try a different GGUF for this model family or update to a newer llama-server build. \
              Original error: {}",
             model_name, error_message
         ));
@@ -554,197 +699,6 @@ impl LLMPort for MockLLMPort {
 
     fn provider_name(&self) -> &str {
         "mock"
-    }
-}
-
-// ============================================================================
-// LocalLLMClient Port Adapter
-// ============================================================================
-
-/// Adapter to convert LocalLLMClient (LLMClient trait) to LLMPort.
-///
-/// LocalLLMClient implements the infrastructure LLMClient trait,
-/// but the application layer needs the LLMPort trait. This adapter
-/// bridges the two.
-struct LocalLLMPortAdapter {
-    client: Arc<LocalLLMClient>,
-}
-
-impl LocalLLMPortAdapter {
-    fn new(client: Arc<LocalLLMClient>) -> Self {
-        Self { client }
-    }
-}
-
-#[async_trait]
-impl LLMPort for LocalLLMPortAdapter {
-    async fn generate(
-        &self,
-        prompt: &str,
-        context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        use crate::infrastructure::llm::inference::engine::parse_context_message;
-        use mistralrs::TextMessageRole;
-
-        // DIAGNOSTIC: Log raw context array
-        tracing::info!(
-            context_count = context.len(),
-            context_items = ?context,
-            "LocalLLMPortAdapter::generate - RAW context received"
-        );
-
-        // Try parsing context messages as role-structured messages
-        let parsed_messages: Vec<_> = context
-            .iter()
-            .filter_map(|msg| match parse_context_message(msg) {
-                Some(parsed) => {
-                    tracing::debug!(
-                        original = msg,
-                        role = ?parsed.0,
-                        content_len = parsed.1.len(),
-                        "Successfully parsed context message"
-                    );
-                    Some(parsed)
-                }
-                None => {
-                    tracing::warn!(
-                        message = msg,
-                        "FAILED to parse context message - falling back"
-                    );
-                    None
-                }
-            })
-            .collect();
-
-        // Log if we had partial parsing failures
-        if !parsed_messages.is_empty() && parsed_messages.len() < context.len() {
-            tracing::warn!(
-                parsed = parsed_messages.len(),
-                total = context.len(),
-                "Some context messages failed to parse - proceeding with parsed messages only"
-            );
-        }
-
-        // If we successfully parsed context messages, use message-based generation
-        if !parsed_messages.is_empty() {
-            // Add the new user message
-            let mut messages = parsed_messages;
-            messages.push((TextMessageRole::User, prompt.to_string()));
-
-            // DIAGNOSTIC: Log final message sequence before sending to LLM
-            tracing::info!(
-                message_count = messages.len(),
-                message_roles = ?messages.iter().map(|(role, _)| format!("{:?}", role)).collect::<Vec<_>>(),
-                "Using message-based generation with parsed context"
-            );
-
-            // Use message-based generation (preserves role alternation)
-            self.client
-                .generate_with_messages(&messages)
-                .await
-                .map_err(|e| {
-                    crate::shared::error::AppError::Other(format!("LLM generation failed: {}", e))
-                })
-        } else {
-            // Fallback: Build system message from context (legacy behavior)
-            let system = if context.is_empty() {
-                None
-            } else {
-                Some(format!(
-                    "Use the following context to answer the question:\n\n{}",
-                    context.join("\n\n")
-                ))
-            };
-
-            // Call LocalLLMClient with traditional approach
-            self.client
-                .generate(prompt, system.as_deref(), None)
-                .await
-                .map_err(|e| {
-                    crate::shared::error::AppError::Other(format!("LLM generation failed: {}", e))
-                })
-        }
-    }
-
-    async fn generate_streaming(
-        &self,
-        prompt: &str,
-        context: &[String],
-        _images: Option<Vec<String>>,
-    ) -> Result<Box<dyn futures::stream::Stream<Item = Result<String>> + Send + Unpin + '_>> {
-        use crate::infrastructure::llm::inference::engine::parse_context_message;
-        use mistralrs::TextMessageRole;
-
-        // Try parsing context as role-structured chat history.
-        let parsed_messages: Vec<_> = context
-            .iter()
-            .filter_map(|msg| parse_context_message(msg))
-            .collect();
-
-        let stream = if !parsed_messages.is_empty() {
-            let mut messages = parsed_messages;
-            messages.push((TextMessageRole::User, prompt.to_string()));
-
-            self.client
-                .generate_stream_with_messages(&messages)
-                .await
-                .map_err(|e| {
-                    crate::shared::error::AppError::Other(format!("LLM streaming failed: {}", e))
-                })?
-        } else {
-            // Fallback to legacy flattened system context if parsing fails.
-            let system = if context.is_empty() {
-                None
-            } else {
-                Some(format!(
-                    "Use the following context to answer the question:\n\n{}",
-                    context.join("\n\n")
-                ))
-            };
-
-            self.client
-                .generate_stream(prompt, system.as_deref(), None)
-                .await
-                .map_err(|e| {
-                    crate::shared::error::AppError::Other(format!("LLM streaming failed: {}", e))
-                })?
-        };
-
-        // Convert LLMError to AppError
-        use futures::StreamExt;
-        let mapped_stream = stream.map(|result| {
-            result
-                .map_err(|e| crate::shared::error::AppError::Other(format!("Stream error: {}", e)))
-        });
-
-        Ok(Box::new(Box::pin(mapped_stream)))
-    }
-
-    fn model_name(&self) -> &str {
-        self.client.model_name()
-    }
-
-    fn max_context_tokens(&self) -> usize {
-        // Get from model info or default to 4K
-        4096
-    }
-
-    fn count_tokens(&self, text: &str) -> usize {
-        // Simple heuristic: 1 token ≈ 4 characters
-        text.len().div_ceil(4)
-    }
-
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(self.client.health_check().await)
-    }
-
-    fn supports_tool_calling(&self) -> bool {
-        false // Local models via mistral.rs don't currently support tool calling
-    }
-
-    fn provider_name(&self) -> &str {
-        "local"
     }
 }
 
@@ -945,6 +899,7 @@ mod tests {
             model_path: PathBuf::from("/nonexistent/model.gguf"),
             n_gpu_layers: 0,
             generation_config: GenerationConfig::default(),
+            app_handle: None,
         };
 
         let result = create_llm(config).await;
@@ -957,6 +912,7 @@ mod tests {
             model_path: PathBuf::from("/nonexistent/model.gguf"),
             n_gpu_layers: 0,
             generation_config: GenerationConfig::default(),
+            app_handle: None,
         };
 
         // Should always succeed with fallback

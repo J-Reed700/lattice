@@ -172,6 +172,7 @@ async fn create_container(
     data_dir: PathBuf,
     ollama_endpoint: String,
     ollama_model: String,
+    app_handle: tauri::AppHandle,
 ) -> Result<crate::interfaces::di::Container, String> {
     use crate::interfaces::di::Container;
 
@@ -188,7 +189,9 @@ async fn create_container(
         None
     };
 
-    // Create container (always succeeds, AI optional)
+    // Create container (always succeeds, AI optional). Builder-style
+    // `with_app_handle` attaches the Tauri AppHandle so the sidecar
+    // dispatch path can spawn `llama-server` via tauri-plugin-shell.
     Container::new(
         pool,
         db_conn,
@@ -198,6 +201,7 @@ async fn create_container(
         data_dir,
     )
     .await
+    .map(|c| c.with_app_handle(app_handle))
     .map_err(|e| format!("Failed to create container: {}", e))
 }
 
@@ -272,6 +276,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     let model_dir_for_init = model_dir.clone();
 
+    let app_handle_for_container = app_handle.clone();
+
     // Initialize all async layers with timeout
     let container = match tokio::time::timeout(Duration::from_secs(30), async move {
         // Sequential initialization with clear error propagation
@@ -323,6 +329,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
             app_dir.clone(),
             ollama_endpoint,
             ollama_model,
+            app_handle_for_container,
         )
         .await?;
 

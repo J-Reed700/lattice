@@ -36,6 +36,16 @@
     "dialog:allow-confirm",
     "shell:default",
     "shell:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/llama-server",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
     "model:allow-get-all-recommended-models",
     "model:allow-get-compatible-models",
     "model:allow-search-model-catalog",

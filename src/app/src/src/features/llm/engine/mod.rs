@@ -3,20 +3,20 @@
 //! Provides clients for local LLM inference including llama.cpp and Ollama.
 //! This module supports both HTTP-based clients and local GPU-accelerated inference.
 
-// Engine sub-modules (flattened from former `modules/` subdirectory).
+// Engine sub-modules.
 pub mod circuit_breaker;
 pub mod factory;
-pub mod local_client;
 pub mod model_catalog_adapter;
 pub mod model_storage_adapter;
 pub mod models;
 pub mod noop_client;
 pub mod ollama_client;
+pub mod sidecar_manager;
+pub mod sidecar_client;
 pub mod traits;
 pub mod types;
 
 // Directory-backed sub-modules.
-pub mod inference;
 pub mod system;
 
 pub use circuit_breaker::{
@@ -25,8 +25,8 @@ pub use circuit_breaker::{
 pub use factory::{
     create_llm, create_llm_with_fallback, find_local_model, is_ollama_available, LLMConfig,
 };
-pub use inference::{InferenceConfig, InferenceEngine, ModelLoader};
-pub use local_client::LocalLLMClient;
+pub use sidecar_client::SidecarLLMClient;
+pub use sidecar_manager::{SidecarConfig, SidecarHandle, SidecarManager};
 pub use model_catalog_adapter::HardcodedModelCatalog;
 pub use model_storage_adapter::FilesystemModelStorage;
 pub use models::{

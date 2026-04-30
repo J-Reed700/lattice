@@ -219,6 +219,9 @@ pub enum LLMError {
     #[error("Insufficient memory: {0}")]
     InsufficientMemory(String),
 
+    #[error("Local LLM inference is not supported in this context: {0}")]
+    PlatformNotSupported(String),
+
     #[error(transparent)]
     #[serde(serialize_with = "serialize_io_error")]
     Io(#[from] std::io::Error),

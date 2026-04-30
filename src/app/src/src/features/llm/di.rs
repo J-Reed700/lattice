@@ -20,7 +20,6 @@ use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
 use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
 use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
-use crate::infrastructure::llm::inference::InferenceEngine;
 use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
@@ -44,7 +43,6 @@ pub struct LlmDi {
 
     // Shared state / adapters
     pub llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
-    pub inference_engine_cache: Arc<RwLock<Option<Arc<InferenceEngine>>>>,
     pub downloaded_model_repo: Arc<DownloadedModelRepository>,
     pub model_catalog: Arc<dyn ModelCatalogPort>,
     pub model_catalog_cache: Arc<ModelCacheAdapter>,
@@ -57,7 +55,6 @@ pub async fn build(
     data_dir: PathBuf,
     credentials: Arc<dyn CredentialsPort>,
     llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
-    inference_engine_cache: Arc<RwLock<Option<Arc<InferenceEngine>>>>,
 ) -> Result<LlmDi> {
     // Model catalog (HuggingFace + SQLite cache)
     let downloaded_model_repo = Arc::new(DownloadedModelRepository::new(db_pool.clone()));
@@ -126,7 +123,6 @@ pub async fn build(
         delete_model_use_case,
         list_models_use_case,
         llm_cache,
-        inference_engine_cache,
         downloaded_model_repo,
         model_catalog,
         model_catalog_cache,

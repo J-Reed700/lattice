@@ -133,7 +133,6 @@ use crate::features::tags::entity::Tag as TagEntity;
 
 // Infrastructure Implementations - ML & Search
 use crate::infrastructure::file_system::file_storage::SecureFileStorage;
-use crate::infrastructure::llm::inference::InferenceEngine;
 use crate::infrastructure::llm::noop_client::NoOpLLMClient;
 use crate::infrastructure::llm::ollama_client::OllamaClient;
 use crate::features::embedding::candle_service::CandleEmbeddingService;
@@ -267,6 +266,22 @@ pub struct Container {
     /// subsequent calls within the cooldown window return the same error
     /// immediately instead of retrying (and spamming logs).
     embedding_error_cooldown: Arc<parking_lot::RwLock<Option<(Instant, AppError)>>>,
+
+    /// Tauri AppHandle, populated at app boot via
+    /// `with_app_handle()`. Required by the LLM factory's sidecar
+    /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
+    /// `llama-server` child process. `None` only in test fixtures
+    /// (MockAppContainer covers most test paths); LLM-load-time
+    /// `InvalidConfig` errors fire if a real path tries to use the
+    /// LLM with no handle attached.
+    ///
+    /// This field is the audit P1-2 ("Container god-object") tradeoff
+    /// made deliberately: the sidecar architecture genuinely
+    /// requires the AppHandle to reach the LLM factory, and threading
+    /// it through every call would add a parameter to dozens of
+    /// methods. The long-term cleanup is to split Container into a
+    /// wiring layer + a runtime-state layer (audit P1-2).
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl Container {
@@ -350,7 +365,6 @@ impl Container {
         let embedding_cache = Arc::new(RwLock::new(None));
         let llm_cache = Arc::new(RwLock::new(None));
         let router_llm_cache = Arc::new(RwLock::new(None));
-        let inference_engine_cache = Arc::new(RwLock::new(None));
         // Capacity 32: well above the natural per-second rate of chat
         // turns. Provides slack if the saga briefly lags during summary
         // generation; backpressure kicks in only if the user blasts
@@ -400,7 +414,6 @@ impl Container {
                 db_pool.clone(),
                 core.clone(),
                 llm_cache,
-                inference_engine_cache,
                 llm_endpoint,
                 llm_model,
             )
@@ -487,7 +500,29 @@ impl Container {
             conversation_command_tx,
             conversation_command_rx,
             embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
+            // Populated post-construction via `with_app_handle()`.
+            // See field doc.
+            app_handle: None,
         })
+    }
+
+    /// Attach the Tauri `AppHandle` so the sidecar feature path can
+    /// reach `tauri-plugin-shell`. Builder-pattern addition rather
+    /// than a constructor parameter, because Container::new has 4+
+    /// callers (3 of which are test fixtures) and breaking those
+    /// signatures isn't worth the symmetry win. Real callers chain
+    /// `.with_app_handle(handle)`; tests skip it (their LLM paths
+    /// don't reach the sidecar branch).
+    pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
+        self.app_handle = Some(handle);
+        self
+    }
+
+    /// Returns the stored AppHandle, if any. Used by the LLM factory
+    /// to populate `LLMConfig::Local.app_handle` when the sidecar
+    /// feature is enabled.
+    fn app_handle(&self) -> Option<tauri::AppHandle> {
+        self.app_handle.clone()
     }
 
     // === Lazy LLM Loading ===
@@ -656,6 +691,9 @@ impl Container {
             model_path,
             n_gpu_layers: -1,
             generation_config,
+            // Populated when the app boots via Container::with_app_handle.
+            // None in tests / sidecar-feature-off builds (where it's unused).
+            app_handle: self.app_handle(),
         };
 
         match create_llm(llm_config).await {
@@ -782,6 +820,9 @@ impl Container {
             model_path: model_path.clone(),
             n_gpu_layers: -1, // Use Metal GPU on M-series Macs (all layers on GPU)
             generation_config,
+            // Populated when the app boots via Container::with_app_handle.
+            // None in tests / sidecar-feature-off builds (where it's unused).
+            app_handle: self.app_handle(),
         };
 
         match create_llm(llm_config).await {
@@ -986,81 +1027,6 @@ impl Container {
                     model, endpoint, e
                 )))
             }
-        }
-    }
-
-    /// Get or load InferenceEngine for internal services (e.g., summarization)
-    ///
-    /// This provides direct access to the mistral.rs InferenceEngine for services
-    /// that need the concrete implementation rather than the LLMPort abstraction.
-    ///
-    /// Cached to avoid reloading the model on every call.
-    pub async fn get_or_load_inference_engine(&self) -> Result<Arc<InferenceEngine>> {
-        use crate::infrastructure::llm::inference::{config::InferenceConfig, InferenceEngine};
-
-        // FAST PATH: Check cache (from AIModule via getter)
-        {
-            let cache = Self::recover_read_lock(self.ai.inference_engine_cache().read());
-            if let Some(engine) = cache.as_ref() {
-                return Ok(Arc::clone(engine));
-            }
-        }
-
-        // SLOW PATH: Load model (from AIModule)
-        let active_model = self
-            .ai
-            .downloaded_model_repo()
-            .get_active_chat_model()
-            .await?
-            .ok_or_else(|| {
-                AppError::InvalidState(
-                    "No chat model is active. Please download and activate a model.".to_string(),
-                )
-            })?;
-
-        tracing::info!(
-            "Loading InferenceEngine for summarization from: {}",
-            active_model.file_path().display()
-        );
-
-        // DownloadedModel doesn't yet carry an explicit ModelFormat field
-        // (schema migration is a follow-up). For now, sniff the format
-        // at the call site via the centralized helper. Once
-        // DownloadedModel.format lands this becomes a direct read.
-        let format =
-            crate::llm::factory::detect_model_format(active_model.file_path());
-
-        let config = InferenceConfig::default();
-        let engine = InferenceEngine::from_path(active_model.file_path(), format, config)
-            .await
-            .map_err(|e| {
-                AppError::ModelLoadFailed(format!("Failed to load inference engine: {}", e))
-            })?;
-
-        // CACHE UPDATE (store in AIModule via getter)
-        {
-            let mut cache = Self::recover_write_lock(self.ai.inference_engine_cache().write());
-            if cache.is_none() {
-                *cache = Some(Arc::new(engine));
-            }
-        }
-
-        let cache = Self::recover_read_lock(self.ai.inference_engine_cache().read());
-        if let Some(cached_engine) = cache.as_ref() {
-            Ok(Arc::clone(cached_engine))
-        } else {
-            Err(AppError::ModelLoadFailed(
-                "InferenceEngine cache is unexpectedly empty after initialization".to_string(),
-            ))
-        }
-    }
-
-    /// Invalidate InferenceEngine cache (called when active model changes)
-    pub fn invalidate_inference_engine_cache(&self) {
-        let mut cache = Self::recover_write_lock(self.ai.inference_engine_cache().write());
-        if cache.is_some() {
-            tracing::info!("Invalidating InferenceEngine cache");
-            *cache = None;
         }
     }
 

@@ -551,7 +551,7 @@ mod tests {
         assert!(manager.is_reranker_ready().await);
         assert_eq!(
             path,
-            std::path::PathBuf::from("/mock/models/reranker/model.onnx")
+            std::path::PathBuf::from("/mock/models/reranker/model.safetensors")
         );
     }
 
@@ -574,7 +574,7 @@ mod tests {
         );
         assert_eq!(
             reranker_path,
-            std::path::PathBuf::from("/mock/models/reranker/model.onnx")
+            std::path::PathBuf::from("/mock/models/reranker/model.safetensors")
         );
         assert_eq!(
             reranker_tokenizer_path,

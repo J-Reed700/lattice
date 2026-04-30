@@ -233,89 +233,18 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             format: ModelFormat::Gguf,
         },
 
-        // === Safetensors Models (HF native format, no quantization) ===
-        // These load via mistralrs::ModelBuilder which auto-detects text
-        // vs multimodal from config.json. They're significantly larger
-        // on disk than GGUF (no quantization) and require correspondingly
-        // more RAM. Gated by the loader's RAM pre-flight check.
-        ModelMetadata {
-            id: "gemma-2-9b-it-safetensors".into(),
-            name: "Gemma 2 9B Instruct".into(),
-            category: ModelCategory::LLM,
-            description: "Google's Gemma 2 9B instruction-tuned model in HF safetensors format. \
-                          Strong reasoning + multilingual; unquantized fp16 — needs ~22 GB RAM.".into(),
-            size_gb: 18.5,
-            minimum_ram_gb: 22.0,
-            recommended_ram_gb: 32.0,
-            context_length: 8192,
-            performance_tier: PerformanceTier::Accurate,
-            supported_quantizations: vec![], // Native fp16 only via this path
-            capabilities: vec!["chat".into(), "reasoning".into(), "multilingual".into()],
-            download_url: Some("https://huggingface.co/google/gemma-2-9b-it".into()),
-            license: "Gemma".into(),
-            requires_auth: true, // Gemma is gated on HF
-            model_id: Some("google/gemma-2-9b-it".into()),
-            default_filename: None, // Multi-shard; download walks the repo
-            files: vec![],
-            total_size_bytes: 0,
-            embedding_dimensions: None,
-            embedding_compatibility: None,
-            format: ModelFormat::Safetensors,
-        },
-        ModelMetadata {
-            id: "gemma-4-e4b-it-safetensors".into(),
-            name: "Gemma 4 E4B IT (multimodal)".into(),
-            category: ModelCategory::LLM,
-            description: "Google's Gemma 4 E4B instruction-tuned multimodal model (text + vision). \
-                          HF safetensors format only; not available as GGUF. Needs ~16 GB RAM.".into(),
-            size_gb: 14.0,
-            minimum_ram_gb: 16.0,
-            recommended_ram_gb: 24.0,
-            context_length: 32768,
-            performance_tier: PerformanceTier::Accurate,
-            supported_quantizations: vec![],
-            capabilities: vec![
-                "chat".into(),
-                "vision".into(),
-                "reasoning".into(),
-                "multilingual".into(),
-            ],
-            download_url: Some("https://huggingface.co/google/gemma-4-E4B-it".into()),
-            license: "Gemma".into(),
-            requires_auth: true,
-            model_id: Some("google/gemma-4-E4B-it".into()),
-            default_filename: None,
-            files: vec![],
-            total_size_bytes: 0,
-            embedding_dimensions: None,
-            embedding_compatibility: None,
-            format: ModelFormat::Safetensors,
-        },
-        ModelMetadata {
-            id: "mistral-7b-instruct-v03-safetensors".into(),
-            name: "Mistral 7B Instruct v0.3".into(),
-            category: ModelCategory::LLM,
-            description: "Mistral 7B v0.3 instruction-tuned model in HF safetensors format. \
-                          Useful when you want non-quantized weights for finetuning compatibility \
-                          or just maximum quality. Needs ~16 GB RAM.".into(),
-            size_gb: 14.5,
-            minimum_ram_gb: 16.0,
-            recommended_ram_gb: 24.0,
-            context_length: 32768,
-            performance_tier: PerformanceTier::Accurate,
-            supported_quantizations: vec![],
-            capabilities: vec!["chat".into(), "reasoning".into(), "code".into()],
-            download_url: Some("https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3".into()),
-            license: "Apache-2.0".into(),
-            requires_auth: true, // Mistral models are gated on HF
-            model_id: Some("mistralai/Mistral-7B-Instruct-v0.3".into()),
-            default_filename: None,
-            files: vec![],
-            total_size_bytes: 0,
-            embedding_dimensions: None,
-            embedding_compatibility: None,
-            format: ModelFormat::Safetensors,
-        },
+        // Sprint 4 PR 4.1+4.2: chat-LLM safetensors entries removed.
+        // The bundled `llama-server` sidecar (Sprint 2 migration) only
+        // accepts GGUF. Models that were previously listed here in
+        // safetensors format (Gemma 2 9B IT, Gemma 4 E4B IT
+        // multimodal, Mistral 7B Instruct v0.3) are either available
+        // as GGUF from third-party packagers or, in the case of
+        // Gemma 4 E4B's multimodal variant, not yet GGUF-quantized.
+        // When suitable GGUFs land we re-add the entries pointing at
+        // the GGUF repo (TheBloke/, MaziyarPanahi/, bartowski/, etc.).
+        // ModelFormat::Safetensors continues to exist for embedding
+        // models (BGE-M3, all-MiniLM-L6-v2) — Candle loads those
+        // natively from safetensors weights.
     ]
 }
 

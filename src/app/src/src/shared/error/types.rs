@@ -699,18 +699,6 @@ impl From<keyring::Error> for AppError {
     }
 }
 
-/// Auto-convert from ONNX Runtime errors. `ort 2.0.0-rc.11+` made
-/// `Error` generic (`Error<R>`) so failed builder methods can return a
-/// recovery value the caller could reuse. We don't use the recovery
-/// path — and some recovery types (e.g. `SessionBuilder`) aren't Send,
-/// so we leave `R` unbounded and just discard it.
-impl<R> From<ort::Error<R>> for AppError {
-    fn from(err: ort::Error<R>) -> Self {
-        AppError::EmbeddingFailed {
-            reason: format!("ONNX runtime error: {}", err),
-        }
-    }
-}
 
 /// Auto-convert from String to AppError
 impl From<String> for AppError {
@@ -754,10 +742,10 @@ impl From<crate::infrastructure::llm::types::LLMError> for AppError {
             LLMError::InvalidConfig(msg) => AppError::InvalidConfig(msg),
             LLMError::Timeout => AppError::Other("LLM request timed out".to_string()),
             LLMError::InsufficientMemory(msg) => {
-                // Surface the safetensors RAM pre-flight error as a load
-                // failure with the user-friendly message preserved
-                // intact (already explains how to proceed).
                 AppError::ModelLoadFailed(msg)
+            }
+            LLMError::PlatformNotSupported(msg) => {
+                AppError::ServiceNotAvailable(msg)
             }
             LLMError::Io(e) => AppError::Io {
                 message: e.to_string(),

@@ -62,9 +62,12 @@ const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tok
 const VOCAB_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/vocab.txt";
 const CONFIG_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/config.json";
 
-const RERANKER_MODEL_URL: &str = "https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v2/resolve/main/onnx/model_quantized.onnx";
+const RERANKER_MODEL_URL: &str =
+    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/model.safetensors";
 const RERANKER_TOKENIZER_URL: &str =
-    "https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v2/resolve/main/tokenizer.json";
+    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/tokenizer.json";
+const RERANKER_CONFIG_URL: &str =
+    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/config.json";
 
 // NOTE: Update this checksum after downloading the actual model
 // To calculate: sha256sum model.onnx or certUtil -hashfile model.onnx SHA256
@@ -594,9 +597,14 @@ impl ModelManager {
             .await
             .context("Failed to create reranker directory")?;
 
+        // Sprint 5: candle's BertModel needs config.json at load time
+        // (drives hidden_size, num_attention_heads, etc.). The old ORT
+        // path embedded those in the .onnx graph, so we didn't need a
+        // separate config download. Now we do.
         let files = vec![
-            ("model.onnx", RERANKER_MODEL_URL, None),
+            ("model.safetensors", RERANKER_MODEL_URL, None),
             ("tokenizer.json", RERANKER_TOKENIZER_URL, None),
+            ("config.json", RERANKER_CONFIG_URL, None),
         ];
 
         for (filename, url, checksum) in files {
@@ -616,11 +624,19 @@ impl ModelManager {
             }
         }
 
+        let legacy_onnx = reranker_dir.join("model.onnx");
+        if legacy_onnx.exists() {
+            tracing::info!("Pruning legacy reranker model.onnx after migration");
+            if let Err(err) = fs::remove_file(&legacy_onnx).await {
+                tracing::warn!("Failed to prune legacy model.onnx: {err}");
+            }
+        }
+
         Ok(())
     }
 
     pub fn get_reranker_path(&self) -> PathBuf {
-        self.model_dir.join("reranker/model.onnx")
+        self.model_dir.join("reranker/model.safetensors")
     }
 
     pub fn get_reranker_tokenizer_path(&self) -> PathBuf {
@@ -630,82 +646,56 @@ impl ModelManager {
     pub async fn is_reranker_ready(&self) -> bool {
         let model_path = self.get_reranker_path();
         let tokenizer_path = self.get_reranker_tokenizer_path();
+        let config_path = self.model_dir.join("reranker/config.json");
 
         tokio::fs::metadata(&model_path).await.is_ok()
             && tokio::fs::metadata(&tokenizer_path).await.is_ok()
+            && tokio::fs::metadata(&config_path).await.is_ok()
     }
 
     async fn check_disk_space(&self) -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            use std::ffi::OsStr;
-            use std::os::windows::ffi::OsStrExt;
+        let mut disks = sysinfo::Disks::new_with_refreshed_list();
+        disks.refresh();
 
-            let path = self.model_dir.to_str().context("Invalid path encoding")?;
 
-            // Get the root drive (e.g., "C:\\" from "C:\\Users\\...")
-            let root = std::path::Path::new(path)
-                .ancestors()
-                .last()
-                .context("Failed to get root path")?;
-
-            let root_str = root.to_str().context("Invalid root path")?;
-            let mut root_wide: Vec<u16> = OsStr::new(root_str)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-
-            // SAFETY: Calling Windows FFI GetDiskFreeSpaceExW is safe because:
-            // 1. root_wide is a valid null-terminated UTF-16 string (created above)
-            // 2. We pass valid mutable pointers to u64 variables on the stack
-            // 3. The pointers remain valid for the duration of the FFI call
-            // 4. GetDiskFreeSpaceExW is designed to write to these output parameters
-            // 5. We check the result code before using the output values
-            // 6. The memory layout of u64 matches the Windows API expectation (ULARGE_INTEGER)
-            // 7. This code only runs on Windows (protected by #[cfg(target_os = "windows")])
-            unsafe {
-                let mut free_bytes: u64 = 0;
-                let mut total_bytes: u64 = 0;
-                let mut total_free_bytes: u64 = 0;
-
-                let result = windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
-                    windows::core::PCWSTR(root_wide.as_mut_ptr()),
-                    Some(&mut free_bytes as *mut u64 as *mut u64),
-                    Some(&mut total_bytes as *mut u64 as *mut u64),
-                    Some(&mut total_free_bytes as *mut u64 as *mut u64),
+        let model_dir_canonical = match self.model_dir.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to canonicalize model_dir for disk-space check, proceeding: {err}"
                 );
-
-                if result.is_ok() {
-                    let free_mb = free_bytes / (1024 * 1024);
-                    if free_mb < MIN_REQUIRED_SPACE_MB {
-                        return Err(AppError::Other(format!(
-                            "Insufficient disk space: {} MB available, {} MB required. Please free up disk space and try again.",
-                            free_mb,
-                            MIN_REQUIRED_SPACE_MB
-                        )));
-                    }
-                    tracing::info!("Disk space check passed: {} MB available", free_mb);
-                } else {
-                    tracing::warn!("Failed to check disk space, proceeding with download");
-                }
+                return Ok(());
             }
+        };
+
+        let matched = disks
+            .list()
+            .iter()
+            .filter(|disk| model_dir_canonical.starts_with(disk.mount_point()))
+            .max_by_key(|disk| disk.mount_point().as_os_str().len());
+
+        let Some(disk) = matched else {
+            tracing::warn!(
+                "No disk found for model_dir {:?}; skipping disk-space check",
+                model_dir_canonical
+            );
+            return Ok(());
+        };
+
+        let free_mb = disk.available_space() / (1024 * 1024);
+        if free_mb < MIN_REQUIRED_SPACE_MB {
+            return Err(AppError::Other(format!(
+                "Insufficient disk space: {} MB available, {} MB required. \
+                 Please free up disk space and try again.",
+                free_mb, MIN_REQUIRED_SPACE_MB
+            )));
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            // On Unix-like systems, use statvfs
-            match fs::metadata(&self.model_dir).await {
-                Ok(_metadata) => {
-                    // This is a simplified check - on Unix we'd need to use statvfs
-                    // For now, just log and continue
-                    tracing::info!("Disk space check skipped on non-Windows platform");
-                }
-                Err(_) => {
-                    tracing::warn!("Could not check disk space, proceeding with download");
-                }
-            }
-        }
-
+        tracing::info!(
+            "Disk space check passed: {} MB available on {:?}",
+            free_mb,
+            disk.mount_point()
+        );
         Ok(())
     }
 }
