@@ -16,6 +16,7 @@ use crate::features::model_management::commands_extra::{
     get_active_chat_model_impl, get_active_embedding_model_impl, get_models_with_metadata_impl,
     is_model_already_downloaded_impl, set_active_chat_model_impl, set_active_embedding_model_impl,
     set_active_utility_model_impl, warm_up_active_chat_model_impl,
+    warm_up_active_utility_model_impl,
 };
 use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl,
@@ -387,6 +388,20 @@ pub async fn clear_active_utility_model(container: State<'_, Container>) -> Resu
 #[specta::specta]
 pub async fn warm_up_active_chat_model(container: State<'_, Container>) -> Result<(), ApiError> {
     warm_up_active_chat_model_impl(container.inner())
+        .await
+        .map_err(|e| ApiError {
+            code: ErrorCode::InternalError,
+            message: e,
+            details: None,
+        })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn warm_up_active_utility_model(
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    warm_up_active_utility_model_impl(container.inner())
         .await
         .map_err(|e| ApiError {
             code: ErrorCode::InternalError,

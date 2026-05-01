@@ -246,20 +246,26 @@ impl DeleteDownloadedModelUseCase {
                         return Ok(());
                     }
 
-                    let file_path = deleted_model.file_path();
+                    // For remote-hosted models there's nothing on disk to remove.
+                    let Some(file_path) = deleted_model.loadable_path() else {
+                        info!(
+                            model_id = %deleted_model.model_id(),
+                            "Skipping file deletion for remote-hosted model"
+                        );
+                        return Ok(());
+                    };
 
                     if file_path.exists() {
-                        // Repository may return a file path or model directory path.
-                        let model_dir = if file_path.is_dir() {
-                            file_path
-                        } else {
-                            file_path.parent().ok_or_else(|| {
+                        let model_dir = deleted_model
+                            .location()
+                            .enclosing_dir()
+                            .ok_or_else(|| {
                                 AppError::FileSystem(format!(
-                                    "Cannot determine parent directory for: {}",
+                                    "Cannot determine enclosing directory for: {}",
                                     file_path.display()
                                 ))
-                            })?
-                        };
+                            })?;
+                        let model_dir = model_dir.as_path();
 
                         // Validate directory is safe to delete
                         match is_safe_model_directory(model_dir, deleted_model.model_id()) {

@@ -54,6 +54,23 @@ export function ChatTab() {
   const provider = llmSettings?.provider ?? 'auto';
   const showOllamaSettings = provider === 'ollama' || provider === 'auto';
 
+  const trimmedHeaderName = ollamaHeaderNameDraft.trim();
+  const trimmedHeaderValue = ollamaHeaderValueDraft.trim();
+  const isHeaderPartialPair =
+    (trimmedHeaderName !== '' && trimmedHeaderValue === '') ||
+    (trimmedHeaderName === '' && trimmedHeaderValue !== '');
+  const headerDraftDiffersFromSaved =
+    trimmedHeaderName !== (llmSettings?.ollamaAuthHeaderName ?? '').trim() ||
+    trimmedHeaderValue !== (llmSettings?.ollamaAuthHeaderValue ?? '').trim();
+  const handleHeaderBlur = () => {
+    if (isHeaderPartialPair) return;
+    if (!headerDraftDiffersFromSaved) return;
+    saveLlmUpdates({
+      ollamaAuthHeaderName: trimmedHeaderName,
+      ollamaAuthHeaderValue: trimmedHeaderValue,
+    });
+  };
+
   const handleApplyBasicAuth = () => {
     if (!ollamaBasicUserDraft.trim()) {
       toast.error('Basic auth username is required');
@@ -301,13 +318,7 @@ export function ChatTab() {
                         type="text"
                         value={ollamaHeaderNameDraft}
                         onChange={(e) => setOllamaHeaderNameDraft(e.target.value)}
-                        onBlur={() => {
-                          if (ollamaHeaderNameDraft !== llmSettings.ollamaAuthHeaderName) {
-                            saveLlmUpdates({
-                              ollamaAuthHeaderName: ollamaHeaderNameDraft.trim(),
-                            });
-                          }
-                        }}
+                        onBlur={handleHeaderBlur}
                         placeholder="Header name (e.g. Authorization)"
                         className={INPUT_CLASS}
                       />
@@ -315,17 +326,16 @@ export function ChatTab() {
                         type="text"
                         value={ollamaHeaderValueDraft}
                         onChange={(e) => setOllamaHeaderValueDraft(e.target.value)}
-                        onBlur={() => {
-                          if (ollamaHeaderValueDraft !== llmSettings.ollamaAuthHeaderValue) {
-                            saveLlmUpdates({
-                              ollamaAuthHeaderValue: ollamaHeaderValueDraft.trim(),
-                            });
-                          }
-                        }}
+                        onBlur={handleHeaderBlur}
                         placeholder="Header value (e.g. Bearer ...)"
                         className={INPUT_CLASS}
                       />
                     </div>
+                    {isHeaderPartialPair && (
+                      <p className="text-[10px] text-[hsl(var(--warning))] leading-snug">
+                        Fill in both name and value (or clear both) to save.
+                      </p>
+                    )}
 
                     <div className="text-xs font-medium text-[hsl(var(--text-secondary))] pt-1">
                       Basic Auth Helper

@@ -4449,6 +4449,12 @@
           "markdownDescription": "Enables the warm_up_active_chat_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the warm_up_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-warm-up-active-utility-model",
+          "markdownDescription": "Enables the warm_up_active_utility_model command without any pre-configured scope."
+        },
+        {
           "description": "Denies the cancel_download command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-cancel-download",
@@ -4633,6 +4639,12 @@
           "type": "string",
           "const": "model:deny-warm-up-active-chat-model",
           "markdownDescription": "Denies the warm_up_active_chat_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the warm_up_active_utility_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-warm-up-active-utility-model",
+          "markdownDescription": "Denies the warm_up_active_utility_model command without any pre-configured scope."
         },
         {
           "description": "Enables the ask_question_stream_wrapper command without any pre-configured scope.",

@@ -8,51 +8,105 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use crate::domain::model_type_classifier::ModelTypeClassifier;
 
 // Re-export ModelType from model_metadata for backward compatibility
 pub use crate::domain::model_metadata::ModelType;
 
-/// Backend that serves a model: a local file on disk vs. a remote Ollama server.
 ///
-/// This is orthogonal to role flags (chat / utility / embedding) — a model
-/// can be `Local` and active for chat, or `Ollama` and active for utility, etc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ModelBackend {
-    Local,
-    Ollama,
+/// This is orthogonal to role flags (chat/utility/embedding) and to the
+/// `model_type` classification — a `LocalFile` GGUF can be a chat model
+/// today and an embedding model tomorrow.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModelLocation {
+    LocalFile { path: PathBuf },
+    LocalDirectory { path: PathBuf },
+    RemoteOllama,
 }
 
-impl ModelBackend {
-    /// Stable lowercase string used as the SQL `backend` column value.
-    pub fn as_db_str(&self) -> &'static str {
+impl ModelLocation {
+    /// Stable string for the SQL `storage_kind` discriminator column.
+    pub fn kind_db_str(&self) -> &'static str {
         match self {
-            ModelBackend::Local => "local",
-            ModelBackend::Ollama => "ollama",
+            ModelLocation::LocalFile { .. } => "local_file",
+            ModelLocation::LocalDirectory { .. } => "local_dir",
+            ModelLocation::RemoteOllama => "remote_ollama",
+        }
+    }
+
+    /// On-disk path the inference engine should be handed. `None` for
+    /// remote-only locations.
+    pub fn loadable_path(&self) -> Option<&Path> {
+        match self {
+            ModelLocation::LocalFile { path } | ModelLocation::LocalDirectory { path } => {
+                Some(path.as_path())
+            }
+            ModelLocation::RemoteOllama => None,
+        }
+    }
+
+    /// Directory containing the model. For `LocalFile` this is the
+    /// weight file's parent (sibling tokenizer/config files live there).
+    /// For `LocalDirectory` it's the directory itself. `None` for remote.
+    pub fn enclosing_dir(&self) -> Option<PathBuf> {
+        match self {
+            ModelLocation::LocalFile { path } => path.parent().map(|p| p.to_path_buf()),
+            ModelLocation::LocalDirectory { path } => Some(path.clone()),
+            ModelLocation::RemoteOllama => None,
+        }
+    }
+
+    /// True for any variant that lives on the local filesystem.
+    pub fn is_local(&self) -> bool {
+        matches!(
+            self,
+            ModelLocation::LocalFile { .. } | ModelLocation::LocalDirectory { .. }
+        )
+    }
+
+    /// Reconstruct from the `(storage_kind, storage_path)` columns.
+    pub fn from_db(kind: &str, path: Option<String>) -> Result<Self, String> {
+        match kind {
+            "local_file" => Ok(ModelLocation::LocalFile {
+                path: PathBuf::from(
+                    path.ok_or_else(|| "local_file row missing storage_path".to_string())?,
+                ),
+            }),
+            "local_dir" => Ok(ModelLocation::LocalDirectory {
+                path: PathBuf::from(
+                    path.ok_or_else(|| "local_dir row missing storage_path".to_string())?,
+                ),
+            }),
+            "remote_ollama" => Ok(ModelLocation::RemoteOllama),
+            other => Err(format!(
+                "Invalid storage_kind '{}': expected 'local_file', 'local_dir', or 'remote_ollama'",
+                other
+            )),
+        }
+    }
+
+    /// `(storage_kind, storage_path)` pair for INSERT/UPDATE bindings.
+    pub fn to_db(&self) -> (&'static str, Option<String>) {
+        match self {
+            ModelLocation::LocalFile { path } => {
+                ("local_file", Some(path.to_string_lossy().into_owned()))
+            }
+            ModelLocation::LocalDirectory { path } => {
+                ("local_dir", Some(path.to_string_lossy().into_owned()))
+            }
+            ModelLocation::RemoteOllama => ("remote_ollama", None),
         }
     }
 }
 
-impl fmt::Display for ModelBackend {
+impl fmt::Display for ModelLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_db_str())
-    }
-}
-
-impl FromStr for ModelBackend {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "local" => Ok(ModelBackend::Local),
-            "ollama" => Ok(ModelBackend::Ollama),
-            other => Err(format!(
-                "Invalid model backend '{}': expected 'local' or 'ollama'",
-                other
-            )),
+        match self {
+            ModelLocation::LocalFile { path } => write!(f, "local_file:{}", path.display()),
+            ModelLocation::LocalDirectory { path } => write!(f, "local_dir:{}", path.display()),
+            ModelLocation::RemoteOllama => f.write_str("remote_ollama"),
         }
     }
 }
@@ -77,7 +131,7 @@ impl FromStr for ModelBackend {
 /// - `file_path` must point to an existing file when model is created
 /// - `file_size_bytes` must be > 0
 /// - `use_count` must be >= 0
-/// - `model_type` must match file extension (.gguf for chat, .onnx for embedding)
+/// - `model_type` must match file extension (.gguf for chat, .safetensors for embedding)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadedModel {
@@ -90,10 +144,13 @@ pub struct DownloadedModel {
     /// Unique model identifier (e.g., "llama-3.2-1b-instruct")
     model_id: String,
 
-    /// Absolute path to the model file on local filesystem
-    file_path: PathBuf,
+    /// Where the model lives — local file, local directory, or remote.
+    /// Replaces the previous `(backend, file_path)` pair where the
+    /// combinations were not type-checked.
+    location: ModelLocation,
 
-    /// Size of the model file in bytes
+    /// Size of the model in bytes (sum across files for multi-file
+    /// layouts; 0 for remote-hosted models).
     file_size_bytes: i64,
 
     /// Type of model (chat or embedding)
@@ -121,9 +178,6 @@ pub struct DownloadedModel {
     /// Additional metadata about the model (provider, version, capabilities, etc.)
     /// Stored as JSON for flexibility
     metadata: Option<JsonValue>,
-
-    /// Backend that serves this model (local file vs. remote Ollama)
-    backend: ModelBackend,
 
     /// Whether this model is currently active for the utility role
     /// (HyDE expansion, router, intent classification)
@@ -163,11 +217,10 @@ impl DownloadedModel {
         id: String,
         model_name: String,
         model_id: String,
-        file_path: PathBuf,
+        location: ModelLocation,
         file_size_bytes: i64,
         architecture: String,
         metadata: Option<JsonValue>,
-        backend: ModelBackend,
     ) -> Result<Self, String> {
         // Validate inputs
         if model_id.trim().is_empty() {
@@ -182,16 +235,16 @@ impl DownloadedModel {
             return Err("architecture cannot be empty".to_string());
         }
 
-        // Ollama-served models are remote: there is no local file to size, so
-        // the synthetic registry row carries `total_size_bytes = 0`. The
-        // size>0 invariant only applies to locally-downloaded files.
-        if backend == ModelBackend::Local && file_size_bytes <= 0 {
+        // Local artifacts must have a real size; remote (Ollama) rows carry 0.
+        if location.is_local() && file_size_bytes <= 0 {
             return Err("file_size_bytes must be greater than 0".to_string());
         }
 
-        // Classify model type using multi-strategy classifier
+        // Classify model type using multi-strategy classifier. The
+        // classifier inspects file extension when available; for
+        // directory layouts it falls back to model_name heuristics.
         let classifier = ModelTypeClassifier;
-        let classification = classifier.classify(&model_name, Some(&file_path));
+        let classification = classifier.classify(&model_name, location.loadable_path());
 
         tracing::info!(
             model_id = %model_id,
@@ -208,7 +261,7 @@ impl DownloadedModel {
             id,
             model_name,
             model_id,
-            file_path,
+            location,
             file_size_bytes,
             model_type,
             architecture,
@@ -218,7 +271,6 @@ impl DownloadedModel {
             is_active_for_chat: false,
             is_active_for_embedding: false,
             metadata,
-            backend,
             is_active_for_utility: false,
         })
     }
@@ -232,7 +284,7 @@ impl DownloadedModel {
         id: String,
         model_name: String,
         model_id: String,
-        file_path: PathBuf,
+        location: ModelLocation,
         file_size_bytes: i64,
         model_type: ModelType,
         architecture: String,
@@ -242,14 +294,13 @@ impl DownloadedModel {
         is_active_for_chat: bool,
         is_active_for_embedding: bool,
         metadata: Option<JsonValue>,
-        backend: ModelBackend,
         is_active_for_utility: bool,
     ) -> Self {
         Self {
             id,
             model_name,
             model_id,
-            file_path,
+            location,
             file_size_bytes,
             model_type,
             architecture,
@@ -259,7 +310,6 @@ impl DownloadedModel {
             is_active_for_chat,
             is_active_for_embedding,
             metadata,
-            backend,
             is_active_for_utility,
         }
     }
@@ -402,8 +452,13 @@ impl DownloadedModel {
         &self.model_id
     }
 
-    pub fn file_path(&self) -> &PathBuf {
-        &self.file_path
+
+    pub fn location(&self) -> &ModelLocation {
+        &self.location
+    }
+
+    pub fn loadable_path(&self) -> Option<&Path> {
+        self.location.loadable_path()
     }
 
     pub fn file_size_bytes(&self) -> i64 {
@@ -442,10 +497,6 @@ impl DownloadedModel {
         self.metadata.as_ref()
     }
 
-    pub fn backend(&self) -> ModelBackend {
-        self.backend
-    }
-
     pub fn is_active_for_utility(&self) -> bool {
         self.is_active_for_utility
     }
@@ -456,62 +507,99 @@ impl DownloadedModel {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     #[test]
-    fn ollama_backend_allows_zero_size() {
+    fn remote_ollama_allows_zero_size() {
         let result = DownloadedModel::new(
             "id-1".to_string(),
             "Ollama Server".to_string(),
             "__ollama_server__".to_string(),
-            PathBuf::from(""),
+            ModelLocation::RemoteOllama,
             0,
             "ollama".to_string(),
             None,
-            ModelBackend::Ollama,
         );
         assert!(
             result.is_ok(),
-            "Ollama backend must permit zero-byte size, got: {:?}",
+            "RemoteOllama must permit zero-byte size, got: {:?}",
             result.err()
         );
         let model = result.unwrap();
-        assert_eq!(model.backend(), ModelBackend::Ollama);
+        assert_eq!(model.location(), &ModelLocation::RemoteOllama);
         assert_eq!(model.file_size_bytes(), 0);
+        assert!(model.loadable_path().is_none());
         assert!(!model.is_active_for_utility());
     }
 
     #[test]
-    fn local_backend_rejects_zero_size() {
+    fn local_file_rejects_zero_size() {
         let result = DownloadedModel::new(
             "id-2".to_string(),
             "Local Model".to_string(),
             "local-model".to_string(),
-            PathBuf::from("/tmp/m.gguf"),
+            ModelLocation::LocalFile {
+                path: PathBuf::from("/tmp/m.gguf"),
+            },
             0,
             "llama".to_string(),
             None,
-            ModelBackend::Local,
         );
-        assert!(
-            result.is_err(),
-            "Local backend must reject zero-byte size"
-        );
+        assert!(result.is_err(), "LocalFile must reject zero-byte size");
     }
 
     #[test]
-    fn model_backend_roundtrips_via_fromstr_display() {
-        for backend in [ModelBackend::Local, ModelBackend::Ollama] {
-            let serialized = backend.to_string();
-            let parsed = ModelBackend::from_str(&serialized).expect("roundtrip parse");
-            assert_eq!(parsed, backend);
-            assert_eq!(serialized, backend.as_db_str());
+    fn local_directory_rejects_zero_size() {
+        let result = DownloadedModel::new(
+            "id-3".to_string(),
+            "Safetensors Model".to_string(),
+            "safe-model".to_string(),
+            ModelLocation::LocalDirectory {
+                path: PathBuf::from("/tmp/safe"),
+            },
+            0,
+            "bert".to_string(),
+            None,
+        );
+        assert!(result.is_err(), "LocalDirectory must reject zero-byte size");
+    }
+
+    #[test]
+    fn location_roundtrips_through_db_pair() {
+        let cases = vec![
+            ModelLocation::LocalFile {
+                path: PathBuf::from("/tmp/m.gguf"),
+            },
+            ModelLocation::LocalDirectory {
+                path: PathBuf::from("/tmp/safe"),
+            },
+            ModelLocation::RemoteOllama,
+        ];
+        for original in cases {
+            let (kind, path) = original.to_db();
+            let restored = ModelLocation::from_db(kind, path).expect("roundtrip parse");
+            assert_eq!(restored, original);
         }
     }
 
     #[test]
-    fn model_backend_fromstr_rejects_unknown() {
-        let err = "remote".parse::<ModelBackend>();
-        assert!(err.is_err(), "unknown backend variant must be rejected");
+    fn location_from_db_rejects_unknown_kind() {
+        let err = ModelLocation::from_db("remote", Some("/tmp/x".into()));
+        assert!(err.is_err(), "unknown storage_kind must be rejected");
+    }
+
+    #[test]
+    fn local_file_enclosing_dir_is_parent() {
+        let loc = ModelLocation::LocalFile {
+            path: PathBuf::from("/tmp/safe/model.gguf"),
+        };
+        assert_eq!(loc.enclosing_dir(), Some(PathBuf::from("/tmp/safe")));
+    }
+
+    #[test]
+    fn local_dir_enclosing_dir_is_self() {
+        let loc = ModelLocation::LocalDirectory {
+            path: PathBuf::from("/tmp/safe"),
+        };
+        assert_eq!(loc.enclosing_dir(), Some(PathBuf::from("/tmp/safe")));
     }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 
 import { z } from 'zod';
 
@@ -21,15 +21,6 @@ const STATUS_TO_STORE_STATE: Record<string, DownloadState> = {
 
 const toStoreState = (status: string): DownloadState =>
   STATUS_TO_STORE_STATE[status.toLowerCase()] ?? 'Pending';
-
-const toSnapshotState = (state: string): TauriEvents.Downloads.Single['status'] => {
-  const normalized = state.toLowerCase();
-  if (normalized === 'failed') return 'error';
-  if (normalized === 'pending' || normalized === 'downloading' || normalized === 'paused' || normalized === 'completed' || normalized === 'error' || normalized === 'cancelled') {
-    return normalized;
-  }
-  return 'pending';
-};
 
 interface SnapshotIdentity {
   modelId?: string;
@@ -56,7 +47,6 @@ const toDownloadStatus = (
 
   return {
     id,
-    // Some UI elements still derive title from url; keep a human label here.
     url: identity.existing?.url || snapshot.filename,
     destination: identity.existing?.destination || snapshot.filename,
     state: toStoreState(snapshot.status),
@@ -75,164 +65,108 @@ const toDownloadStatus = (
   };
 };
 
-export function useDownloads() {
-  const [downloads, setDownloads] = useState<Map<string, TauriEvents.Downloads.StateSnapshot>>(new Map());
-  const [error, setError] = useState<string | null>(null);
-  const setStoreDownload = useDownloadStore((state) => state.setDownload);
-  const setStoreError = useDownloadStore((state) => state.setDownloadError);
-  const removeStoreDownload = useDownloadStore((state) => state.removeDownload);
 
+export function useDownloadsListener(): void {
   useEffect(() => {
     let mounted = true;
     let unlistenProgress: (() => void) | null = null;
     let unlistenFailed: (() => void) | null = null;
 
+    const setStoreDownload = useDownloadStore.getState().setDownload;
+    const setStoreError = useDownloadStore.getState().setDownloadError;
+    const removeStoreDownload = useDownloadStore.getState().removeDownload;
+    const setListenerError = useDownloadStore.getState().setListenerError;
+
     (async () => {
       try {
-        // Hydrate drawer with existing sessions so users can open it
-        // mid-download and still see current work.
         const existing = await VaultAPI.listDownloads();
         if (existing.ok && mounted) {
-          const seeded = new Map<string, TauriEvents.Downloads.StateSnapshot>();
-          const existingIds = new Set<string>();
+          const liveStoreKeys = new Set<string>();
           for (const item of existing.data) {
-            const status = toSnapshotState(item.state);
-            const snapshot: TauriEvents.Downloads.Single = {
-              kind: 'single',
-              id: item.id,
-              filename: item.destination.split(/[\\/]/).pop() ?? 'unknown',
-              bytesDownloaded: item.bytes_downloaded,
-              totalBytes: item.total_bytes,
-              bytesPerSecond: item.bytes_per_second,
-              percentage: item.percentage,
-              etaSeconds: item.eta_seconds,
-              status,
-            };
-            seeded.set(item.id, snapshot);
-            existingIds.add(item.id);
-            setStoreDownload(item.id, {
+            const filename = item.destination.split(/[\\/]/).pop() ?? 'unknown';
+            const storeKey = item.model_id
+              ? `${item.model_id}:${filename}`
+              : item.id;
+            liveStoreKeys.add(storeKey);
+            setStoreDownload(storeKey, {
               ...item,
               state: toStoreState(item.state),
             });
           }
-          // Remove stale entries not returned by backend.
+          // Drop any stale store entries the backend no longer reports.
           const storeDownloads = useDownloadStore.getState().downloads;
           for (const id of Array.from(storeDownloads.keys())) {
-            if (!existingIds.has(id)) {
+            if (!liveStoreKeys.has(id)) {
               removeStoreDownload(id);
             }
           }
-          setDownloads(seeded);
         }
 
-        // Listen for download progress events
         const unlistenProgressFn = await listenValidated(
           TauriEventNames.Downloads.Progress,
           EventSchemas.Downloads.StateSnapshot,
           (event: { payload: EventSchemas.Downloads.StateSnapshot }) => {
             if (!mounted) return;
-
             const snapshot = event.payload;
 
-            setDownloads((prev) => {
-              const next = new Map(prev);
-
-              // Update or add the snapshot
-              const id = snapshot.kind === 'single' ? snapshot.id : snapshot.id;
-              next.set(id, snapshot);
-
-               if (snapshot.kind === 'single') {
-                 const existing = useDownloadStore.getState().getDownload(snapshot.id);
-                 setStoreDownload(
-                   snapshot.id,
-                   toDownloadStatus(snapshot.id, snapshot, { existing })
-                 );
-               } else {
-                 // Represent batch snapshots as synthetic per-file entries in store
-                 for (const file of snapshot.files) {
-                   const syntheticId = `${snapshot.id}:${file.filename}`;
-                   const fileSnapshot: TauriEvents.Downloads.Single = {
-                     kind: 'single',
-                     id: syntheticId,
-                     filename: file.filename,
-                     bytesDownloaded: file.bytesDownloaded,
-                     totalBytes: file.totalBytes,
-                     bytesPerSecond: snapshot.aggregateBytesPerSecond,
-                     percentage: file.totalBytes > 0 ? (file.bytesDownloaded / file.totalBytes) * 100 : 0,
-                     etaSeconds: snapshot.aggregateEtaSeconds,
-                     status: file.status,
-                   };
-                   next.set(syntheticId, fileSnapshot);
-                   const existing = useDownloadStore.getState().getDownload(syntheticId);
-                   setStoreDownload(
-                     syntheticId,
-                     toDownloadStatus(syntheticId, fileSnapshot, {
-                       modelId: snapshot.id,
-                       modelName: snapshot.groupName,
-                       existing,
-                     })
-                   );
-                 }
-               }
-
-              // Remove completed downloads after 5 seconds
-              if (snapshot.status === 'completed') {
-                const batchPrefix = snapshot.kind === 'batch' ? `${snapshot.id}:` : null;
-                setTimeout(() => {
-                  if (mounted) {
-                    setDownloads((current) => {
-                      const updated = new Map(current);
-                      for (const key of Array.from(updated.keys())) {
-                        const isRoot = key === id;
-                        const isBatchChild = batchPrefix !== null && key.startsWith(batchPrefix);
-                        if (isRoot || isBatchChild) {
-                          updated.delete(key);
-                          removeStoreDownload(key);
-                        }
-                      }
-                      return updated;
-                    });
-                  }
-                }, 5000);
+            if (snapshot.kind === 'single') {
+              const existing = useDownloadStore.getState().getDownload(snapshot.id);
+              setStoreDownload(
+                snapshot.id,
+                toDownloadStatus(snapshot.id, snapshot, { existing })
+              );
+            } else {
+              for (const file of snapshot.files) {
+                const syntheticId = `${snapshot.id}:${file.filename}`;
+                const fileSnapshot: TauriEvents.Downloads.Single = {
+                  kind: 'single',
+                  id: syntheticId,
+                  filename: file.filename,
+                  bytesDownloaded: file.bytesDownloaded,
+                  totalBytes: file.totalBytes,
+                  bytesPerSecond: snapshot.aggregateBytesPerSecond,
+                  percentage:
+                    file.totalBytes > 0
+                      ? (file.bytesDownloaded / file.totalBytes) * 100
+                      : 0,
+                  etaSeconds: snapshot.aggregateEtaSeconds,
+                  status: file.status,
+                };
+                const existing = useDownloadStore.getState().getDownload(syntheticId);
+                setStoreDownload(
+                  syntheticId,
+                  toDownloadStatus(syntheticId, fileSnapshot, {
+                    modelId: snapshot.id,
+                    modelName: snapshot.groupName,
+                    existing,
+                  })
+                );
               }
-
-              return next;
-            });
+            }
           },
           (error: z.ZodError) => {
             if (!mounted) return;
-            console.error('[useDownloads] Validation error:', error.format());
-            setError('Invalid download event received from backend');
+            console.error('[useDownloadsListener] Validation error:', error.format());
+            setListenerError('Invalid download event received from backend');
           }
         );
 
-        // Listen for download failed events
         const unlistenFailedFn = await listenValidated(
           TauriEventNames.Downloads.Failed,
           EventSchemas.Downloads.Failed,
           (event: { payload: EventSchemas.Downloads.Failed }) => {
             if (!mounted) return;
-
             const { id, error: errorMsg } = event.payload;
-            console.error(`[useDownloads] Download ${id} failed:`, errorMsg);
-            setError(`Download failed: ${errorMsg}`);
+            console.error(`[useDownloadsListener] Download ${id} failed:`, errorMsg);
+            setListenerError(`Download failed: ${errorMsg}`);
             setStoreError(id, errorMsg);
-
-            // Remove the failed download from state after showing error
-            setTimeout(() => {
-              if (mounted) {
-                setDownloads((current) => {
-                  const updated = new Map(current);
-                  updated.delete(id);
-                  removeStoreDownload(id);
-                  return updated;
-                });
-              }
-            }, 10000); // Keep failed downloads visible for 10 seconds
+            // Failed entries persist in the store until either the user
+            // hits Retry or Remove, or the 24h cleanup runs. The drawer
+            // shows the error message + Retry button while it's there.
           },
           (error: z.ZodError) => {
             if (!mounted) return;
-            console.error('[useDownloads] Failed event validation error:', error.format());
+            console.error('[useDownloadsListener] Failed event validation error:', error.format());
           }
         );
 
@@ -240,14 +174,13 @@ export function useDownloads() {
           unlistenProgress = unlistenProgressFn;
           unlistenFailed = unlistenFailedFn;
         } else {
-          // Component unmounted before listeners were set up
           unlistenProgressFn();
           unlistenFailedFn();
         }
       } catch (err) {
         if (!mounted) return;
-        console.error('[useDownloads] Setup error:', err);
-        setError(err instanceof Error ? err.message : 'Failed to setup download listener');
+        console.error('[useDownloadsListener] Setup error:', err);
+        setListenerError(err instanceof Error ? err.message : 'Failed to setup download listener');
       }
     })();
 
@@ -257,133 +190,151 @@ export function useDownloads() {
       unlistenFailed?.();
     };
   }, []);
+}
 
-  const pauseDownload = useCallback(async (id: string): Promise<void> => {
-    const result = await VaultAPI.pauseDownload(id);
-    if (!result.ok) {
-      throw new Error(`Failed to pause download: ${result.error}`);
-    }
-  }, []);
+export function useDownloadActions() {
+  const removeStoreDownload = useDownloadStore((s) => s.removeDownload);
 
-  const resumeDownload = useCallback(async (id: string): Promise<void> => {
-    const result = await VaultAPI.resumeDownload(id);
-    if (!result.ok) {
-      throw new Error(`Failed to resume download: ${result.error}`);
-    }
-  }, []);
-
-  const cancelDownload = useCallback(async (id: string): Promise<void> => {
-    try {
-      const result = await VaultAPI.cancelDownload(id);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-    } catch (error) {
-      console.error('[useDownloads] Failed to cancel download:', error);
-      throw new Error(`Failed to cancel download: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, []);
-
-  const retryDownload = useCallback(async (id: string): Promise<void> => {
-    const result = await VaultAPI.retryDownload(id);
-    if (!result.ok) {
-      throw new Error(`Failed to retry download: ${result.error}`);
-    }
-  }, []);
-
-  const removeDownload = useCallback(async (id: string): Promise<void> => {
-    const backendId = id.includes(':') ? id.split(':')[0] : id;
-    const prefix = `${backendId}:`;
-    const removeFromUi = () => {
-      setDownloads((prev) => {
-        const next = new Map(prev);
-        for (const key of Array.from(next.keys())) {
-          if (key === backendId || key === id || key.startsWith(prefix)) {
-            next.delete(key);
-            removeStoreDownload(key);
-          }
-        }
-        return next;
-      });
-    };
-
-    const result = await VaultAPI.removeDownload(backendId);
-    if (result.ok) {
-      removeFromUi();
-      return;
-    }
-
-    // Idempotent UX: if backend already removed it, clear stale UI state anyway.
-    const err = (result.error || '').toLowerCase();
-    if (err.includes('not found') || err.includes('already removed')) {
-      removeFromUi();
-      return;
-    }
-
-    throw new Error(`Failed to remove download: ${result.error}`);
-  }, [removeStoreDownload]);
-
-  const clearCompletedDownloads = useCallback(async (): Promise<number> => {
-    const result = await VaultAPI.clearCompletedDownloads();
-    if (result.ok) {
-      setDownloads((prev) => {
-        const next = new Map(prev);
-        for (const [id, download] of prev.entries()) {
-          if (download.status === 'completed') {
-            next.delete(id);
-            removeStoreDownload(id);
-          }
-        }
-        return next;
-      });
-      return result.data;
-    } else {
-      throw new Error(`Failed to clear completed downloads: ${result.error}`);
-    }
-  }, []);
-
-  const fetchAllDownloads = useCallback(async (): Promise<void> => {
+  const resyncFromBackend = useCallback(async () => {
     const existing = await VaultAPI.listDownloads();
-    if (!existing.ok) {
-      throw new Error(existing.error);
-    }
-
-    const seeded = new Map<string, TauriEvents.Downloads.StateSnapshot>();
-    const existingIds = new Set<string>();
+    if (!existing.ok) return;
+    const setStoreDownload = useDownloadStore.getState().setDownload;
+    const liveStoreKeys = new Set<string>();
     for (const item of existing.data) {
-      const snapshot: TauriEvents.Downloads.Single = {
-        kind: 'single',
-        id: item.id,
-        filename: item.destination.split(/[\\/]/).pop() ?? 'unknown',
-        bytesDownloaded: item.bytes_downloaded,
-        totalBytes: item.total_bytes,
-        bytesPerSecond: item.bytes_per_second,
-        percentage: item.percentage,
-        etaSeconds: item.eta_seconds,
-        status: toSnapshotState(item.state),
-      };
-      seeded.set(item.id, snapshot);
-      existingIds.add(item.id);
-      setStoreDownload(item.id, {
+      const filename = item.destination.split(/[\\/]/).pop() ?? 'unknown';
+      const storeKey = item.model_id ? `${item.model_id}:${filename}` : item.id;
+      liveStoreKeys.add(storeKey);
+      setStoreDownload(storeKey, {
         ...item,
         state: toStoreState(item.state),
       });
     }
-    // Remove stale entries not returned by backend.
     const storeDownloads = useDownloadStore.getState().downloads;
     for (const id of Array.from(storeDownloads.keys())) {
-      if (!existingIds.has(id)) {
+      if (!liveStoreKeys.has(id)) {
         removeStoreDownload(id);
       }
     }
-    setDownloads(seeded);
-  }, [removeStoreDownload, setStoreDownload]);
+  }, [removeStoreDownload]);
 
-  const getDownload = useCallback((id: string): TauriEvents.Downloads.StateSnapshot | undefined => downloads.get(id), [downloads]);
+  const isStaleSessionError = (msg: string): boolean => {
+    const e = msg.toLowerCase();
+    return e.includes('not found') || e.includes('already removed');
+  };
+
+  const resolveBackendId = (storeKey: string): string => {
+    const row = useDownloadStore.getState().downloads.get(storeKey);
+    if (row) return row.id;
+    return storeKey.includes(':') ? storeKey.split(':')[0] : storeKey;
+  };
+
+  const pauseDownload = useCallback(
+    async (id: string): Promise<void> => {
+      const result = await VaultAPI.pauseDownload(resolveBackendId(id));
+      if (result.ok) return;
+      if (isStaleSessionError(result.error)) {
+        await resyncFromBackend();
+        return;
+      }
+      throw new Error(`Failed to pause download: ${result.error}`);
+    },
+    [resyncFromBackend]
+  );
+
+  const resumeDownload = useCallback(
+    async (id: string): Promise<void> => {
+      const result = await VaultAPI.resumeDownload(resolveBackendId(id));
+      if (result.ok) return;
+      if (isStaleSessionError(result.error)) {
+        await resyncFromBackend();
+        return;
+      }
+      throw new Error(`Failed to resume download: ${result.error}`);
+    },
+    [resyncFromBackend]
+  );
+
+  const cancelDownload = useCallback(
+    async (id: string): Promise<void> => {
+      const result = await VaultAPI.cancelDownload(resolveBackendId(id));
+      if (result.ok) return;
+      if (isStaleSessionError(result.error)) {
+        await resyncFromBackend();
+        return;
+      }
+      throw new Error(`Failed to cancel download: ${result.error}`);
+    },
+    [resyncFromBackend]
+  );
+
+  const retryDownload = useCallback(
+    async (id: string): Promise<void> => {
+      const result = await VaultAPI.retryDownload(resolveBackendId(id));
+      if (result.ok) return;
+      if (isStaleSessionError(result.error)) {
+        await resyncFromBackend();
+        return;
+      }
+      throw new Error(`Failed to retry download: ${result.error}`);
+    },
+    [resyncFromBackend]
+  );
+
+  const removeDownload = useCallback(
+    async (id: string): Promise<void> => {
+      const backendId = resolveBackendId(id);
+      const removeFromStore = () => {
+        removeStoreDownload(id);
+      };
+
+      const result = await VaultAPI.removeDownload(backendId);
+      if (result.ok) {
+        removeFromStore();
+        return;
+      }
+
+      if (isStaleSessionError(result.error)) {
+        removeFromStore();
+        return;
+      }
+
+      throw new Error(`Failed to remove download: ${result.error}`);
+    },
+    [removeStoreDownload]
+  );
+
+  const clearCompletedDownloads = useCallback(async (): Promise<number> => {
+    const result = await VaultAPI.clearCompletedDownloads();
+    if (!result.ok) throw new Error(`Failed to clear completed downloads: ${result.error}`);
+    const all = useDownloadStore.getState().downloads;
+    for (const [id, download] of all.entries()) {
+      if (download.state === 'Completed') removeStoreDownload(id);
+    }
+    return result.data;
+  }, [removeStoreDownload]);
+
+  const fetchAllDownloads = useCallback(async (): Promise<void> => {
+    const existing = await VaultAPI.listDownloads();
+    if (!existing.ok) throw new Error(existing.error);
+
+    const setStoreDownload = useDownloadStore.getState().setDownload;
+    const liveStoreKeys = new Set<string>();
+    for (const item of existing.data) {
+      const filename = item.destination.split(/[\\/]/).pop() ?? 'unknown';
+      const storeKey = item.model_id ? `${item.model_id}:${filename}` : item.id;
+      liveStoreKeys.add(storeKey);
+      setStoreDownload(storeKey, {
+        ...item,
+        state: toStoreState(item.state),
+      });
+    }
+    const storeDownloads = useDownloadStore.getState().downloads;
+    for (const id of Array.from(storeDownloads.keys())) {
+      if (!liveStoreKeys.has(id)) removeStoreDownload(id);
+    }
+  }, [removeStoreDownload]);
 
   return {
-    downloads: Array.from(downloads.values()),
-    error,
     pauseDownload,
     resumeDownload,
     cancelDownload,
@@ -391,6 +342,5 @@ export function useDownloads() {
     removeDownload,
     clearCompletedDownloads,
     fetchAllDownloads,
-    getDownload,
   };
 }

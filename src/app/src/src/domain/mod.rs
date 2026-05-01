@@ -123,7 +123,8 @@ pub use error::DomainError;
 
 // Re-export embedding defaults
 pub use embedding_constants::{
-    DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
+    DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_CURATED_ID,
+    DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
 
 // ============================================================================

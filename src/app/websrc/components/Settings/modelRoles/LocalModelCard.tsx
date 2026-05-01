@@ -53,12 +53,33 @@ export function LocalModelCard({ model }: Props) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isWarming, setIsWarming] = useState(false);
 
+  // Warm up whichever roles this model is currently active for. Each
+  // role has its own LLM cache on the backend (chat / utility), so a
+  // single model can be active in two slots and needs both warmed.
+  // Run sequentially -- a single GGUF can't load twice in parallel
+  // without thrashing memory.
   const handleWarmUp = async () => {
     setIsWarming(true);
     try {
-      const result = await VaultAPI.warmUpActiveChatModel();
-      if (!result.ok) throw new Error(result.error);
-      toast.success(`${model.model_name} warmed up`, {
+      const targets: Array<{ label: string; call: () => Promise<{ ok: boolean; error?: string }> }> = [];
+      if (model.is_active_for_chat) {
+        targets.push({ label: 'chat', call: VaultAPI.warmUpActiveChatModel });
+      }
+      if (model.is_active_for_utility) {
+        targets.push({ label: 'utility', call: VaultAPI.warmUpActiveUtilityModel });
+      }
+      if (targets.length === 0) {
+        toast.error('No active role to warm up', {
+          message: 'Assign this model to chat or utility first.',
+        });
+        return;
+      }
+      for (const target of targets) {
+        const result = await target.call();
+        if (!result.ok) throw new Error(`${target.label}: ${result.error}`);
+      }
+      const roleSummary = targets.map((t) => t.label).join(' + ');
+      toast.success(`${model.model_name} warmed up (${roleSummary})`, {
         message: 'Loaded into memory and ready for fast first response.',
       });
     } catch (error) {
@@ -130,7 +151,7 @@ export function LocalModelCard({ model }: Props) {
               ))}
             </div>
             <div className="flex items-center justify-end gap-1">
-              {model.is_active_for_chat && (
+              {(model.is_active_for_chat || model.is_active_for_utility) && (
                 <Button
                   variant="ghost"
                   size="sm"

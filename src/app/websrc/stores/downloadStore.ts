@@ -9,6 +9,8 @@ interface DownloadStore {
   downloads: Map<string, DownloadStatus>;
   activeDownloads: Set<string>;
   isDrawerOpen: boolean;
+  listenerError: string | null;
+  setListenerError: (error: string | null) => void;
 
   setDownload: (id: string, status: DownloadStatus) => void;
   updateDownloadProgress: (
@@ -44,6 +46,8 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
   downloads: new Map(),
   activeDownloads: new Set(),
   isDrawerOpen: false,
+  listenerError: null,
+  setListenerError: (error) => set({ listenerError: error }),
 
   setDownload: (id, status) => {
     console.log('[downloadStore] setDownload called:', id, 'model_id:', status.model_id, 'state:', status.state, 'url:', status.url);

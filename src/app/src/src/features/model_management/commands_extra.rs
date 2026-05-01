@@ -18,7 +18,7 @@ use crate::features::model_management::use_cases::{
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
     SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase, SetActiveUtilityModelUseCase,
 };
-use crate::domain::downloaded_model::{DownloadedModel, ModelBackend, ModelType};
+use crate::domain::downloaded_model::{DownloadedModel, ModelLocation, ModelType};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::interfaces::di::Container;
@@ -57,11 +57,20 @@ pub struct DownloadedModelResponse {
 
 impl From<DownloadedModel> for DownloadedModelResponse {
     fn from(model: DownloadedModel) -> Self {
+        let file_path = model
+            .loadable_path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let backend = if model.location().is_local() {
+            "local"
+        } else {
+            "ollama"
+        };
         Self {
             id: model.id().to_string(),
             model_name: model.model_name().to_string(),
             model_id: model.model_id().to_string(),
-            file_path: model.file_path().to_string_lossy().to_string(),
+            file_path,
             file_size_bytes: model.file_size_bytes(),
             model_type: model.model_type().to_db_string().to_string(),
             downloaded_at: model.downloaded_at().to_rfc3339(),
@@ -70,7 +79,7 @@ impl From<DownloadedModel> for DownloadedModelResponse {
             is_active_for_chat: model.is_active_for_chat(),
             is_active_for_embedding: model.is_active_for_embedding(),
             is_active_for_utility: model.is_active_for_utility(),
-            backend: model.backend().as_db_str().to_string(),
+            backend: backend.to_string(),
             metadata: model.metadata().cloned(),
         }
     }
@@ -306,11 +315,16 @@ async fn sync_external_model_directories(
             "path": candidate.file_path.to_string_lossy().to_string(),
         });
 
+        // External imports always come in as a single weight file —
+        // we don't recursively scan into config.json/tokenizer.json
+        // siblings here, so this is always a LocalFile artifact.
         let external_model = DownloadedModel::from_db(
             uuid::Uuid::new_v4().to_string(),
             model_name,
             model_id.clone(),
-            candidate.file_path,
+            ModelLocation::LocalFile {
+                path: candidate.file_path,
+            },
             candidate.file_size_bytes,
             model_type,
             architecture,
@@ -320,7 +334,6 @@ async fn sync_external_model_directories(
             false,
             false,
             Some(metadata),
-            ModelBackend::Local,
             false,
         );
 
@@ -340,7 +353,13 @@ async fn sync_external_model_directories(
         }
 
         let still_discovered = discovered_model_ids.contains(model.model_id());
-        let file_exists = model.file_path().exists() && model.file_path().is_file();
+        // External rows are always LocalFile (see external_model
+        // construction above). loadable_path() returns the file path;
+        // we re-check existence on disk to detect manual deletion.
+        let file_exists = model
+            .loadable_path()
+            .map(|p| p.exists() && p.is_file())
+            .unwrap_or(false);
         if still_discovered && file_exists {
             continue;
         }
@@ -811,6 +830,47 @@ pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(),
     Ok(())
 }
 
+/// Warm up the currently active utility model.
+///
+/// Utility models (HyDE expansion, intent routing, follow-up classifier)
+/// pay the same cold-start cost as chat models on first use — a 9B GGUF
+/// can take 60-120s to mmap + bind on CPU. Calling this from the UI
+/// pays that cost up-front (with a visible "loading" state) so the
+/// user's first chat turn doesn't carry it.
+///
+/// Returns `Ok(())` even when no utility model is configured — the
+/// runtime falls back to the chat LLM in that case, so there's nothing
+/// to warm up. Returns `Err` only when a model IS configured but fails
+/// to load.
+pub async fn warm_up_active_utility_model_impl(container: &Container) -> Result<(), String> {
+    let security_arc = Arc::clone(container.security_context());
+    let rate_limiters = security_arc.rate_limiters();
+
+    rate_limiters
+        .model_management
+        .check_rate_limit("model_management")
+        .await
+        .map_err(|e| format!("Rate limit exceeded: {}", e))?;
+
+    let start = Instant::now();
+    match container.get_or_load_utility_llm().await {
+        Ok(Some(_llm)) => {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            info!(elapsed_ms, "Active utility model warmed up");
+            Ok(())
+        }
+        Ok(None) => {
+            // No utility model is configured. Not an error — the runtime
+            // falls back to the chat LLM. Surface a friendly message in
+            // logs but treat as success so the UI doesn't toast errors
+            // for users who haven't picked a utility model.
+            info!("No active utility model configured; warmup is a no-op");
+            Ok(())
+        }
+        Err(error) => Err(format!("Failed to warm up active utility model: {}", error)),
+    }
+}
+
 /// Set the active utility model.
 ///
 /// Utility = HyDE expansion / router / intent classification — a chat-style
@@ -852,10 +912,11 @@ pub async fn set_active_utility_model_impl(
             .await
             .ok();
 
-            // Utility shares the LLM resolution path with chat, so invalidate the
-            // LLM cache to force re-resolution on next HyDE/router invocation.
-            container.invalidate_llm_cache();
-            info!("LLM cache invalidated - utility role updated");
+            // The utility LLM has its own cache (distinct from chat).
+            // Invalidate so the next HyDE/router call rebuilds against
+            // the newly-active model.
+            container.invalidate_utility_llm_cache();
+            info!("Utility LLM cache invalidated - utility role updated");
             Ok(())
         }
         Err(e) => {
@@ -901,8 +962,8 @@ pub async fn clear_active_utility_model_impl(container: &Container) -> Result<()
             .await
             .ok();
 
-            container.invalidate_llm_cache();
-            info!("LLM cache invalidated after clearing utility model");
+            container.invalidate_utility_llm_cache();
+            info!("Utility LLM cache invalidated after clearing utility model");
             Ok(())
         }
         Err(e) => {

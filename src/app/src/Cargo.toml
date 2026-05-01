@@ -65,7 +65,12 @@ chrono = { version = "0.4", features = ["serde"] }
 # reranker inference, with the bundled llama-server sidecar handling
 # the chat LLM. ~50MB removed from the binary; no more two-allocator
 # split between ORT's C++ runtime and Candle's pure-Rust runtime.
-tokenizers = "0.15"
+# Drop tokenizers' default features to avoid `esaxx_fast`, which builds esaxx-rs
+# with `.static_crt(true)` (/MT). That collides with cxx/usearch using /MD on
+# Windows MSVC and the linker fails with LNK1319 "RuntimeLibrary mismatch".
+# `esaxx_fast` is a SentencePiece training optimization we don't use — we only
+# run pretrained tokenizers for inference.
+tokenizers = { version = "0.15", default-features = false, features = ["progressbar", "onig"] }
 ndarray = "0.16.1"
 anyhow = "1.0"
 thiserror = "1.0"

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Sparkles, CheckCircle, XCircle } from 'lucide-react';
 
-import { useDownloads } from '../../hooks/useDownloads';
+import { useDownloadStore } from '../../stores/downloadStore';
 import { getErrorMessage } from '../../lib/errorUtils';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/button';
@@ -51,7 +51,10 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
   const [error, setError] = useState<string | null>(null);
   const [modelInfo, setModelInfo] = useState<FirstRunStatusResponse | null>(null);
 
-  const { getDownload } = useDownloads();
+  // Subscribe to the specific download by id. The listener (mounted in
+  // App.tsx) writes updates into the store; this selector re-renders us
+  // when the relevant entry changes.
+  const download = useDownloadStore((s) => (downloadId ? s.downloads.get(downloadId) ?? null : null));
 
   useEffect(() => {
     if (open) {
@@ -103,30 +106,28 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
     onComplete();
   };
 
-  const download = downloadId ? getDownload(downloadId) : null;
-
   useEffect(() => {
-    if (download?.status === 'completed') {
+    if (download?.state === 'Completed') {
       setDownloading(false);
       toast.success('Model downloaded successfully!', {
         message: 'Your embedding model is ready to use.',
       });
       onOpenChange(false);
       onComplete();
-    } else if (download?.status === 'error') {
+    } else if (download?.state === 'Failed') {
       setDownloading(false);
-      setError('Download failed');
+      setError(download.error_message || 'Download failed');
       toast.error('Download failed', {
-        message: 'An error occurred during download',
+        message: download.error_message || 'An error occurred during download',
       });
     }
-  }, [download]);
+  }, [download, onOpenChange, onComplete]);
 
-  const progressPercentage = download?.kind === 'single' && download.totalBytes && download.totalBytes > 0
-    ? (download.bytesDownloaded / download.totalBytes) * 100
-    : download?.kind === 'batch' && download.aggregateTotalBytes > 0
-      ? download.aggregatePercentage
-      : 0;
+  const progressPercentage =
+    download?.percentage ??
+    (download && download.total_bytes && download.total_bytes > 0
+      ? (download.bytes_downloaded / download.total_bytes) * 100
+      : 0);
 
   if (!modelInfo) {
     return null;
@@ -195,7 +196,7 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
             </>
           )}
 
-          {downloading && download?.kind === 'single' && (
+          {downloading && download && (
             <div className="space-y-3">
               <div className="bg-[hsl(var(--accent-muted))] dark:bg-[hsl(var(--accent-muted))] p-4 rounded-lg border border-[hsl(var(--accent))] dark:border-[hsl(var(--accent))]">
                 <div className="flex items-start gap-3">
@@ -205,41 +206,14 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
                       Downloading Model
                     </h3>
                     <p className="text-xs text-[hsl(var(--text-secondary))] mb-3">
-                      {formatFileSize(download.bytesDownloaded)} of {formatFileSize(download.totalBytes || 0)}
+                      {formatFileSize(download.bytes_downloaded)} of {formatFileSize(download.total_bytes || 0)}
                     </p>
                     <Progress value={progressPercentage} className="h-2" />
                     <div className="flex items-center justify-between mt-2 text-xs text-[hsl(var(--text-tertiary))]">
                       <span>{progressPercentage.toFixed(1)}%</span>
                       <span>
-                        {download.bytesPerSecond > 0
-                          ? `${formatFileSize(download.bytesPerSecond)}/s`
-                          : 'Calculating...'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {downloading && download?.kind === 'batch' && (
-            <div className="space-y-3">
-              <div className="bg-[hsl(var(--accent-muted))] dark:bg-[hsl(var(--accent-muted))] p-4 rounded-lg border border-[hsl(var(--accent))] dark:border-[hsl(var(--accent))]">
-                <div className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-[hsl(var(--accent))] dark:text-[hsl(var(--accent))] mt-0.5" />
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-sm text-[hsl(var(--text-primary))] mb-1">
-                      Downloading Model Files
-                    </h3>
-                    <p className="text-xs text-[hsl(var(--text-secondary))] mb-3">
-                      {download.completedFiles} of {download.totalFiles} files • {formatFileSize(download.aggregateBytesDownloaded)} of {formatFileSize(download.aggregateTotalBytes)}
-                    </p>
-                    <Progress value={progressPercentage} className="h-2" />
-                    <div className="flex items-center justify-between mt-2 text-xs text-[hsl(var(--text-tertiary))]">
-                      <span>{progressPercentage.toFixed(1)}%</span>
-                      <span>
-                        {download.aggregateBytesPerSecond > 0
-                          ? `${formatFileSize(download.aggregateBytesPerSecond)}/s`
+                        {download.bytes_per_second > 0
+                          ? `${formatFileSize(download.bytes_per_second)}/s`
                           : 'Calculating...'}
                       </span>
                     </div>

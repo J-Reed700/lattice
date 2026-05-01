@@ -10,7 +10,7 @@ import { TooltipProvider } from './components/ui';
 import { ErrorProvider , useError } from './contexts/ErrorContext';
 import { useApplyTheme } from './hooks/useApplyTheme';
 import { useDownloadedModels } from './hooks/useDownloadedModels';
-import { useDownloads } from './hooks/useDownloads';
+import { useDownloadsListener } from './hooks/useDownloads';
 import { useProgressCleanup } from './hooks/useProgressCleanup';
 import VaultAPI from './lib/api';
 import { router } from './routes';
@@ -35,8 +35,9 @@ function App() {
   // Periodic cleanup for progress store (prevents memory leaks)
   useProgressCleanup();
 
-  // Initialize download event listeners
-  useDownloads();
+  // Initialize the single global download IPC listener. Must NOT be
+  // called from any other component or every event will apply twice.
+  useDownloadsListener();
 
   // Initialize downloaded models event listeners (always-on for toast notifications)
   useDownloadedModels();

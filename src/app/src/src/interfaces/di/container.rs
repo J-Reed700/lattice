@@ -250,6 +250,9 @@ pub struct Container {
     /// Router LLM cache (optional smaller routing model)
     router_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
 
+    /// Utility LLM cache (HyDE expansion, intent routing, follow-up)
+    utility_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
+
     /// Producer half of the conversation command channel. Cloneable;
     /// chat.rs sends `SummaryRefreshRequested` here. Backpressured
     /// mpsc rather than broadcast because this is a 1-to-1 command
@@ -469,6 +472,7 @@ impl Container {
         let embedding_cache = Arc::new(RwLock::new(None));
         let llm_cache = Arc::new(RwLock::new(None));
         let router_llm_cache = Arc::new(RwLock::new(None));
+        let utility_llm_cache = Arc::new(RwLock::new(None));
         // Capacity 32: well above the natural per-second rate of chat
         // turns. Provides slack if the saga briefly lags during summary
         // generation; backpressure kicks in only if the user blasts
@@ -589,11 +593,7 @@ impl Container {
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
 
-        // === Settings side effects (audit P0-3) ===
-        // Built here, after AI module + function_executor exist,
-        // so Update/Reset settings use cases (constructed fresh on
-        // each access via `*_settings_use_case()` getters) can
-        // invalidate the right caches. See ContainerSettingsSideEffects.
+
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
             Arc::new(ContainerSettingsSideEffects {
                 llm_cache: ai.llm_cache().clone(),
@@ -614,6 +614,7 @@ impl Container {
             function_registry,
             function_executor,
             router_llm_cache,
+            utility_llm_cache,
             conversation_command_tx,
             conversation_command_rx,
             embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
@@ -794,7 +795,10 @@ impl Container {
             return Err(AppError::InvalidConfig(reason));
         }
 
-        let model_path = model.file_path().clone();
+        let model_path = match model.loadable_path() {
+            Some(p) => p.to_path_buf(),
+            None => return Ok(None),
+        };
         if !model_path.exists() {
             return Ok(None);
         }
@@ -821,6 +825,157 @@ impl Container {
                 model.model_name(),
                 e
             ))),
+        }
+    }
+
+    /// Get the utility LLM if one is configured.
+    pub async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
+
+        let active = match self
+            .ai
+            .downloaded_model_repo()
+            .get_active_utility_model()
+            .await
+        {
+            Ok(Some(m)) => m,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to query active utility model — falling back to chat LLM"
+                );
+                return Ok(None);
+            }
+        };
+
+        let settings = self
+            .system
+            .get_settings_use_case()
+            .execute()
+            .await
+            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
+
+
+        let generation_config = crate::llm::GenerationConfig {
+            temperature: settings.llm.temperature,
+            top_p: settings.llm.top_p,
+            top_k: settings.llm.top_k,
+            max_tokens: 512,
+            repeat_penalty: settings.llm.repeat_penalty,
+        };
+
+        let ollama_utility_tag = {
+            let utility = settings.llm.ollama_utility_model.trim();
+            if utility.is_empty() {
+                settings.llm.model.clone()
+            } else {
+                utility.to_string()
+            }
+        };
+
+        let cache_key = if active.location().is_local() {
+            active.model_id().to_string()
+        } else {
+            format!("{}::{}", active.model_id(), ollama_utility_tag)
+        };
+
+        // Fast path: return cached LLM if cache key matches.
+        {
+            let cache = Self::recover_read_lock(self.utility_llm_cache.read());
+            if let Some((cached_model, cached_llm)) = cache.as_ref() {
+                if cached_model == &cache_key {
+                    return Ok(Some(Arc::clone(cached_llm)));
+                }
+            }
+        }
+
+        let llm_result = if active.location().is_local() {
+            self.load_utility_local(&active, generation_config).await
+        } else {
+            self.try_load_ollama_with_model(&settings.llm, &ollama_utility_tag, generation_config)
+                .await
+                .map(Some)
+                .or_else(|e| {
+                    tracing::warn!(
+                        model_id = %active.model_id(),
+                        ollama_tag = %ollama_utility_tag,
+                        error = %e,
+                        "Failed to reach Ollama for utility role — falling back to chat LLM"
+                    );
+                    Ok(None)
+                })
+        };
+
+        let llm = match llm_result? {
+            Some(llm) => llm,
+            None => return Ok(None),
+        };
+
+        {
+            let mut cache = Self::recover_write_lock(self.utility_llm_cache.write());
+            *cache = Some((cache_key, Arc::clone(&llm)));
+        }
+
+        Ok(Some(llm))
+    }
+
+    async fn load_utility_local(
+        &self,
+        active: &crate::domain::DownloadedModel,
+        generation_config: crate::llm::GenerationConfig,
+    ) -> Result<Option<Arc<dyn LLMPort>>> {
+        let model_id = active.model_id();
+        let model_path = match active.loadable_path() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                tracing::warn!(
+                    model_id = %model_id,
+                    "Active utility model has no loadable path — skipping"
+                );
+                return Ok(None);
+            }
+        };
+        if !model_path.exists() {
+            tracing::warn!(
+                model_id = %model_id,
+                path = %model_path.display(),
+                "Active utility model artifact missing on disk — falling back to chat LLM"
+            );
+            return Ok(None);
+        }
+
+        let llm_config = crate::infrastructure::llm::factory::LLMConfig::Local {
+            model_path: model_path.clone(),
+            n_gpu_layers: -1,
+            generation_config,
+            app_handle: self.app_handle(),
+        };
+
+        tracing::info!(
+            model_id = %model_id,
+            path = %model_path.display(),
+            "Loading utility LLM"
+        );
+
+        match crate::infrastructure::llm::factory::create_llm(llm_config).await {
+            Ok(llm) => Ok(Some(llm)),
+            Err(e) => {
+                tracing::warn!(
+                    model_id = %model_id,
+                    error = %e,
+                    "Failed to load utility LLM — falling back to chat LLM"
+                );
+                Ok(None)
+            }
+        }
+    }
+
+
+    pub fn invalidate_utility_llm_cache(&self) {
+        let mut cache = Self::recover_write_lock(self.utility_llm_cache.write());
+        if cache.is_some() {
+            *cache = None;
+            tracing::debug!("Utility LLM cache invalidated");
         }
     }
 
@@ -920,12 +1075,14 @@ impl Container {
             active_model.model_id()
         );
 
-        // Validate the model file exists
-        let model_path = active_model.file_path().clone();
+        let model_path = match active_model.loadable_path() {
+            Some(p) => p.to_path_buf(),
+            None => return Ok(None),
+        };
 
         if !model_path.exists() {
             tracing::warn!(
-                "Active model file not found: {} - user may have deleted it manually",
+                "Active model artifact not found: {} - user may have deleted it manually",
                 model_path.display()
             );
             return Ok(None);
@@ -1330,20 +1487,20 @@ impl Container {
             active_model.model_id()
         );
 
-        // Validate the model file exists
-        let model_path = active_model.file_path().clone();
+
+        let model_path = match active_model.loadable_path() {
+            Some(p) => p.to_path_buf(),
+            None => return Ok(None),
+        };
 
         if !model_path.exists() {
             tracing::warn!(
-                "Active embedding model file not found: {} - user may have deleted it manually",
+                "Active embedding model artifact not found: {} - user may have deleted it manually",
                 model_path.display()
             );
             return Ok(None);
         }
 
-        // SECURITY FIX (CWE-22): Validate path before loading to prevent path traversal
-        // This protects against malicious paths injected into the database (e.g., ../../etc/passwd)
-        // Get the models directory from the path itself (parent directory)
         let models_dir = model_path
             .parent()
             .ok_or_else(|| AppError::Security("Model path has no parent directory".into()))?
@@ -1369,34 +1526,13 @@ impl Container {
             }
         };
 
-        // Candle loads weights from a directory (config.json + tokenizer.json
-        // + model.safetensors live as siblings). Resolve the parent of the
-        // validated weight path.
-        let model_dir = validated_path
-            .parent()
-            .ok_or_else(|| {
-                AppError::ModelLoadFailed(format!(
-                    "validated model path has no parent directory: {}",
-                    validated_path.display()
-                ))
-            })?
-            .to_path_buf();
 
-        // Reject legacy ONNX downloads with a clear message. The ONNX runtime
-        // was removed in this release; users with legacy downloads need to
-        // re-download in safetensors format.
-        if validated_path.extension().and_then(|s| s.to_str()) == Some("onnx") {
-            tracing::error!(
-                "Active embedding model is a legacy ONNX download: {}",
-                validated_path.display()
-            );
-            return Err(AppError::ModelLoadFailed(format!(
-                "Embedding model '{}' was downloaded as ONNX, which is no longer supported. \
-                 Delete and re-download it from Settings → Models — the new download will use \
-                 the Candle-compatible safetensors format.",
+        let model_dir = active_model.location().enclosing_dir().ok_or_else(|| {
+            AppError::ModelLoadFailed(format!(
+                "Active embedding model {} has no enclosing directory (remote-hosted?)",
                 active_model.model_name()
-            )));
-        }
+            ))
+        })?;
 
         tracing::info!(
             "Loading Candle embedding model from validated dir: {}",
@@ -1408,10 +1544,6 @@ impl Container {
                 let expected_dim = self.search.vector_search().dimension();
                 let actual_dim = service.dimension();
                 if actual_dim != expected_dim {
-                    // The dimension-metadata sidecar (step 5) wipes the index
-                    // on switch, but we still hit this branch on first load
-                    // before the wipe propagates. Treat it as a hard error
-                    // here — the next app start picks up the new dimension.
                     tracing::error!(
                         "Embedding dimension mismatch: model '{}' produces {}-dim vectors \
                          but the vector index expects {}-dim. Restart the app to rebuild \
@@ -1453,13 +1585,7 @@ impl Container {
         }
     }
 
-    /// Load embedding service with fallback strategy
-    ///
-    /// Strategy:
-    /// 1. Try active embedding model from models DB table (ONNX)
-    /// 2. Fallback to Mock implementation
-    ///
-    /// This method NEVER panics - it always returns a working embedding service (even if degraded Mock)
+
     async fn load_embedding_with_fallback(&self) -> Result<Arc<dyn EmbeddingPort>> {
         use crate::application::ports::MockEmbeddingPort;
 
@@ -1474,8 +1600,6 @@ impl Container {
                 tracing::debug!("No active embedding model available, using mock...");
             }
             Err(e @ AppError::ModelLoadFailed(_)) => {
-                // Do not silently degrade when the user has explicitly selected an active model
-                // but loading it fails. Surface this so UI can show actionable error details.
                 return Err(e);
             }
             Err(e) => {
@@ -1499,12 +1623,6 @@ impl Container {
     }
 
     /// Get LLM service with lazy loading
-    ///
-    /// This is an async wrapper that should replace direct llm_service() calls.
-    /// For commands that need LLM, use container.get_or_load_llm().await instead.
-    ///
-    /// Note: This method is kept for backward compatibility but will be removed.
-    /// Use get_or_load_llm() for new code.
     #[deprecated(note = "Use get_or_load_llm().await instead")]
     pub async fn llm_service(&self) -> Result<Arc<dyn LLMPort>> {
         self.get_or_load_llm().await

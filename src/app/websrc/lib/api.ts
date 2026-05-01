@@ -158,6 +158,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   is_model_already_downloaded: { domain: 'model', command: 'is_model_already_downloaded' },
   set_active_chat_model: { domain: 'model', command: 'set_active_chat_model' },
   warm_up_active_chat_model: { domain: 'model', command: 'warm_up_active_chat_model' },
+  warm_up_active_utility_model: { domain: 'model', command: 'warm_up_active_utility_model' },
   get_active_chat_model: { domain: 'model', command: 'get_active_chat_model' },
   get_active_models: { domain: 'model', command: 'get_active_models' },
   delete_downloaded_model_and_file: { domain: 'model', command: 'delete_model' },
@@ -3147,6 +3148,17 @@ const VaultAPI = {
    */
   warmUpActiveChatModel: async (): Promise<ApiResult<void>> =>
     apiCall<void>('warm_up_active_chat_model'),
+
+  /**
+   * Eagerly load the currently active utility model into memory.
+   *
+   * Utility models (HyDE expansion, intent routing, follow-up classifier)
+   * pay a 60-120s cold-start cost on first use. Calling this from the
+   * UI pays that cost up-front so the user's first chat turn doesn't
+   * carry it. No-op (returns Ok) when no utility model is configured.
+   */
+  warmUpActiveUtilityModel: async (): Promise<ApiResult<void>> =>
+    apiCall<void>('warm_up_active_utility_model'),
 
   /**
    * Gets the currently active chat model.

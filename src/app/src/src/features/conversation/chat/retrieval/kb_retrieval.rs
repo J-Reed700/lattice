@@ -73,9 +73,17 @@ pub(super) async fn run_kb_retrieval(
             timings,
         };
     }
+    
+    let hyde_llm: Arc<dyn crate::application::ports::LLMPort> = match container
+        .get_or_load_utility_llm()
+        .await
+    {
+        Ok(Some(util)) => util,
+        _ => Arc::clone(llm),
+    };
 
     let hyde_interpretation_start = Instant::now();
-    let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(llm));
+    let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(hyde_llm);
     let hyde_context =
         super::build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
     let interpretation = hyde_service

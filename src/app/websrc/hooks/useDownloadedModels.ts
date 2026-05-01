@@ -85,6 +85,18 @@ export const useDownloadedModels = () => {
     }
   }, []);
 
+  const warmUpActiveUtilityModel = useCallback(async (): Promise<void> => {
+    try {
+      const result = await VaultAPI.warmUpActiveUtilityModel();
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error('[useDownloadedModels] Failed to warm up active utility model:', error);
+      throw new Error(`Failed to warm up active utility model: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, []);
+
   const deleteDownloadedModel = useCallback(async (id: string, deleteFile = true): Promise<void> => {
     try {
       const result = await VaultAPI.deleteDownloadedModel(id, deleteFile);
@@ -265,6 +277,7 @@ export const useDownloadedModels = () => {
     isModelDownloaded,
     setActiveChatModel,
     warmUpActiveChatModel,
+    warmUpActiveUtilityModel,
     setActiveEmbeddingModel: setActiveEmbeddingModelById,
     setActiveUtilityModel,
     clearActiveUtilityModel,

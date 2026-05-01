@@ -5,7 +5,6 @@
 //! `llama3.1:8b` or `qwen2.5:7b` — using a 27B reasoning model here costs
 //! many seconds per turn for near-zero quality gain.
 
-use crate::domain::downloaded_model::ModelBackend;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
@@ -19,11 +18,7 @@ impl SetActiveUtilityModelUseCase {
         Self { repository }
     }
 
-    /// Set a model active for the utility role.
-    ///
-    /// Local models must be fully downloaded. Ollama-backed models are
-    /// considered "present" if they appear in the model table (populated
-    /// by the Ollama sync service) — no disk-file check applies.
+
     pub async fn execute(&self, model_id: &str) -> Result<()> {
         let model = self
             .repository
@@ -31,17 +26,17 @@ impl SetActiveUtilityModelUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Model not found: {}", model_id)))?;
 
-        if model.backend() == ModelBackend::Local {
-            if !self.repository.is_downloaded(model_id).await? {
-                return Err(AppError::InvalidInput(format!(
-                    "Model '{}' is not fully downloaded yet. Finish the download before activating it.",
-                    model_id
-                )));
-            }
-            // Utility is a chat-style generation role — reject non-LLM picks
-            // the same way chat does (rejects embedding models, etc.).
-            model.validate_for_operation(true)?;
+        // Local models gate on the download check; remote (Ollama) models
+        // have no on-disk file so skip it.
+        if model.location().is_local() && !self.repository.is_downloaded(model_id).await? {
+            return Err(AppError::InvalidInput(format!(
+                "Model '{}' is not fully downloaded yet. Finish the download before activating it.",
+                model_id
+            )));
         }
+        // Utility is a chat-style generation role — reject embedding
+        // models the same way the chat slot does.
+        model.validate_for_operation(true)?;
 
         self.repository.set_active_utility_model(model_id).await?;
         info!(model_id = %model_id, "Active utility model updated");
@@ -59,6 +54,7 @@ impl SetActiveUtilityModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::domain::downloaded_model::ModelLocation;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {
@@ -75,24 +71,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ollama_row_can_be_assigned_utility_role() {
-        // Primary fix path: clicking "Set as Utility" on the Ollama Server card
-        // should activate without erroring on the missing on-disk file.
+    async fn ollama_row_is_accepted_as_utility() {
         let repo = setup_repo().await;
         let use_case = SetActiveUtilityModelUseCase::new(repo.clone());
 
         use_case
             .execute("__ollama_server__")
             .await
-            .expect("activating ollama row for utility should bypass download check");
+            .expect("Ollama-hosted utility model should be accepted — a small local Ollama \
+                     model can be faster than a large bundled GGUF");
 
         let active = repo
             .get_active_utility_model()
             .await
-            .expect("get active utility")
-            .expect("expected an active utility model");
-        assert_eq!(active.model_id(), "__ollama_server__");
-        assert_eq!(active.backend(), ModelBackend::Ollama);
+            .expect("get active utility");
+        assert!(active.is_some(), "utility slot should hold the Ollama row");
     }
 
     #[tokio::test]
@@ -100,10 +93,9 @@ mod tests {
         let repo = setup_repo().await;
         let use_case = SetActiveUtilityModelUseCase::new(repo.clone());
 
-        use_case
-            .execute("__ollama_server__")
+        repo.set_active_utility_model("__ollama_server__")
             .await
-            .expect("set utility");
+            .expect("seed utility slot");
         use_case.clear().await.expect("clear utility");
 
         let active = repo

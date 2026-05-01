@@ -24,7 +24,9 @@
 //! }
 //! ```
 
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME;
+use crate::domain::embedding_constants::{
+    DEFAULT_EMBEDDING_MODEL_CURATED_ID, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME,
+};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::Result;
 use serde::{Deserialize, Serialize};
@@ -106,7 +108,9 @@ impl CheckFirstRunStatusUseCase {
 
         FirstRunStatusResponse {
             needs_setup: true,
-            recommended_model_id: Some(DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.to_string()),
+            // The id is the curated catalog key (lowercased), not the
+            // display name — the download use case looks up by id.
+            recommended_model_id: Some(DEFAULT_EMBEDDING_MODEL_CURATED_ID.to_string()),
             recommended_model_name: Some(format!(
                 "{} (Embedding Model)",
                 DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME
@@ -124,7 +128,7 @@ impl CheckFirstRunStatusUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::domain::downloaded_model::{DownloadedModel, ModelBackend};
+    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {
@@ -145,11 +149,12 @@ mod tests {
             uuid::Uuid::new_v4().to_string(),
             format!("Embed {}", model_id),
             model_id.to_string(),
-            std::path::PathBuf::from(format!("/tmp/{}.onnx", model_id)),
+            ModelLocation::LocalDirectory {
+                path: std::path::PathBuf::from(format!("/tmp/{}", model_id)),
+            },
             512,
             "bge".to_string(),
             None,
-            ModelBackend::Local,
         )
         .expect("create local embedding model")
     }
@@ -159,11 +164,12 @@ mod tests {
             uuid::Uuid::new_v4().to_string(),
             format!("Chat {}", model_id),
             model_id.to_string(),
-            std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            ModelLocation::LocalFile {
+                path: std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            },
             1024,
             "llama".to_string(),
             None,
-            ModelBackend::Local,
         )
         .expect("create local chat model")
     }

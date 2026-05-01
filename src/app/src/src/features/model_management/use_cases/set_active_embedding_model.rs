@@ -2,7 +2,6 @@
 //!
 //! Sets which downloaded model to use for embedding feature.
 
-use crate::domain::downloaded_model::ModelBackend;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
@@ -42,7 +41,7 @@ impl SetActiveEmbeddingModelUseCase {
 
         // Remote-backed models (Ollama) have no on-disk files and the file-extension based
         // type check doesn't apply, so the download + chat/embedding gate is Local-only.
-        if model.backend() == ModelBackend::Local {
+        if model.location().is_local() {
             if !self.repository.is_downloaded(model_id).await? {
                 return Err(AppError::InvalidInput(format!(
                     "Model '{}' is not fully downloaded yet. Finish downloading all files before activating it.",

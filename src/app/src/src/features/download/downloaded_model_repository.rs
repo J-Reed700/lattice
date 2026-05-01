@@ -2,8 +2,7 @@
 //!
 //! Manages persistence of downloaded model records in SQLite.
 
-use crate::domain::downloaded_model::{DownloadedModel, ModelBackend, ModelType};
-use std::str::FromStr;
+use crate::domain::downloaded_model::{DownloadedModel, ModelLocation, ModelType};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value as JsonValue;
@@ -11,13 +10,18 @@ use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
 use tracing::{debug, error, info, warn};
 
-/// Database record structure for RETURNING queries
+/// Database record structure for RETURNING queries.
+///
+/// Mirrors the row produced by `MODEL_SELECT_BASE`. The `(storage_kind,
+/// storage_path)` pair is the canonical representation of `ModelLocation`
+/// in the DB; both are read verbatim with no JOIN-time recomputation.
 #[derive(Debug, sqlx::FromRow)]
 struct DownloadedModelRecord {
     id: String,
     model_name: String,
     model_id: String,
-    file_path: String,
+    storage_kind: String,
+    storage_path: Option<String>,
     file_size_bytes: i64,
     model_type: String,
     architecture: String,
@@ -27,48 +31,23 @@ struct DownloadedModelRecord {
     is_active_for_chat: i64,
     is_active_for_embedding: i64,
     metadata: Option<String>,
-    backend: String,
     is_active_for_utility: i64,
 }
 
-const MODEL_FILE_SUMMARY_CTE: &str = r#"
-WITH ranked_model_files AS (
-    SELECT
-        mf.model_id,
-        mf.file_path,
-        mf.file_name,
-        ROW_NUMBER() OVER (
-            PARTITION BY mf.model_id
-            ORDER BY
-                CASE
-                    WHEN mf.file_name = 'model.onnx' THEN 0
-                    WHEN mf.file_name LIKE '%.onnx' AND mf.file_name NOT LIKE '%.onnx_data' THEN 1
-                    WHEN mf.file_name LIKE '%.gguf' THEN 2
-                    ELSE 3
-                END,
-                mf.file_name
-        ) AS rn
-    FROM model_files mf
-),
-primary_model_files AS (
-    SELECT model_id, file_path AS primary_file_path
-    FROM ranked_model_files
-    WHERE rn = 1
-),
-model_file_totals AS (
-    SELECT model_id, SUM(size_bytes) AS total_file_size_bytes
-    FROM model_files
-    GROUP BY model_id
-)
-"#;
-
+/// Read columns directly from `models`. The previous version of this
+/// query had a CTE that re-derived the "primary file" by alphabetical
+/// order over `model_files` and `COALESCE`-overrode the saga-written
+/// path, which silently corrupted multi-file safetensors models. The
+/// SSOT for the loadable artifact is `models.storage_kind` +
+/// `models.storage_path`, written by the saga and never recomputed.
 const MODEL_SELECT_BASE: &str = r#"
 SELECT
     m.id,
     m.model_name,
     m.model_id,
-    COALESCE(pmf.primary_file_path, m.base_path) AS file_path,
-    COALESCE(mft.total_file_size_bytes, m.total_size_bytes, 0) AS file_size_bytes,
+    m.storage_kind,
+    m.storage_path,
+    COALESCE(m.total_size_bytes, 0) AS file_size_bytes,
     m.model_type,
     m.architecture,
     m.downloaded_at,
@@ -77,11 +56,8 @@ SELECT
     m.is_active_for_chat,
     m.is_active_for_embedding,
     m.metadata,
-    m.backend,
     m.is_active_for_utility
 FROM models m
-LEFT JOIN primary_model_files pmf ON pmf.model_id = m.model_id
-LEFT JOIN model_file_totals mft ON mft.model_id = m.model_id
 "#;
 
 /// Map domain model type strings to the models-table CHECK constraint values.
@@ -129,18 +105,19 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
         let is_active_embedding = record.is_active_for_embedding != 0;
         let is_active_utility = record.is_active_for_utility != 0;
 
-        let backend = ModelBackend::from_str(&record.backend).map_err(|e| {
-            AppError::InvalidData(format!(
-                "Invalid backend '{}' for model_id '{}': {}",
-                record.backend, record.model_id, e
-            ))
-        })?;
+        let location = ModelLocation::from_db(&record.storage_kind, record.storage_path)
+            .map_err(|e| {
+                AppError::InvalidData(format!(
+                    "Invalid storage_kind/storage_path for model_id '{}': {}",
+                    record.model_id, e
+                ))
+            })?;
 
         Ok(DownloadedModel::from_db(
             record.id,
             record.model_name,
             record.model_id,
-            PathBuf::from(record.file_path),
+            location,
             record.file_size_bytes,
             model_type_enum,
             record.architecture,
@@ -150,7 +127,6 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
             is_active_chat,
             is_active_embedding,
             metadata_val,
-            backend,
             is_active_utility,
         ))
     }
@@ -191,16 +167,10 @@ impl DownloadedModelRepository {
         let id = model.id().to_string();
         let model_name = model.model_name().to_string();
         let model_id = model.model_id().to_string();
-        let file_path_str = model
-            .file_path()
-            .to_str()
-            .ok_or_else(|| AppError::InvalidInput("Invalid file path encoding".to_string()))?;
-        // Extract base_path (directory) from file_path for database storage
-        let base_path = model
-            .file_path()
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
+        // Persist the location verbatim — no parent() guessing, no
+        // overloaded "is this a file or a dir" semantics. The DB stores
+        // exactly what the saga decided.
+        let (storage_kind, storage_path) = model.location().to_db();
         let file_size_bytes = model.file_size_bytes();
         let model_type_str = normalize_model_type_for_models_table(model.model_type()).to_string();
         let architecture = model.architecture().to_string();
@@ -214,7 +184,14 @@ impl DownloadedModelRepository {
             0
         };
         let is_active_utility = if model.is_active_for_utility() { 1i64 } else { 0i64 };
-        let backend_str = model.backend().as_db_str().to_string();
+        // Legacy `backend` column maps directly off the location variant.
+        // Kept in INSERT for compatibility with the column's NOT NULL
+        // constraint until a follow-up migration drops it.
+        let backend_str = if model.location().is_local() {
+            "local"
+        } else {
+            "ollama"
+        };
         let metadata_json = model.metadata_to_json();
         let total_size_bytes = model.file_size_bytes();
 
@@ -226,14 +203,17 @@ impl DownloadedModelRepository {
         sqlx::query(
             r#"
             INSERT INTO models (
-                id, model_name, model_id, base_path, total_size_bytes, status, model_type, architecture,
-                downloaded_at, last_used_at, use_count, is_active_for_chat, is_active_for_embedding, metadata,
+                id, model_name, model_id, storage_kind, storage_path,
+                total_size_bytes, status, model_type, architecture,
+                downloaded_at, last_used_at, use_count,
+                is_active_for_chat, is_active_for_embedding, metadata,
                 backend, is_active_for_utility
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'completed', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(model_id) DO UPDATE SET
                 model_name = excluded.model_name,
-                base_path = excluded.base_path,
+                storage_kind = excluded.storage_kind,
+                storage_path = excluded.storage_path,
                 total_size_bytes = excluded.total_size_bytes,
                 status = excluded.status,
                 model_type = excluded.model_type,
@@ -251,7 +231,8 @@ impl DownloadedModelRepository {
         .bind(id)
         .bind(model_name)
         .bind(&model_id)
-        .bind(base_path)
+        .bind(storage_kind)
+        .bind(storage_path)
         .bind(total_size_bytes)
         .bind(model_type_str)
         .bind(architecture)
@@ -283,9 +264,17 @@ impl DownloadedModelRepository {
                 })?;
 
         if existing_file_count == 0 {
+            // Synthesize a single completed model_file row so the
+            // download manifest is always non-empty for local models.
+            // Use the loadable path's file name (or, for directory
+            // layouts, a synthetic stem derived from model_id).
+            let synthetic_file_path = model
+                .loadable_path()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let file_name = model
-                .file_path()
-                .file_name()
+                .loadable_path()
+                .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{}-model", model_id));
@@ -312,7 +301,7 @@ impl DownloadedModelRepository {
             .bind(model_file_id)
             .bind(&model_id)
             .bind(&file_name)
-            .bind(file_path_str)
+            .bind(&synthetic_file_path)
             .bind(&file_name)
             .bind(file_size_bytes)
             .bind(file_size_bytes)
@@ -444,7 +433,7 @@ impl DownloadedModelRepository {
                 let model: DownloadedModel = row.try_into()?;
                 // Ollama-served models live remotely; there is no local file
                 // for `is_downloaded` to verify. Skip the FS check for them.
-                if model.backend() == ModelBackend::Ollama
+                if !model.location().is_local()
                     || self.is_downloaded(model.model_id()).await?
                 {
                     Ok(Some(model))
@@ -485,7 +474,7 @@ impl DownloadedModelRepository {
                 let model: DownloadedModel = row.try_into()?;
                 // Ollama-served models live remotely; there is no local file
                 // for `is_downloaded` to verify. Skip the FS check for them.
-                if model.backend() == ModelBackend::Ollama
+                if !model.location().is_local()
                     || self.is_downloaded(model.model_id()).await?
                 {
                     Ok(Some(model))
@@ -691,7 +680,7 @@ impl DownloadedModelRepository {
         match record {
             Some(row) => {
                 let model: DownloadedModel = row.try_into()?;
-                if model.backend() == ModelBackend::Ollama
+                if !model.location().is_local()
                     || self.is_downloaded(model.model_id()).await?
                 {
                     Ok(Some(model))
@@ -766,7 +755,8 @@ impl DownloadedModelRepository {
               id,
               model_name,
               model_id,
-              base_path AS file_path,
+              storage_kind,
+              storage_path,
               total_size_bytes AS file_size_bytes,
               model_type,
               architecture,
@@ -776,7 +766,6 @@ impl DownloadedModelRepository {
               is_active_for_chat,
               is_active_for_embedding,
               metadata,
-              backend,
               is_active_for_utility
             "#,
         )
@@ -940,10 +929,13 @@ impl DownloadedModelRepository {
 
         if rows.is_empty() {
             // Legacy fallback for old rows that may not have model_files populated.
+            // Remote-hosted models are always "downloaded" (they're not on disk
+            // by definition); local rows are checked against their loadable
+            // path, which is a file for GGUF and a directory for safetensors.
             let model = self.find_by_model_id(model_id).await?;
-            return Ok(model.is_some_and(|m| {
-                let path = m.file_path();
-                path.exists() && path.is_file()
+            return Ok(model.is_some_and(|m| match m.loadable_path() {
+                Some(path) => path.exists(),
+                None => true,
             }));
         }
 
@@ -1073,13 +1065,18 @@ impl ModelStoragePort for DownloadedModelRepository {
     async fn list_models(&self) -> Result<Vec<DownloadedModelDto>> {
         let models = self.list().await?;
 
-        // Convert domain entities to DTOs
+        // Convert domain entities to DTOs. Remote (Ollama) entries have
+        // no on-disk path; surface an empty PathBuf so the DTO contract
+        // (path: PathBuf) stays unchanged for now.
         Ok(models
             .into_iter()
             .map(|model| DownloadedModelDto {
                 model_id: model.model_id().to_string(),
-                path: model.file_path().to_path_buf(),
-                size_bytes: model.file_size_bytes() as u64, // Convert i64 to u64
+                path: model
+                    .loadable_path()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default(),
+                size_bytes: model.file_size_bytes() as u64,
                 downloaded_at: *model.downloaded_at(),
             })
             .collect())
@@ -1095,10 +1092,19 @@ impl ModelStoragePort for DownloadedModelRepository {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Model not found: {}", model_id)))?;
 
-        let path = model.file_path().to_path_buf();
-        if !path.exists() || !path.is_file() {
+        let path = model
+            .loadable_path()
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "Model {} has no local path (remote-hosted)",
+                    model_id
+                ))
+            })?
+            .to_path_buf();
+        // Either a file (GGUF, single-shard) or a directory (safetensors layout).
+        if !path.exists() {
             return Err(AppError::NotFound(format!(
-                "Model file not found on disk: {}",
+                "Model artifact not found on disk: {}",
                 path.display()
             )));
         }
@@ -1116,7 +1122,6 @@ impl ModelStoragePort for DownloadedModelRepository {
 fn build_model_select_query(suffix: &str) -> String {
     format!(
         r#"
-{MODEL_FILE_SUMMARY_CTE}
 {MODEL_SELECT_BASE}
 {suffix}
 "#
@@ -1196,11 +1201,12 @@ mod tests {
             uuid::Uuid::new_v4().to_string(),
             format!("Test Model {}", model_id),
             model_id.to_string(),
-            std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            ModelLocation::LocalFile {
+                path: std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            },
             1024,
             "llama".to_string(),
             None,
-            ModelBackend::Local,
         )
         .expect("create local chat model")
     }
@@ -1210,11 +1216,12 @@ mod tests {
             uuid::Uuid::new_v4().to_string(),
             format!("Embed {}", model_id),
             model_id.to_string(),
-            std::path::PathBuf::from(format!("/tmp/{}.onnx", model_id)),
+            ModelLocation::LocalDirectory {
+                path: std::path::PathBuf::from(format!("/tmp/{}", model_id)),
+            },
             512,
             "bge".to_string(),
             None,
-            ModelBackend::Local,
         )
         .expect("create local embedding model")
     }
@@ -1228,7 +1235,7 @@ mod tests {
             .expect("find by model id")
             .expect("synthetic ollama row missing after migrations");
 
-        assert_eq!(model.backend(), ModelBackend::Ollama);
+        assert_eq!(model.location(), &ModelLocation::RemoteOllama);
         assert_eq!(model.file_size_bytes(), 0);
         assert_eq!(model.model_id(), "__ollama_server__");
     }
@@ -1273,7 +1280,7 @@ mod tests {
             .await
             .expect("get active chat model");
         let active = active.expect("expected ollama row to be returned despite no local file");
-        assert_eq!(active.backend(), ModelBackend::Ollama);
+        assert_eq!(active.location(), &ModelLocation::RemoteOllama);
         assert_eq!(active.model_id(), "__ollama_server__");
     }
 
@@ -1299,7 +1306,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_and_load_local_model_preserves_backend() {
+    async fn save_and_load_local_model_preserves_location() {
         let repo = setup_repo().await;
         let model = make_local_chat_model("local-chat-1");
         repo.save(&model).await.expect("save local chat model");
@@ -1309,7 +1316,11 @@ mod tests {
             .await
             .expect("find local model")
             .expect("local model missing after save");
-        assert_eq!(loaded.backend(), ModelBackend::Local);
+        assert!(loaded.location().is_local());
+        assert!(matches!(
+            loaded.location(),
+            ModelLocation::LocalFile { .. }
+        ));
         assert!(!loaded.is_active_for_utility());
     }
 }

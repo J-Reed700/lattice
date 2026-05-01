@@ -16,7 +16,9 @@ use crate::features::llm::dto::DownloadModelRequestDto;
 use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::audit_success;
 use crate::domain::download::DownloadOperationState;
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME;
+use crate::domain::embedding_constants::{
+    DEFAULT_EMBEDDING_MODEL_CURATED_ID, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME,
+};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::interfaces::di::Container;
 
@@ -83,7 +85,7 @@ pub async fn download_default_embedding_model_impl(
 ) -> std::result::Result<String, String> {
     tracing::info!("Command: download_default_embedding_model - ENTRY");
 
-    let model_id = DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.to_string();
+    let model_id = DEFAULT_EMBEDDING_MODEL_CURATED_ID.to_string();
     let model_name = DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.to_string();
 
     container

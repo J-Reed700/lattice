@@ -50,6 +50,31 @@ pub(super) async fn run_retrieval_pipeline(
         debug!(error = %e, "Embedding model not available for RAG — search will be skipped");
     }
 
+
+    let utility_llm: Arc<dyn crate::application::ports::LLMPort> = match container
+        .get_or_load_utility_llm()
+        .await
+    {
+        Ok(Some(util)) => {
+            tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
+            util
+        }
+        Ok(None) => {
+            tracing::debug!(
+                "No utility LLM configured — falling back to chat LLM for HyDE \
+                 (set one in Settings → Model Catalog to speed up retrieval)"
+            );
+            Arc::clone(llm)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Utility LLM load failed — falling back to chat LLM"
+            );
+            Arc::clone(llm)
+        }
+    };
+
     const RESPONSE_TOKEN_BUDGET_RATIO: f64 = 0.25;
     const PROMPT_OVERHEAD_TOKENS: usize = 200;
 
@@ -188,7 +213,9 @@ pub(super) async fn run_retrieval_pipeline(
         && outcome.interpretation.hyde_text.is_none()
     {
         let external_hyde_start = Instant::now();
-        let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(llm));
+        // HyDE runs on the utility LLM (small, fast, local) when set,
+        // not the chat LLM. See utility_llm resolution above.
+        let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(&utility_llm));
         let hyde_context =
             build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
         external_hyde_context = hyde_context.clone();
@@ -339,7 +366,8 @@ pub(super) async fn run_retrieval_pipeline(
         );
         let mut generated_web_query: Option<String> = None;
         let mut web_query_source = "hyde_generated";
-        let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(llm));
+        // Web-query rewriting also runs on the utility LLM, not chat.
+        let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(&utility_llm));
         let web_query = match hyde_service
             .generate_web_search_query_with_context(
                 validated_message,

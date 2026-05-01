@@ -66,6 +66,7 @@
     "model:allow-is-model-already-downloaded",
     "model:allow-set-active-chat-model",
     "model:allow-warm-up-active-chat-model",
+    "model:allow-warm-up-active-utility-model",
     "model:allow-get-active-chat-model",
     "model:allow-get-active-embedding-model",
     "model:allow-clear-active-chat-model",

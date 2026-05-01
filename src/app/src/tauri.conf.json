@@ -36,6 +36,9 @@
     "targets": "all",
     "icon": [],
     "resources": [],
+    "externalBin": [
+      "binaries/llama-server"
+    ],
     "copyright": "\u00a9 2026 Lattice",
     "category": "Productivity",
     "shortDescription": "Local-first AI knowledge base",

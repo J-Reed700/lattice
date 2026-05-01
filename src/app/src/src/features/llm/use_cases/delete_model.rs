@@ -617,7 +617,7 @@ mod db_ssot_tests {
 
     use super::*;
     use crate::application::ports::model_storage::MockModelStoragePort;
-    use crate::domain::downloaded_model::{DownloadedModel, ModelBackend};
+    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
     use crate::infrastructure::persistence::repositories::DownloadedModelRepository as ConcreteRepo;
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -639,11 +639,12 @@ mod db_ssot_tests {
             uuid::Uuid::new_v4().to_string(),
             format!("Test Model {}", model_id),
             model_id.to_string(),
-            std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            ModelLocation::LocalFile {
+                path: std::path::PathBuf::from(format!("/tmp/{}.gguf", model_id)),
+            },
             size_bytes,
             "llama".to_string(),
             None,
-            ModelBackend::Local,
         )
         .expect("create local model")
     }

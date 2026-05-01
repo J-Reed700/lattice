@@ -2,7 +2,6 @@
 //!
 //! Sets which downloaded model to use for chat feature.
 
-use crate::domain::downloaded_model::ModelBackend;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
@@ -42,7 +41,7 @@ impl SetActiveChatModelUseCase {
 
         // Remote-backed models (Ollama) have no on-disk files and no local file-type to gate on,
         // so the download check + chat/embedding type validation only applies to Local backends.
-        if model.backend() == ModelBackend::Local {
+        if model.location().is_local() {
             if !self.repository.is_downloaded(model_id).await? {
                 return Err(AppError::InvalidInput(format!(
                     "Model '{}' is not fully downloaded yet. Finish downloading all files before activating it.",
@@ -63,6 +62,7 @@ impl SetActiveChatModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::domain::downloaded_model::ModelLocation;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> DownloadedModelRepository {
@@ -98,7 +98,7 @@ mod tests {
             .expect("get active chat model")
             .expect("expected ollama row to be active for chat");
         assert_eq!(active.model_id(), "__ollama_server__");
-        assert_eq!(active.backend(), ModelBackend::Ollama);
+        assert_eq!(active.location(), &ModelLocation::RemoteOllama);
     }
 
     #[tokio::test]

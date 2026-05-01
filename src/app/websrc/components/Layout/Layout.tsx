@@ -230,7 +230,9 @@ export function Layout() {
         </AnimatePresence>
       </div>
 
-      {/* Global Downloads UI */}
+      {/* Global Downloads UI — the single IPC listener for download events
+          is mounted at the App level (see App.tsx). These components only
+          read from useDownloadStore. */}
       <DrawerTrigger />
       <DownloadsDrawer />
     </div>

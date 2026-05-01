@@ -66,11 +66,10 @@ export function OllamaMetaCard() {
 
   const { url: ollamaUrl, chatTag, utilityTag } = config;
 
-  // Utility role falls through to the chat tag when no utility tag is set.
-  const effectiveUtilityTag = utilityTag || chatTag;
+  // Utility falls back to the chat tag when the user hasn't set a
+  // separate one (mirrors the Rust side in get_or_load_utility_llm).
+  const resolvedUtilityTag = utilityTag || chatTag;
 
-  // Filter the roles array for this card: we only surface chat + utility on
-  // Ollama (embedding uses a separate local Candle pipeline).
   const ollamaRoles = ROLES.filter((r) => r.id === 'chat' || r.id === 'utility');
 
   return (
@@ -94,22 +93,21 @@ export function OllamaMetaCard() {
           <TagRow label="Chat tag" value={chatTag} fallback="Not set" />
           <TagRow
             label="Utility tag"
-            value={utilityTag}
-            fallback={chatTag ? `Falls back to chat (${chatTag})` : 'Not set'}
+            value={resolvedUtilityTag}
+            fallback="Not set"
             muted={!utilityTag}
           />
           <p className="text-[10px] text-[hsl(var(--text-tertiary))] leading-snug pt-1">
             Edit these tags in Settings → Chat → Ollama Server Connection.
+            Utility falls back to the chat tag when not set — for best
+            latency, point it at a small fast model on your Ollama host.
           </p>
         </div>
 
         <div className="flex flex-col gap-2 pt-3 border-t border-[hsl(var(--border-subtle))]">
           <div className="flex flex-wrap gap-1.5">
             {ollamaRoles.map((role) => {
-              // The utility role button is disabled when there's no tag at
-              // all — activating it would immediately fall back to chat,
-              // which is confusing.
-              const tagForRole = role.id === 'chat' ? chatTag : effectiveUtilityTag;
+              const tagForRole = role.id === 'utility' ? resolvedUtilityTag : chatTag;
               if (!tagForRole) {
                 return (
                   <button

@@ -18,6 +18,7 @@ fn main() {
                     "set_active_chat_model",
                     "set_active_utility_model",
                     "warm_up_active_chat_model",
+                    "warm_up_active_utility_model",
                     "get_active_chat_model",
                     "get_active_embedding_model",
                     "get_active_models",

@@ -482,29 +482,43 @@ impl InputValidator {
             });
         }
 
-        // Check 4: Must be a regular file (not directory or symlink)
-        let metadata = std::fs::metadata(path)
+        let metadata = std::fs::symlink_metadata(path)
             .map_err(|e| AppError::FileSystem(format!("Failed to read file metadata: {}", e)))?;
 
-        if !metadata.is_file() {
+        if metadata.file_type().is_symlink() {
             return Err(AppError::Security(format!(
-                "Path is not a regular file (CWE-59): {}",
+                "Path is a symlink (CWE-59): {}",
                 path.display()
             )));
         }
 
-        // Check 5: Must have .onnx extension
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .ok_or_else(|| {
-                AppError::InvalidInput(format!("File has no extension: {}", path.display()))
-            })?;
+        if metadata.is_dir() {
+            let config_marker = path.join("config.json");
+            if !config_marker.is_file() {
+                return Err(AppError::InvalidInput(format!(
+                    "Model directory missing config.json marker — expected a safetensors layout: {}",
+                    path.display()
+                )));
+            }
+        } else if metadata.is_file() {
+            // Single-file format: must have a known extension.
+            let extension = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .ok_or_else(|| {
+                    AppError::InvalidInput(format!("File has no extension: {}", path.display()))
+                })?;
 
-        if extension != "onnx" && extension != "gguf" {
-            return Err(AppError::InvalidInput(format!(
-                "Invalid model file extension '{}' (expected '.onnx' for embedding models or '.gguf' for chat models): {}",
-                extension,
+            if extension != "gguf" && extension != "safetensors" {
+                return Err(AppError::InvalidInput(format!(
+                    "Invalid model file extension '{}' (expected '.gguf' or '.safetensors'; or a directory containing config.json): {}",
+                    extension,
+                    path.display()
+                )));
+            }
+        } else {
+            return Err(AppError::Security(format!(
+                "Path is neither a regular file nor a directory: {}",
                 path.display()
             )));
         }

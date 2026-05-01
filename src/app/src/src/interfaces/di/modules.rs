@@ -340,7 +340,7 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
 
     let repo = DownloadedModelRepository::new(db_pool.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
-    let model_dir = active.file_path().parent()?;
+    let model_dir = active.location().enclosing_dir()?;
     let config_path = model_dir.join("config.json");
     let bytes = std::fs::read(&config_path).ok()?;
     let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;

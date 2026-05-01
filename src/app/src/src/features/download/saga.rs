@@ -1,4 +1,4 @@
-use crate::domain::downloaded_model::{DownloadedModel, ModelBackend};
+use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
 use crate::domain::events::model_download_events::*;
 use crate::domain::repositories::unit_of_work::ModelFileRepositoryPort;
 use crate::domain::repositories::UnitOfWorkFactory;
@@ -45,20 +45,15 @@ impl DownloadSaga {
             .or_else(|| files.first())
     }
 
-    /// Resolve the path to store on `DownloadedModel.file_path`. For
-    /// single-file formats (GGUF, ONNX) this is the file path itself.
-    /// For safetensors LLM/multimodal layouts (config.json + shards),
-    /// the loader expects the *directory* — return the parent of
-    /// `config.json`. Returns `None` if the primary file has no parent
-    /// (shouldn't happen for valid downloads).
-    fn primary_path_for_downloaded_model(
+    fn model_location_for_download(
         primary: &crate::domain::entities::model_file::ModelFile,
-    ) -> Option<PathBuf> {
+    ) -> Option<ModelLocation> {
         let path = PathBuf::from(&primary.file_path);
         if primary.file_name == "config.json" {
-            path.parent().map(|p| p.to_path_buf())
+            path.parent()
+                .map(|p| ModelLocation::LocalDirectory { path: p.to_path_buf() })
         } else {
-            Some(path)
+            Some(ModelLocation::LocalFile { path })
         }
     }
 
@@ -274,19 +269,21 @@ impl DownloadSaga {
             let main_file = Self::select_primary_model_file(&files)
                 .ok_or_else(|| format!("No files found for model {}", event.model_id))?;
 
-            let file_path = Self::primary_path_for_downloaded_model(main_file).ok_or_else(
-                || format!("Primary file has no parent for model {}", event.model_id),
-            )?;
+            let location = Self::model_location_for_download(main_file).ok_or_else(|| {
+                format!(
+                    "Primary file has no parent directory for model {}",
+                    event.model_id
+                )
+            })?;
 
             let downloaded_model = DownloadedModel::new(
                 Uuid::new_v4().to_string(),
                 model.model_name().to_string(),
                 event.model_id.clone(),
-                file_path,
+                location,
                 total_size as i64,
                 model.architecture.clone(),
                 model.metadata.clone(),
-                ModelBackend::Local,
             )
             .map_err(|e| format!("Failed to create DownloadedModel: {}", e))?;
 
@@ -411,9 +408,11 @@ impl DownloadSaga {
 #[cfg(test)]
 mod tests {
     use super::DownloadSaga;
+    use crate::domain::downloaded_model::ModelLocation;
     use crate::domain::entities::model_file::ModelFile;
     use crate::domain::value_objects::model_status::FileStatus;
     use chrono::Utc;
+    use std::path::PathBuf;
 
     fn make_file(file_name: &str, file_path: &str) -> ModelFile {
         ModelFile {
@@ -492,20 +491,27 @@ mod tests {
     }
 
     #[test]
-    fn primary_path_returns_directory_for_config_json() {
-        // For safetensors, DownloadedModel.file_path should point at
-        // the model directory (parent of config.json), because that's
-        // what mistralrs::ModelBuilder takes as input.
+    fn model_location_returns_directory_for_config_json() {
         let primary = make_file("config.json", "/tmp/gemma-2-9b-it/config.json");
-        let path = DownloadSaga::primary_path_for_downloaded_model(&primary).unwrap();
-        assert_eq!(path.to_string_lossy(), "/tmp/gemma-2-9b-it");
+        let location = DownloadSaga::model_location_for_download(&primary).unwrap();
+        assert_eq!(
+            location,
+            ModelLocation::LocalDirectory {
+                path: PathBuf::from("/tmp/gemma-2-9b-it")
+            }
+        );
     }
 
     #[test]
-    fn primary_path_returns_file_path_for_gguf() {
-        // GGUF stays a single-file path.
+    fn model_location_returns_local_file_for_gguf() {
+        // GGUF stays a single-file path under LocalFile.
         let primary = make_file("phi.gguf", "/tmp/phi/phi.gguf");
-        let path = DownloadSaga::primary_path_for_downloaded_model(&primary).unwrap();
-        assert_eq!(path.to_string_lossy(), "/tmp/phi/phi.gguf");
+        let location = DownloadSaga::model_location_for_download(&primary).unwrap();
+        assert_eq!(
+            location,
+            ModelLocation::LocalFile {
+                path: PathBuf::from("/tmp/phi/phi.gguf")
+            }
+        );
     }
 }

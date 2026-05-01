@@ -55,7 +55,7 @@ use tokio::time::timeout;
 
 pub const SIDECAR_BIN: &str = "binaries/llama-server";
 const READY_NEEDLE: &str = "HTTP server listening";
-const READINESS_TIMEOUT: Duration = Duration::from_secs(60);
+const READINESS_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Configuration for spawning a llama-server sidecar.
 #[derive(Debug, Clone)]
