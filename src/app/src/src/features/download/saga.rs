@@ -298,6 +298,69 @@ impl DownloadSaga {
                 event.model_id
             );
 
+            // Auto-activate empty role slots — the natural "first download
+            // wins" semantic. Critical for first-run UX: user clicks
+            // "Install Recommended AI", we close the modal immediately,
+            // and the chat/embedding models become usable as soon as
+            // their downloads complete (combined with the boot-time
+            // prewarm, no manual Settings trip needed). We never steal
+            // an already-occupied slot — if a user explicitly assigned a
+            // model and downloads a second one, the second stays inert
+            // until they swap it in.
+            if downloaded_model.is_embedding_model() {
+                match self.downloaded_model_repo.get_active_embedding_model().await {
+                    Ok(None) => {
+                        if let Err(e) = self
+                            .downloaded_model_repo
+                            .set_active_embedding_model(&event.model_id)
+                            .await
+                        {
+                            warn!(
+                                model_id = %event.model_id,
+                                error = %e,
+                                "Saga: failed to auto-activate empty embedding slot"
+                            );
+                        } else {
+                            info!(
+                                model_id = %event.model_id,
+                                "Saga: auto-activated newly-downloaded embedding model (slot was empty)"
+                            );
+                        }
+                    }
+                    Ok(Some(_)) => {} // user already has one — don't steal
+                    Err(e) => warn!(
+                        error = %e,
+                        "Saga: failed to read active embedding slot for auto-activate"
+                    ),
+                }
+            } else if downloaded_model.is_chat_model() {
+                match self.downloaded_model_repo.get_active_chat_model().await {
+                    Ok(None) => {
+                        if let Err(e) = self
+                            .downloaded_model_repo
+                            .set_active_chat_model(&event.model_id)
+                            .await
+                        {
+                            warn!(
+                                model_id = %event.model_id,
+                                error = %e,
+                                "Saga: failed to auto-activate empty chat slot"
+                            );
+                        } else {
+                            info!(
+                                model_id = %event.model_id,
+                                "Saga: auto-activated newly-downloaded chat model (slot was empty)"
+                            );
+                        }
+                    }
+                    Ok(Some(_)) => {}
+                    Err(e) => warn!(
+                        error = %e,
+                        "Saga: failed to read active chat slot for auto-activate"
+                    ),
+                }
+            }
+
             // ONLY after successful save, emit the completion event
             let completion_event = ModelDownloadCompletedEvent {
                 model_id: event.model_id.clone(),

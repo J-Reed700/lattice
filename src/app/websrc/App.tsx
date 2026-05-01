@@ -11,6 +11,7 @@ import { ErrorProvider , useError } from './contexts/ErrorContext';
 import { useApplyTheme } from './hooks/useApplyTheme';
 import { useDownloadedModels } from './hooks/useDownloadedModels';
 import { useDownloadsListener } from './hooks/useDownloads';
+import { useModelWarmupListener } from './hooks/useModelWarmupListener';
 import { useProgressCleanup } from './hooks/useProgressCleanup';
 import VaultAPI from './lib/api';
 import { router } from './routes';
@@ -38,6 +39,11 @@ function App() {
   // Initialize the single global download IPC listener. Must NOT be
   // called from any other component or every event will apply twice.
   useDownloadsListener();
+
+  // Subscribe once to backend boot-time model warmup events so the chat
+  // input can mask while a cold-mmap is in flight. Single-mount, same as
+  // useDownloadsListener.
+  useModelWarmupListener();
 
   // Initialize downloaded models event listeners (always-on for toast notifications)
   useDownloadedModels();

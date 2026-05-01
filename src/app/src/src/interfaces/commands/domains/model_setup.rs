@@ -46,7 +46,10 @@ pub async fn check_first_run_status_impl(
     tracing::info!("Command: check_first_run_status - ENTRY");
 
     let repository = (*container.downloaded_model_repository()).clone();
-    let use_case = CheckFirstRunStatusUseCase::new(repository);
+    // Pass the system_info probe so the chat recommendation is sized to the
+    // user's actual RAM, not a one-size-fits-all small-tier default.
+    let use_case =
+        CheckFirstRunStatusUseCase::with_system_info(repository, container.system_info());
     let response = use_case
         .execute()
         .await

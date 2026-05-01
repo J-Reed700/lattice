@@ -152,6 +152,18 @@ export namespace EventSchemas {
       model_id: z.string(),
       error: z.string(),
     });
+
+    /// Boot-time pre-warm progress for an active model role. Fired by the
+    /// backend on app startup so the chat input can mask while a cold load
+    /// is in flight. Phases:
+    ///   started → ready  (success — model in memory)
+    ///   started → skipped (no active model for this role — chat fallback)
+    ///   started → failed (load attempted but errored — error string included)
+    export const WarmupStatus = z.object({
+      role: z.enum(['chat', 'utility', 'embedding']),
+      phase: z.enum(['started', 'ready', 'skipped', 'failed']),
+      error: z.string().nullable().optional(),
+    });
   }
 
   export namespace Progress {
@@ -654,6 +666,10 @@ export const TauriEventNames = {
     DownloadProgress: 'download:progress' as const,
     DownloadCompleted: 'download:completed' as const,
     DownloadError: 'download:failed' as const,
+
+    /// Boot-time pre-warm status for chat/utility/embedding model roles.
+    /// Backend fires `started → ready|skipped|failed` per role.
+    WarmupStatus: 'model:warmup-status' as const,
   },
   LLM: {
     StreamChunk: 'llm-stream' as const,

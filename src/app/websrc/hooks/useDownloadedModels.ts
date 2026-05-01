@@ -223,10 +223,29 @@ export const useDownloadedModels = () => {
 
           try {
             // Refetch downloaded models to sync with database
-            await fetchDownloadedModels();
+            const updated = await fetchDownloadedModels();
 
             // Show success notification
             toast.success(`${modelName} ready`);
+
+            // If the saga auto-activated this download into an empty role
+            // slot (chat or utility), kick off the corresponding warm-up
+            // so the FIRST chat turn after a fresh install doesn't pay the
+            // 60-180s GGUF cold-mmap cost. Embedding models warm via a
+            // different path on first use; chat/utility need explicit
+            // warmup commands. Fire-and-forget — warmup failures are
+            // non-fatal and surface in the model card UI.
+            const justCompleted = updated.find((m) => m.model_name === modelName);
+            if (justCompleted?.is_active_for_chat) {
+              void VaultAPI.warmUpActiveChatModel().catch((err) =>
+                console.warn('[useDownloadedModels] post-download chat warmup failed:', err),
+              );
+            }
+            if (justCompleted?.is_active_for_utility) {
+              void VaultAPI.warmUpActiveUtilityModel().catch((err) =>
+                console.warn('[useDownloadedModels] post-download utility warmup failed:', err),
+              );
+            }
           } catch (error) {
             console.error('[useDownloadedModels] Failed to refresh after completion:', error);
           }

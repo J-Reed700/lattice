@@ -979,6 +979,69 @@ impl Container {
         }
     }
 
+    /// Fire-and-forget pre-warm of the chat, utility, and embedding models
+    /// on app boot. Each role runs in its own task so a slow chat load can't
+    /// block utility/embedding (and vice versa). Errors are logged but never
+    /// propagated — boot must always succeed even with no models present.
+    ///
+    /// Emits `model:warmup-status` events with `{ role, phase }` so the UI
+    /// can mask the chat input during cold-load. Phases:
+    /// - `started`: load kicked off
+    /// - `ready`: model loaded, cached, ready for first request
+    /// - `skipped`: no active model configured for this role (not an error)
+    /// - `failed`: load attempted but failed; payload includes error message
+    pub fn prewarm_active_models(&self, app_handle: tauri::AppHandle) {
+        use tauri::Manager;
+        for role in ["chat", "utility", "embedding"] {
+            let handle = app_handle.clone();
+            tokio::spawn(async move {
+                let container = match handle.try_state::<Container>() {
+                    Some(c) => c,
+                    None => {
+                        tracing::warn!(role, "prewarm: Container not in Tauri state yet");
+                        return;
+                    }
+                };
+                emit_warmup(&handle, role, "started", None);
+                let started = std::time::Instant::now();
+                let outcome = match role {
+                    "chat" => match container.get_or_load_llm().await {
+                        Ok(_) => Outcome::Ready,
+                        Err(e) => match &e {
+                            AppError::ModelLoadFailed(msg) => Outcome::Failed(msg.clone()),
+                            AppError::InvalidConfig(msg) if msg.contains("not configured") => {
+                                Outcome::Skipped
+                            }
+                            _ => Outcome::Failed(e.to_string()),
+                        },
+                    },
+                    "utility" => match container.get_or_load_utility_llm().await {
+                        Ok(Some(_)) => Outcome::Ready,
+                        Ok(None) => Outcome::Skipped,
+                        Err(e) => Outcome::Failed(e.to_string()),
+                    },
+                    "embedding" => match container.get_or_load_embedding().await {
+                        Ok(_) => Outcome::Ready,
+                        Err(e) => Outcome::Failed(e.to_string()),
+                    },
+                    _ => unreachable!(),
+                };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                match &outcome {
+                    Outcome::Ready => tracing::info!(role, elapsed_ms, "prewarm: ready"),
+                    Outcome::Skipped => tracing::info!(role, "prewarm: no active model — skipped"),
+                    Outcome::Failed(msg) => tracing::warn!(role, error = %msg, "prewarm: failed"),
+                }
+                let (phase, error) = match outcome {
+                    Outcome::Ready => ("ready", None),
+                    Outcome::Skipped => ("skipped", None),
+                    Outcome::Failed(msg) => ("failed", Some(msg)),
+                };
+                emit_warmup(&handle, role, phase, error);
+            });
+        }
+    }
+
     /// Invalidate the LLM cache
     ///
     /// Call this when the active model changes to force reload on next access
@@ -2149,6 +2212,27 @@ impl Container {
         crate::infrastructure::persistence::repositories::DownloadedModelRepository::new(
             self.core.db_pool().clone(),
         )
+    }
+}
+
+/// Outcome of a single role's prewarm attempt. Internal to `prewarm_active_models`.
+enum Outcome {
+    Ready,
+    Skipped,
+    Failed(String),
+}
+
+/// Emit a `model:warmup-status` event. Failure to emit is logged but not
+/// propagated — a missing event listener must not abort prewarm.
+fn emit_warmup(app: &tauri::AppHandle, role: &str, phase: &str, error: Option<String>) {
+    use tauri::Emitter;
+    let payload = serde_json::json!({
+        "role": role,
+        "phase": phase,
+        "error": error,
+    });
+    if let Err(e) = app.emit("model:warmup-status", payload) {
+        tracing::warn!(role, phase, error = %e, "Failed to emit warmup status event");
     }
 }
 

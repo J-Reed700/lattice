@@ -9,6 +9,8 @@ import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsP
 import { Message } from './Message';
 import { VaultAPI } from '../../lib/api';
 import { getConversationMessages, useConversationsStore } from '../../stores/conversationsStore';
+import { useDownloadedModelsStore } from '../../stores/downloadedModelsStore';
+import { selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarmupStore';
 import { toast } from '../../stores/toastStore';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 
@@ -355,6 +357,11 @@ export function ChatPanel() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isSending || !activeConversationId) return;
+    // Block submit while the chat model is mid-cold-mmap or not yet
+    // downloaded. The user can keep typing; we just hold their message
+    // until the sidecar is ready.
+    if (useModelWarmupStore.getState().chat.phase === 'started') return;
+    if (useDownloadedModelsStore.getState().activeModel === null) return;
 
     const message = input.trim();
     setInput('');
@@ -407,12 +414,24 @@ export function ChatPanel() {
   const turnMode: TurnMode =
     normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
 
-  const placeholder =
-    turnMode === 'followup'
-      ? 'Follow up'
-      : turnMode === 'query'
-        ? 'Search sources and answer'
-        : 'Ask anything';
+  // While the chat model is mid-cold-mmap on app boot, surface a friendly
+  // status so the user knows the field works but submit is paused. Other
+  // surfaces (notes, BM25 search) keep working through this period.
+  // We also gate when no chat model is active yet — first-run window
+  // between "Install Recommended AI" click and chat download finishing.
+  const isChatWarming = useModelWarmupStore(selectIsChatWarming);
+  const hasActiveChatModel = useDownloadedModelsStore((s) => s.activeModel !== null);
+  const isChatUnavailable = isChatWarming || !hasActiveChatModel;
+
+  const placeholder = !hasActiveChatModel
+    ? 'AI is downloading… notes and search work now'
+    : isChatWarming
+      ? 'Warming up AI… you can keep typing'
+      : turnMode === 'followup'
+        ? 'Follow up'
+        : turnMode === 'query'
+          ? 'Search sources and answer'
+          : 'Ask anything';
 
   const handleCreateEmptyStateConversation = async () => {
     if (isCreatingConversation) return;
@@ -560,9 +579,21 @@ export function ChatPanel() {
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim()}
-                aria-label="Send message"
-                title="Send · Enter"
+                disabled={!input.trim() || isChatUnavailable}
+                aria-label={
+                  !hasActiveChatModel
+                    ? 'AI is still downloading'
+                    : isChatWarming
+                      ? 'Warming up AI…'
+                      : 'Send message'
+                }
+                title={
+                  !hasActiveChatModel
+                    ? 'Chat model is downloading — submit available once ready'
+                    : isChatWarming
+                      ? 'AI is warming up — try again in a few seconds'
+                      : 'Send · Enter'
+                }
                 className="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-sm bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] transition-[background-color,color,transform] duration-fast active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--border-default))] disabled:text-[hsl(var(--text-muted))] disabled:active:scale-100"
               >
                 <Send className="h-4 w-4" />

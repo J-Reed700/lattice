@@ -248,6 +248,37 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
     ]
 }
 
+/// Pick a single chat model recommendation for first-run, given the user's
+/// detected effective RAM (system RAM + discrete VRAM, or unified memory on
+/// Apple Silicon). The chosen model's `recommended_ram_gb` must comfortably
+/// fit so the user's first chat turn is responsive — not just barely loadable.
+///
+/// Tiers (anchored to actual catalog entries):
+/// - **< 8 GB effective**: Phi-3 Mini Q4 (~2.3 GB, 4 GB recommended). Fastest
+///   path to a working app on a 4–6 GB-free laptop. Quality is good enough
+///   for the first-run "Aha" moment; users can swap up later.
+/// - **8 – 16 GB effective**: Mistral 7B Instruct Q4 (~4.4 GB, 12 GB
+///   recommended). Strong general-purpose model that comfortably fits the
+///   common indie laptop tier.
+/// - **≥ 16 GB effective**: Qwen 2.5 7B Instruct Q4 (~4.7 GB, 12 GB
+///   recommended). Strongest reasoning + code on this size class. We
+///   intentionally don't push 13B/Mixtral here because the cold-start cost
+///   on CPU is brutal — saving "go bigger" for the catalog is a better UX
+///   than burning a new user's first impression on a 90-second mmap.
+///
+/// Returns the curated catalog `id` (the same key the download use case
+/// expects). Falls back to the smallest tier if the catalog is somehow
+/// missing the preferred entry, so this never returns an unknown id.
+pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
+    if effective_ram_gb < 8.0 {
+        "phi-3-mini-4k-instruct-q4_k_m"
+    } else if effective_ram_gb < 16.0 {
+        "mistral-7b-instruct-v0.2-q4_k_m"
+    } else {
+        "qwen2.5-7b-instruct-q4_k_m"
+    }
+}
+
 // ============================================================================
 // Embedding Models - Semantic Search Optimized
 // ============================================================================
