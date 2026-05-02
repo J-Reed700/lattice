@@ -1,3 +1,4 @@
+use crate::features::vault::writeback;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -249,7 +250,19 @@ pub async fn create_workspace_note_impl(
     .await
     .map_err(|e| AppError::Database(format!("Failed to create workspace note: {}", e)))?;
 
-    get_note_by_id(container.db_pool(), &note_id).await
+    let note = get_note_by_id(container.db_pool(), &note_id).await?;
+    // Vault writeback: fire-and-forget. Failures log but never block
+    // the SQL commit; the database is still the canonical write.
+    writeback::spawn_sync_workspace_note(
+        container,
+        note.id.clone(),
+        note.title.clone(),
+        note.content.clone(),
+        note.created_at.clone(),
+        note.updated_at.clone(),
+        Vec::new(),
+    );
+    Ok(note)
 }
 
 pub async fn update_workspace_note_impl(
@@ -292,7 +305,17 @@ pub async fn update_workspace_note_impl(
         ))
     })?;
 
-    get_note_by_id(container.db_pool(), &note_id).await
+    let updated = get_note_by_id(container.db_pool(), &note_id).await?;
+    writeback::spawn_sync_workspace_note(
+        container,
+        updated.id.clone(),
+        updated.title.clone(),
+        updated.content.clone(),
+        updated.created_at.clone(),
+        updated.updated_at.clone(),
+        Vec::new(),
+    );
+    Ok(updated)
 }
 
 pub async fn delete_workspace_note_impl(
@@ -507,6 +530,7 @@ pub async fn update_daily_note_content_impl(
     request: UpdateDailyNoteContentRequestDto,
 ) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
+    let note_id = request.note_id.clone();
     sqlx::query(
         r#"
         UPDATE daily_notes_workspace
@@ -515,10 +539,25 @@ pub async fn update_daily_note_content_impl(
         "#,
     )
     .bind(request.content)
-    .bind(now)
-    .bind(request.note_id)
+    .bind(&now)
+    .bind(&note_id)
     .execute(container.db_pool())
     .await
     .map_err(|e| AppError::Database(format!("Failed to update daily note content: {}", e)))?;
+
+    // Daily notes share the same `daily_notes_workspace` table as
+    // workspace notes — backend-side they're the same entity. Reuse the
+    // workspace writeback path so vault export is consistent.
+    if let Ok(note) = get_note_by_id(container.db_pool(), &note_id).await {
+        writeback::spawn_sync_workspace_note(
+            container,
+            note.id.clone(),
+            note.title.clone(),
+            note.content.clone(),
+            note.created_at.clone(),
+            note.updated_at.clone(),
+            Vec::new(),
+        );
+    }
     Ok(())
 }

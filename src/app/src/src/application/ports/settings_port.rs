@@ -227,6 +227,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
             SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
             SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
+            SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
         };
         Ok(value)
     }
@@ -255,6 +256,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
                     SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
                     SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
+                    SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
                 };
 
                 let mut category_map = category_value
@@ -299,6 +301,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                         settings.privacy =
                             serde_json::from_value(serde_json::Value::Object(category_map))?;
                     }
+                    SettingsCategory::Vault => {
+                        settings.vault =
+                            serde_json::from_value(serde_json::Value::Object(category_map))?;
+                    }
                 }
             }
             None => {
@@ -336,6 +342,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     SettingsCategory::Sync => settings.sync = Default::default(),
                     SettingsCategory::Backup => settings.backup = Default::default(),
                     SettingsCategory::Privacy => settings.privacy = Default::default(),
+                    SettingsCategory::Vault => settings.vault = Default::default(),
                 }
             }
             None => {

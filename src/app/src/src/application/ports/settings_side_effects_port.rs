@@ -41,6 +41,17 @@
 use crate::features::settings::dto::SettingsCategory;
 use async_trait::async_trait;
 
+/// Hints emitted by the use case when something policy-relevant
+/// transitioned in this update. Lets the side-effect impl react to
+/// transitions without having to read both before/after states itself.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SettingsTransitionHints {
+    /// True iff `vault.enabled` flipped from false to true in this
+    /// update — triggers the one-shot backfill of existing notes into
+    /// the vault folder. Use case sets this; side-effect impl reacts.
+    pub vault_just_enabled: bool,
+}
+
 /// Port for settings-mutation side effects (cache invalidation,
 /// runtime configuration refresh).
 ///
@@ -54,13 +65,17 @@ use async_trait::async_trait;
 pub trait SettingsSideEffectsPort: Send + Sync {
     /// Notify that settings have been updated. `category` is `Some`
     /// when only a single category was modified (the common case),
-    /// `None` for a global update or full reset.
+    /// `None` for a global update or full reset. `hints` carries
+    /// transition flags the use case computed before/after the write.
     ///
     /// Implementations decide which side effects to fire based on
-    /// the category — e.g., only invalidate the LLM cache if the
-    /// LLM category (or `None`) was touched. The port doesn't
-    /// dictate the policy; Container's impl owns it.
-    async fn on_settings_updated(&self, category: Option<SettingsCategory>);
+    /// the category and hints. The port doesn't dictate the policy;
+    /// Container's impl owns it.
+    async fn on_settings_updated(
+        &self,
+        category: Option<SettingsCategory>,
+        hints: SettingsTransitionHints,
+    );
 }
 
 /// No-op implementation for tests that don't care about side effects.
@@ -68,7 +83,12 @@ pub struct NoopSettingsSideEffects;
 
 #[async_trait]
 impl SettingsSideEffectsPort for NoopSettingsSideEffects {
-    async fn on_settings_updated(&self, _category: Option<SettingsCategory>) {}
+    async fn on_settings_updated(
+        &self,
+        _category: Option<SettingsCategory>,
+        _hints: SettingsTransitionHints,
+    ) {
+    }
 }
 
 /// Recording mock for tests that want to assert the use case invokes
@@ -102,7 +122,11 @@ impl Default for RecordingSettingsSideEffects {
 #[cfg(test)]
 #[async_trait]
 impl SettingsSideEffectsPort for RecordingSettingsSideEffects {
-    async fn on_settings_updated(&self, category: Option<SettingsCategory>) {
+    async fn on_settings_updated(
+        &self,
+        category: Option<SettingsCategory>,
+        _hints: SettingsTransitionHints,
+    ) {
         self.calls.lock().push(category);
     }
 }

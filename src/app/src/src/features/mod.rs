@@ -35,4 +35,5 @@ pub mod settings;
 pub mod stats;
 pub mod tags;
 pub mod updates;
+pub mod vault;
 pub mod web;

@@ -1052,6 +1052,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
             SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
             SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
+            SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
         };
 
         Ok(value)
@@ -1093,6 +1094,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Sync => serde_json::to_value(&settings.sync)?,
                     SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
                     SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
+                    SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
                 };
 
                 let merged = self.merge_category_updates(category_value, &updates)?;
@@ -1119,6 +1121,9 @@ impl SettingsRepositoryPort for SettingsRepository {
                     }
                     SettingsCategory::Privacy => {
                         settings.privacy = serde_json::from_value(merged)?;
+                    }
+                    SettingsCategory::Vault => {
+                        settings.vault = serde_json::from_value(merged)?;
                     }
                 }
             }
@@ -1157,6 +1162,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Sync => settings.sync = Default::default(),
                     SettingsCategory::Backup => settings.backup = Default::default(),
                     SettingsCategory::Privacy => settings.privacy = Default::default(),
+                    SettingsCategory::Vault => settings.vault = Default::default(),
                 }
             }
             None => {

@@ -40,6 +40,12 @@ pub struct SettingsDto {
     /// Privacy configuration (telemetry, crash reporting)
     #[serde(default)]
     pub privacy: PrivacySettingsDto,
+
+    /// Vault portability configuration. Mirrors notes to plain markdown
+    /// files on disk so users can manage them with their own tools
+    /// (Obsidian, ripgrep, git, iCloud, etc.). See VaultSettingsDto.
+    #[serde(default)]
+    pub vault: VaultSettingsDto,
 }
 
 /// Indexing settings.
@@ -447,6 +453,52 @@ pub struct PrivacySettingsDto {
     pub crash_reporting: bool,
 }
 
+/// Vault portability settings. Drives the markdown-mirror sync.
+///
+/// The vault folder is the user-facing source of truth: their notes live
+/// there as plain `.md` files alongside frontmatter (id, timestamps, tags).
+/// Lattice writes there on save and watches for external edits — so users
+/// can edit notes in Obsidian / VS Code / iCloud / a CLI without losing
+/// data. SQLite remains the index/query layer; the vault folder is the
+/// portability layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultSettingsDto {
+    /// Absolute path to the vault folder. Empty string means
+    /// "use the default" (`~/Lattice`), resolved at startup.
+    /// Validation: must be writable, must NOT be inside the app data
+    /// directory (would cause recursive backup loops).
+    #[serde(default)]
+    pub vault_path: String,
+
+    /// Whether the markdown writeback layer is enabled. Off by default
+    /// so existing users opt in explicitly — flipping it on triggers a
+    /// one-shot backfill of the vault folder from the SQLite store.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Whether to also watch the vault folder for external file changes
+    /// and re-import them into SQLite. Independent toggle so users can
+    /// have one-way export without inviting external editors to write
+    /// back into their note store.
+    #[serde(default)]
+    pub watch_external_changes: bool,
+}
+
+impl Default for VaultSettingsDto {
+    fn default() -> Self {
+        // Off by default — explicit opt-in. The frontend prompts the user
+        // to enable it when they first visit the Vault settings tab so
+        // existing installs don't suddenly start writing files outside
+        // their app dir without consent.
+        Self {
+            vault_path: String::new(),
+            enabled: false,
+            watch_external_changes: false,
+        }
+    }
+}
+
 // ============================================================================
 // Settings Category Enum
 // ============================================================================
@@ -469,6 +521,8 @@ pub enum SettingsCategory {
     Backup,
     /// Privacy settings (telemetry + crash reporting)
     Privacy,
+    /// Vault portability (markdown mirror folder)
+    Vault,
 }
 
 impl SettingsCategory {
@@ -482,6 +536,7 @@ impl SettingsCategory {
             SettingsCategory::Sync,
             SettingsCategory::Backup,
             SettingsCategory::Privacy,
+            SettingsCategory::Vault,
         ]
     }
 
@@ -495,6 +550,7 @@ impl SettingsCategory {
             SettingsCategory::Sync => "sync",
             SettingsCategory::Backup => "backup",
             SettingsCategory::Privacy => "privacy",
+            SettingsCategory::Vault => "vault",
         }
     }
 }
@@ -511,6 +567,7 @@ impl FromStr for SettingsCategory {
             "sync" => Ok(SettingsCategory::Sync),
             "backup" => Ok(SettingsCategory::Backup),
             "privacy" => Ok(SettingsCategory::Privacy),
+            "vault" => Ok(SettingsCategory::Vault),
             _ => Err(format!("Unknown settings category: {}", s)),
         }
     }

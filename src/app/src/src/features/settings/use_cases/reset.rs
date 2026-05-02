@@ -79,8 +79,13 @@ impl ResetSettingsUseCase {
         // caches need invalidation just like an update. The previous
         // `reset_settings` Tauri command never invalidated anything,
         // so a "reset to defaults" silently left stale LLM caches.
+        // Reset never flips vault.enabled to true (only false via the
+        // default), so all transition hints stay at their default off.
         self.side_effects
-            .on_settings_updated(request.category)
+            .on_settings_updated(
+                request.category,
+                crate::application::ports::settings_side_effects_port::SettingsTransitionHints::default(),
+            )
             .await;
 
         Ok(result)

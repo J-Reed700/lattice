@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { Settings as SettingsIcon, Search, Database, MessageSquare, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive, FileText, Settings2, Wrench } from 'lucide-react';
+import { Settings as SettingsIcon, Search, Database, MessageSquare, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive, FileText, Settings2, Wrench, FolderOpen } from 'lucide-react';
 
 import { AIModelsTab } from './AIModelsTab';
 import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
@@ -18,11 +18,12 @@ import { DisplayTab } from './DisplayTab';
 import { IndexingTab } from './IndexingTab';
 import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
+import { VaultTab } from './VaultTab';
 import { SETTINGS_QUERY_KEY } from '../../hooks/queries/useSettingsQuery';
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 
-type SettingsTab = 'search' | 'indexing' | 'chat' | 'models' | 'downloaded-models' | 'prompts' | 'tuning' | 'tools' | 'display' | 'privacy';
+type SettingsTab = 'search' | 'indexing' | 'vault' | 'chat' | 'models' | 'downloaded-models' | 'prompts' | 'tuning' | 'tools' | 'display' | 'privacy';
 
 interface Tab {
   id: SettingsTab;
@@ -42,6 +43,7 @@ const tabGroups: TabGroup[] = [
     tabs: [
       { id: 'search', label: 'Search', icon: Search, component: SearchTab },
       { id: 'indexing', label: 'Indexing', icon: Database, component: IndexingTab },
+      { id: 'vault', label: 'Vault', icon: FolderOpen, component: VaultTab },
       { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
       { id: 'privacy', label: 'Privacy', icon: Shield, component: PrivacyTab },
     ],

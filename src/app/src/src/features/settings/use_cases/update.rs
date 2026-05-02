@@ -86,13 +86,14 @@ impl UpdateSettingsUseCase {
         // memory or on disk.
         validate_security_constraints(&request)?;
 
-        // Capture pre-state for audit logging.
-        let previous_ollama_url = self
-            .repository
-            .get_all()
-            .await
-            .map(|s| s.llm.ollama_url)
+        // Capture pre-state for audit logging + transition detection.
+        let previous = self.repository.get_all().await.ok();
+        let previous_ollama_url = previous
+            .as_ref()
+            .map(|s| s.llm.ollama_url.clone())
             .unwrap_or_default();
+        let previous_vault_enabled =
+            previous.as_ref().map(|s| s.vault.enabled).unwrap_or(false);
 
         // ---------- Apply + structural validation ----------
         let updated_settings = self
@@ -131,8 +132,11 @@ impl UpdateSettingsUseCase {
         // helpers, future migration scripts) can't bypass it. The
         // port impl is best-effort — failures don't roll back the
         // already-persisted settings.
+        let hints = crate::application::ports::settings_side_effects_port::SettingsTransitionHints {
+            vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
+        };
         self.side_effects
-            .on_settings_updated(request.category)
+            .on_settings_updated(request.category, hints)
             .await;
 
         Ok(updated_settings)
@@ -195,6 +199,11 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
                 validate_indexed_paths_payload(value)?;
             }
         }
+        Some(SettingsCategory::Vault) => {
+            if let Some(value) = request.updates.get("vaultPath") {
+                validate_vault_path_payload(value)?;
+            }
+        }
         // Global update (None) — the payload may carry the whole
         // settings shape with `llm.ollamaUrl` or `indexing.indexedPaths`
         // as nested objects.
@@ -209,10 +218,37 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
                     validate_indexed_paths_payload(paths)?;
                 }
             }
+            if let Some(vault) = request.updates.get("vault") {
+                if let Some(path) = vault.get("vaultPath") {
+                    validate_vault_path_payload(path)?;
+                }
+            }
         }
         // Other categories carry no security-sensitive fields today.
         _ => {}
     }
+
+    Ok(())
+}
+
+/// CWE-22 / CWE-158: vault path must be a valid absolute directory path
+/// (or empty, meaning "use the default"). Same validator as
+/// `indexed_paths` since the threat surface is identical — a hostile
+/// frontend could try to point the vault writeback at `/etc` or
+/// `~/.ssh`.
+fn validate_vault_path_payload(value: &serde_json::Value) -> Result<()> {
+    let path_str = value.as_str().ok_or_else(|| {
+        AppError::InvalidInput("vaultPath must be a string".to_string())
+    })?;
+
+    // Empty string is the sentinel for "use default" — accept it.
+    if path_str.is_empty() {
+        return Ok(());
+    }
+
+    InputValidator::new()
+        .validate_directory_path(path_str, false)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid vaultPath: {e}")))?;
 
     Ok(())
 }

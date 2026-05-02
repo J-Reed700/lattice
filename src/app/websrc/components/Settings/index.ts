@@ -12,3 +12,4 @@ export { AIModelsTab } from './AIModelsTab';
 export { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab } from './AITab';
 export { DisplayTab } from './DisplayTab';
 export { PrivacyTab } from './PrivacyTab';
+export { VaultTab } from './VaultTab';

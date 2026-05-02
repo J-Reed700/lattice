@@ -323,6 +323,11 @@ struct ContainerSettingsSideEffects {
 
     /// Settings repository for re-reading custom_tools after a write.
     settings_repository: Arc<dyn SettingsRepositoryPort>,
+
+    /// SQLite pool — used by the vault backfill side effect to walk
+    /// every workspace note and write it to the vault folder when the
+    /// user flips `vault.enabled` on.
+    db_pool: sqlx::SqlitePool,
 }
 
 #[async_trait::async_trait]
@@ -330,8 +335,42 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
     async fn on_settings_updated(
         &self,
         category: Option<crate::features::settings::dto::SettingsCategory>,
+        hints: crate::application::ports::settings_side_effects_port::SettingsTransitionHints,
     ) {
         use crate::features::settings::dto::SettingsCategory;
+
+        // Vault was just enabled — fire the one-shot backfill so
+        // existing notes appear in the vault folder, not just the
+        // ones written from this point forward. Resolve the root from
+        // current settings (the user may have configured a path along
+        // with flipping the toggle in the same update). Best-effort:
+        // resolution failure logs and skips.
+        if hints.vault_just_enabled {
+            match self.settings_repository.get_all().await {
+                Ok(settings) => {
+                    if let Some(vault_root) = crate::features::vault::writeback::resolve_vault_root(
+                        &settings.vault.vault_path,
+                    ) {
+                        tracing::info!(
+                            vault_root = %vault_root.display(),
+                            "Vault enabled — kicking off one-shot backfill"
+                        );
+                        crate::features::vault::writeback::spawn_backfill(
+                            self.db_pool.clone(),
+                            vault_root,
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Vault enabled but vault root could not be resolved — skipping backfill"
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "Vault enabled but settings re-read failed — skipping backfill"
+                ),
+            }
+        }
 
         // Invalidate the LLM caches when LLM settings (or a global
         // / no-category mutation, which could touch anything) changed.
@@ -600,6 +639,7 @@ impl Container {
                 router_llm_cache: router_llm_cache.clone(),
                 function_executor: function_executor.clone(),
                 settings_repository: system.settings_repo().clone(),
+                db_pool: core.db_pool().clone(),
             });
 
         // === Return Hollow Container ===

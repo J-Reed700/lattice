@@ -13,6 +13,26 @@ export interface AppSettings {
   sync: SyncSettings;
   backup: BackupSettings;
   privacy: PrivacySettings;
+  vault: VaultSettings;
+}
+
+/**
+ * Vault portability settings.
+ *
+ * Mirrors notes to plain markdown files on disk so users can manage
+ * them with their own tools (Obsidian, ripgrep, git, iCloud).
+ *
+ * - `vaultPath` empty string means "use the default" (~/Lattice).
+ * - `enabled` is off by default; flipping false → true triggers a
+ *   one-shot backfill of every existing note into the vault folder.
+ * - `watchExternalChanges` is the reverse-direction toggle (filesystem
+ *   watcher → SQLite re-import). Independent so users can have one-way
+ *   export without inviting external editors to write back.
+ */
+export interface VaultSettings {
+  vaultPath: string;
+  enabled: boolean;
+  watchExternalChanges: boolean;
 }
 
 /**
