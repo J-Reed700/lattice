@@ -1,28 +1,3 @@
-//! First Run Setup Use Case
-//!
-//! Detects if this is the first run and if a default embedding model needs to be downloaded.
-//!
-//! # Purpose
-//!
-//! Checks the model registry (DB) for any completed embedding model. If none exist,
-//! recommends downloading the default model (DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME).
-//!
-//! # Business Logic
-//!
-//! 1. Query the model registry for any embedding model with status='completed'.
-//! 2. If none found, return needs_setup=true with recommendation.
-//! 3. If at least one exists, return needs_setup=false.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! let use_case = CheckFirstRunStatusUseCase::new(repository);
-//! let response = use_case.execute().await?;
-//!
-//! if response.needs_setup {
-//!     println!("First run detected. Recommended model: {}", response.recommended_model_id.unwrap());
-//! }
-//! ```
 
 use crate::application::ports::system_info::SystemInfoPort;
 use crate::domain::curated_models::{get_curated_llm_models, recommend_chat_model_for_ram};
@@ -35,69 +10,33 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-// =============================================================================
-// DTOs
-// =============================================================================
-
-/// One model the first-run modal will install. Embedding + chat are bundled
-/// into a single "Install Recommended AI" click; the user doesn't pick from
-/// a catalog by default. Power users can still override via "More options".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecommendedModel {
-    /// Curated catalog id (the key the download use case expects).
     pub model_id: String,
-    /// Human-friendly display name for the modal.
     pub display_name: String,
-    /// Estimated bytes on disk after download. Drives the "(4.2 GB)"
-    /// callout next to the install button.
     pub estimated_size_bytes: u64,
 }
 
-/// Response DTO for first-run status check
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirstRunStatusResponse {
-    /// Whether first-run setup is needed (no embedding model in registry).
     pub needs_setup: bool,
-    /// LEGACY: kept for transitional frontend compatibility — points at the
-    /// embedding model id. New callers should read `embedding_model.model_id`.
+    /// Legacy: point at embedding model id. New callers read `embedding_model`.
     pub recommended_model_id: Option<String>,
-    /// LEGACY: see `recommended_model_id`.
     pub recommended_model_name: Option<String>,
-    /// LEGACY: see `recommended_model_id`. Total of embedding + chat now lives
-    /// in the per-recommendation entries below.
     pub estimated_size_bytes: Option<u64>,
 
-    /// Embedding recommendation. Always present when `needs_setup` is true —
-    /// every install path needs an embedding model for indexing.
     pub embedding_model: Option<RecommendedModel>,
-    /// Chat model recommendation, sized to the user's hardware. Present
-    /// when `needs_setup` is true. Frontend installs both in parallel via
-    /// the existing batch-download path.
     pub chat_model: Option<RecommendedModel>,
-    /// Sum of embedding + chat estimated bytes. Drives the install
-    /// button's "(N.N GB)" affordance.
     pub total_estimated_size_bytes: Option<u64>,
 }
 
-// =============================================================================
-// Use Case
-// =============================================================================
-
-/// Check first-run status use case
 pub struct CheckFirstRunStatusUseCase {
-    /// Repository used to query the model registry
     repository: DownloadedModelRepository,
-    /// Hardware probe used to size the recommended chat model. Optional
-    /// because legacy call sites (and tests) construct without it; when
-    /// absent, falls back to the safe small-tier recommendation.
+    /// Without a probe, falls back to the small-tier chat recommendation.
     system_info: Option<Arc<dyn SystemInfoPort>>,
 }
 
 impl CheckFirstRunStatusUseCase {
-    /// Construct without hardware detection. Recommends the small-tier
-    /// chat model as a safe default. Prefer `with_system_info` for
-    /// production callers so users with capable machines aren't given
-    /// an underpowered first-impression model.
     pub fn new(repository: DownloadedModelRepository) -> Self {
         Self {
             repository,
@@ -105,8 +44,6 @@ impl CheckFirstRunStatusUseCase {
         }
     }
 
-    /// Construct with a hardware probe so the chat model recommendation
-    /// fits the user's actual RAM/VRAM budget.
     pub fn with_system_info(
         repository: DownloadedModelRepository,
         system_info: Arc<dyn SystemInfoPort>,
@@ -117,12 +54,7 @@ impl CheckFirstRunStatusUseCase {
         }
     }
 
-    /// Execute the use case
     pub async fn execute(&self) -> Result<FirstRunStatusResponse> {
-        // Registry is the source of truth — filesystem heuristics drift and miss
-        // models stored in subdirs (see Phase 3 fix: the welcome modal never
-        // dismissed because a non-recursive top-level .onnx scan never matched
-        // the per-model subdirectory layout).
         debug!("Checking first-run status via model registry");
         let has_embedding = self.repository.has_any_embedding_model().await?;
         if has_embedding {
@@ -142,9 +74,6 @@ impl CheckFirstRunStatusUseCase {
         Ok(self.build_recommendation().await)
     }
 
-    /// Build the recommendation bundle. Probes hardware (if available) to
-    /// pick a chat model that comfortably fits the user's RAM, then pairs
-    /// it with the default embedding model.
     async fn build_recommendation(&self) -> FirstRunStatusResponse {
         let embedding = embedding_recommendation();
         let chat = self.chat_recommendation().await;
@@ -157,8 +86,7 @@ impl CheckFirstRunStatusUseCase {
 
         FirstRunStatusResponse {
             needs_setup: true,
-            // Legacy fields point at the embedding model so old frontends
-            // keep working through the rollout.
+            // Legacy fields point at the embedding model.
             recommended_model_id: embedding.as_ref().map(|m| m.model_id.clone()),
             recommended_model_name: embedding.as_ref().map(|m| m.display_name.clone()),
             estimated_size_bytes: embedding.as_ref().map(|m| m.estimated_size_bytes),
@@ -169,10 +97,8 @@ impl CheckFirstRunStatusUseCase {
     }
 
     async fn chat_recommendation(&self) -> Option<RecommendedModel> {
-        // Detect effective RAM. Includes discrete VRAM when present so
-        // GPU-equipped boxes get the bigger model. Falls back to small-
-        // tier if detection fails — better to under-recommend than crash
-        // a 6 GB laptop loading a 7 B model.
+        // Effective RAM = system RAM + discrete VRAM. Probe failure
+        // falls through to the small-tier recommendation.
         let effective_ram_gb = match &self.system_info {
             Some(probe) => match probe.get_system_info().await {
                 Ok(info) => {
@@ -199,8 +125,6 @@ impl CheckFirstRunStatusUseCase {
             .map(|m| RecommendedModel {
                 model_id: m.id,
                 display_name: m.name,
-                // Catalog stores `size_gb` as a float; convert to bytes
-                // for the frontend's progress + drawer rendering.
                 estimated_size_bytes: (m.size_gb * 1_073_741_824.0) as u64,
             })
     }
@@ -215,15 +139,10 @@ fn embedding_recommendation() -> Option<RecommendedModel> {
     Some(RecommendedModel {
         model_id: DEFAULT_EMBEDDING_MODEL_CURATED_ID.to_string(),
         display_name: format!("{} (Embedding Model)", DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME),
-        // 91.7 MB sane fallback — observed real-world download size for
-        // all-MiniLM-L6-v2 safetensors + tokenizer.json + config.json.
+        // Observed real-world size for all-MiniLM-L6-v2 + tokenizer + config.
         estimated_size_bytes: catalog_size.unwrap_or(91_700_000),
     })
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -328,8 +247,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_first_run_when_embedding_model_present_but_status_not_completed() {
-        // Validates that has_any_embedding_model filters by status='completed'.
-        // We bypass save() (which forces 'completed') and insert a row with status='downloading'.
         let repo = setup_repo().await;
 
         let pool = {

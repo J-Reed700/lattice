@@ -327,6 +327,10 @@ fn main() {
                     "plugin_export_csv",
                     "plugin_export_html",
                 ]),
+            )
+            .plugin(
+                "vault",
+                tauri_build::InlinedPlugin::new().commands(&["rescan_vault"]),
             ),
     ) {
         eprintln!("failed to run tauri-build: {}", error);

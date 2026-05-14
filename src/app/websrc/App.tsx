@@ -13,6 +13,9 @@ import { useDownloadedModels } from './hooks/useDownloadedModels';
 import { useDownloadsListener } from './hooks/useDownloads';
 import { useModelWarmupListener } from './hooks/useModelWarmupListener';
 import { useProgressCleanup } from './hooks/useProgressCleanup';
+import { useVaultFocusRescan } from './hooks/useVaultFocusRescan';
+import { useVaultImportListener } from './hooks/useVaultImportListener';
+import { useVaultWriteErrorListener } from './hooks/useVaultWriteErrorListener';
 import VaultAPI from './lib/api';
 import { router } from './routes';
 import { startDownloadCleanup } from './stores/downloadStore';
@@ -40,10 +43,11 @@ function App() {
   // called from any other component or every event will apply twice.
   useDownloadsListener();
 
-  // Subscribe once to backend boot-time model warmup events so the chat
-  // input can mask while a cold-mmap is in flight. Single-mount, same as
-  // useDownloadsListener.
+  // Single-mount listeners. See each hook's docs.
   useModelWarmupListener();
+  useVaultWriteErrorListener();
+  useVaultImportListener();
+  useVaultFocusRescan();
 
   // Initialize downloaded models event listeners (always-on for toast notifications)
   useDownloadedModels();

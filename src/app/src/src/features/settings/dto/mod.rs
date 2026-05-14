@@ -41,9 +41,6 @@ pub struct SettingsDto {
     #[serde(default)]
     pub privacy: PrivacySettingsDto,
 
-    /// Vault portability configuration. Mirrors notes to plain markdown
-    /// files on disk so users can manage them with their own tools
-    /// (Obsidian, ripgrep, git, iCloud, etc.). See VaultSettingsDto.
     #[serde(default)]
     pub vault: VaultSettingsDto,
 }
@@ -453,44 +450,23 @@ pub struct PrivacySettingsDto {
     pub crash_reporting: bool,
 }
 
-/// Vault portability settings. Drives the markdown-mirror sync.
-///
-/// The vault folder is the user-facing source of truth: their notes live
-/// there as plain `.md` files alongside frontmatter (id, timestamps, tags).
-/// Lattice writes there on save and watches for external edits — so users
-/// can edit notes in Obsidian / VS Code / iCloud / a CLI without losing
-/// data. SQLite remains the index/query layer; the vault folder is the
-/// portability layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultSettingsDto {
-    /// Absolute path to the vault folder. Empty string means
-    /// "use the default" (`~/Lattice`), resolved at startup.
-    /// Validation: must be writable, must NOT be inside the app data
-    /// directory (would cause recursive backup loops).
+    /// Empty string = `~/Lattice`.
     #[serde(default)]
     pub vault_path: String,
 
-    /// Whether the markdown writeback layer is enabled. Off by default
-    /// so existing users opt in explicitly — flipping it on triggers a
-    /// one-shot backfill of the vault folder from the SQLite store.
     #[serde(default)]
     pub enabled: bool,
 
-    /// Whether to also watch the vault folder for external file changes
-    /// and re-import them into SQLite. Independent toggle so users can
-    /// have one-way export without inviting external editors to write
-    /// back into their note store.
+    /// Reverse-direction sync: import external `.md` edits back into SQL.
     #[serde(default)]
     pub watch_external_changes: bool,
 }
 
 impl Default for VaultSettingsDto {
     fn default() -> Self {
-        // Off by default — explicit opt-in. The frontend prompts the user
-        // to enable it when they first visit the Vault settings tab so
-        // existing installs don't suddenly start writing files outside
-        // their app dir without consent.
         Self {
             vault_path: String::new(),
             enabled: false,
@@ -764,8 +740,6 @@ impl Default for RouterSettingsDto {
     fn default() -> Self {
         Self {
             enabled: false,
-            // Default to a small, fast local model suitable for routing.
-            // Users can override this in Settings → Model Catalog.
             model: "phi-3.5-mini-instruct-q4_k_m".to_string(),
             timeout_ms: 350,
             max_tokens: 120,

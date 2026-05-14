@@ -5061,6 +5061,18 @@
           "markdownDescription": "Denies the get_version_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the rescan_vault command without any pre-configured scope.",
+          "type": "string",
+          "const": "vault:allow-rescan-vault",
+          "markdownDescription": "Enables the rescan_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rescan_vault command without any pre-configured scope.",
+          "type": "string",
+          "const": "vault:deny-rescan-vault",
+          "markdownDescription": "Denies the rescan_vault command without any pre-configured scope."
+        },
+        {
           "description": "Enables the extract_article command without any pre-configured scope.",
           "type": "string",
           "const": "web:allow-extract-article",

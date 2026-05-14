@@ -228,13 +228,8 @@ export const useDownloadedModels = () => {
             // Show success notification
             toast.success(`${modelName} ready`);
 
-            // If the saga auto-activated this download into an empty role
-            // slot (chat or utility), kick off the corresponding warm-up
-            // so the FIRST chat turn after a fresh install doesn't pay the
-            // 60-180s GGUF cold-mmap cost. Embedding models warm via a
-            // different path on first use; chat/utility need explicit
-            // warmup commands. Fire-and-forget — warmup failures are
-            // non-fatal and surface in the model card UI.
+            // Auto-warm whichever roles the saga just auto-activated so
+            // the first chat turn doesn't pay the cold-mmap cost.
             const justCompleted = updated.find((m) => m.model_name === modelName);
             if (justCompleted?.is_active_for_chat) {
               void VaultAPI.warmUpActiveChatModel().catch((err) =>

@@ -55,6 +55,12 @@ serde_json = "1.0"
 jsonschema = "0.17"
 tokio = { version = "1.35", features = ["full"] }
 notify = "6.1"
+# Sibling of `notify` (same maintainers) that handles the editor-temp-file-
+# swap insanity natively. Without it we'd hand-roll a sweep loop that
+# misclassifies macOS FSEvents Any/Other variants and atomic-rename
+# sequences. The debouncer batches into clean DebouncedEvent groups
+# keyed per-path with backend-tracked metadata.
+notify-debouncer-full = "0.3"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }

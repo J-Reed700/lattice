@@ -357,9 +357,7 @@ export function ChatPanel() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isSending || !activeConversationId) return;
-    // Block submit while the chat model is mid-cold-mmap or not yet
-    // downloaded. The user can keep typing; we just hold their message
-    // until the sidecar is ready.
+    // Block submit while warming up or before chat model downloads.
     if (useModelWarmupStore.getState().chat.phase === 'started') return;
     if (useDownloadedModelsStore.getState().activeModel === null) return;
 
@@ -414,11 +412,8 @@ export function ChatPanel() {
   const turnMode: TurnMode =
     normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
 
-  // While the chat model is mid-cold-mmap on app boot, surface a friendly
-  // status so the user knows the field works but submit is paused. Other
-  // surfaces (notes, BM25 search) keep working through this period.
-  // We also gate when no chat model is active yet — first-run window
-  // between "Install Recommended AI" click and chat download finishing.
+  // Mask the input during warmup, and during the first-run window
+  // between "Install Recommended AI" and the chat download finishing.
   const isChatWarming = useModelWarmupStore(selectIsChatWarming);
   const hasActiveChatModel = useDownloadedModelsStore((s) => s.activeModel !== null);
   const isChatUnavailable = isChatWarming || !hasActiveChatModel;

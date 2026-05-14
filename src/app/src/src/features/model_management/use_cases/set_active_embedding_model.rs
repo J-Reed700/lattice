@@ -1,12 +1,9 @@
-//! Set Active Embedding Model Use Case
-//!
-//! Sets which downloaded model to use for embedding feature.
+//! Sets the active embedding model.
 
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
 
-/// Use case for setting the active embedding model
 pub struct SetActiveEmbeddingModelUseCase {
     repository: DownloadedModelRepository,
 }
@@ -16,22 +13,6 @@ impl SetActiveEmbeddingModelUseCase {
         Self { repository }
     }
 
-    /// Execute the use case
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The model_id to set as active for embedding
-    ///
-    /// # Business Logic
-    ///
-    /// - Validates that the model is an embedding model (not a chat model)
-    /// - Sets is_active_for_embedding=1 for specified model
-    /// - Database trigger automatically deactivates all other models
-    ///
-    /// # Errors
-    ///
-    /// - Returns NotFound if model_id doesn't exist
-    /// - Returns InvalidInput if trying to use a chat model (.gguf) for embeddings
     pub async fn execute(&self, model_id: &str) -> Result<()> {
         let model = self
             .repository
@@ -39,8 +20,7 @@ impl SetActiveEmbeddingModelUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Model not found: {}", model_id)))?;
 
-        // Remote-backed models (Ollama) have no on-disk files and the file-extension based
-        // type check doesn't apply, so the download + chat/embedding gate is Local-only.
+        // Remote-backed models have no on-disk files, so download + type checks only apply to Local.
         if model.location().is_local() {
             if !self.repository.is_downloaded(model_id).await? {
                 return Err(AppError::InvalidInput(format!(
@@ -79,9 +59,7 @@ mod tests {
 
     #[tokio::test]
     async fn ollama_backed_model_bypasses_filesystem_and_type_checks() {
-        // The synthetic Ollama row has model_type='chat' and zero files. The pre-Phase-2
-        // implementation would reject it here on both `is_downloaded` AND
-        // `validate_for_operation(false)`. Phase 2 gates both behind backend == Local.
+        // Synthetic Ollama row has model_type='chat' and zero files -- downloads gated behind Local.
         let repo = setup_repo().await;
         let use_case = SetActiveEmbeddingModelUseCase::new(repo);
 

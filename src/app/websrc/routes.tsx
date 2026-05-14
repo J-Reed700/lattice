@@ -50,9 +50,7 @@ export const router = createBrowserRouter([
         element: <Layout />,
         children: [
           {
-            // Daily Note is the default startup screen — addiction-loop
-            // hook from the 60-day plan. The Dashboard remains accessible
-            // at /home for power users who prefer the overview.
+            // Daily Note is the default landing; Dashboard remains at /home.
             index: true,
             element: <Navigate to="/journals" replace />,
           },

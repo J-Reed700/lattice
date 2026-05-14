@@ -35,5 +35,6 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::backup::plugin::init(),
         crate::features::updates::plugin::init(),
         crate::features::qa::plugin::init(),
+        crate::features::vault::plugin::init(),
     ]
 }

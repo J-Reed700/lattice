@@ -263,6 +263,7 @@
     "backup:allow-plugin-export-markdown",
     "backup:allow-plugin-export-json",
     "backup:allow-plugin-export-csv",
-    "backup:allow-plugin-export-html"
+    "backup:allow-plugin-export-html",
+    "vault:allow-rescan-vault"
   ]
 }

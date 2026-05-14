@@ -1,12 +1,5 @@
 /**
- * Model Warmup Store
- *
- * Tracks the boot-time pre-warm status of the chat / utility / embedding
- * model roles so the chat input can mask while a cold-mmap is in flight.
- *
- * This is NOT backend state — it's a derived view of transient `model:warmup-status`
- * events the Rust container fires once at boot. Zustand is appropriate here because
- * the data has no SQL truth source and no other consumer needs to write it.
+ * Per-role boot-time warmup status. Powers the chat input skeleton.
  */
 
 import { create } from 'zustand';
@@ -61,13 +54,8 @@ export const useModelWarmupStore = create<ModelWarmupStore>((set) => ({
     }),
 }));
 
-/// True while the chat model is mid-cold-load. Intended for the chat input
-/// skeleton — flips false once the chat role is `ready`, `skipped`, or
-/// `failed` (the last two mean we never actually warm — caller falls back).
 export const selectIsChatWarming = (s: ModelWarmupStore): boolean =>
   s.chat.phase === 'started';
 
-/// True when the chat model has completed prewarm in any terminal state.
-/// Useful for "first ready" toasts.
 export const selectIsChatReady = (s: ModelWarmupStore): boolean =>
   s.chat.phase === 'ready' || s.chat.phase === 'skipped';

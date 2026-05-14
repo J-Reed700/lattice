@@ -1,22 +1,3 @@
-/**
- * Vault Settings Tab
- *
- * Surfaces the markdown-mirror feature: pick a folder on disk, flip
- * "Enabled" to start writing notes there, optionally watch for external
- * edits. Backend is the SSOT (Rust SettingsRepository) — this tab uses
- * `useSettingsQuery` for reads and `useUpdateSettingsMutation` for writes.
- *
- * The first time the user flips Enabled to true, the backend does a
- * one-shot backfill of every existing note into `<vault>/notes/<id>.md`
- * with YAML frontmatter. Subsequent saves write through automatically.
- *
- * Safe-by-default:
- * - Disabled by default — explicit opt-in.
- * - Empty vaultPath uses the default `~/Lattice` so users don't have
- *   to think about the layout to get started.
- * - Path validation runs in the Rust use case before any write lands.
- */
-
 import { useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
@@ -174,12 +155,12 @@ export function VaultTab() {
         onChange={handleEnabledChange}
       />
 
-      {/* External-watcher toggle (placeholder UX — implementation lands in a follow-up) */}
+      {/* External-watcher toggle */}
       <Toggle
         title="Watch for external edits"
-        description="Re-import changes you make in Obsidian / VS Code / etc. back into Lattice. Off until v1.1 — for now, edits made outside Lattice won't sync back."
+        description="Re-import changes you make in Obsidian / VS Code / iCloud / etc. back into Lattice. Real-time via OS filesystem events, plus a refresh whenever you switch back to Lattice. Toggle takes effect on next app launch."
         checked={watchExternal}
-        disabled={true}
+        disabled={isSaving || isSyncing}
         onChange={handleWatchChange}
       />
 

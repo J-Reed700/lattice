@@ -1,13 +1,6 @@
 /**
- * useModelWarmupListener
- *
- * Subscribes once at app mount to the backend `model:warmup-status` event
- * stream and routes each phase update into the modelWarmupStore so any
- * component (chat input mask, header, etc.) can read the per-role state
- * with a simple selector.
- *
- * Mount this exactly once — at App.tsx, NOT in every consumer. Multiple
- * mounts produce duplicate dispatches.
+ * Routes `model:warmup-status` events into modelWarmupStore.
+ * Mount once in App.tsx — multiple mounts cause duplicate dispatches.
  */
 
 import { useEffect } from 'react';

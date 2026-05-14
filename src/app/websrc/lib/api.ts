@@ -414,6 +414,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   stop_auto_backup: { domain: 'backup', command: 'stop_auto_backup' },
   get_metrics: { domain: 'metrics', command: 'get_metrics' },
   get_version_info: { domain: 'updates', command: 'get_version_info' },
+  rescan_vault: { domain: 'vault', command: 'rescan_vault' },
 };
 
 /**
@@ -3296,6 +3297,19 @@ const VaultAPI = {
    */
   downloadModel: async (modelId: string): Promise<ApiResult<DownloadModelResponse>> =>
     apiCall<DownloadModelResponse>('download_model', { modelId }),
+
+  /**
+   * Rescan the vault folder for external `.md` edits the watcher may have
+   * missed. No-op if vault is disabled or watch toggle is off (backend
+   * gates). Returns counts of files scanned and imported.
+   *
+   * Called from the focus-rescan hook whenever the Tauri window regains
+   * focus — belt-and-suspenders for the fs watcher.
+   */
+  rescanVault: async (): Promise<
+    ApiResult<{ scanned: number; imported: number; deleted: number }>
+  > =>
+    apiCall<{ scanned: number; imported: number; deleted: number }>('rescan_vault'),
 
   /**
    * Starts a batch file import operation for indexing multiple files

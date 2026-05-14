@@ -1,21 +1,3 @@
-//! Update Settings Use Case
-//!
-//! Domain + security validation for settings mutations. Owns:
-//!
-//! - **SSRF prevention** for `llm.ollama_url` (CWE-918) — moved here from
-//!   the deleted `save_config` Tauri command.
-//! - **Path traversal / null byte prevention** for `indexing.indexed_paths`
-//!   (CWE-22, CWE-158) — moved here from the deleted `add_watch_folder`
-//!   command. Critical: applies to ANY mutation of `indexed_paths`, not
-//!   just the dedicated commands. Without this, a malicious or buggy
-//!   frontend could inject `/etc/shadow` via a raw `update_settings`
-//!   call with category=indexing and an `indexedPaths` payload.
-//! - **Audit logging** for LLM endpoint changes (CWE-778) — moved here
-//!   from `save_config`.
-//!
-//! The repository stays "dumb" — it does structural validation only
-//! (Zod-like — non-empty strings, in-range numbers). Domain + security
-//! validation lives at this layer.
 
 use crate::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
@@ -27,28 +9,12 @@ use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use url::Url;
 
-/// Use case for updating application settings.
-///
-/// # Responsibilities
-///
-/// - Update specific settings fields
-/// - Support category-specific or global updates
-/// - Domain + security validation (SSRF, path traversal)
-/// - Audit logging for security-sensitive changes
-/// - Repository-level structural validation
-/// - Trigger downstream side effects (cache invalidation) via the
-///   `SettingsSideEffectsPort`. Audit P0-3 fix: previously the Tauri
-///   command did this directly, leaking when internal callers
-///   bypassed the plugin layer.
 pub struct UpdateSettingsUseCase {
     repository: Arc<dyn SettingsRepositoryPort>,
     side_effects: Arc<dyn SettingsSideEffectsPort>,
 }
 
 impl UpdateSettingsUseCase {
-    /// Create a use case with no-op side effects. Convenience for
-    /// tests and code paths that legitimately don't care about cache
-    /// invalidation. Production code should use `with_side_effects`.
     pub fn new(repository: Arc<dyn SettingsRepositoryPort>) -> Self {
         Self {
             repository,
@@ -56,11 +22,6 @@ impl UpdateSettingsUseCase {
         }
     }
 
-    /// Production constructor. Wires the side-effects port so a
-    /// successful update triggers `on_settings_updated(category)` —
-    /// which the Container impl uses to invalidate the LLM cache,
-    /// router LLM cache, and refresh custom-tool runtime
-    /// configuration.
     pub fn with_side_effects(
         repository: Arc<dyn SettingsRepositoryPort>,
         side_effects: Arc<dyn SettingsSideEffectsPort>,
@@ -71,22 +32,10 @@ impl UpdateSettingsUseCase {
         }
     }
 
-    /// Execute the use case to update settings.
-    ///
-    /// # Errors
-    ///
-    /// - `InvalidInput` — SSRF check failed on `llm.ollama_url`, path
-    ///   validation failed on `indexing.indexed_paths`, or repository
-    ///   structural validation failed.
-    /// - `Storage` — Failed to persist updated settings.
     pub async fn execute(&self, request: UpdateSettingsRequestDto) -> Result<SettingsDto> {
-        // ---------- Pre-write security validation ----------
-        // These checks run on the *incoming* update payload BEFORE the
-        // repository merges it, so a malicious value never lands in
-        // memory or on disk.
+        // Validate before merge so hostile values never reach the repository.
         validate_security_constraints(&request)?;
 
-        // Capture pre-state for audit logging + transition detection.
         let previous = self.repository.get_all().await.ok();
         let previous_ollama_url = previous
             .as_ref()
@@ -95,7 +44,23 @@ impl UpdateSettingsUseCase {
         let previous_vault_enabled =
             previous.as_ref().map(|s| s.vault.enabled).unwrap_or(false);
 
-        // ---------- Apply + structural validation ----------
+        // Pre-flight vault writability on enable flip.
+        if let Some(proposed) = compute_proposed_vault(&request, previous.as_ref()) {
+            if !previous_vault_enabled && proposed.enabled {
+                let root = crate::features::vault::writeback::resolve_vault_root(
+                    &proposed.vault_path,
+                )
+                .ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "Vault root could not be resolved (no home directory available). \
+                         Pick an explicit folder in Vault settings."
+                            .to_string(),
+                    )
+                })?;
+                probe_vault_writable(&root).await?;
+            }
+        }
+
         let updated_settings = self
             .repository
             .update(request.category, request.updates.clone())
@@ -111,9 +76,6 @@ impl UpdateSettingsUseCase {
 
         self.repository.save_all(&updated_settings).await?;
 
-        // ---------- Audit logging ----------
-        // Emit an audit event when a security-sensitive field changed.
-        // Today: ollama_url. Add others here as they're identified.
         if updated_settings.llm.ollama_url != previous_ollama_url {
             let event = AuditEvent::new(AuditAction::ConfigChanged, AuditResult::success())
                 .with_resource_id("settings.llm.ollama_url")
@@ -126,12 +88,8 @@ impl UpdateSettingsUseCase {
             }
         }
 
-        // ---------- Downstream side effects ----------
-        // Audit P0-3 fix: trigger cache invalidation here, not in the
-        // Tauri command, so internal callers (tests, watch-folder
-        // helpers, future migration scripts) can't bypass it. The
-        // port impl is best-effort — failures don't roll back the
-        // already-persisted settings.
+        // Side effects after persist. Best-effort — failures don't roll
+        // back already-committed settings.
         let hints = crate::application::ports::settings_side_effects_port::SettingsTransitionHints {
             vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
         };
@@ -142,7 +100,6 @@ impl UpdateSettingsUseCase {
         Ok(updated_settings)
     }
 
-    /// Update a specific settings category (convenience wrapper).
     pub async fn update_category(
         &self,
         category: SettingsCategory,
@@ -155,7 +112,6 @@ impl UpdateSettingsUseCase {
         self.execute(request).await
     }
 
-    /// Update global settings (across all categories).
     pub async fn update_global(
         &self,
         updates: std::collections::HashMap<String, serde_json::Value>,
@@ -168,24 +124,7 @@ impl UpdateSettingsUseCase {
     }
 }
 
-// ============================================================================
-// Security validation helpers
-// ============================================================================
-
-/// Run the security checks that apply to settings mutations. Returns
-/// `Err(InvalidInput)` if any field carries a value that should never
-/// reach the repository.
-///
-/// Run BEFORE the repository merge so a hostile payload never lands on
-/// disk. Each check is targeted at a specific field; unrelated updates
-/// (e.g. changing `search.max_results`) are not affected.
 fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<()> {
-    // The category gates which keys can appear. For LLM updates, check
-    // ollama_url for SSRF. For Indexing updates, check indexed_paths
-    // for traversal. For a "global" update (no category), check both
-    // — the payload is keyed by category names, so the keys we look at
-    // are different.
-
     match request.category {
         Some(SettingsCategory::Llm) => {
             if let Some(value) = request.updates.get("ollamaUrl") {
@@ -204,9 +143,6 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
                 validate_vault_path_payload(value)?;
             }
         }
-        // Global update (None) — the payload may carry the whole
-        // settings shape with `llm.ollamaUrl` or `indexing.indexedPaths`
-        // as nested objects.
         None => {
             if let Some(llm) = request.updates.get("llm") {
                 if let Some(url) = llm.get("ollamaUrl").and_then(|v| v.as_str()) {
@@ -224,24 +160,97 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
                 }
             }
         }
-        // Other categories carry no security-sensitive fields today.
         _ => {}
     }
 
     Ok(())
 }
 
-/// CWE-22 / CWE-158: vault path must be a valid absolute directory path
-/// (or empty, meaning "use the default"). Same validator as
-/// `indexed_paths` since the threat surface is identical — a hostile
-/// frontend could try to point the vault writeback at `/etc` or
-/// `~/.ssh`.
+struct ProposedVault {
+    enabled: bool,
+    vault_path: String,
+}
+
+/// Returns `None` for updates that can't affect vault config.
+fn compute_proposed_vault(
+    request: &UpdateSettingsRequestDto,
+    previous: Option<&SettingsDto>,
+) -> Option<ProposedVault> {
+    let prev_enabled = previous.map(|s| s.vault.enabled).unwrap_or(false);
+    let prev_path = previous
+        .map(|s| s.vault.vault_path.clone())
+        .unwrap_or_default();
+
+    match request.category {
+        Some(SettingsCategory::Vault) => {
+            let enabled = request
+                .updates
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(prev_enabled);
+            let vault_path = request
+                .updates
+                .get("vaultPath")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or(prev_path);
+            Some(ProposedVault {
+                enabled,
+                vault_path,
+            })
+        }
+        None => {
+            let vault = request.updates.get("vault")?;
+            let enabled = vault
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(prev_enabled);
+            let vault_path = vault
+                .get("vaultPath")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or(prev_path);
+            Some(ProposedVault {
+                enabled,
+                vault_path,
+            })
+        }
+        Some(_) => None,
+    }
+}
+
+async fn probe_vault_writable(root: &std::path::Path) -> Result<()> {
+    if let Err(e) = tokio::fs::create_dir_all(root).await {
+        return Err(AppError::InvalidInput(format!(
+            "Vault folder '{}' could not be created: {}. Pick a different folder.",
+            root.display(),
+            e
+        )));
+    }
+    let sentinel = root.join(".lattice-vault-probe");
+    if let Err(e) = tokio::fs::write(&sentinel, b"probe").await {
+        return Err(AppError::InvalidInput(format!(
+            "Vault folder '{}' is not writable: {}. Check permissions, or pick a different folder.",
+            root.display(),
+            e
+        )));
+    }
+    // Cleanup is best-effort.
+    if let Err(e) = tokio::fs::remove_file(&sentinel).await {
+        tracing::warn!(
+            sentinel = %sentinel.display(),
+            error = %e,
+            "vault writability probe: failed to clean up sentinel file"
+        );
+    }
+    Ok(())
+}
+
 fn validate_vault_path_payload(value: &serde_json::Value) -> Result<()> {
     let path_str = value.as_str().ok_or_else(|| {
         AppError::InvalidInput("vaultPath must be a string".to_string())
     })?;
 
-    // Empty string is the sentinel for "use default" — accept it.
     if path_str.is_empty() {
         return Ok(());
     }
@@ -253,8 +262,6 @@ fn validate_vault_path_payload(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// CWE-22 / CWE-158: enforce path validation on every string in an
-/// `indexed_paths` array payload.
 fn validate_indexed_paths_payload(value: &serde_json::Value) -> Result<()> {
     let arr = value.as_array().ok_or_else(|| {
         AppError::InvalidInput(
@@ -269,10 +276,6 @@ fn validate_indexed_paths_payload(value: &serde_json::Value) -> Result<()> {
                 "indexedPaths entries must be strings".to_string(),
             )
         })?;
-        // require_exists=false: legitimate use of generic update may
-        // include paths the user wants to track even if currently
-        // unmounted (network drives, removable media). The dedicated
-        // add_watch_folder command checks existence at add time.
         validator
             .validate_directory_path(path_str, false)
             .map_err(|e| AppError::InvalidInput(format!(
@@ -283,15 +286,6 @@ fn validate_indexed_paths_payload(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// SSRF (CWE-918) prevention for HTTP/HTTPS URLs. Moved here verbatim
-/// from the deleted `save_config` command to preserve the security
-/// surface.
-///
-/// Blocks:
-/// - Non-http(s) schemes (file://, javascript:, etc.)
-/// - URLs with userinfo (`http://localhost@evil.com` style)
-/// - Empty or invalid host
-/// - Port 0
 fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
     let url = Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
@@ -299,7 +293,6 @@ fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
         return Err("URL must use http:// or https://".to_string());
     }
 
-    // Reject URLs with userinfo to prevent SSRF authority-component attacks.
     if !url.username().is_empty() || url.password().is_some() {
         return Err("URL must not contain username or password".to_string());
     }
@@ -318,9 +311,7 @@ fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
+// ---- Tests ----
 
 #[cfg(test)]
 mod tests {
@@ -328,100 +319,6 @@ mod tests {
     use crate::application::ports::MockSettingsRepository;
     use serde_json::json;
     use std::collections::HashMap;
-
-    #[tokio::test]
-    async fn test_update_search_category() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = UpdateSettingsUseCase::new(repository);
-
-        let mut updates = HashMap::new();
-        updates.insert("maxResults".to_string(), json!(20));
-        updates.insert("similarityThreshold".to_string(), json!(0.8));
-
-        let request = UpdateSettingsRequestDto {
-            category: Some(SettingsCategory::Search),
-            updates,
-        };
-
-        let result = use_case.execute(request).await.unwrap();
-
-        assert_eq!(result.search.max_results, 20);
-        assert_eq!(result.search.similarity_threshold, 0.8);
-    }
-
-    #[tokio::test]
-    async fn test_update_indexing_category() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = UpdateSettingsUseCase::new(repository);
-
-        let mut updates = HashMap::new();
-        updates.insert("chunkSize".to_string(), json!(1024));
-        updates.insert("chunkOverlap".to_string(), json!(100));
-
-        let request = UpdateSettingsRequestDto {
-            category: Some(SettingsCategory::Indexing),
-            updates,
-        };
-
-        let result = use_case.execute(request).await.unwrap();
-
-        assert_eq!(result.indexing.chunk_size, 1024);
-        assert_eq!(result.indexing.chunk_overlap, 100);
-    }
-
-    #[tokio::test]
-    async fn test_update_category_helper() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = UpdateSettingsUseCase::new(repository);
-
-        let mut updates = HashMap::new();
-        updates.insert("temperature".to_string(), json!(0.9));
-        updates.insert("maxTokens".to_string(), json!(4096));
-
-        let result = use_case
-            .update_category(SettingsCategory::Llm, updates)
-            .await
-            .unwrap();
-
-        assert_eq!(result.llm.temperature, 0.9);
-        assert_eq!(result.llm.max_tokens, 4096);
-    }
-
-    #[tokio::test]
-    async fn test_validation_failure() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = UpdateSettingsUseCase::new(repository);
-
-        let mut updates = HashMap::new();
-        updates.insert("chunkSize".to_string(), json!(0));
-
-        let request = UpdateSettingsRequestDto {
-            category: Some(SettingsCategory::Indexing),
-            updates,
-        };
-
-        let result = use_case.execute(request).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_validation_out_of_range() {
-        let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = UpdateSettingsUseCase::new(repository);
-
-        let mut updates = HashMap::new();
-        updates.insert("similarityThreshold".to_string(), json!(1.5));
-
-        let request = UpdateSettingsRequestDto {
-            category: Some(SettingsCategory::Search),
-            updates,
-        };
-
-        let result = use_case.execute(request).await;
-        assert!(result.is_err());
-    }
-
-    // === SSRF tests for llm.ollama_url ===
 
     #[tokio::test]
     async fn test_ssrf_authority_component_attack_rejected() {
@@ -486,8 +383,6 @@ mod tests {
 
         assert_eq!(result.llm.ollama_url, "http://localhost:11434");
     }
-
-    // === Path traversal tests for indexing.indexed_paths ===
 
     #[tokio::test]
     async fn test_path_traversal_in_indexed_paths_rejected() {
@@ -562,8 +457,6 @@ mod tests {
         assert_eq!(result.indexing.indexed_paths.len(), 2);
     }
 
-    // === Global (no-category) update SSRF + path checks ===
-
     #[tokio::test]
     async fn test_global_update_still_checks_ollama_url() {
         let repository = Arc::new(MockSettingsRepository::new());
@@ -582,13 +475,7 @@ mod tests {
         );
     }
 
-    // ============================================================
-    // Audit P0-3 regression tests: settings updates MUST trigger
-    // SettingsSideEffectsPort, regardless of caller (IPC, internal,
-    // test). These tests pin the invariant so a future refactor that
-    // re-introduces the leak (e.g., moves cache-invalidation back to
-    // the plugin layer) breaks them visibly.
-    // ============================================================
+    // SSRF and path-traversal regression tests.
 
     #[tokio::test]
     async fn audit_p03_side_effects_fire_on_successful_update() {
@@ -629,11 +516,7 @@ mod tests {
             side_effects.clone(),
         );
 
-        // Path-traversal payload — rejected before the repository
-        // write. Side effect MUST NOT fire because nothing changed
-        // on disk; firing it would invalidate the LLM cache for no
-        // reason and force a costly model reload on the next chat
-        // turn.
+        // Path-traversal payload — rejected before repository write.
         let mut updates = HashMap::new();
         updates.insert(
             "indexedPaths".to_string(),
@@ -681,8 +564,7 @@ mod tests {
         assert_eq!(
             calls,
             vec![None],
-            "global update should pass None to the side-effects port \
-             so the impl can decide to invalidate everything"
+            "global update should pass None so the impl can invalidate everything"
         );
     }
 

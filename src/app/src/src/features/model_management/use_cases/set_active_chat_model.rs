@@ -1,12 +1,9 @@
-//! Set Active Chat Model Use Case
-//!
-//! Sets which downloaded model to use for chat feature.
+//! Sets the active chat model.
 
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use tracing::info;
 
-/// Use case for setting the active chat model
 pub struct SetActiveChatModelUseCase {
     repository: DownloadedModelRepository,
 }
@@ -16,22 +13,6 @@ impl SetActiveChatModelUseCase {
         Self { repository }
     }
 
-    /// Execute the use case
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The model_id to set as active for chat
-    ///
-    /// # Business Logic
-    ///
-    /// - Validates that the model is a chat model (not an embedding model)
-    /// - Sets is_active_for_chat=1 for specified model
-    /// - Database trigger automatically deactivates all other models
-    ///
-    /// # Errors
-    ///
-    /// - Returns NotFound if model_id doesn't exist
-    /// - Returns InvalidInput if trying to use an embedding model (.onnx) for chat
     pub async fn execute(&self, model_id: &str) -> Result<()> {
         let model = self
             .repository
@@ -39,8 +20,7 @@ impl SetActiveChatModelUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Model not found: {}", model_id)))?;
 
-        // Remote-backed models (Ollama) have no on-disk files and no local file-type to gate on,
-        // so the download check + chat/embedding type validation only applies to Local backends.
+        // Remote-backed models have no on-disk files, so download + type checks only apply to Local.
         if model.location().is_local() {
             if !self.repository.is_downloaded(model_id).await? {
                 return Err(AppError::InvalidInput(format!(
@@ -80,10 +60,7 @@ mod tests {
 
     #[tokio::test]
     async fn activates_synthetic_ollama_row_without_filesystem_check() {
-        // The Ollama meta-row has zero on-disk files by design — `is_downloaded`
-        // returns false for it. Phase 2 gates the download check on
-        // backend == Local, so this should now succeed instead of erroring out
-        // with "Model '__ollama_server__' is not fully downloaded yet".
+        // Synthetic Ollama row has zero on-disk files -- download check is Local-only.
         let repo = setup_repo().await;
         let use_case = SetActiveChatModelUseCase::new(repo.clone());
 

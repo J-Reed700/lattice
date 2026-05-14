@@ -605,10 +605,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     app_handle.manage(download_state);
 
-    // Kick off background pre-warm of the chat / utility / embedding models
-    // so the first chat turn doesn't pay the 60-180s GGUF cold-mmap cost.
-    // This is fire-and-forget — emits `model:warmup-status` events the UI
-    // listens to for masking the chat input. Errors never block boot.
     if let Some(container) = app_handle.try_state::<crate::interfaces::di::Container>() {
         container.prewarm_active_models(app_handle.clone());
     } else {

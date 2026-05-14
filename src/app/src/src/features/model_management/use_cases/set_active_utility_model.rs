@@ -1,9 +1,4 @@
-//! Set Active Utility Model Use Case
-//!
-//! Sets which model to use for HyDE expansion, router/intent classification.
-//! The utility model is typically a small fast instruct model like
-//! `llama3.1:8b` or `qwen2.5:7b` — using a 27B reasoning model here costs
-//! many seconds per turn for near-zero quality gain.
+//! Sets the active utility model (HyDE expansion, router/intent classification).
 
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
@@ -18,7 +13,6 @@ impl SetActiveUtilityModelUseCase {
         Self { repository }
     }
 
-
     pub async fn execute(&self, model_id: &str) -> Result<()> {
         let model = self
             .repository
@@ -26,16 +20,14 @@ impl SetActiveUtilityModelUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Model not found: {}", model_id)))?;
 
-        // Local models gate on the download check; remote (Ollama) models
-        // have no on-disk file so skip it.
+        // Local models gate on the download check; remote (Ollama) models don't have on-disk files.
         if model.location().is_local() && !self.repository.is_downloaded(model_id).await? {
             return Err(AppError::InvalidInput(format!(
                 "Model '{}' is not fully downloaded yet. Finish the download before activating it.",
                 model_id
             )));
         }
-        // Utility is a chat-style generation role — reject embedding
-        // models the same way the chat slot does.
+        // Utility is a chat-style generation role -- reject embedding the same way the chat slot does.
         model.validate_for_operation(true)?;
 
         self.repository.set_active_utility_model(model_id).await?;
@@ -43,7 +35,7 @@ impl SetActiveUtilityModelUseCase {
         Ok(())
     }
 
-    /// Clear the utility model slot — reverting HyDE/router to the chat model.
+    /// Clear the utility model slot, reverting HyDE/router to the chat model.
     pub async fn clear(&self) -> Result<()> {
         self.repository.clear_active_utility_model().await?;
         Ok(())
@@ -78,8 +70,7 @@ mod tests {
         use_case
             .execute("__ollama_server__")
             .await
-            .expect("Ollama-hosted utility model should be accepted — a small local Ollama \
-                     model can be faster than a large bundled GGUF");
+            .expect("Ollama utility model should be accepted");
 
         let active = repo
             .get_active_utility_model()

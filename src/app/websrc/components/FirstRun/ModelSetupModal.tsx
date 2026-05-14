@@ -1,17 +1,6 @@
 /**
- * ModelSetupModal — opinionated first-run UX
- *
- * Single bundle install: one giant button that downloads BOTH the embedding
- * model (for indexing) and a hardware-sized chat model (for Q&A). The
- * backend does the hardware probe + recommendation; the modal just renders
- * what it gets.
- *
- * The instant the user clicks Install, we dismiss the modal and let them
- * use the app immediately. Downloads continue in the header progress
- * drawer (already built — `useDownloads`). The chat input shows a
- * "Warming up AI…" skeleton until the prewarm event fires.
- *
- * Notes / BM25 search / Daily Note are fully usable during this window.
+ * Single-bundle first-run install. Backend recommends; modal renders.
+ * Click dismisses immediately — downloads continue in the header drawer.
  */
 import { useEffect, useState } from 'react';
 
@@ -97,8 +86,8 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
   };
 
   const handleMoreOptions = () => {
-    // Persist the skip so we don't reopen on the way to settings, but
-    // don't mark setup complete — user is choosing a model manually.
+    // Skip-flag prevents re-open in Settings, but don't mark complete —
+    // user is choosing manually.
     localStorage.setItem('lattice:first-run-skipped', 'true');
     onOpenChange(false);
     navigate('/settings');
@@ -109,11 +98,8 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
     if (!status?.embedding_model && !status?.chat_model) return;
     setError(null);
 
-    // Fire both downloads. Embedding has its own dedicated command (special-
-    // cased on the backend for first-run telemetry); chat goes through the
-    // generic download path. Don't await — the app should usable before
-    // either finishes. Failures surface as toasts via the existing
-    // download event listeners.
+    // Embedding uses its first-run dedicated command; chat uses the
+    // generic download path. Both are fire-and-forget.
     const tasks: Array<Promise<unknown>> = [];
 
     if (status.embedding_model) {
@@ -136,7 +122,6 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
       );
     }
 
-    // Show one ack so the user understands the dismiss isn't a bug.
     const sizeNote = status.total_estimated_size_bytes
       ? ` (${formatGb(status.total_estimated_size_bytes)})`
       : '';
@@ -144,8 +129,6 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
       message: 'Downloading in the background — you can start using Lattice now.',
     });
 
-    // Dismiss IMMEDIATELY — the parallel-experience choreography from the
-    // 60-day plan. Don't await tasks; let them keep running.
     onOpenChange(false);
     onComplete();
     void Promise.allSettled(tasks);

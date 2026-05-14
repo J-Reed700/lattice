@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import VaultAPI from '@/lib/api';
+import { useVaultImportStore } from '@/stores/vaultImportStore';
 import type { ConversationDto, MessageDto } from '@/types/api/conversation';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import type { ConversationMessage as ChatConversationMessage } from '@/types/conversation';
@@ -179,6 +180,13 @@ export function useJournalEntries(options: {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Refetch on any external vault import.
+  const importTick = useVaultImportStore((s) => s.importTick);
+  useEffect(() => {
+    if (importTick === 0) return;
+    void reload();
+  }, [importTick, reload]);
 
   useEffect(() => {
     setPinnedIds(readPinnedEntries(journalSpaceId));

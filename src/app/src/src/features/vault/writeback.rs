@@ -1,49 +1,14 @@
-//! Vault writeback — mirrors notes to plain markdown on disk.
-//!
-//! Called as a side-effect after a successful note write. Spawns a
-//! tokio task so the caller (the SQL command) doesn't wait on disk I/O.
-//! Failures are logged but never propagated — the database commit
-//! always wins. This module never returns errors; it logs them.
-//!
-//! ## Path scheme
-//! All notes (workspace + daily) live in `<vault>/notes/<id>.md`.
-//! Daily notes share the `daily_notes_workspace` table with workspace
-//! notes — backend-side they're the same entity, just rendered with a
-//! date affordance in the UI.
-//!
-//! ## Frontmatter
-//! YAML-style block at the top of every file, Obsidian-compatible:
-//! ```text
-//! ---
-//! id: <uuid>
-//! title: <string>
-//! created_at: <rfc3339>
-//! updated_at: <rfc3339>
-//! tags: [foo, bar]
-//! ---
-//!
-//! <body>
-//! ```
-//!
-//! ## Atomicity
-//! Writes go to `<target>.tmp` then `rename` over the live file. Most
-//! filesystems make this atomic so an external watcher never sees a
-//! truncated file.
-//!
-//! ## Disabled-by-default
-//! `settings.vault.enabled == false` short-circuits before any path
-//! resolution. Users opt in via the Vault settings tab.
+//! Mirrors notes to markdown files on disk.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use sqlx::SqlitePool;
+use tokio::sync::mpsc;
+
+use crate::features::settings::use_cases::GetSettingsUseCase;
 use crate::interfaces::di::Container;
 
-/// Sync a workspace note to the vault folder. Fire-and-forget — spawns
-/// a tokio task and returns immediately. Caller doesn't await the disk
-/// write.
-///
-/// `body` is the raw markdown body the user typed; frontmatter is added
-/// here. `tags` are passed through verbatim.
 pub fn spawn_sync_workspace_note(
     container: &Container,
     id: String,
@@ -53,94 +18,227 @@ pub fn spawn_sync_workspace_note(
     updated_at: String,
     tags: Vec<String>,
 ) {
-    // Clone the Arc out of the container reference so the spawned future
-    // owns its own handle — the &Container we were passed has a non-
-    // 'static lifetime tied to the caller.
-    let settings_uc = std::sync::Arc::clone(container.system.get_settings_use_case());
-    tokio::spawn(async move {
+    let handle = container.vault_writer();
+    handle.submit(VaultWriteJob::WorkspaceNote {
+        id,
+        title,
+        body,
+        created_at,
+        updated_at,
+        tags,
+    });
+}
+
+pub enum VaultWriteJob {
+    WorkspaceNote {
+        id: String,
+        title: String,
+        body: String,
+        created_at: String,
+        updated_at: String,
+        tags: Vec<String>,
+    },
+    Backfill {
+        pool: SqlitePool,
+        vault_root: PathBuf,
+    },
+}
+
+#[derive(Clone)]
+pub struct VaultWriterHandle {
+    tx: mpsc::UnboundedSender<VaultWriteJob>,
+    /// Shared cell the worker reads on every error to decide whether
+    /// to emit a `vault:write-error` Tauri event. Populated post-
+    /// construction via `set_app_handle` because the AppHandle isn't
+    /// available until after the container builder runs.
+    app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+}
+
+impl VaultWriterHandle {
+    pub fn submit(&self, job: VaultWriteJob) {
+        if let Err(e) = self.tx.send(job) {
+            tracing::warn!(error = %e, "vault writer queue dropped a job (worker shut down)");
+        }
+    }
+
+    /// Install the Tauri AppHandle so the worker can emit
+    /// `vault:write-error` events when an atomic_write fails. Called
+    /// from `Container::with_app_handle` once the handle is available.
+    /// Safe to call multiple times; later calls overwrite earlier
+    /// (non-test code only ever calls it once).
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        match self.app_handle.write() {
+            Ok(mut guard) => *guard = Some(handle),
+            Err(poisoned) => *poisoned.into_inner() = Some(handle),
+        }
+    }
+}
+
+pub fn start_vault_writer(
+    settings_uc: Arc<GetSettingsUseCase>,
+    suppression: super::watcher::WriteSuppressionRegistry,
+) -> VaultWriterHandle {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let app_handle = Arc::new(std::sync::RwLock::new(None));
+    tokio::spawn(run_worker(
+        rx,
+        settings_uc,
+        Arc::clone(&app_handle),
+        suppression,
+    ));
+    VaultWriterHandle { tx, app_handle }
+}
+
+async fn run_worker(
+    mut rx: mpsc::UnboundedReceiver<VaultWriteJob>,
+    settings_uc: Arc<GetSettingsUseCase>,
+    app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    suppression: super::watcher::WriteSuppressionRegistry,
+) {
+    tracing::info!("vault writer worker started");
+    while let Some(job) = rx.recv().await {
         let settings = match settings_uc.execute().await {
             Ok(s) => s,
             Err(e) => {
-                tracing::debug!(error = %e, "vault writeback: failed to load settings — skipping");
-                return;
+                tracing::debug!(error = %e, "vault worker: settings read failed — skipping job");
+                continue;
             }
         };
         if !settings.vault.enabled {
-            return;
+            continue;
         }
         let vault_root = match resolve_vault_root(&settings.vault.vault_path) {
             Some(p) => p,
             None => {
-                tracing::warn!("vault writeback: could not resolve vault root — skipping");
-                return;
+                tracing::warn!("vault worker: could not resolve vault root — skipping job");
+                continue;
             }
         };
-        let target = vault_root.join("notes").join(format!("{}.md", id));
-        let frontmatter = build_frontmatter(&id, &title, &created_at, &updated_at, &tags);
-        let document = format!("{}\n\n{}", frontmatter, body);
-        if let Err(e) = atomic_write(&target, &document).await {
-            tracing::warn!(
-                target = %target.display(),
-                error = %e,
-                "vault writeback: workspace note write failed"
-            );
-        } else {
-            tracing::debug!(target = %target.display(), "vault writeback: workspace note synced");
+
+        match job {
+            VaultWriteJob::WorkspaceNote {
+                id,
+                title,
+                body,
+                created_at,
+                updated_at,
+                tags,
+            } => {
+                let target = vault_root.join("notes").join(format!("{}.md", id));
+                let frontmatter =
+                    build_frontmatter(&id, &title, &created_at, &updated_at, &tags);
+                let document = format!("{}\n\n{}", frontmatter, body);
+                if let Err(e) = atomic_write(&target, &document).await {
+                    tracing::warn!(
+                        target = %target.display(),
+                        error = %e,
+                        "vault worker: workspace note write failed"
+                    );
+                    emit_write_error(&app_handle, Some(&id), &target, &e.to_string());
+                } else {
+                    // Stamp the suppression registry so the watcher
+                    // doesn't treat our own write as an external edit
+                    // and bounce it back through SQL → vault → ...
+                    suppression.mark_written(target.clone()).await;
+                    tracing::debug!(target = %target.display(), "vault worker: workspace note synced");
+                }
+            }
+            VaultWriteJob::Backfill {
+                pool,
+                vault_root: backfill_root,
+            } => {
+                run_backfill(pool, backfill_root, &app_handle, &suppression).await;
+            }
         }
-    });
+    }
+    tracing::info!("vault writer worker exited (all senders dropped)");
 }
 
-/// One-shot backfill: walk every workspace note and write it as
-/// markdown into the vault. Called when the user flips
-/// `vault.enabled` from false to true so existing notes appear in the
-/// vault folder, not just newly-written ones.
+/// Emit a `vault:write-error` Tauri event so the frontend can surface
+/// disk-full / permission-denied / vault-deleted-from-under-us cases
+/// as a persistent toast. Without this, the user keeps editing notes
+/// believing the vault is mirroring while every write silently fails.
 ///
-/// Fire-and-forget — spawns a single tokio task that streams through
-/// the table. Failures on individual notes log but don't abort the
-/// walk; one bad row should never block the rest.
-pub fn spawn_backfill(pool: sqlx::SqlitePool, vault_root: std::path::PathBuf) {
-    tokio::spawn(async move {
-        // Stream rather than load all into memory — a power user could
-        // have thousands of notes.
-        let rows = match sqlx::query_as::<_, BackfillRow>(
-            r#"
-            SELECT id, title, content, created_at, updated_at
-            FROM daily_notes_workspace
-            "#,
-        )
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(error = %e, "vault backfill: failed to enumerate notes");
-                return;
-            }
-        };
+/// Best-effort: a missing AppHandle (test fixtures, or a window that
+/// has been destroyed) is logged but never crashes the worker.
+fn emit_write_error(
+    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    note_id: Option<&str>,
+    target: &Path,
+    error: &str,
+) {
+    use tauri::Emitter;
+    let guard = match app_handle.read() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let Some(handle) = guard.as_ref() else {
+        // No handle yet — boot order or test fixture. Already logged
+        // by the caller via tracing::warn; nothing more to do.
+        return;
+    };
+    let payload = serde_json::json!({
+        "noteId": note_id,
+        "target": target.display().to_string(),
+        "error": error,
+    });
+    if let Err(e) = handle.emit("vault:write-error", payload) {
+        tracing::warn!(error = %e, "failed to emit vault:write-error event");
+    }
+}
 
-        let total = rows.len();
-        let mut succeeded = 0usize;
-        for row in rows {
-            let target = vault_root.join("notes").join(format!("{}.md", row.id));
-            let frontmatter = build_frontmatter(
-                &row.id,
-                &row.title,
-                &row.created_at,
-                &row.updated_at,
-                &[],
-            );
-            let document = format!("{}\n\n{}", frontmatter, row.content);
-            match atomic_write(&target, &document).await {
-                Ok(()) => succeeded += 1,
-                Err(e) => tracing::warn!(
+async fn run_backfill(
+    pool: SqlitePool,
+    vault_root: PathBuf,
+    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    suppression: &super::watcher::WriteSuppressionRegistry,
+) {
+    let rows = match sqlx::query_as::<_, BackfillRow>(
+        r#"
+        SELECT id, title, content, created_at, updated_at
+        FROM daily_notes_workspace
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "vault backfill: failed to enumerate notes");
+            return;
+        }
+    };
+
+    let total = rows.len();
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    for row in rows {
+        let target = vault_root.join("notes").join(format!("{}.md", row.id));
+        let frontmatter =
+            build_frontmatter(&row.id, &row.title, &row.created_at, &row.updated_at, &[]);
+        let document = format!("{}\n\n{}", frontmatter, row.content);
+        match atomic_write(&target, &document).await {
+            Ok(()) => {
+                suppression.mark_written(target.clone()).await;
+                succeeded += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
                     target = %target.display(),
                     error = %e,
                     "vault backfill: write failed for one note"
-                ),
+                );
+                failed += 1;
+                // Don't spam an event per row — surface a single
+                // representative error after the walk completes.
+                // (See post-loop emit below.)
+                if failed == 1 {
+                    emit_write_error(app_handle, Some(&row.id), &target, &e.to_string());
+                }
             }
         }
-        tracing::info!(succeeded, total, "vault backfill complete");
-    });
+    }
+    tracing::info!(succeeded, failed, total, "vault backfill complete");
 }
 
 #[derive(sqlx::FromRow)]
@@ -152,9 +250,7 @@ struct BackfillRow {
     updated_at: String,
 }
 
-/// Resolve the vault root path. Empty configured value means use the
-/// default `<home>/Lattice`. Pub so the settings side-effect can resolve
-/// the same way the per-write path does — keep both in lockstep.
+/// Resolve vault path; empty string falls back to `<home>/Lattice`.
 pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     let trimmed = configured.trim();
     if !trimmed.is_empty() {
@@ -163,9 +259,6 @@ pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join("Lattice"))
 }
 
-/// Build a YAML frontmatter block. Inline-escapes title quotes by
-/// JSON-style escaping (`\"`) — Obsidian and most YAML parsers accept
-/// double-quoted scalar strings with backslash escapes.
 fn build_frontmatter(
     id: &str,
     title: &str,
@@ -173,13 +266,13 @@ fn build_frontmatter(
     updated_at: &str,
     tags: &[String],
 ) -> String {
-    let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped_title = escape_yaml_double_quoted(title);
     let tags_block = if tags.is_empty() {
         "tags: []".to_string()
     } else {
         let escaped: Vec<String> = tags
             .iter()
-            .map(|t| format!("\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\"")))
+            .map(|t| format!("\"{}\"", escape_yaml_double_quoted(t)))
             .collect();
         format!("tags: [{}]", escaped.join(", "))
     };
@@ -188,16 +281,30 @@ fn build_frontmatter(
     )
 }
 
-/// Atomically write `contents` to `target`. Creates parent directories
-/// as needed. Writes to `<target>.tmp` then renames, so an external
-/// watcher never sees a truncated file.
+fn escape_yaml_double_quoted(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "")
+}
+
 async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let tmp = target.with_extension("md.tmp");
-    tokio::fs::write(&tmp, contents.as_bytes()).await?;
-    tokio::fs::rename(&tmp, target).await?;
+    let tmp = match target.file_name().and_then(|n| n.to_str()) {
+        Some(name) => target.with_file_name(format!("{}.{}.tmp", name, uuid::Uuid::new_v4())),
+        None => target.with_extension(format!("md.{}.tmp", uuid::Uuid::new_v4())),
+    };
+    let write_result = tokio::fs::write(&tmp, contents.as_bytes()).await;
+    if let Err(e) = write_result {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, target).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -223,14 +330,22 @@ mod tests {
 
     #[test]
     fn frontmatter_escapes_quotes_in_title() {
-        let fm = build_frontmatter(
-            "id1",
-            "She said \"hi\"",
-            "now",
-            "now",
-            &[],
-        );
+        let fm = build_frontmatter("id1", "She said \"hi\"", "now", "now", &[]);
         assert!(fm.contains("title: \"She said \\\"hi\\\"\""));
+    }
+
+    #[test]
+    fn frontmatter_escapes_newline_in_title() {
+        let fm = build_frontmatter("id1", "Line one\nLine two", "now", "now", &[]);
+        assert!(fm.contains("title: \"Line one\\nLine two\""));
+        let title_line = fm.lines().find(|l| l.starts_with("title:")).unwrap();
+        assert!(!title_line.contains('\n'));
+    }
+
+    #[test]
+    fn frontmatter_strips_carriage_returns() {
+        let fm = build_frontmatter("id1", "Windows\r\nlineending", "now", "now", &[]);
+        assert!(fm.contains("title: \"Windows\\nlineending\""));
     }
 
     #[test]
@@ -248,8 +363,14 @@ mod tests {
     #[test]
     fn resolve_vault_root_falls_back_to_default_on_empty_string() {
         let root = resolve_vault_root("");
-        // Default is <home>/Lattice; on a system without home_dir
-        // resolution this returns None, which is acceptable.
+        if let Some(p) = root {
+            assert!(p.ends_with("Lattice"));
+        }
+    }
+
+    #[test]
+    fn resolve_vault_root_treats_whitespace_as_empty() {
+        let root = resolve_vault_root("   ");
         if let Some(p) = root {
             assert!(p.ends_with("Lattice"));
         }
@@ -262,5 +383,67 @@ mod tests {
         atomic_write(&target, "hello").await.unwrap();
         let read = tokio::fs::read_to_string(&target).await.unwrap();
         assert_eq!(read, "hello");
+    }
+
+    #[tokio::test]
+    async fn atomic_write_handles_concurrent_writers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("note.md");
+
+        let target_a = target.clone();
+        let target_b = target.clone();
+        let a = tokio::spawn(async move { atomic_write(&target_a, "version A").await });
+        let b = tokio::spawn(async move { atomic_write(&target_b, "version B").await });
+        a.await.unwrap().unwrap();
+        b.await.unwrap().unwrap();
+
+        let final_contents = tokio::fs::read_to_string(&target).await.unwrap();
+        assert!(
+            final_contents == "version A" || final_contents == "version B",
+            "final file must be one of the inputs verbatim, got: {:?}",
+            final_contents
+        );
+
+        let mut entries = tokio::fs::read_dir(tmp.path()).await.unwrap();
+        let mut count = 0;
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            assert!(!name.contains(".tmp"), "unexpected leftover tmp file: {}", name);
+            count += 1;
+        }
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn worker_preserves_submit_order_for_same_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_root = tmp.path().to_path_buf();
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<(String, String)>();
+        let worker_root = vault_root.clone();
+        let worker = tokio::spawn(async move {
+            while let Some((id, body)) = rx.recv().await {
+                let target = worker_root.join("notes").join(format!("{}.md", id));
+                atomic_write(&target, &body).await.unwrap();
+            }
+        });
+
+        let id = "ordering-test".to_string();
+        for n in 0..50 {
+            tx.send((id.clone(), format!("version-{n}"))).unwrap();
+        }
+        drop(tx);
+        worker.await.unwrap();
+
+        let final_contents = tokio::fs::read_to_string(
+            vault_root.join("notes").join("ordering-test.md"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            final_contents, "version-49",
+            "FIFO worker must end at the last submitted version"
+        );
     }
 }

@@ -153,16 +153,25 @@ export namespace EventSchemas {
       error: z.string(),
     });
 
-    /// Boot-time pre-warm progress for an active model role. Fired by the
-    /// backend on app startup so the chat input can mask while a cold load
-    /// is in flight. Phases:
-    ///   started → ready  (success — model in memory)
-    ///   started → skipped (no active model for this role — chat fallback)
-    ///   started → failed (load attempted but errored — error string included)
+    /// Phases: `started → ready | skipped | failed`.
     export const WarmupStatus = z.object({
       role: z.enum(['chat', 'utility', 'embedding']),
       phase: z.enum(['started', 'ready', 'skipped', 'failed']),
       error: z.string().nullable().optional(),
+    });
+  }
+
+  export namespace Vault {
+    /// SQL save succeeded but markdown mirror failed.
+    export const WriteError = z.object({
+      noteId: z.string().nullable().optional(),
+      target: z.string(),
+      error: z.string(),
+    });
+
+    /// External `.md` edit imported into SQLite by the watcher.
+    export const NoteImported = z.object({
+      noteId: z.string(),
     });
   }
 
@@ -684,6 +693,10 @@ export const TauriEventNames = {
   Search: {
     Started: 'search-started' as const,
     Complete: 'search-complete' as const,
+  },
+  Vault: {
+    WriteError: 'vault:write-error' as const,
+    NoteImported: 'vault:note-imported' as const,
   },
 } as const;
 

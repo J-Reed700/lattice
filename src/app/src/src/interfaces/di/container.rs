@@ -253,6 +253,13 @@ pub struct Container {
     /// Utility LLM cache (HyDE expansion, intent routing, follow-up)
     utility_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
 
+    /// All vault writes flow through a single mpsc-fed worker; see
+    /// `features::vault::writeback`.
+    vault_writer: crate::features::vault::writeback::VaultWriterHandle,
+
+    /// Shared by writer + watcher for loop suppression.
+    vault_write_suppression: crate::features::vault::watcher::WriteSuppressionRegistry,
+
     /// Producer half of the conversation command channel. Cloneable;
     /// chat.rs sends `SummaryRefreshRequested` here. Backpressured
     /// mpsc rather than broadcast because this is a 1-to-1 command
@@ -324,10 +331,12 @@ struct ContainerSettingsSideEffects {
     /// Settings repository for re-reading custom_tools after a write.
     settings_repository: Arc<dyn SettingsRepositoryPort>,
 
-    /// SQLite pool — used by the vault backfill side effect to walk
-    /// every workspace note and write it to the vault folder when the
-    /// user flips `vault.enabled` on.
+    /// Used by the vault backfill side effect.
     db_pool: sqlx::SqlitePool,
+
+    /// Backfill submits through this so it shares the FIFO queue with
+    /// per-note writes.
+    vault_writer: crate::features::vault::writeback::VaultWriterHandle,
 }
 
 #[async_trait::async_trait]
@@ -339,12 +348,8 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
     ) {
         use crate::features::settings::dto::SettingsCategory;
 
-        // Vault was just enabled — fire the one-shot backfill so
-        // existing notes appear in the vault folder, not just the
-        // ones written from this point forward. Resolve the root from
-        // current settings (the user may have configured a path along
-        // with flipping the toggle in the same update). Best-effort:
-        // resolution failure logs and skips.
+        // Submit through the writer queue so backfill shares the FIFO
+        // with per-note writes and can't race fresh edits.
         if hints.vault_just_enabled {
             match self.settings_repository.get_all().await {
                 Ok(settings) => {
@@ -353,11 +358,13 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                     ) {
                         tracing::info!(
                             vault_root = %vault_root.display(),
-                            "Vault enabled — kicking off one-shot backfill"
+                            "Vault enabled — enqueueing one-shot backfill"
                         );
-                        crate::features::vault::writeback::spawn_backfill(
-                            self.db_pool.clone(),
-                            vault_root,
+                        self.vault_writer.submit(
+                            crate::features::vault::writeback::VaultWriteJob::Backfill {
+                                pool: self.db_pool.clone(),
+                                vault_root,
+                            },
                         );
                     } else {
                         tracing::warn!(
@@ -633,6 +640,13 @@ impl Container {
         )) as Arc<dyn FunctionExecutorTrait>;
 
 
+        let vault_write_suppression =
+            crate::features::vault::watcher::WriteSuppressionRegistry::new();
+        let vault_writer = crate::features::vault::writeback::start_vault_writer(
+            Arc::clone(system.get_settings_use_case()),
+            vault_write_suppression.clone(),
+        );
+
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
             Arc::new(ContainerSettingsSideEffects {
                 llm_cache: ai.llm_cache().clone(),
@@ -640,9 +654,9 @@ impl Container {
                 function_executor: function_executor.clone(),
                 settings_repository: system.settings_repo().clone(),
                 db_pool: core.db_pool().clone(),
+                vault_writer: vault_writer.clone(),
             });
 
-        // === Return Hollow Container ===
         Ok(Self {
             core,
             system,
@@ -655,24 +669,73 @@ impl Container {
             function_executor,
             router_llm_cache,
             utility_llm_cache,
+            vault_writer,
+            vault_write_suppression,
             conversation_command_tx,
             conversation_command_rx,
             embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
             settings_side_effects,
-            // Populated post-construction via `with_app_handle()`.
-            // See field doc.
             app_handle: None,
         })
     }
 
-    /// Attach the Tauri `AppHandle` so the sidecar feature path can
-    /// reach `tauri-plugin-shell`. Builder-pattern addition rather
-    /// than a constructor parameter, because Container::new has 4+
-    /// callers (3 of which are test fixtures) and breaking those
-    /// signatures isn't worth the symmetry win. Real callers chain
-    /// `.with_app_handle(handle)`; tests skip it (their LLM paths
-    /// don't reach the sidecar branch).
+    pub fn vault_writer(&self) -> &crate::features::vault::writeback::VaultWriterHandle {
+        &self.vault_writer
+    }
+
+    /// Belt-and-suspenders safety net for the fs watcher.
+    /// No-op when vault is disabled or the watch toggle is off.
+    pub async fn rescan_vault(
+        &self,
+    ) -> Result<crate::features::vault::watcher::RescanSummary> {
+        let settings = self
+            .system
+            .get_settings_use_case()
+            .execute()
+            .await
+            .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
+        if !settings.vault.enabled || !settings.vault.watch_external_changes {
+            return Ok(crate::features::vault::watcher::RescanSummary {
+                scanned: 0,
+                imported: 0,
+                deleted: 0,
+            });
+        }
+        let vault_root =
+            crate::features::vault::writeback::resolve_vault_root(&settings.vault.vault_path)
+                .ok_or_else(|| {
+                    AppError::InvalidConfig(
+                        "Vault root could not be resolved (no home directory)".to_string(),
+                    )
+                })?;
+        let app_handle = self.app_handle.clone().ok_or_else(|| {
+            AppError::InvalidConfig(
+                "AppHandle not installed — Container constructed without with_app_handle"
+                    .to_string(),
+            )
+        })?;
+        crate::features::vault::watcher::rescan_vault(
+            self.core.db_pool().clone(),
+            vault_root,
+            self.vault_write_suppression.clone(),
+            app_handle,
+        )
+        .await
+        .map_err(AppError::Other)
+    }
+
+    /// Attach the Tauri `AppHandle` post-construction. Real callers chain
+    /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
+        self.vault_writer.set_app_handle(handle.clone());
+        // Watcher reads settings once and exits if disabled.
+        crate::features::vault::watcher::start_vault_watcher(
+            Arc::clone(self.system.get_settings_use_case()),
+            self.core.db_pool().clone(),
+            handle.clone(),
+            self.vault_write_suppression.clone(),
+        );
+
         self.app_handle = Some(handle);
         self
     }
@@ -1019,17 +1082,9 @@ impl Container {
         }
     }
 
-    /// Fire-and-forget pre-warm of the chat, utility, and embedding models
-    /// on app boot. Each role runs in its own task so a slow chat load can't
-    /// block utility/embedding (and vice versa). Errors are logged but never
-    /// propagated — boot must always succeed even with no models present.
-    ///
-    /// Emits `model:warmup-status` events with `{ role, phase }` so the UI
-    /// can mask the chat input during cold-load. Phases:
-    /// - `started`: load kicked off
-    /// - `ready`: model loaded, cached, ready for first request
-    /// - `skipped`: no active model configured for this role (not an error)
-    /// - `failed`: load attempted but failed; payload includes error message
+    /// Fire-and-forget per-role warmup at boot. Emits
+    /// `model:warmup-status { role, phase, error? }` events with phases
+    /// `started → ready | skipped | failed`. Errors never propagate.
     pub fn prewarm_active_models(&self, app_handle: tauri::AppHandle) {
         use tauri::Manager;
         for role in ["chat", "utility", "embedding"] {
@@ -1047,22 +1102,16 @@ impl Container {
                 let outcome = match role {
                     "chat" => match container.get_or_load_llm().await {
                         Ok(_) => Outcome::Ready,
-                        Err(e) => match &e {
-                            AppError::ModelLoadFailed(msg) => Outcome::Failed(msg.clone()),
-                            AppError::InvalidConfig(msg) if msg.contains("not configured") => {
-                                Outcome::Skipped
-                            }
-                            _ => Outcome::Failed(e.to_string()),
-                        },
+                        Err(e) => classify_load_error(e),
                     },
                     "utility" => match container.get_or_load_utility_llm().await {
                         Ok(Some(_)) => Outcome::Ready,
                         Ok(None) => Outcome::Skipped,
-                        Err(e) => Outcome::Failed(e.to_string()),
+                        Err(e) => classify_load_error(e),
                     },
                     "embedding" => match container.get_or_load_embedding().await {
                         Ok(_) => Outcome::Ready,
-                        Err(e) => Outcome::Failed(e.to_string()),
+                        Err(e) => classify_load_error(e),
                     },
                     _ => unreachable!(),
                 };
@@ -2255,15 +2304,24 @@ impl Container {
     }
 }
 
-/// Outcome of a single role's prewarm attempt. Internal to `prewarm_active_models`.
 enum Outcome {
     Ready,
     Skipped,
     Failed(String),
 }
 
-/// Emit a `model:warmup-status` event. Failure to emit is logged but not
-/// propagated — a missing event listener must not abort prewarm.
+/// First-run state (`AiModelsNotInstalled`) and router opt-out
+/// (`InvalidConfig("...not configured...")`) are Skipped, not Failed —
+/// the chat input mask shouldn't treat them as load errors.
+fn classify_load_error(e: AppError) -> Outcome {
+    match &e {
+        AppError::AiModelsNotInstalled(_) => Outcome::Skipped,
+        AppError::InvalidConfig(msg) if msg.contains("not configured") => Outcome::Skipped,
+        AppError::ModelLoadFailed(msg) => Outcome::Failed(msg.clone()),
+        _ => Outcome::Failed(e.to_string()),
+    }
+}
+
 fn emit_warmup(app: &tauri::AppHandle, role: &str, phase: &str, error: Option<String>) {
     use tauri::Emitter;
     let payload = serde_json::json!({
