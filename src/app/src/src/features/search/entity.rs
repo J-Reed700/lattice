@@ -7,7 +7,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::features::search::dto::SearchResultPortDto;
 use crate::shared::error::AppError;
 
 type Result<T> = std::result::Result<T, AppError>;
@@ -348,46 +347,6 @@ impl SearchResult {
     }
 }
 
-// ============================================================================
-// Conversions from DTOs
-// ============================================================================
-
-impl From<SearchResultPortDto> for SearchResult {
-    fn from(dto: SearchResultPortDto) -> Self {
-        // Convert SearchResultPortDto from ports to domain SearchResult
-        // Map doc_id to id, and chunk_id to document_id (if not empty)
-        let document_id = if dto.chunk_id.is_empty() {
-            None
-        } else {
-            Some(dto.doc_id.clone())
-        };
-
-        let id = if dto.chunk_id.is_empty() {
-            dto.doc_id
-        } else {
-            dto.chunk_id
-        };
-
-        Self {
-            id,
-            score: dto.score.clamp(0.0, 1.0),
-            snippet: Some(dto.content),
-            document_id,
-            file_path: None,
-            position: None,
-            language: None,
-            word_count: None,
-            has_code: None,
-            section: None,
-            token_count: None,
-        }
-    }
-}
-
-// ============================================================================
-// Ordering - Higher scores come first
-// ============================================================================
-
 impl Eq for SearchResult {}
 
 impl PartialOrd for SearchResult {
@@ -405,10 +364,6 @@ impl Ord for SearchResult {
             .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

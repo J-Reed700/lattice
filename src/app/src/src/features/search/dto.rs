@@ -11,16 +11,6 @@ use std::collections::HashMap;
 pub use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 pub use crate::features::cache::dto::CacheStatsDto;
 
-/// Search result from infrastructure ports.
-///
-/// This is a simple DTO used at port boundaries to avoid domain dependencies.
-/// Infrastructure adapters return this, and use cases map it to domain entities.
-///
-/// # Design Rationale
-///
-/// - **Decoupling**: Ports don't depend on domain entities (Clean Architecture)
-/// - **Simplicity**: Contains only essential fields needed from search engines
-/// - **Flexibility**: Can be returned by various search implementations (vector, text, hybrid)
 /// Search request from the frontend.
 ///
 /// Represents a search query with optional parameters for filtering and ranking.

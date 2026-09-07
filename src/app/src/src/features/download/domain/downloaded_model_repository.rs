@@ -32,8 +32,7 @@ use async_trait::async_trait;
 ///
 /// # Implementing Types
 ///
-/// See `crate::infrastructure::persistence::repositories::DownloadedModelRepository`
-/// for the SQLite implementation.
+/// The SQLite adapter implements this contract in the persistence layer.
 #[async_trait]
 pub trait DownloadedModelRepository: Send + Sync {
     /// Delete a downloaded model by its model_id
