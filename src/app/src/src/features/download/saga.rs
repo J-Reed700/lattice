@@ -274,7 +274,7 @@ impl DownloadSaga {
                 )
             })?;
 
-            let downloaded_model = DownloadedModel::new(
+            let downloaded_model = DownloadedModel::new_with_catalog(
                 Uuid::new_v4().to_string(),
                 model.model_name().to_string(),
                 event.model_id.clone(),
@@ -282,6 +282,10 @@ impl DownloadSaga {
                 total_size as i64,
                 model.architecture.clone(),
                 model.metadata.clone(),
+                |identifier| {
+                    crate::features::model_management::catalog_cache::ModelCatalogCache::instance()
+                        .lookup(identifier)
+                },
             )
             .map_err(|e| format!("Failed to create DownloadedModel: {}", e))?;
 

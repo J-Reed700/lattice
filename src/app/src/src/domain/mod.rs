@@ -75,7 +75,7 @@ pub mod curated_models;
 pub mod download;
 #[path = "../features/download/domain/snapshot.rs"]
 pub mod download_snapshot;
-#[path = "../features/download/domain/downloaded_model.rs"]
+#[path = "modules/downloaded_model.rs"]
 pub mod downloaded_model;
 #[path = "modules/embedding_constants.rs"]
 pub mod embedding_constants;

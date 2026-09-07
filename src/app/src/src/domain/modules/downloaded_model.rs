@@ -222,6 +222,31 @@ impl DownloadedModel {
         architecture: String,
         metadata: Option<JsonValue>,
     ) -> Result<Self, String> {
+        Self::new_with_catalog(
+            id,
+            model_name,
+            model_id,
+            location,
+            file_size_bytes,
+            architecture,
+            metadata,
+            |_| None,
+        )
+    }
+
+    /// Create a model using a catalog lookup supplied by the application.
+    /// Catalog matches take precedence over filename and extension heuristics.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_catalog(
+        id: String,
+        model_name: String,
+        model_id: String,
+        location: ModelLocation,
+        file_size_bytes: i64,
+        architecture: String,
+        metadata: Option<JsonValue>,
+        catalog_lookup: impl FnOnce(&str) -> Option<ModelType>,
+    ) -> Result<Self, String> {
         // Validate inputs
         if model_id.trim().is_empty() {
             return Err("model_id cannot be empty".to_string());
@@ -245,10 +270,7 @@ impl DownloadedModel {
         // directory layouts it falls back to model_name heuristics.
         let classifier = ModelTypeClassifier;
         let classification =
-            classifier.classify_with_catalog(&model_name, location.loadable_path(), |identifier| {
-                crate::features::model_management::catalog_cache::ModelCatalogCache::instance()
-                    .lookup(identifier)
-            });
+            classifier.classify_with_catalog(&model_name, location.loadable_path(), catalog_lookup);
 
         tracing::info!(
             model_id = %model_id,
@@ -510,6 +532,43 @@ impl DownloadedModel {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn catalog_classification_overrides_file_extension() {
+        let model = DownloadedModel::new_with_catalog(
+            "id".into(),
+            "custom-model".into(),
+            "custom-model".into(),
+            ModelLocation::LocalFile {
+                path: PathBuf::from("/tmp/model.gguf"),
+            },
+            100,
+            "bert".into(),
+            None,
+            |_| Some(ModelType::TextEmbeddings),
+        )
+        .unwrap();
+        assert!(model.is_embedding_model());
+        assert!(!model.is_chat_model());
+    }
+
+    #[test]
+    fn catalog_miss_preserves_extension_classification() {
+        let model = DownloadedModel::new_with_catalog(
+            "id".into(),
+            "custom-model".into(),
+            "custom-model".into(),
+            ModelLocation::LocalFile {
+                path: PathBuf::from("/tmp/model.gguf"),
+            },
+            100,
+            "llama".into(),
+            None,
+            |_| None,
+        )
+        .unwrap();
+        assert!(model.is_chat_model());
+    }
 
     #[test]
     fn remote_ollama_allows_zero_size() {

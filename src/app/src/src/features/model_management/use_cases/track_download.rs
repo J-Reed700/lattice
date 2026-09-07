@@ -51,7 +51,7 @@ impl TrackDownloadUseCase {
             .unwrap_or("unknown")
             .to_lowercase();
 
-        let model = DownloadedModel::new(
+        let model = DownloadedModel::new_with_catalog(
             id.clone(),
             model_name.clone(),
             model_id.clone(),
@@ -61,6 +61,10 @@ impl TrackDownloadUseCase {
             file_size_bytes,
             architecture,
             metadata,
+            |identifier| {
+                crate::features::model_management::catalog_cache::ModelCatalogCache::instance()
+                    .lookup(identifier)
+            },
         )?;
 
         // Save to repository
