@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use crate::features::model_management::domain::{ModelCategory, ModelMetadata, PerformanceTier};
+use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
 use crate::llm::models::ModelFormat;
 
 // ============================================================================
@@ -698,8 +698,16 @@ mod tests {
                 .iter()
                 .map(|file| file.filename.as_str())
                 .collect();
-            assert!(names.contains(&"model.gguf"), "{} missing weights", model.id);
-            assert!(names.contains(&"config.json"), "{} missing config", model.id);
+            assert!(
+                names.contains(&"model.gguf"),
+                "{} missing weights",
+                model.id
+            );
+            assert!(
+                names.contains(&"config.json"),
+                "{} missing config",
+                model.id
+            );
             assert!(
                 names.contains(&"tokenizer.json"),
                 "{} missing tokenizer",
@@ -720,7 +728,10 @@ mod tests {
             .collect();
 
         for url in &urls {
-            assert!(url.starts_with("https://huggingface.co/"), "{url} is not on HF");
+            assert!(
+                url.starts_with("https://huggingface.co/"),
+                "{url} is not on HF"
+            );
             assert!(url.contains("/resolve/main/"), "{url} is not a resolve URL");
             assert!(
                 !url.contains("-base") && !url.contains("-small"),

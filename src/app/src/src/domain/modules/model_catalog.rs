@@ -32,7 +32,7 @@
 //! let results = service.search_and_rank(models, &filters);
 //! ```
 
-use crate::features::model_management::domain::{ModelCategory, ModelMetadata};
+use crate::domain::model_management::{ModelCategory, ModelMetadata};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -378,7 +378,7 @@ impl Default for ModelCatalogService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::model_management::domain::PerformanceTier;
+    use crate::domain::model_management::PerformanceTier;
 
     fn create_test_model(
         id: &str,

@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use crate::features::model_management::domain::{ModelCategory, ModelMetadata, PerformanceTier};
+use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -71,8 +71,7 @@ pub struct ExternalModelMetadata {
     /// surface this so users see a "Coming soon" badge instead of starting a
     /// download that will fail.
     #[serde(default)]
-    pub embedding_compatibility:
-        Option<crate::features::embedding::compatibility::EmbeddingCompatibility>,
+    pub embedding_compatibility: Option<crate::domain::model_management::EmbeddingCompatibility>,
 }
 
 impl ExternalModelMetadata {

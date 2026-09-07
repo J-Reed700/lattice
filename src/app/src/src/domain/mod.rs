@@ -87,6 +87,8 @@ pub mod metadata;
 pub mod model_catalog;
 #[path = "modules/model_file_validator.rs"]
 pub mod model_file_validator;
+#[path = "modules/model_management.rs"]
+pub mod model_management;
 #[path = "modules/model_metadata.rs"]
 pub mod model_metadata;
 #[path = "modules/model_paths.rs"]
@@ -151,11 +153,11 @@ pub use qa::{
 // Model Management Types
 // ============================================================================
 
-// Re-export model management types from the features slice
-pub use crate::features::model_management::domain::{
+// Re-export model management types from their canonical domain module.
+pub use model_management::{
     CompatibilityLevel, CompatibilityScore, CompatibilityScorer, CpuArchitecture, GpuAcceleration,
-    GpuType, ModelCategory, ModelMetadata as ModelManagementMetadata, ModelRecommendation,
-    PerformanceTier, SystemCapabilities,
+    GpuType, ModelCategory, ModelFormat, ModelMetadata as ModelManagementMetadata,
+    ModelRecommendation, PerformanceTier, SystemCapabilities,
 };
 
 // Re-export curated model catalog

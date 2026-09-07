@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::model_management::ModelFormat;
+
 /// Information about an LLM model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -36,28 +38,6 @@ pub enum Quantization {
     Q8,
     F16,
     F32,
-}
-
-/// On-disk model storage format.
-///
-/// Each format gets its own loader path inside `ModelLoader`, but the
-/// downstream `mistralrs::Model` runtime is shared. New formats (AWQ,
-/// ExLlamaV2, MLX, etc.) can be added here without touching the runtime.
-///
-/// `Gguf` is the default for serde compatibility — old serialized
-/// catalog entries didn't carry a `format` field.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ModelFormat {
-    /// Single-file `.gguf` blob (llama.cpp ecosystem). Path on disk is a
-    /// file ending in `.gguf`. Loaded via `mistralrs::GgufModelBuilder`.
-    #[default]
-    Gguf,
-    /// Hugging Face safetensors layout: a directory containing
-    /// `config.json`, `tokenizer.json`, and one or more `*.safetensors`
-    /// shards. Loaded via `mistralrs::ModelBuilder` which auto-detects
-    /// text vs multimodal from `config.json`.
-    Safetensors,
 }
 
 /// Model catalog

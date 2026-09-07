@@ -14,36 +14,7 @@
 //! (Gemma, Qwen, Llama, Mistral) are reserved for a follow-up PR with
 //! last-token pooling.
 
-use serde::{Deserialize, Serialize};
-
-/// Whether a model can be loaded by the current Candle embedding path.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum EmbeddingCompatibility {
-    /// Model is BERT-family — should load with Candle's standard BERT loader.
-    Compatible {
-        /// The architecture tag detected (`bert`, `xlm_roberta`, etc).
-        architecture: String,
-    },
-    /// Model is recognized but its architecture isn't supported yet.
-    /// Surface this so the UI can badge the row and explain *why*.
-    Incompatible {
-        /// The architecture tag detected (e.g. `qwen3`, `gemma3`, `llama`).
-        architecture: String,
-        /// Short human-readable reason shown in tooltip.
-        reason: String,
-    },
-    /// We couldn't determine the architecture from tags. Treat as
-    /// not-yet-supported (don't pretend to know what we don't).
-    Unknown,
-}
-
-impl EmbeddingCompatibility {
-    /// Is this model loadable via Candle today?
-    pub fn is_compatible(&self) -> bool {
-        matches!(self, Self::Compatible { .. })
-    }
-}
+pub use crate::domain::model_management::EmbeddingCompatibility;
 
 /// Architecture tags that the local CandleEmbeddingService can actually
 /// load today. Each entry corresponds to a wired `ModelVariant` case in

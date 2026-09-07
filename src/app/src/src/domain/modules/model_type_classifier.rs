@@ -115,6 +115,22 @@ impl ModelTypeClassifier {
         model_name: impl AsRef<str>,
         file_path: Option<&Path>,
     ) -> ModelTypeClassification {
+        self.classify_with_catalog(model_name, file_path, |_| None)
+    }
+
+    /// Classify a model with an optional catalog lookup supplied by the caller.
+    ///
+    /// Keeping the lookup behind this function argument prevents the domain
+    /// service from reaching into a global feature cache.
+    pub fn classify_with_catalog<F>(
+        &self,
+        model_name: impl AsRef<str>,
+        file_path: Option<&Path>,
+        catalog_lookup: F,
+    ) -> ModelTypeClassification
+    where
+        F: FnOnce(&str) -> Option<ModelType>,
+    {
         let identifier = ModelIdentifier::new(model_name.as_ref());
 
         debug!(
@@ -124,7 +140,12 @@ impl ModelTypeClassifier {
         );
 
         // Strategy 1: Catalog lookup
-        if let Some(classification) = self.classify_by_catalog(&identifier) {
+        if let Some(model_type) = catalog_lookup(identifier.as_str()) {
+            let classification = ModelTypeClassification::new(
+                model_type,
+                1.0,
+                ClassificationStrategy::CatalogLookup,
+            );
             info!(
                 model_name = identifier.as_str(),
                 model_type = ?classification.model_type,
@@ -169,25 +190,6 @@ impl ModelTypeClassifier {
             0.3,
             ClassificationStrategy::Fallback,
         )
-    }
-
-    /// Attempt to classify by catalog lookup.
-    ///
-    /// Uses a curated list of known models with explicit type mappings.
-    fn classify_by_catalog(&self, identifier: &ModelIdentifier) -> Option<ModelTypeClassification> {
-        use crate::features::model_management::catalog_cache::ModelCatalogCache;
-
-        let catalog = ModelCatalogCache::instance();
-
-        if let Some(model_type) = catalog.lookup(identifier.as_str()) {
-            return Some(ModelTypeClassification::new(
-                model_type,
-                1.0,
-                ClassificationStrategy::CatalogLookup,
-            ));
-        }
-
-        None
     }
 
     /// Attempt to classify by pattern matching.

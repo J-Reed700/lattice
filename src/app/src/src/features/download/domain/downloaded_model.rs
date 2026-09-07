@@ -244,7 +244,11 @@ impl DownloadedModel {
         // classifier inspects file extension when available; for
         // directory layouts it falls back to model_name heuristics.
         let classifier = ModelTypeClassifier;
-        let classification = classifier.classify(&model_name, location.loadable_path());
+        let classification =
+            classifier.classify_with_catalog(&model_name, location.loadable_path(), |identifier| {
+                crate::features::model_management::catalog_cache::ModelCatalogCache::instance()
+                    .lookup(identifier)
+            });
 
         tracing::info!(
             model_id = %model_id,
