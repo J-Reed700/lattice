@@ -21,17 +21,17 @@
 //!
 //! ```rust
 //! use crate::application::ports::TextSearchPort;
-//! use crate::features::search::dto::SearchResultPortDto;
+//! use crate::application::contracts::search::SearchResultRecord;
 //!
 //! async fn search_documents(
 //!     searcher: &impl TextSearchPort,
 //!     query: &str,
-//! ) -> Result<Vec<SearchResultPortDto>> {
+//! ) -> Result<Vec<SearchResultRecord>> {
 //!     searcher.search(query, 20).await
 //! }
 //! ```
 
-use crate::features::search::dto::SearchResultPortDto;
+use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;

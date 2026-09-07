@@ -18,17 +18,17 @@
 //!
 //! ```rust
 //! use crate::application::ports::VectorSearchPort;
-//! use crate::features::search::dto::SearchResultPortDto;
+//! use crate::application::contracts::search::SearchResultRecord;
 //!
 //! fn find_similar(
 //!     searcher: &impl VectorSearchPort,
 //!     query_embedding: &[f32],
-//! ) -> Result<Vec<SearchResultPortDto>> {
+//! ) -> Result<Vec<SearchResultRecord>> {
 //!     searcher.search(query_embedding, 10, 0.7)
 //! }
 //! ```
 
-use crate::features::search::dto::SearchResultPortDto;
+use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 use crate::shared::result::Result;
 use std::collections::HashSet;
 

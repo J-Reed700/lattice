@@ -13,9 +13,4 @@
 //! - **Flexibility**: Can evolve DTOs for API versioning
 //! - **Testing**: Easy to test conversions in isolation
 //!
-//! ## Organization
-//!
-//! - `conversation_mapper` (re-export) — used by chat-side conversation creation
-
-// Re-export mappers
-pub use crate::features::conversation::mapper::ConversationDtoMapper;
+//! Feature-specific mappings live with their owning vertical slice.

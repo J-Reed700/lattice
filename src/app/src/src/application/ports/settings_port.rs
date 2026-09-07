@@ -5,7 +5,9 @@
 //! This port abstracts settings persistence, allowing different implementations
 //! (file-based, database, remote, etc.) while keeping the application layer independent.
 
-use crate::features::settings::dto::{SettingsCategory, SettingsDto};
+use crate::application::contracts::settings::{
+    LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
+};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -172,7 +174,7 @@ pub trait SettingsRepositoryPort: Send + Sync {
     /// # Returns
     ///
     /// Validation result with errors and warnings
-    fn validate(&self, settings: &SettingsDto) -> crate::features::settings::dto::ValidationResult;
+    fn validate(&self, settings: &SettingsDto) -> ValidationResult;
 
     /// Check if a file path is valid and accessible.
     ///
@@ -396,9 +398,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         Ok(self.settings.read().await.clone())
     }
 
-    fn validate(&self, settings: &SettingsDto) -> crate::features::settings::dto::ValidationResult {
-        use crate::features::settings::dto::ValidationResult;
-
+    fn validate(&self, settings: &SettingsDto) -> ValidationResult {
         let mut result = ValidationResult::success();
 
         // Validate indexing settings
@@ -452,7 +452,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         if settings.llm.max_tokens == 0 {
             result.add_error("llm", "max_tokens must be greater than 0".to_string());
         }
-        if settings.llm.provider == crate::features::settings::dto::LLMProvider::Ollama {
+        if settings.llm.provider == LLMProvider::Ollama {
             if settings.llm.ollama_url.is_empty() {
                 result.add_error("llm", "ollama_url cannot be empty".to_string());
             }

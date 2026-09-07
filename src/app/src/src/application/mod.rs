@@ -27,6 +27,7 @@
 //! - `ports/` - Interface definitions for infrastructure (Hexagonal Architecture)
 //! - `services/` - Application services (FileType, ContextWindowBuilder, …)
 
+pub mod contracts;
 pub mod error;
 pub mod factories;
 pub mod mappers;

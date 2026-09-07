@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use crate::application::contracts::search::SearchResultRecord as SearchResultPortDto;
 pub use crate::features::cache::dto::CacheStatsDto;
 
 /// Search result from infrastructure ports.
@@ -20,21 +21,6 @@ pub use crate::features::cache::dto::CacheStatsDto;
 /// - **Decoupling**: Ports don't depend on domain entities (Clean Architecture)
 /// - **Simplicity**: Contains only essential fields needed from search engines
 /// - **Flexibility**: Can be returned by various search implementations (vector, text, hybrid)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResultPortDto {
-    /// Document identifier (may be chunk ID or document ID)
-    pub doc_id: String,
-
-    /// Chunk identifier (empty string if result is a document, not a chunk)
-    pub chunk_id: String,
-
-    /// Relevance score (0.0 to 1.0)
-    pub score: f32,
-
-    /// Content snippet or text
-    pub content: String,
-}
-
 /// Search request from the frontend.
 ///
 /// Represents a search query with optional parameters for filtering and ranking.

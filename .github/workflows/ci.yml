@@ -91,11 +91,12 @@ jobs:
   # every PR is the bare minimum until P1-3 replaces it with
   # module-system enforcement.
   repository-barrier:
-    name: repository barrier check
+    name: architecture boundary checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/check-repository-barrier.sh
+      - run: bash scripts/check-rust-layer-boundaries.sh
 
   # -----------------------------------------------------------------
   # Frontend (Tauri webview — React + TypeScript)

@@ -2,15 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FavoriteDto {
-    pub id: String,
-    pub document_id: String,
-    pub document_name: String,
-    pub document_path: String,
-    pub file_type: Option<String>,
-    pub added_at: String,
-}
+pub use crate::application::contracts::favorites::FavoriteRecord as FavoriteDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddFavoriteRequestDto {

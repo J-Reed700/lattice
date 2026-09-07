@@ -3,7 +3,7 @@
 //! failures must not propagate, the user's setting has already been
 //! persisted.
 
-use crate::features::settings::dto::SettingsCategory;
+use crate::application::contracts::settings::SettingsCategory;
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, Copy, Default)]
