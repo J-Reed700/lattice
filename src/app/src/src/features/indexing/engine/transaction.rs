@@ -34,7 +34,7 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::indexing::transaction::FileIndexTransaction;
+//! use lattice::indexing::transaction::FileIndexTransaction;
 //!
 //! async fn index_file(path: &Path) -> Result<FileRecord> {
 //!     let file_id = generate_id();
@@ -81,8 +81,17 @@ use std::sync::Arc;
 ///
 /// Safe to use across threads. Rollback spawns a new task to avoid blocking.
 pub struct FileIndexTransaction {
-    /// File ID being indexed
+    /// File ID being indexed. This is a `files.id`, **not** a `documents.id`.
     file_id: String,
+
+    /// Source path of the file being indexed.
+    ///
+    /// Needed because `documents` is keyed by `file_path`, and there is no
+    /// column joining it to `files.id`. Rollback previously ran
+    /// `DELETE FROM documents WHERE id = <files.id>`, mixing the two id
+    /// domains — it matched zero rows every single time, so the guard did
+    /// nothing it claimed to do.
+    file_path: Option<String>,
 
     /// File storage service for cleanup
     file_storage: Arc<FileStorageService>,
@@ -119,10 +128,20 @@ impl FileIndexTransaction {
     ) -> Self {
         Self {
             file_id,
+            file_path: None,
             file_storage,
             db_pool,
             committed: false,
         }
+    }
+
+    /// Record the source path so rollback can remove the `documents` row.
+    ///
+    /// Without it, rollback can only clean up file storage and the `files`
+    /// row; a partially-written document would survive the failure.
+    pub fn with_file_path(mut self, file_path: impl Into<String>) -> Self {
+        self.file_path = Some(file_path.into());
+        self
     }
 
     /// Mark transaction as successfully committed.
@@ -173,21 +192,47 @@ impl FileIndexTransaction {
             );
         }
 
-        // Delete database record (cascades to chunks and embeddings)
-        if let Err(e) = sqlx::query!("DELETE FROM documents WHERE id = ?", self.file_id)
+        // Delete the document row (cascades to chunks and embeddings).
+        // Keyed by path, because `documents.id` and `files.id` are different
+        // id domains — the old `WHERE id = <files.id>` matched nothing.
+        // Non-macro form to avoid regenerating the offline sqlx cache.
+        if let Some(file_path) = &self.file_path {
+            match sqlx::query("DELETE FROM documents WHERE file_path = ?")
+                .bind(file_path)
+                .execute(&self.db_pool)
+                .await
+            {
+                Ok(result) => tracing::debug!(
+                    file_path = %file_path,
+                    rows = result.rows_affected(),
+                    "Deleted document row during rollback"
+                ),
+                Err(e) => tracing::error!(
+                    file_path = %file_path,
+                    error = %e,
+                    "Failed to delete document row during rollback"
+                ),
+            }
+        }
+
+        // Delete the `files` row too. Leaving it behind stranded an entry at
+        // `is_indexed = 0` that no later run would revisit, so failures
+        // accumulated and polluted "needs indexing" queries.
+        match sqlx::query("DELETE FROM files WHERE id = ?")
+            .bind(&self.file_id)
             .execute(&self.db_pool)
             .await
         {
-            tracing::error!(
+            Ok(result) => tracing::debug!(
+                file_id = %self.file_id,
+                rows = result.rows_affected(),
+                "Deleted files row during rollback"
+            ),
+            Err(e) => tracing::error!(
                 file_id = %self.file_id,
                 error = %e,
-                "Failed to delete database record during rollback"
-            );
-        } else {
-            tracing::debug!(
-                file_id = %self.file_id,
-                "Successfully deleted database record during rollback"
-            );
+                "Failed to delete files row during rollback"
+            ),
         }
     }
 }
@@ -206,6 +251,7 @@ impl Drop for FileIndexTransaction {
 
             // Clone data needed for async cleanup
             let file_id = self.file_id.clone();
+            let file_path = self.file_path.clone();
             let file_storage = Arc::clone(&self.file_storage);
             let db_pool = self.db_pool.clone();
 
@@ -215,6 +261,7 @@ impl Drop for FileIndexTransaction {
                 // Mark as committed to prevent double-cleanup
                 let tx = FileIndexTransaction {
                     file_id,
+                    file_path,
                     file_storage,
                     db_pool,
                     committed: true,
@@ -245,6 +292,73 @@ mod tests {
             .unwrap();
 
         (pool, temp_dir)
+    }
+
+    /// The guard's whole purpose is removing partial state after a failure.
+    /// It previously deleted `FROM documents WHERE id = <files.id>` — two
+    /// different id domains — so it matched zero rows on every rollback that
+    /// ever ran, and left the `files` row stranded at `is_indexed = 0`.
+    #[tokio::test]
+    async fn rollback_removes_both_the_document_and_the_files_row() {
+        let (pool, temp_dir) = create_test_pool().await;
+        let vault_path = temp_dir.path().join("lattice");
+        tokio::fs::create_dir_all(&vault_path).await.unwrap();
+
+        let file_storage = Arc::new(FileStorageService::new(vault_path, pool.clone()));
+        let file_id = "files-row-1".to_string();
+        let file_path = "/tmp/partially-indexed.txt";
+
+        sqlx::query(
+            "INSERT INTO files (id, content_hash, file_name, mime_type, size_bytes, \
+             storage_path, is_indexed, created_at, accessed_at) \
+             VALUES (?, 'hash-1', 'partially-indexed.txt', 'text/plain', 10, '/store/x', 0, 0, 0)",
+        )
+        .bind(&file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes, \
+             modified_at, indexed_at, checksum, status) \
+             VALUES ('doc-row-1', ?, 'partially-indexed.txt', 'text/plain', 10, \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'abc', 'indexed')",
+        )
+        .bind(file_path)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Drop without committing — this is the failure path.
+        {
+            let _tx =
+                FileIndexTransaction::new(file_id.clone(), file_storage.clone(), pool.clone())
+                    .with_file_path(file_path);
+        }
+
+        // Cleanup is spawned, so give it a moment.
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        let documents: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE file_path = ?")
+                .bind(file_path)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            documents, 0,
+            "rollback must delete the partial document row"
+        );
+
+        let files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE id = ?")
+            .bind(&file_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            files, 0,
+            "rollback must delete the files row, not strand it at is_indexed = 0"
+        );
     }
 
     #[tokio::test]

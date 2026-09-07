@@ -38,8 +38,8 @@ pub struct ChunkParams {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::entities::chunk::Chunk;
-/// use vault_desktop::domain_types::DocumentId;
+/// use lattice::domain::entities::chunk::Chunk;
+/// use lattice::domain_types::DocumentId;
 ///
 /// let doc_id = DocumentId::new();
 /// let chunk = Chunk::new(doc_id, "This is chunk content".to_string(), 0);
@@ -75,8 +75,8 @@ impl Chunk {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::entities::chunk::Chunk;
-    /// use vault_desktop::domain_types::DocumentId;
+    /// use lattice::domain::entities::chunk::Chunk;
+    /// use lattice::domain_types::DocumentId;
     ///
     /// let doc_id = DocumentId::new();
     /// let chunk = Chunk::new(doc_id.clone(), "Content here".to_string(), 0);

@@ -17,8 +17,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::search::hybrid_search::HybridSearchUseCase;
-//! use vault_desktop::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+//! use lattice::application::use_cases::search::hybrid_search::HybridSearchUseCase;
+//! use lattice::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
 //!
 //! # async fn example(use_case: HybridSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = SearchRequestDto {
@@ -40,11 +40,11 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::features::search::dto::{SearchModeDto, SearchRequestDto, SearchResponseDto};
-use crate::features::search::mapper::SearchMapper;
 use crate::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use crate::domain::entities::search_result::SearchResult;
 use crate::domain::services::SearchRankingService;
+use crate::features::search::dto::{SearchModeDto, SearchRequestDto, SearchResponseDto};
+use crate::features::search::mapper::SearchMapper;
 use crate::shared::error::Result;
 use crate::shared::text_utils::safe_truncate;
 use once_cell::sync::Lazy;

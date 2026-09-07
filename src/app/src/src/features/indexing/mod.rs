@@ -2,7 +2,7 @@
 //!
 //! Document indexing pipeline: content extraction (PDF, DOCX, HTML,
 //! …), semantic chunking, metadata extraction, and storage of chunks
-//! + embeddings. The actor-based service in `engine/actor.rs` is the
+//! and embeddings. The actor-based service in `engine/actor.rs` is the
 //! primary worker driving the pipeline.
 //!
 //! ## Public surface

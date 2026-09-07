@@ -1,0 +1,19 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 59
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": "user456",
+  "action": "search_performed",
+  "resource_id": null,
+  "result": "success",
+  "metadata": {
+    "duration_ms": "150",
+    "query": "machine learning neural networks",
+    "results_count": "25",
+    "search_mode": "hybrid"
+  }
+}

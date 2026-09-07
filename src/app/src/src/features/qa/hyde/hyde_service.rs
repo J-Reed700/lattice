@@ -22,7 +22,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::services::hyde::HyDEService;
+//! use lattice::infrastructure::services::hyde::HyDEService;
 //! use std::sync::Arc;
 //!
 //! async fn example(llm: Arc<dyn LLMPort>) {
@@ -62,8 +62,8 @@ use tracing::{debug, info};
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::infrastructure::services::hyde::HyDEService;
-/// use vault_desktop::domain::qa::hyde::QueryType;
+/// use lattice::infrastructure::services::hyde::HyDEService;
+/// use lattice::domain::qa::hyde::QueryType;
 /// use std::sync::Arc;
 ///
 /// async fn example(llm: Arc<dyn LLMPort>) -> Result<()> {
@@ -96,7 +96,7 @@ impl HyDEService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::hyde::HyDEService;
+    /// use lattice::infrastructure::services::hyde::HyDEService;
     /// use std::sync::Arc;
     ///
     /// let service = HyDEService::new(llm_port);
@@ -250,7 +250,7 @@ impl HyDEService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::qa::hyde::QueryType;
+    /// use lattice::domain::qa::hyde::QueryType;
     ///
     /// // Force treating a query as a question
     /// let interpretation = service.interpret_query_with_type(
@@ -337,12 +337,23 @@ fn contextual_followup_score(query: &str, conversation_context: &str) -> f32 {
     };
     let salience_compactness =
         1.0 - ((query_salient.len() as f32) / (query_tokens.len() as f32)).min(1.0);
+    let discourse_bonus = if query_tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "though" | "also" | "instead" | "otherwise" | "then"
+        )
+    }) {
+        0.30
+    } else {
+        0.0
+    };
 
     (overlap_tail * 0.45)
         + (overlap_full * 0.20)
         + (token_overlap_tail * 0.25)
         + (brevity_bonus * 0.07)
         + (salience_compactness * 0.03)
+        + discourse_bonus
 }
 
 fn tokenize_terms(text: &str) -> Vec<String> {

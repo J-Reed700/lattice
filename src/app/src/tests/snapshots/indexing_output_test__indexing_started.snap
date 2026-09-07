@@ -1,0 +1,9 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 94
+expression: event
+---
+{
+  "type": "Started",
+  "total_files": 150
+}

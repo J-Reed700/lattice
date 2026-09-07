@@ -1,10 +1,10 @@
 //! Text chunk and embedding storage operations.
 
 use super::checksum::calculate_checksum;
+use crate::features::embedding::service::MODEL_NAME;
+use crate::features::mentions::repository::MentionRepository;
 use crate::infrastructure::indexing::chunker::TextChunk;
 use crate::infrastructure::indexing::error::{IndexingError, Result};
-use crate::features::mentions::repository::MentionRepository;
-use crate::features::embedding::service::MODEL_NAME;
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -71,7 +71,12 @@ pub async fn store_document(
             indexed_at.clone()
         });
 
-    sqlx::query!(
+    // `RETURNING id` because the upsert's DO UPDATE branch keeps the row's
+    // original id. Re-indexing a modified file otherwise bound chunks to a
+    // freshly-generated UUID that no document row has, so the delete below
+    // matched nothing and the chunk inserts died on a foreign-key violation.
+    // Non-macro form to avoid regenerating the offline sqlx cache.
+    let doc_id: String = sqlx::query_scalar(
         r#"
         INSERT INTO documents (
             id, file_path, file_name, mime_type,
@@ -84,17 +89,18 @@ pub async fn store_document(
             checksum = excluded.checksum,
             status = 'indexed',
             updated_at = CURRENT_TIMESTAMP
+        RETURNING id
         "#,
-        doc_id,
-        file_path,
-        file_name,
-        mime_type,
-        size_bytes,
-        modified_at_str,
-        indexed_at,
-        checksum,
     )
-    .execute(&mut *tx)
+    .bind(&doc_id)
+    .bind(&file_path)
+    .bind(file_name)
+    .bind(mime_type)
+    .bind(size_bytes)
+    .bind(&modified_at_str)
+    .bind(&indexed_at)
+    .bind(&checksum)
+    .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
@@ -124,12 +130,11 @@ pub async fn store_document(
             IndexingError::InvalidData(format!("Embedding index {} out of bounds", idx))
         })?;
 
-        let embedding_bytes = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect::<Vec<u8>>();
+        let embedding_bytes = crate::features::embedding::encoding::encode_embedding(embedding);
 
-        let embedding_id = Uuid::new_v4().to_string();
+        // Canonical key so delete/rebuild/insert all agree — see
+        // `embedding::encoding::vector_key`.
+        let embedding_id = crate::features::embedding::encoding::vector_key(&chunk_id);
         let dimension = embedding.len() as i32;
 
         sqlx::query!(
@@ -149,21 +154,36 @@ pub async fn store_document(
         .await?;
     }
 
-    // Extract mentions from document content
-    let mention_repo = MentionRepository::new(pool.clone());
     let full_text = chunks
         .iter()
         .map(|c| c.text.as_str())
         .collect::<Vec<_>>()
         .join(" ");
+
+    tx.commit().await?;
+
+    // Mentions are written *after* the commit, deliberately.
+    //
+    // `MentionRepository` works through the pool, i.e. on a different pooled
+    // connection. Calling it while the transaction above was still open meant
+    // a second connection asking for SQLite's single writer lock that this
+    // very task was holding — a guaranteed self-deadlock that burned the full
+    // 5-second `busy_timeout` on *every indexed document*, then failed with
+    // SQLITE_BUSY and dropped the mentions via a warning nobody reads.
+    // Indexing a 500-file folder spent ~42 minutes purely waiting on a lock
+    // it could never acquire.
+    //
+    // Never open a second connection inside a write transaction on SQLite.
+    // Mentions are derived data, so recomputing them outside the transaction
+    // costs only that they aren't atomic with the document — far better than
+    // never being persisted at all.
+    let mention_repo = MentionRepository::new(pool.clone());
     if let Err(e) = mention_repo
         .extract_and_store_mentions(&doc_id, &full_text)
         .await
     {
         tracing::warn!("Failed to extract mentions for document {}: {}", doc_id, e);
     }
-
-    tx.commit().await?;
 
     Ok(doc_id)
 }

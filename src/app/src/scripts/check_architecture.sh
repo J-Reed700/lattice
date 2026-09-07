@@ -2,7 +2,10 @@
 # Local architecture quality checks
 # Mirrors the GitHub Actions workflow for local validation
 
-set -e
+set -euo pipefail
+
+ARCH_CHECK_TMP_DIR="$(mktemp -d)"
+trap 'rm -rf -- "$ARCH_CHECK_TMP_DIR"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -73,6 +76,7 @@ echo ""
 # Check 3: Clippy Architecture Lints
 echo "📋 Check 3: Clippy Architecture Lints"
 echo "-------------------------------------"
+CLIPPY_LOG="$ARCH_CHECK_TMP_DIR/clippy.log"
 if cargo clippy --all-targets --all-features --quiet -- \
     -D warnings \
     -W clippy::all \
@@ -85,11 +89,12 @@ if cargo clippy --all-targets --all-features --quiet -- \
     -D clippy::panic \
     -D clippy::todo \
     -D clippy::unimplemented \
-    2>&1 | head -n 20; then
+    >"$CLIPPY_LOG" 2>&1; then
     echo -e "${GREEN}✅ Clippy checks passed${NC}"
     PASSED_CHECKS=$((PASSED_CHECKS + 1))
 else
     echo -e "${RED}❌ Clippy checks failed${NC}"
+    head -n 20 "$CLIPPY_LOG"
     echo "See errors above. Common fixes:"
     echo "  - Replace .unwrap() with proper error handling"
     echo "  - Replace .expect() with Result propagation"

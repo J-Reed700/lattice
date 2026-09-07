@@ -33,7 +33,7 @@ impl ChecksumFactory {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::factories::checksum_factory::ChecksumFactory;
+    /// use lattice::application::factories::checksum_factory::ChecksumFactory;
     /// use std::path::Path;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,7 +65,7 @@ impl ChecksumFactory {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::factories::checksum_factory::ChecksumFactory;
+    /// use lattice::application::factories::checksum_factory::ChecksumFactory;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let content = b"Hello, world!";
@@ -91,8 +91,8 @@ impl ChecksumFactory {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::factories::checksum_factory::ChecksumFactory;
-    /// use vault_desktop::domain::value_objects::checksum::Checksum;
+    /// use lattice::application::factories::checksum_factory::ChecksumFactory;
+    /// use lattice::domain::value_objects::checksum::Checksum;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let content = b"test content";
@@ -121,7 +121,7 @@ impl ChecksumFactory {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::factories::checksum_factory::ChecksumFactory;
+    /// use lattice::application::factories::checksum_factory::ChecksumFactory;
     /// use std::path::Path;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {

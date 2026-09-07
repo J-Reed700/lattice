@@ -42,7 +42,7 @@ impl ChunkingService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::services::chunking_service::ChunkingService;
+    /// use lattice::domain::services::chunking_service::ChunkingService;
     ///
     /// let service = ChunkingService::new();
     /// let chunks = service.chunk_fixed_size("Long text here", 10, 2);
@@ -97,7 +97,7 @@ impl ChunkingService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::services::chunking_service::ChunkingService;
+    /// use lattice::domain::services::chunking_service::ChunkingService;
     ///
     /// let service = ChunkingService::new();
     /// let sentences = service.chunk_by_sentences("First sentence. Second sentence!");
@@ -171,7 +171,7 @@ impl ChunkingService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::services::chunking_service::ChunkingService;
+    /// use lattice::domain::services::chunking_service::ChunkingService;
     ///
     /// let service = ChunkingService::new();
     /// let text = "First paragraph.\n\nSecond paragraph.";
@@ -201,7 +201,7 @@ impl ChunkingService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::services::chunking_service::ChunkingService;
+    /// use lattice::domain::services::chunking_service::ChunkingService;
     ///
     /// let service = ChunkingService::new();
     /// let chunks = service.chunk_by_word_count("word1 word2 word3 word4", 2);
@@ -248,7 +248,7 @@ impl ChunkingService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::services::chunking_service::ChunkingService;
+    /// use lattice::domain::services::chunking_service::ChunkingService;
     ///
     /// let service = ChunkingService::new();
     /// assert_eq!(service.word_count("hello world"), 2);

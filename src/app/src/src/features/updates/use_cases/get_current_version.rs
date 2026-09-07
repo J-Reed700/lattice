@@ -1,5 +1,5 @@
-use crate::features::updates::dto::VersionInfoDto;
 use crate::application::ports::UpdateCheckerPort;
+use crate::features::updates::dto::VersionInfoDto;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

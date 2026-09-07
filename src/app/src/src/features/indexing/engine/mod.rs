@@ -55,7 +55,7 @@
 //! ### Index a Single File
 //!
 //! ```rust,no_run
-//! use vault_desktop::indexing::{IndexingService, IndexTask};
+//! use lattice::indexing::{IndexingService, IndexTask};
 //! use std::path::PathBuf;
 //!
 //! let service = IndexingService::new(
@@ -77,7 +77,7 @@
 //! ### Index a Directory
 //!
 //! ```rust,no_run
-//! use vault_desktop::indexing::IndexingService;
+//! use lattice::indexing::IndexingService;
 //!
 //! service.index_directory("/path/to/docs").await?;
 //! // Recursively indexes all supported files
@@ -86,7 +86,7 @@
 //! ### Monitor Progress
 //!
 //! ```rust,no_run
-//! use vault_desktop::indexing::{IndexProgress, IndexingEvent};
+//! use lattice::indexing::{IndexProgress, IndexingEvent};
 //!
 //! let mut events = service.subscribe_events();
 //!
@@ -142,7 +142,7 @@
 //! ## Configuration
 //!
 //! ```rust
-//! use vault_desktop::indexing::ChunkerConfig;
+//! use lattice::indexing::ChunkerConfig;
 //!
 //! let config = ChunkerConfig {
 //!     max_tokens: 512,           // Model max length

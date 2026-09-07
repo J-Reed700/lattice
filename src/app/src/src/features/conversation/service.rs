@@ -16,7 +16,7 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::services::ConversationService;
+//! use lattice::services::ConversationService;
 //! use sqlx::SqlitePool;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -83,7 +83,7 @@ impl ConversationService {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # use vault_desktop::services::ConversationService;
+    /// # use lattice::services::ConversationService;
     /// # async fn example(service: ConversationService) -> Result<(), Box<dyn std::error::Error>> {
     /// let conversation = service.create_conversation(
     ///     "My Chat".to_string(),
@@ -138,7 +138,7 @@ impl ConversationService {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # use vault_desktop::services::ConversationService;
+    /// # use lattice::services::ConversationService;
     /// # async fn example(service: ConversationService) -> Result<(), Box<dyn std::error::Error>> {
     /// // Get first page of 20 conversations
     /// let conversations = service.list_conversations(Some(20), Some(0)).await?;
@@ -226,7 +226,7 @@ impl ConversationService {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # use vault_desktop::services::ConversationService;
+    /// # use lattice::services::ConversationService;
     /// # async fn example(service: ConversationService, conversation_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     /// let message = service.add_user_message(
     ///     conversation_id,
@@ -348,7 +348,7 @@ impl ConversationService {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # use vault_desktop::services::ConversationService;
+    /// # use lattice::services::ConversationService;
     /// # async fn example(service: ConversationService, conversation_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     /// // Keep only recent 10K tokens of history
     /// service.prune_conversation_to_limit(conversation_id, 10000).await?;
@@ -457,7 +457,7 @@ impl ConversationService {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # use vault_desktop::services::ConversationService;
+    /// # use lattice::services::ConversationService;
     /// # async fn example(service: ConversationService, conversation_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     /// // Two-phase commit pattern
     /// let user_msg = service.add_message_with_status(
@@ -514,7 +514,7 @@ impl ConversationService {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # use vault_desktop::services::ConversationService;
+    /// # use lattice::services::ConversationService;
     /// # async fn example(service: ConversationService, message_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     /// // Mark message as completed after operation succeeds
     /// service.update_message_status(message_id, "completed").await?;
@@ -633,6 +633,13 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
 
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         self.update_message_status(message_id, status).await
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::application::ports::ConversationHistoryPort for ConversationService {
+    async fn get_conversation(&self, id: &str) -> Result<Option<ConversationAggregate>> {
+        self.get_conversation(id).await
     }
 }
 

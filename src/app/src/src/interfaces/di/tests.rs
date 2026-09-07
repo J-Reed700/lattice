@@ -9,10 +9,10 @@
 #[cfg(test)]
 mod di_integration_tests {
     use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
-    use crate::infrastructure::persistence::repositories::traits::*;
-    use crate::infrastructure::services::traits::*;
     use crate::features::embedding::EmbeddingServiceTrait;
     use crate::features::search::SearchServiceTrait;
+    use crate::infrastructure::persistence::repositories::traits::*;
+    use crate::infrastructure::services::traits::*;
     use crate::interfaces::di::MockAppContainer;
 
     /// Test complete document indexing workflow using mocks

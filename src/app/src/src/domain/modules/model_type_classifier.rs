@@ -194,6 +194,17 @@ impl ModelTypeClassifier {
     ///
     /// Matches common naming conventions and model families.
     fn classify_by_pattern(&self, identifier: &ModelIdentifier) -> Option<ModelTypeClassification> {
+        // Transcription patterns. Evaluated first: whisper ships as a `.gguf`
+        // file, which the extension fallback would otherwise call a language
+        // model, putting it in the chat picker.
+        if self.matches_transcription_pattern(identifier) {
+            return Some(ModelTypeClassification::new(
+                ModelType::Transcription,
+                0.8,
+                ClassificationStrategy::PatternMatching,
+            ));
+        }
+
         // Text embeddings patterns
         if self.matches_text_embeddings_pattern(identifier) {
             return Some(ModelTypeClassification::new(
@@ -252,6 +263,10 @@ impl ModelTypeClassifier {
     }
 
     // Pattern matching helpers
+
+    fn matches_transcription_pattern(&self, id: &ModelIdentifier) -> bool {
+        id.contains("whisper") || id.contains("transcri") || id.contains("distil-whisper")
+    }
 
     fn matches_text_embeddings_pattern(&self, id: &ModelIdentifier) -> bool {
         id.contains("embed")

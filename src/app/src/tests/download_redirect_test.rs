@@ -8,8 +8,6 @@
 #![allow(unused_imports)]
 #![allow(deprecated)]
 
-use std::path::PathBuf;
-use tempfile::TempDir;
 /// Test that download engine properly handles redirects
 ///
 /// This test verifies the fix for the BGE-M3 download bug where:
@@ -17,11 +15,11 @@ use tempfile::TempDir;
 /// - GET request must use the FINAL redirect URL, not the original URL
 ///
 /// Without the fix, GET would use original URL and return 0 bytes.
-use lattice::features::download::engine::{
-    DownloadEngine, DownloadOptions, HttpDownloadEngine,
-};
+use lattice::features::download::engine::{DownloadEngine, DownloadOptions, HttpDownloadEngine};
+use std::path::PathBuf;
+use tempfile::TempDir;
 use wiremock::{
-    matchers::{method, path},
+    matchers::{header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 #[tokio::test]
@@ -52,6 +50,21 @@ async fn test_download_follows_redirects() {
         .mount(&mock_server)
         .await;
 
+    // Small responses intentionally trigger the engine's Range probe before
+    // the real download. Keep the probe distinct from the full-body GET.
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .and(header("range", "bytes=0-0"))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .set_body_bytes(&test_data[..1])
+                .insert_header("content-range", format!("bytes 0-0/{}", test_data.len())),
+        )
+        .with_priority(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
     // GET request to final URL returns data
     Mock::given(method("GET"))
         .and(path("/final"))
@@ -60,6 +73,7 @@ async fn test_download_follows_redirects() {
                 .set_body_bytes(test_data)
                 .insert_header("content-length", test_data.len().to_string()),
         )
+        .with_priority(2)
         .expect(1) // Should be called exactly once
         .mount(&mock_server)
         .await;
@@ -69,7 +83,7 @@ async fn test_download_follows_redirects() {
         .and(path("/original"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_bytes(&[]) // Empty response
+                .set_body_bytes([]) // Empty response
                 .insert_header("content-length", "0"),
         )
         .expect(0) // Should NOT be called
@@ -118,6 +132,21 @@ async fn test_get_file_size_returns_final_url() {
     Mock::given(method("HEAD"))
         .and(path("/final"))
         .respond_with(ResponseTemplate::new(200).insert_header("content-length", "12345"))
+        .mount(&mock_server)
+        .await;
+
+    // Wiremock may normalize an empty HEAD response to Content-Length: 0.
+    // Model the production fallback so the test verifies the same size via
+    // Content-Range when the HEAD length is unavailable or suspicious.
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .and(header("range", "bytes=0-0"))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .set_body_bytes([0])
+                .insert_header("content-range", "bytes 0-0/12345"),
+        )
+        .expect(1)
         .mount(&mock_server)
         .await;
 

@@ -23,9 +23,8 @@ pub struct SettingsDi {
 }
 
 pub async fn build(settings_path: &Path) -> Result<SettingsDi> {
-    let settings_repo =
-        Arc::new(SettingsRepository::new(settings_path.to_path_buf()).await?)
-            as Arc<dyn SettingsRepositoryPort>;
+    let settings_repo = Arc::new(SettingsRepository::new(settings_path.to_path_buf()).await?)
+        as Arc<dyn SettingsRepositoryPort>;
 
     Ok(SettingsDi {
         get_settings_use_case: Arc::new(GetSettingsUseCase::new(settings_repo.clone())),

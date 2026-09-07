@@ -1,5 +1,5 @@
 use crate::shared::error::{AppError, Result};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::SqlitePool;
 
 /// Maximum number of parameters in a single SQLite query
 ///
@@ -18,9 +18,6 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 /// }
 /// ```
 const SQLITE_MAX_PARAMS: usize = 900;
-
-/// Batch size for bulk inserts
-const BATCH_INSERT_SIZE: usize = 100;
 
 pub struct DatabaseUtils;
 
@@ -46,72 +43,6 @@ impl DatabaseUtils {
         }
 
         Ok(results)
-    }
-
-    /// Issue #9: Batch Insert Optimization (P0 - 100x Faster)
-    /// Insert multiple records efficiently in batches
-    pub async fn batch_insert_chunks(
-        pool: &SqlitePool,
-        chunks: Vec<(String, String, String, i32, i32, i32)>, // (id, doc_id, content, index, start, end)
-    ) -> Result<()> {
-        let mut tx = pool.begin().await?;
-
-        // Use BEGIN IMMEDIATE for proper transaction isolation
-        sqlx::query("BEGIN IMMEDIATE").execute(&mut *tx).await?;
-
-        for batch in chunks.chunks(BATCH_INSERT_SIZE) {
-            let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "INSERT INTO text_chunks (id, document_id, content, chunk_index, start_char, end_char) "
-            );
-
-            query_builder.push_values(batch, |mut b, chunk| {
-                b.push_bind(&chunk.0)
-                    .push_bind(&chunk.1)
-                    .push_bind(&chunk.2)
-                    .push_bind(chunk.3)
-                    .push_bind(chunk.4)
-                    .push_bind(chunk.5);
-            });
-
-            query_builder.build().execute(&mut *tx).await?;
-        }
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// Batch insert embeddings with binary storage
-    pub async fn batch_insert_embeddings(
-        pool: &SqlitePool,
-        embeddings: Vec<(String, String, Vec<f32>, String, i32)>, // (id, chunk_id, vector, model, dim)
-    ) -> Result<()> {
-        let mut tx = pool.begin().await?;
-
-        sqlx::query("BEGIN IMMEDIATE").execute(&mut *tx).await?;
-
-        for batch in embeddings.chunks(BATCH_INSERT_SIZE) {
-            for (id, chunk_id, vector, model, dim) in batch {
-                // Issue #12: Fix Embedding Storage Efficiency
-                // Store as BLOB, not TEXT
-                let embedding_bytes: Vec<u8> =
-                    vector.iter().flat_map(|f| f.to_le_bytes()).collect();
-
-                sqlx::query(
-                    "INSERT INTO text_embeddings (id, chunk_id, embedding, model_name, dimension) 
-                     VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(id)
-                .bind(chunk_id)
-                .bind(&embedding_bytes)
-                .bind(model)
-                .bind(dim)
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
-
-        tx.commit().await?;
-        Ok(())
     }
 
     /// Deserialize embedding from BLOB storage

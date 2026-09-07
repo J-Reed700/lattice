@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::shared::api_result::{ApiResult, ErrorCode};
+//! use lattice::shared::api_result::{ApiResult, ErrorCode};
 //!
 //! // Success response
 //! let result = ApiResult::success(vec![1, 2, 3]);
@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// # use vault_desktop::shared::api_result::{ApiResult, ErrorCode};
+/// # use lattice::shared::api_result::{ApiResult, ErrorCode};
 /// let success = ApiResult::success("hello");
 /// assert!(success.is_ok());
 ///
@@ -84,7 +84,7 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::shared::api_result::ApiResult;
+    /// # use lattice::shared::api_result::ApiResult;
     /// let result = ApiResult::success(42);
     /// assert!(result.is_ok());
     /// ```
@@ -97,7 +97,7 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::shared::api_result::{ApiResult, ErrorCode};
+    /// # use lattice::shared::api_result::{ApiResult, ErrorCode};
     /// let result = ApiResult::<()>::error(ErrorCode::NotFound, "Resource not found");
     /// assert!(!result.is_ok());
     /// ```
@@ -117,7 +117,7 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::shared::api_result::{ApiResult, ErrorCode};
+    /// # use lattice::shared::api_result::{ApiResult, ErrorCode};
     /// let result = ApiResult::<()>::error_with_details(
     ///     ErrorCode::ValidationError,
     ///     "Invalid request",
@@ -145,8 +145,8 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::shared::api_result::ApiResult;
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::shared::api_result::ApiResult;
+    /// # use lattice::application::error::ApplicationError;
     /// let ok: Result<i32, ApplicationError> = Ok(42);
     /// let result = ApiResult::from_result(ok);
     /// assert!(result.is_ok());
@@ -178,12 +178,12 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::shared::api_result::ApiResult;
+    /// # use lattice::shared::api_result::ApiResult;
     /// let success = ApiResult::success(42);
     /// assert!(success.is_ok());
     ///
     /// let error = ApiResult::<i32>::error(
-    ///     vault_desktop::shared::api_result::ErrorCode::NotFound,
+    ///     lattice::shared::api_result::ErrorCode::NotFound,
     ///     "Not found"
     /// );
     /// assert!(!error.is_ok());
@@ -197,12 +197,12 @@ impl<T> ApiResult<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::shared::api_result::ApiResult;
+    /// # use lattice::shared::api_result::ApiResult;
     /// let success = ApiResult::success(42);
     /// assert!(!success.is_err());
     ///
     /// let error = ApiResult::<i32>::error(
-    ///     vault_desktop::shared::api_result::ErrorCode::NotFound,
+    ///     lattice::shared::api_result::ErrorCode::NotFound,
     ///     "Not found"
     /// );
     /// assert!(error.is_err());
@@ -220,7 +220,7 @@ impl<T> ApiResult<T> {
 /// # Examples
 ///
 /// ```rust
-/// # use vault_desktop::shared::api_result::{ApiError, ErrorCode};
+/// # use lattice::shared::api_result::{ApiError, ErrorCode};
 /// let error = ApiError {
 ///     code: ErrorCode::NotFound,
 ///     message: "Document not found".to_string(),
@@ -251,7 +251,7 @@ pub struct ApiError {
 /// # Examples
 ///
 /// ```rust
-/// # use vault_desktop::shared::api_result::ErrorCode;
+/// # use lattice::shared::api_result::ErrorCode;
 /// let code = ErrorCode::NotFound;
 /// let json = serde_json::to_string(&code).unwrap();
 /// assert_eq!(json, "\"NOT_FOUND\"");
@@ -846,7 +846,7 @@ impl From<serde_json::Error> for ApiError {
 /// # Examples
 ///
 /// ```rust
-/// # use vault_desktop::shared::api_result::sanitize_database_error;
+/// # use lattice::shared::api_result::sanitize_database_error;
 /// let error = "error in SQL: SELECT * FROM users WHERE password = 'secret'";
 /// let sanitized = sanitize_database_error(error);
 /// assert!(!sanitized.contains("SELECT"));

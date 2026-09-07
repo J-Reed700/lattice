@@ -6,9 +6,15 @@
 //! - `CredentialsPort` - Endpoint configuration storage
 //!
 //! # Security
-//! - Validates URL format before storage
 //! - Stores endpoint securely in credentials store
 //! - Audit logs endpoint changes
+//!
+//! Note: this use case does **not** validate the URL. That is currently safe
+//! because the stored value is never fetched from here, but any code that
+//! starts making requests to it must validate first — see the SSRF guard in
+//! `features/web/services/web.rs`, which resolves DNS and rejects
+//! loopback/link-local/private targets. This comment previously claimed
+//! validation happened here; it did not.
 //!
 //! # Example
 //! ```rust,no_run
@@ -16,8 +22,8 @@
 //! use_case.execute("ollama".into(), "http://localhost:11434".into()).await?;
 //! ```
 
-use crate::features::credentials::dto::CredentialOperationResultDto;
 use crate::application::ports::CredentialsPort;
+use crate::features::credentials::dto::CredentialOperationResultDto;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::stats::GetSystemStatsUseCase;
+//! use lattice::application::use_cases::stats::GetSystemStatsUseCase;
 //!
 //! # async fn example(use_case: GetSystemStatsUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let stats = use_case.execute().await?;
@@ -25,9 +25,9 @@
 
 use std::sync::Arc;
 
-use crate::features::health::dto::SystemStatsDto;
 use crate::application::ports::{DatabaseStatsPort, RepositoryPort};
 use crate::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
+use crate::features::health::dto::SystemStatsDto;
 use crate::features::tags::entity::Tag as TagEntity;
 use crate::shared::error::Result;
 
@@ -64,10 +64,10 @@ impl GetSystemStatsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::use_cases::stats::GetSystemStatsUseCase;
+    /// use lattice::application::use_cases::stats::GetSystemStatsUseCase;
     /// # use std::sync::Arc;
-    /// # use vault_desktop::application::ports::RepositoryPort;
-    /// # use vault_desktop::domain::entities::{Document, Chunk, Tag};
+    /// # use lattice::application::ports::RepositoryPort;
+    /// # use lattice::domain::entities::{Document, Chunk, Tag};
     ///
     /// # async fn example(
     /// #     doc_repo: Arc<dyn RepositoryPort<Document>>,
@@ -106,7 +106,7 @@ impl GetSystemStatsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::stats::GetSystemStatsUseCase;
+    /// # use lattice::application::use_cases::stats::GetSystemStatsUseCase;
     /// # async fn example(use_case: GetSystemStatsUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let stats = use_case.execute().await?;
     ///

@@ -7,16 +7,14 @@
 //! 4. Generate embeddings
 //! 5. Store document + chunks + embeddings
 
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::function_calling::dto::CleanArticle;
+use crate::features::indexing::IndexStorageTrait;
+use crate::features::web::{WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::indexing::chunker::{
     ChunkerConfig, ContextualizedChunk, SemanticChunker,
 };
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::IndexStorageTrait;
-use crate::features::web::{
-    WebArchiveServiceTrait, WebIngestionResult, WebIngestionServiceTrait,
-};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -166,10 +164,10 @@ impl Default for WebIngestionConfig {
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::infrastructure::services::{
+/// use lattice::infrastructure::services::{
 ///     WebIngestionService, ArticleExtractorService, embedding::OnnxEmbeddingService
 /// };
-/// use vault_desktop::infrastructure::indexing::storage::IndexStorage;
+/// use lattice::infrastructure::indexing::storage::IndexStorage;
 /// use std::sync::Arc;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -745,6 +743,7 @@ impl WebIngestionService {
             .arg("--no-warnings")
             .arg("--")
             .arg(url)
+            .kill_on_drop(true)
             .output();
 
         let output = timeout(
@@ -851,6 +850,7 @@ impl WebIngestionService {
                 command.arg("--language").arg(language);
             }
         }
+        command.kill_on_drop(true);
 
         let output = timeout(
             Duration::from_secs(self.config.asr_timeout_secs),
@@ -1139,6 +1139,7 @@ impl WebIngestionService {
             .arg("--no-warnings")
             .arg("--")
             .arg(url)
+            .kill_on_drop(true)
             .output();
 
         let output = timeout(
@@ -1579,11 +1580,7 @@ mod tests {
         assert!(result.is_err());
         let error = match result {
             Ok(_) => {
-                assert!(
-                    false,
-                    "builder unexpectedly succeeded without required dependencies"
-                );
-                return;
+                panic!("builder unexpectedly succeeded without required dependencies");
             }
             Err(error) => error,
         };
@@ -1645,11 +1642,7 @@ mod tests {
         assert!(result.is_err());
         let error = match result {
             Ok(_) => {
-                assert!(
-                    false,
-                    "builder unexpectedly accepted invalid chunk configuration"
-                );
-                return;
+                panic!("builder unexpectedly accepted invalid chunk configuration");
             }
             Err(error) => error,
         };
@@ -1681,8 +1674,7 @@ mod tests {
         assert!(result.is_err());
         let error = match result {
             Ok(_) => {
-                assert!(false, "builder unexpectedly accepted empty yt-dlp binary");
-                return;
+                panic!("builder unexpectedly accepted empty yt-dlp binary");
             }
             Err(error) => error,
         };
@@ -1862,8 +1854,7 @@ This is a test
         assert!(result.is_err());
         let error = match result {
             Ok(_) => {
-                assert!(false, "builder unexpectedly accepted zero yt-dlp timeout");
-                return;
+                panic!("builder unexpectedly accepted zero yt-dlp timeout");
             }
             Err(error) => error,
         };
@@ -1895,8 +1886,7 @@ This is a test
         assert!(result.is_err());
         let error = match result {
             Ok(_) => {
-                assert!(false, "builder unexpectedly accepted empty ASR binary");
-                return;
+                panic!("builder unexpectedly accepted empty ASR binary");
             }
             Err(error) => error,
         };
@@ -1928,8 +1918,7 @@ This is a test
         assert!(result.is_err());
         let error = match result {
             Ok(_) => {
-                assert!(false, "builder unexpectedly accepted zero ASR timeout");
-                return;
+                panic!("builder unexpectedly accepted zero ASR timeout");
             }
             Err(error) => error,
         };

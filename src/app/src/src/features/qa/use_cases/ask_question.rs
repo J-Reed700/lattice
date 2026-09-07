@@ -14,14 +14,14 @@ use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
 use std::sync::Arc;
 
-use crate::features::qa::dto::{QARequestDto, QAResponseDto, SourceDto, StreamChunkDto};
-use crate::features::search::mapper::infer_category;
-use crate::features::search::mapper::SearchMapper;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingPort, LLMPort, VectorSearchPort,
 };
 use crate::domain::entities::search_result::SearchResult;
 use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
+use crate::features::qa::dto::{QARequestDto, QAResponseDto, SourceDto, StreamChunkDto};
+use crate::features::search::mapper::infer_category;
+use crate::features::search::mapper::SearchMapper;
 use crate::infrastructure::services::hyde::HyDEService;
 use crate::shared::error::Result;
 use crate::shared::text_utils::{build_excerpt, extract_highlight_terms};
@@ -600,7 +600,7 @@ impl AskQuestionUseCase {
 
         // Build doc_id → file_name lookup
         let mut doc_file_names: HashMap<String, String> = HashMap::new();
-        for (doc_id, result) in doc_ids.iter().zip(doc_metadata_results.into_iter()) {
+        for (doc_id, result) in doc_ids.iter().zip(doc_metadata_results) {
             if let Ok(Some(doc)) = result {
                 doc_file_names.insert(doc_id.clone(), doc.file_name().to_string());
             }
@@ -608,7 +608,7 @@ impl AskQuestionUseCase {
 
         let mut context_blocks = Vec::new();
 
-        for (doc_id, chunk_result) in doc_ids.iter().zip(chunk_results.into_iter()) {
+        for (doc_id, chunk_result) in doc_ids.iter().zip(chunk_results) {
             match chunk_result {
                 Ok(mut chunks) => {
                     if chunks.is_empty() {
@@ -736,7 +736,14 @@ impl AskQuestionUseCase {
                 }
             }
 
-            let chunk = &chunks[idx];
+            let Some(chunk) = chunks.get(idx) else {
+                tracing::warn!(
+                    chunk_index = idx,
+                    chunk_count = chunks.len(),
+                    "Skipping invalid snapshot chunk index"
+                );
+                continue;
+            };
             let content = chunk.content();
 
             if !snapshot.ends_with('\n') {
@@ -852,7 +859,7 @@ impl AskQuestionUseCase {
 
         // Build lookup map: doc_id → Document
         let mut doc_map = std::collections::HashMap::new();
-        for (id, result) in doc_ids.iter().zip(doc_results.into_iter()) {
+        for (id, result) in doc_ids.iter().zip(doc_results) {
             match result {
                 Ok(Some(doc)) => {
                     doc_map.insert(*id, doc);
@@ -951,6 +958,7 @@ impl AskQuestionUseCase {
                 section,
                 chunk_index,
                 chunk_excerpts: None,
+                citation_id: None,
             });
         }
         Ok(sources)

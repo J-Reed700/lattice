@@ -161,7 +161,7 @@ fn should_use_raw_web_query(query: &str) -> bool {
 
     // Very short single-token queries are often referential ("it", "that").
     if terms.len() == 1 {
-        return terms[0].len() >= 6;
+        return terms.first().is_some_and(|term| term.len() >= 6);
     }
 
     true
@@ -229,7 +229,10 @@ fn render_web_search_query(terms: &[String], max_chars: usize) -> String {
     }
 
     if query.is_empty() {
-        terms[0].chars().take(max_chars).collect()
+        terms
+            .first()
+            .map(|term| term.chars().take(max_chars).collect())
+            .unwrap_or_default()
     } else {
         query
     }

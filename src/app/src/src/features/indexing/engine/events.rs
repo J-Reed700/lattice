@@ -92,10 +92,7 @@ mod tests {
         let event = IndexingEvent::started(10);
         match event {
             IndexingEvent::Started { total_files } => assert_eq!(total_files, 10),
-            _ => assert!(
-                false,
-                "Expected IndexingEvent::Started, got a different variant"
-            ),
+            _ => panic!("Expected IndexingEvent::Started, got a different variant"),
         }
     }
 

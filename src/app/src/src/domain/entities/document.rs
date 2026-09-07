@@ -192,8 +192,8 @@ impl std::str::FromStr for Category {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::entities::document::Document;
-/// use vault_desktop::domain_types::{DocumentId, ValidatedFilePath};
+/// use lattice::domain::entities::document::Document;
+/// use lattice::domain_types::{DocumentId, ValidatedFilePath};
 /// use std::path::PathBuf;
 ///
 /// let path = ValidatedFilePath::new(PathBuf::from("/docs/file.txt")).unwrap();
@@ -348,8 +348,8 @@ impl Document {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::entities::document::Document;
-    /// use vault_desktop::domain_types::ValidatedFilePath;
+    /// use lattice::domain::entities::document::Document;
+    /// use lattice::domain_types::ValidatedFilePath;
     /// use std::path::PathBuf;
     ///
     /// let path = ValidatedFilePath::new(PathBuf::from("/docs/report.pdf")).unwrap();
@@ -469,10 +469,10 @@ impl Document {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::domain::entities::Document;
-    /// # use vault_desktop::domain::entities::chunk::Chunk;
-    /// # use vault_desktop::shared::domain_types::TagId;
-    /// # use vault_desktop::shared::error::Result;
+    /// # use lattice::domain::entities::Document;
+    /// # use lattice::domain::entities::chunk::Chunk;
+    /// # use lattice::shared::domain_types::TagId;
+    /// # use lattice::shared::error::Result;
     /// # fn example(metadata: Document, chunks: Vec<Chunk>, tags: Vec<TagId>) -> Result<Document> {
     /// // Repository loads metadata, chunks, and tags separately, then reconstructs:
     /// let complete_entity = metadata.from_parts(chunks, tags)?;
@@ -1224,7 +1224,7 @@ mod property_tests {
         fn prop_quality_score_clamped(mut doc in arbitrary_document(), score in -10.0f32..10.0f32) {
             doc.set_quality_score(score);
             let result = doc.quality_score();
-            prop_assert!(result >= 0.0 && result <= 1.0);
+            prop_assert!((0.0..=1.0).contains(&result));
         }
 
         #[test]
@@ -1876,7 +1876,7 @@ mod unit_tests {
                     .expect("from_file should succeed");
 
             // ASSERT
-            assert!(document.chunks().len() > 0, "Document must have chunks");
+            assert!(!document.chunks().is_empty(), "Document must have chunks");
 
             // Verify chunks belong to this document
             for chunk in document.chunks() {

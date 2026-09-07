@@ -95,10 +95,7 @@ mod tests {
             IndexTask::IndexFile { path } => {
                 assert_eq!(path, PathBuf::from("/test/file.txt"));
             }
-            _ => assert!(
-                false,
-                "Expected IndexTask::IndexFile, got a different variant"
-            ),
+            _ => panic!("Expected IndexTask::IndexFile, got a different variant"),
         }
     }
 
@@ -146,10 +143,7 @@ mod tests {
                 IndexTask::IndexFile { path } => {
                     assert!(path.to_string_lossy().contains(&format!("file{}.txt", i)));
                 }
-                _ => assert!(
-                    false,
-                    "Expected IndexTask::IndexFile, got a different variant"
-                ),
+                _ => panic!("Expected IndexTask::IndexFile, got a different variant"),
             }
         }
     }

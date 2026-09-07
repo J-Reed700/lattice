@@ -22,8 +22,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::system_info_adapter::SystemInfoAdapter;
-//! use vault_desktop::application::ports::SystemInfoPort;
+//! use lattice::infrastructure::system_info_adapter::SystemInfoAdapter;
+//! use lattice::application::ports::SystemInfoPort;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let adapter = SystemInfoAdapter::new();

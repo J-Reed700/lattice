@@ -46,6 +46,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::cancel_indexing,
             commands::pause_indexing,
             commands::resume_indexing,
+            commands::clear_indexing_failure,
             commands::reindex_file,
             commands::delete_document,
             commands::rename_document,
@@ -59,6 +60,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_indexing_activities,
             commands::get_recent_documents,
             document_list::get_document,
+            commands::get_corpus_shape,
+            commands::list_conversations_citing_document,
         ])
         .build()
 }

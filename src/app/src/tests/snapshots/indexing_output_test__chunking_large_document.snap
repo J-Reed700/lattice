@@ -1,0 +1,47 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 181
+expression: "&chunks[0..5]"
+---
+[
+  {
+    "text": "Chunk 0 content with some sample text",
+    "start_idx": 0,
+    "end_idx": 100,
+    "token_count": 50,
+    "document_path": "",
+    "chunk_index": 0
+  },
+  {
+    "text": "Chunk 1 content with some sample text",
+    "start_idx": 100,
+    "end_idx": 200,
+    "token_count": 49,
+    "document_path": "",
+    "chunk_index": 1
+  },
+  {
+    "text": "Chunk 2 content with some sample text",
+    "start_idx": 200,
+    "end_idx": 300,
+    "token_count": 48,
+    "document_path": "",
+    "chunk_index": 2
+  },
+  {
+    "text": "Chunk 3 content with some sample text",
+    "start_idx": 300,
+    "end_idx": 400,
+    "token_count": 47,
+    "document_path": "",
+    "chunk_index": 3
+  },
+  {
+    "text": "Chunk 4 content with some sample text",
+    "start_idx": 400,
+    "end_idx": 500,
+    "token_count": 46,
+    "document_path": "",
+    "chunk_index": 4
+  }
+]

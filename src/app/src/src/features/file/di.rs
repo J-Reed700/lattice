@@ -3,12 +3,18 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sqlx::SqlitePool;
+
 use crate::application::ports::{
     DocumentRepository, DocumentRepositoryPort, FileStoragePort, FileSystemPort,
 };
+use crate::features::file::repository::{
+    CitingConversationsRepositoryPort, SqliteCitingConversationsRepository,
+};
 use crate::features::file::use_cases::{
-    GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
-    ReadFileBytesUseCase, ReadFileContentUseCase, ShowInFolderUseCase, UpdateFileMetadataUseCase,
+    GetFileMetadataUseCase, GetFilePathByIdUseCase, ListCitingConversationsUseCase,
+    OpenFileByIdUseCase, OpenFileUseCase, ReadFileBytesUseCase, ReadFileContentUseCase,
+    ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };
 use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::security::FileAccessConfig;
@@ -23,6 +29,7 @@ pub struct FileDi {
     pub read_file_content_use_case: Arc<ReadFileContentUseCase>,
     pub read_file_bytes_use_case: Arc<ReadFileBytesUseCase>,
     pub update_file_metadata_use_case: Arc<UpdateFileMetadataUseCase>,
+    pub list_citing_conversations_use_case: Arc<ListCitingConversationsUseCase>,
 }
 
 pub fn build(
@@ -32,6 +39,7 @@ pub fn build(
     tag_service: Arc<dyn TagServiceTrait>,
     file_access_config: Arc<FileAccessConfig>,
     vault_path: PathBuf,
+    db_pool: SqlitePool,
 ) -> FileDi {
     FileDi {
         open_file_use_case: Arc::new(OpenFileUseCase::new(
@@ -72,6 +80,10 @@ pub fn build(
         update_file_metadata_use_case: Arc::new(UpdateFileMetadataUseCase::new(
             document_repo as Arc<dyn DocumentRepositoryPort>,
             tag_service,
+        )),
+        list_citing_conversations_use_case: Arc::new(ListCitingConversationsUseCase::new(
+            Arc::new(SqliteCitingConversationsRepository::new(db_pool))
+                as Arc<dyn CitingConversationsRepositoryPort>,
         )),
     }
 }

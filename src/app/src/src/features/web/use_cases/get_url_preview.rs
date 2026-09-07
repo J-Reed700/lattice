@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
-//! use vault_desktop::application::dtos::web_dto::GetUrlPreviewRequestDto;
+//! use lattice::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
+//! use lattice::application::dtos::web_dto::GetUrlPreviewRequestDto;
 //!
 //! # async fn example(use_case: GetUrlPreviewUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = GetUrlPreviewRequestDto {
@@ -80,8 +80,8 @@ impl GetUrlPreviewUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
-    /// # use vault_desktop::application::dtos::web_dto::GetUrlPreviewRequestDto;
+    /// # use lattice::application::use_cases::web::get_url_preview::GetUrlPreviewUseCase;
+    /// # use lattice::application::dtos::web_dto::GetUrlPreviewRequestDto;
     /// # async fn example(use_case: GetUrlPreviewUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = GetUrlPreviewRequestDto {
     ///     url: "https://blog.example.com/article".to_string(),

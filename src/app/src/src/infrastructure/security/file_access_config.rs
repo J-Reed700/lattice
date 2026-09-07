@@ -1,4 +1,4 @@
-use super::validated_file::ValidatedFile;
+use super::validated_file::{ValidatedFile, ValidatedFileError};
 use crate::shared::error::AppError;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -81,6 +81,24 @@ impl FileAccessConfig {
     /// # Ok::<(), crate::shared::error::AppError>(())
     /// ```
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<ValidatedFile, AppError> {
+        let display_path = path.as_ref().display().to_string();
+        // This probe only preserves the public NotFound error contract. A
+        // positive result grants no access: ValidatedFile still performs the
+        // authoritative scope check and open below on its own handle.
+        match path.as_ref().try_exists() {
+            Ok(false) => {
+                return Err(AppError::NotFound(format!(
+                    "File not found: {display_path}"
+                )))
+            }
+            Ok(true) => {}
+            Err(error) => {
+                return Err(AppError::FileRead {
+                    path: display_path,
+                    reason: error.to_string(),
+                });
+            }
+        }
         let roots = self
             .allowed_roots
             .read()
@@ -88,7 +106,16 @@ impl FileAccessConfig {
 
         let roots_vec: Vec<PathBuf> = roots.iter().cloned().collect();
 
-        ValidatedFile::open(path, &roots_vec).map_err(|e| AppError::Security(e.to_string()))
+        ValidatedFile::open(path, &roots_vec).map_err(|error| match error {
+            ValidatedFileError::Io(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
+                AppError::NotFound(format!("File not found: {display_path}"))
+            }
+            ValidatedFileError::Io(io_error) => AppError::FileRead {
+                path: display_path,
+                reason: io_error.to_string(),
+            },
+            other => AppError::Security(other.to_string()),
+        })
     }
 
     /// Validate path against allowed roots (scope validation only).
@@ -240,6 +267,43 @@ impl FileAccessConfig {
         })?;
 
         roots.insert(canonical);
+        Ok(())
+    }
+
+    /// Replace the entire allowed-roots set atomically.
+    ///
+    /// Use when recomputing policy from settings — adding the new roots and
+    /// removing the stale ones separately would leave a window in which a
+    /// just-unindexed directory is still readable, and would let roots from a
+    /// previous vault accumulate for the life of the process.
+    ///
+    /// Roots that cannot be canonicalized (not yet created, unmounted volume,
+    /// cloud placeholder) are skipped with a warning rather than failing the
+    /// whole update — a single bad entry in settings must not leave the app
+    /// with no readable roots at all.
+    pub fn set_allowed_roots(&self, roots: Vec<PathBuf>) -> Result<(), AppError> {
+        let mut resolved = std::collections::HashSet::new();
+
+        for root in roots {
+            match root.canonicalize() {
+                Ok(canonical) => {
+                    resolved.insert(canonical);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        root = %root.display(),
+                        error = %e,
+                        "skipping unreadable allowed root"
+                    );
+                }
+            }
+        }
+
+        let mut guard = self
+            .allowed_roots
+            .write()
+            .map_err(|e| AppError::InternalError(format!("Lock error: {}", e)))?;
+        *guard = resolved;
         Ok(())
     }
 

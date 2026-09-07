@@ -9,8 +9,8 @@
 #![allow(deprecated)]
 
 use insta::assert_json_snapshot;
-use std::collections::HashMap;
 use lattice::audit::event::{AuditAction, AuditEvent, AuditResult};
+use std::collections::HashMap;
 #[test]
 fn test_audit_event_file_indexed_success() {
     let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success())

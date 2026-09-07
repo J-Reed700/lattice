@@ -4,7 +4,7 @@
 # This script updates the SQLX offline query cache (.sqlx/ directory)
 # to ensure CI/CD pipelines can build without a live database connection.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -16,34 +16,25 @@ echo "SQLX Offline Cache Update Script"
 echo "========================================="
 echo ""
 
-# Step 1: Check for database setup
-echo "Step 1: Checking database setup..."
-
-if [ ! -f "sqlx_prepare.db" ]; then
-    echo "❌ ERROR: sqlx_prepare.db not found"
-    echo ""
-    echo "Please ensure the database is set up first:"
-    echo "  1. The migrations are in: migrations/20250101000000_init_schema.sql"
-    echo "  2. Create database: sqlite3 sqlx_prepare.db < migrations/20250101000000_init_schema.sql"
-    echo "  3. Add conversation tables from init_schema.sql"
-    echo ""
-    exit 1
-fi
-
+# Step 1: Check migration source
+echo "Step 1: Checking migration source..."
 if [ ! -d "migrations" ]; then
     echo "❌ ERROR: migrations directory not found"
     exit 1
 fi
 
-echo "✓ Database setup found"
+echo "✓ Migration chain found"
 echo ""
 
-# Step 2: Set environment variables
-echo "Step 2: Setting environment variables..."
-export DATABASE_URL="sqlite://sqlx_prepare.db"
+# Step 2: Build an isolated database from the runtime migration chain.
+echo "Step 2: Creating temporary migrated database..."
+SQLX_PREPARE_DIR="$(mktemp -d)"
+trap 'rm -rf "$SQLX_PREPARE_DIR"' EXIT
+export DATABASE_URL="sqlite://$SQLX_PREPARE_DIR/sqlx_prepare.db"
 export SQLX_OFFLINE="false"
-echo "✓ DATABASE_URL=$DATABASE_URL"
-echo "✓ SQLX_OFFLINE=$SQLX_OFFLINE"
+touch "$SQLX_PREPARE_DIR/sqlx_prepare.db"
+cargo sqlx migrate run --source migrations
+echo "✓ Applied migrations to temporary database"
 echo ""
 
 # Step 3: Verify compilation works
@@ -51,7 +42,7 @@ echo "Step 3: Checking if project compiles..."
 echo "NOTE: The project must compile without errors before SQLX cache can be updated"
 echo ""
 
-if ! cargo check --lib 2>&1 | tail -20; then
+if ! cargo check --lib; then
     echo ""
     echo "❌ ERROR: Project has compilation errors"
     echo ""
@@ -77,7 +68,7 @@ echo "Step 4: Updating SQLX offline cache..."
 echo "Running: cargo sqlx prepare"
 echo ""
 
-if cargo sqlx prepare; then
+if cargo sqlx prepare -- --lib; then
     echo ""
     echo "========================================="
     echo "✓ SUCCESS: SQLX cache updated"
@@ -102,8 +93,8 @@ else
     echo ""
     echo "To debug:"
     echo "  1. Check error output above"
-    echo "  2. Verify all tables exist: sqlite3 sqlx_prepare.db '.tables'"
-    echo "  3. Run migrations if needed"
+    echo "  2. Verify the migration chain runs from an empty database"
+    echo "  3. Confirm new query DTOs match their selected columns"
     echo ""
     exit 1
 fi

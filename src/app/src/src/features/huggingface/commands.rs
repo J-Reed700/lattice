@@ -11,6 +11,9 @@ use tracing::{error, info};
 const HF_TOKEN_KEY: &str = "huggingface_token";
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+// The wire said `is_set`; every consumer (and `types/api/credentials.ts`) reads
+// `isSet`, so the status always deserialised as "not set".
+#[serde(rename_all = "camelCase")]
 pub struct HfTokenStatus {
     pub is_set: bool,
 }

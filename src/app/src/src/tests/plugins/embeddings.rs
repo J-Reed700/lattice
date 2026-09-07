@@ -43,7 +43,7 @@ async fn smoke_test_generate_embedding_happy_path() {
                 embedding.len()
             );
             assert!(
-                embedding.len() > 0,
+                !embedding.is_empty(),
                 "Embedding should have non-zero dimensions"
             );
         }

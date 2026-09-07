@@ -21,7 +21,7 @@ const MIN_QUERY_LENGTH: usize = 1;
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::value_objects::search_query::SearchQuery;
+/// use lattice::domain::value_objects::search_query::SearchQuery;
 ///
 /// let query = SearchQuery::new("machine learning algorithms")?;
 /// assert_eq!(query.as_str(), "machine learning algorithms");
@@ -47,7 +47,7 @@ impl SearchQuery {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_query::SearchQuery;
+    /// use lattice::domain::value_objects::search_query::SearchQuery;
     ///
     /// let query = SearchQuery::new("rust programming")?;
     /// assert!(query.contains("rust"));
@@ -116,7 +116,7 @@ impl SearchQuery {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_query::SearchQuery;
+    /// use lattice::domain::value_objects::search_query::SearchQuery;
     ///
     /// let query = SearchQuery::new("machine learning")?;
     /// assert_eq!(query.word_count(), 2);
@@ -131,7 +131,7 @@ impl SearchQuery {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_query::SearchQuery;
+    /// use lattice::domain::value_objects::search_query::SearchQuery;
     ///
     /// let query = SearchQuery::new("Rust Programming")?;
     /// assert!(query.contains_ignore_case("rust"));
@@ -159,7 +159,7 @@ impl SearchQuery {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_query::SearchQuery;
+    /// use lattice::domain::value_objects::search_query::SearchQuery;
     ///
     /// let query = SearchQuery::new("machine learning algorithms")?;
     /// let words = query.words();

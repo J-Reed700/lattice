@@ -12,8 +12,8 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::error::ApplicationError;
-//! use vault_desktop::domain::error::DomainError;
+//! use lattice::application::error::ApplicationError;
+//! use lattice::domain::error::DomainError;
 //!
 //! fn validate_config(data: &str) -> Result<(), ApplicationError> {
 //!     if data.is_empty() {
@@ -50,8 +50,8 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::application::error::ApplicationError;
+    /// # use lattice::domain::error::DomainError;
     /// let domain_err = DomainError::EntityNotFound {
     ///     entity_type: "Document".to_string(),
     ///     identifier: "doc-123".to_string(),
@@ -67,7 +67,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::InvalidConfig {
     ///     details: "Missing required field 'api_key'".to_string(),
     /// };
@@ -82,7 +82,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::ServiceNotAvailable {
     ///     service: "EmbeddingService".to_string(),
     ///     reason: "Model not loaded".to_string(),
@@ -98,7 +98,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::QueueFull {
     ///     queue_name: "indexing_queue".to_string(),
     /// };
@@ -113,7 +113,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::SerializationFailed {
     ///     context: "DocumentDTO".to_string(),
     ///     reason: "Invalid UTF-8 in field 'content'".to_string(),
@@ -128,7 +128,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::DeserializationFailed {
     ///     context: "SearchRequest".to_string(),
     ///     reason: "Missing required field 'query'".to_string(),
@@ -143,7 +143,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::JsonError {
     ///     message: "Expected comma".to_string(),
     ///     line: 42,
@@ -164,7 +164,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::ParsingError {
     ///     context: "CSV file".to_string(),
     ///     reason: "Unexpected end of file".to_string(),
@@ -179,7 +179,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::UseCaseFailed {
     ///     use_case: "IndexDocumentUseCase".to_string(),
     ///     reason: "Embedding generation timed out".to_string(),
@@ -194,7 +194,7 @@ pub enum ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let error = ApplicationError::MappingError {
     ///     context: "Document -> DocumentDTO".to_string(),
     ///     reason: "Missing required field".to_string(),
@@ -211,8 +211,8 @@ impl ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::application::error::ApplicationError;
+    /// # use lattice::domain::error::DomainError;
     /// let domain = ApplicationError::from(DomainError::EntityNotFound {
     ///     entity_type: "Document".to_string(),
     ///     identifier: "doc-123".to_string(),
@@ -233,8 +233,8 @@ impl ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::application::error::ApplicationError;
+    /// # use lattice::domain::error::DomainError;
     /// let domain_err = DomainError::EntityNotFound {
     ///     entity_type: "Document".to_string(),
     ///     identifier: "doc-123".to_string(),
@@ -265,8 +265,8 @@ impl ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::application::error::ApplicationError;
+    /// # use lattice::domain::error::DomainError;
     /// let queue_full = ApplicationError::QueueFull {
     ///     queue_name: "indexing".to_string(),
     /// };
@@ -302,7 +302,7 @@ impl ApplicationError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::application::error::ApplicationError;
+    /// # use lattice::application::error::ApplicationError;
     /// let config = ApplicationError::InvalidConfig {
     ///     details: "Missing field".to_string(),
     /// };

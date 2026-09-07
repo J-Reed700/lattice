@@ -7,7 +7,7 @@ use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{Row, SqlitePool};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
 /// Database record structure for RETURNING queries.
@@ -70,6 +70,37 @@ fn normalize_model_type_for_models_table(model_type: ModelType) -> &'static str 
         ModelType::TextEmbeddings => "embedding",
         ModelType::Vision => "multi_modal",
         ModelType::Reranker => "qa",
+        ModelType::Transcription => "custom",
+    }
+}
+
+fn directory_has_loadable_weights(path: &Path) -> bool {
+    path.is_dir()
+        && std::fs::read_dir(path)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .any(|entry| {
+                entry.is_file()
+                    && entry.extension().and_then(|value| value.to_str()) == Some("safetensors")
+            })
+}
+
+fn location_is_available(location: &ModelLocation) -> bool {
+    match location {
+        ModelLocation::LocalFile { path } => path.is_file(),
+        ModelLocation::LocalDirectory { path } => directory_has_loadable_weights(path),
+        ModelLocation::RemoteOllama => true,
+    }
+}
+
+fn fallback_artifact_path(location: &ModelLocation) -> Option<PathBuf> {
+    match location {
+        ModelLocation::LocalFile { path } => Some(path.clone()),
+        ModelLocation::LocalDirectory { path } => Some(path.join("model.safetensors")),
+        ModelLocation::RemoteOllama => None,
     }
 }
 
@@ -105,8 +136,8 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
         let is_active_embedding = record.is_active_for_embedding != 0;
         let is_active_utility = record.is_active_for_utility != 0;
 
-        let location = ModelLocation::from_db(&record.storage_kind, record.storage_path)
-            .map_err(|e| {
+        let location =
+            ModelLocation::from_db(&record.storage_kind, record.storage_path).map_err(|e| {
                 AppError::InvalidData(format!(
                     "Invalid storage_kind/storage_path for model_id '{}': {}",
                     record.model_id, e
@@ -183,7 +214,11 @@ impl DownloadedModelRepository {
         } else {
             0
         };
-        let is_active_utility = if model.is_active_for_utility() { 1i64 } else { 0i64 };
+        let is_active_utility = if model.is_active_for_utility() {
+            1i64
+        } else {
+            0i64
+        };
         // Legacy `backend` column maps directly off the location variant.
         // Kept in INSERT for compatibility with the column's NOT NULL
         // constraint until a follow-up migration drops it.
@@ -268,16 +303,22 @@ impl DownloadedModelRepository {
             // download manifest is always non-empty for local models.
             // Use the loadable path's file name (or, for directory
             // layouts, a synthetic stem derived from model_id).
-            let synthetic_file_path = model
-                .loadable_path()
+            let fallback_artifact = fallback_artifact_path(model.location());
+            let synthetic_file_path = fallback_artifact
+                .as_deref()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let file_name = model
-                .loadable_path()
+            let file_name = fallback_artifact
+                .as_deref()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{}-model", model_id));
+            let fallback_file_size = fallback_artifact
+                .as_deref()
+                .and_then(|path| std::fs::metadata(path).ok())
+                .map(|metadata| metadata.len() as i64)
+                .unwrap_or(file_size_bytes);
             let now = Utc::now().to_rfc3339();
             let model_file_id = uuid::Uuid::new_v4().to_string();
 
@@ -303,8 +344,8 @@ impl DownloadedModelRepository {
             .bind(&file_name)
             .bind(&synthetic_file_path)
             .bind(&file_name)
-            .bind(file_size_bytes)
-            .bind(file_size_bytes)
+            .bind(fallback_file_size)
+            .bind(fallback_file_size)
             .bind(&now)
             .bind(&now)
             .bind(model.downloaded_at().to_rfc3339())
@@ -433,9 +474,7 @@ impl DownloadedModelRepository {
                 let model: DownloadedModel = row.try_into()?;
                 // Ollama-served models live remotely; there is no local file
                 // for `is_downloaded` to verify. Skip the FS check for them.
-                if !model.location().is_local()
-                    || self.is_downloaded(model.model_id()).await?
-                {
+                if !model.location().is_local() || self.is_downloaded(model.model_id()).await? {
                     Ok(Some(model))
                 } else {
                     warn!(
@@ -474,9 +513,7 @@ impl DownloadedModelRepository {
                 let model: DownloadedModel = row.try_into()?;
                 // Ollama-served models live remotely; there is no local file
                 // for `is_downloaded` to verify. Skip the FS check for them.
-                if !model.location().is_local()
-                    || self.is_downloaded(model.model_id()).await?
-                {
+                if !model.location().is_local() || self.is_downloaded(model.model_id()).await? {
                     Ok(Some(model))
                 } else {
                     warn!(
@@ -680,9 +717,7 @@ impl DownloadedModelRepository {
         match record {
             Some(row) => {
                 let model: DownloadedModel = row.try_into()?;
-                if !model.location().is_local()
-                    || self.is_downloaded(model.model_id()).await?
-                {
+                if !model.location().is_local() || self.is_downloaded(model.model_id()).await? {
                     Ok(Some(model))
                 } else {
                     warn!(
@@ -912,6 +947,13 @@ impl DownloadedModelRepository {
             return Ok(false);
         }
 
+        let Some(model) = self.find_by_model_id(model_id).await? else {
+            return Ok(false);
+        };
+        if !location_is_available(model.location()) {
+            return Ok(false);
+        }
+
         let rows = sqlx::query(
             r#"
             SELECT file_path, status, size_bytes
@@ -932,11 +974,7 @@ impl DownloadedModelRepository {
             // Remote-hosted models are always "downloaded" (they're not on disk
             // by definition); local rows are checked against their loadable
             // path, which is a file for GGUF and a directory for safetensors.
-            let model = self.find_by_model_id(model_id).await?;
-            return Ok(model.is_some_and(|m| match m.loadable_path() {
-                Some(path) => path.exists(),
-                None => true,
-            }));
+            return Ok(true);
         }
 
         for row in rows {
@@ -955,6 +993,9 @@ impl DownloadedModelRepository {
             }
 
             let path = PathBuf::from(&file_path);
+            if path.is_dir() && matches!(model.location(), ModelLocation::LocalDirectory { .. }) {
+                continue;
+            }
             if !path.exists() || !path.is_file() {
                 return Ok(false);
             }
@@ -1306,6 +1347,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn corrective_migration_purges_any_local_embedding_without_safetensors() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("create in-memory pool");
+        sqlx::raw_sql(
+            r#"
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE models (
+                model_id TEXT PRIMARY KEY,
+                model_type TEXT NOT NULL,
+                backend TEXT NOT NULL
+            );
+            CREATE TABLE model_files (
+                model_id TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                FOREIGN KEY (model_id) REFERENCES models(model_id) ON DELETE CASCADE
+            );
+
+            INSERT INTO models VALUES ('third-legacy-onnx', 'embedding', 'local');
+            INSERT INTO model_files VALUES ('third-legacy-onnx', 'config.json');
+            INSERT INTO model_files VALUES ('third-legacy-onnx', 'tokenizer.json');
+
+            INSERT INTO models VALUES ('valid-candle', 'embedding', 'local');
+            INSERT INTO model_files VALUES ('valid-candle', 'model.safetensors');
+
+            INSERT INTO models VALUES ('remote', 'embedding', 'ollama');
+            INSERT INTO models VALUES ('chat-without-safetensors', 'chat', 'local');
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("seed legacy rows");
+
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/20260801010000_purge_unloadable_embedding_models.sql"
+        ))
+        .execute(&pool)
+        .await
+        .expect("run corrective purge");
+
+        let remaining: Vec<String> =
+            sqlx::query_scalar("SELECT model_id FROM models ORDER BY model_id")
+                .fetch_all(&pool)
+                .await
+                .expect("list remaining models");
+        assert_eq!(
+            remaining,
+            vec![
+                "chat-without-safetensors".to_string(),
+                "remote".to_string(),
+                "valid-candle".to_string(),
+            ]
+        );
+
+        let orphan_children: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM model_files WHERE model_id = 'third-legacy-onnx'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count cascaded children");
+        assert_eq!(orphan_children, 0);
+    }
+
+    #[tokio::test]
     async fn save_and_load_local_model_preserves_location() {
         let repo = setup_repo().await;
         let model = make_local_chat_model("local-chat-1");
@@ -1317,10 +1424,42 @@ mod tests {
             .expect("find local model")
             .expect("local model missing after save");
         assert!(loaded.location().is_local());
-        assert!(matches!(
-            loaded.location(),
-            ModelLocation::LocalFile { .. }
-        ));
+        assert!(matches!(loaded.location(), ModelLocation::LocalFile { .. }));
         assert!(!loaded.is_active_for_utility());
+    }
+
+    #[tokio::test]
+    async fn directory_model_fallback_tracks_required_weights_file() {
+        let repo = setup_repo().await;
+        let directory = tempfile::tempdir().expect("create model directory");
+        std::fs::write(directory.path().join("model.safetensors"), b"weights")
+            .expect("write model weights");
+
+        let model = DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            "Directory Model".to_string(),
+            "directory-model".to_string(),
+            ModelLocation::LocalDirectory {
+                path: directory.path().to_path_buf(),
+            },
+            7,
+            "bge".to_string(),
+            None,
+        )
+        .expect("create directory model");
+
+        repo.save(&model).await.expect("save directory model");
+        assert!(repo
+            .is_downloaded("directory-model")
+            .await
+            .expect("check directory model"));
+
+        let file_path: String = sqlx::query_scalar(
+            "SELECT file_path FROM model_files WHERE model_id = 'directory-model'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .expect("load fallback file path");
+        assert!(file_path.ends_with("model.safetensors"));
     }
 }

@@ -23,10 +23,13 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::mentions::plugin::init(),
         crate::features::function_calling::plugin::init(),
         crate::features::daily_notes::plugin::init(),
+        crate::features::references::plugin::init(),
         // AI services
+        crate::features::compare::plugin::init(),
         crate::features::embedding::plugin::init(),
         crate::features::huggingface::plugin::init(),
         crate::features::extraction::plugin::init(),
+        crate::features::transcription::plugin::init(),
         crate::features::web::plugin::init(),
         // Final domains
         crate::features::conversation::plugin::init(),
@@ -36,5 +39,6 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::updates::plugin::init(),
         crate::features::qa::plugin::init(),
         crate::features::vault::plugin::init(),
+        crate::features::corpus_shape::plugin::init(),
     ]
 }

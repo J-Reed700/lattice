@@ -28,6 +28,8 @@ pub mod conversational_service;
 pub mod di;
 pub mod dto;
 pub mod plugin;
+pub mod starters;
+pub mod starters_dto;
 pub mod traits;
 pub mod use_cases;
 

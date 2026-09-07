@@ -95,7 +95,7 @@ impl ConversationServiceTrait for MockConversationService {
             .collect();
 
         // Sort by updated_at descending (most recent first)
-        all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        all.sort_by_key(|conversation| std::cmp::Reverse(conversation.updated_at));
 
         let offset = offset.unwrap_or(0) as usize;
         let limit = limit.map(|l| l as usize);

@@ -12,13 +12,13 @@
 //! All commands are routed through the Gateway pattern which provides async dispatch.
 //! Async functions store state on the heap (in Future objects), not the stack.
 
-use crate::features::llm::dto::DownloadModelRequestDto;
-use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
 use crate::audit_success;
 use crate::domain::download::DownloadOperationState;
 use crate::domain::embedding_constants::{
     DEFAULT_EMBEDDING_MODEL_CURATED_ID, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME,
 };
+use crate::features::initialization::use_cases::first_run_setup::CheckFirstRunStatusUseCase;
+use crate::features::llm::dto::DownloadModelRequestDto;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::interfaces::di::Container;
 

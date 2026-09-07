@@ -251,17 +251,20 @@ async fn delete_model_cleans_up_download_sessions_for_same_model() {
     sqlx::query(
         r#"
         INSERT INTO models (
-            id, model_name, model_id, base_path, total_size_bytes, status,
+            id, model_name, model_id, base_path, storage_kind, storage_path,
+            total_size_bytes, status,
             model_type, architecture, downloaded_at, use_count,
             is_active_for_chat, is_active_for_embedding
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(model_record_id)
     .bind("Cleanup Test Embedding Model")
     .bind(model_id)
     .bind("/tmp/models/cleanup-test-embed-model")
+    .bind("local_file")
+    .bind("/tmp/models/cleanup-test-embed-model/model.onnx")
     .bind(1024_i64)
     .bind("completed")
     .bind("embedding")

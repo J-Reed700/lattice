@@ -3,9 +3,9 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::infrastructure::services::traits::*;
-#[cfg(test)]
 use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
+#[cfg(test)]
+use crate::infrastructure::services::traits::*;
 #[cfg(test)]
 use crate::shared::error::Result;
 // Removed: use crate::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
@@ -56,10 +56,17 @@ impl Default for MockTagService {
 #[async_trait]
 #[cfg(test)]
 impl TagServiceTrait for MockTagService {
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag> {
+    async fn create_tag(
+        &self,
+        name: &str,
+        color: Option<&str>,
+    ) -> Result<crate::features::tags::entity::Tag> {
         let tag_name = TagName::new(name.to_lowercase())
             .map_err(|e| crate::error::AppError::InvalidData(format!("Invalid tag name: {}", e)))?;
-        let tag = crate::features::tags::entity::Tag::new(tag_name, color.unwrap_or("#6366f1").to_string());
+        let tag = crate::features::tags::entity::Tag::new(
+            tag_name,
+            color.unwrap_or("#6366f1").to_string(),
+        );
         self.tags.write().insert(name.to_lowercase(), tag.clone());
         Ok(tag)
     }
@@ -98,7 +105,9 @@ impl TagServiceTrait for MockTagService {
         Ok(self.tags.read().values().cloned().collect())
     }
 
-    async fn get_all_tags_with_counts(&self) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
+    async fn get_all_tags_with_counts(
+        &self,
+    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
         self.get_all_with_counts().await
     }
 
@@ -237,7 +246,11 @@ impl TagServiceTrait for MockTagService {
         existing
     }
 
-    async fn get_or_create(&self, name: &str, color: &str) -> Result<crate::features::tags::entity::Tag> {
+    async fn get_or_create(
+        &self,
+        name: &str,
+        color: &str,
+    ) -> Result<crate::features::tags::entity::Tag> {
         let normalized = name.to_lowercase();
         let mut tags = self.tags.write();
 
@@ -254,7 +267,9 @@ impl TagServiceTrait for MockTagService {
         }
     }
 
-    async fn get_all_with_counts(&self) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
+    async fn get_all_with_counts(
+        &self,
+    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>> {
         let tags = self.tags.read();
         Ok(tags
             .values()
@@ -294,9 +309,9 @@ impl MockTagRepository {
     ///
     /// # Example
     /// ```rust
-    /// use vault_desktop::domain::entities::tag::Tag;
-    /// use vault_desktop::domain_types::TagName;
-    /// use vault_desktop::services::traits::MockTagRepository;
+    /// use lattice::domain::entities::tag::Tag;
+    /// use lattice::domain_types::TagName;
+    /// use lattice::services::traits::MockTagRepository;
     ///
     /// let mock = MockTagRepository::new();
     /// let name = TagName::new("rust".to_string()).unwrap();
@@ -339,7 +354,11 @@ impl Default for MockTagRepository {
 #[async_trait]
 #[cfg(test)]
 impl TagRepositoryTrait for MockTagRepository {
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag> {
+    async fn create_tag(
+        &self,
+        name: &str,
+        color: Option<&str>,
+    ) -> Result<crate::features::tags::entity::Tag> {
         let entity = self.get_or_create(name, color).await?;
         Ok(entity)
     }

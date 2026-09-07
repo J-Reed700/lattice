@@ -22,8 +22,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-//! use vault_desktop::application::ports::ModelCatalogPort;
+//! use lattice::infrastructure::huggingface_adapter::HuggingFaceAdapter;
+//! use lattice::application::ports::ModelCatalogPort;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -254,7 +254,9 @@ impl HuggingFaceModel {
             })
             .collect();
 
-        let chosen = safetensors.into_iter().find(|s| s.filename == "model.safetensors")?;
+        let chosen = safetensors
+            .into_iter()
+            .find(|s| s.filename == "model.safetensors")?;
 
         let has_tokenizer = self.siblings.iter().any(|s| s.filename == "tokenizer.json");
         let has_config = self.siblings.iter().any(|s| s.filename == "config.json");

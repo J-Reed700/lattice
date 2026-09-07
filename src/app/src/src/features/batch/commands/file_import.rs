@@ -3,8 +3,8 @@
 //! Thin command layer for batch file import operations.
 //! Follows CLAUDE.md command pattern: validation → delegation → audit logging.
 
-use crate::features::batch::dto::StartBatchFileImportRequestDto;
 use crate::application::ports::EmbeddingPort;
+use crate::features::batch::dto::StartBatchFileImportRequestDto;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::domain_types::ValidatedFilePath;
@@ -148,8 +148,8 @@ pub async fn start_batch_file_import(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::batch::BatchFileImportServiceTrait;
     use crate::features::batch::services::file_import_trait::MockBatchFileImportService;
+    use crate::features::batch::BatchFileImportServiceTrait;
     use std::sync::Arc;
 
     // Note: Full integration tests require Container setup.

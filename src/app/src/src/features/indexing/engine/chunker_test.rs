@@ -180,8 +180,12 @@ mod property_tests {
         /// Property: Empty input produces empty output
         #[test]
         fn prop_empty_input_empty_output(
-            max_tokens in 10_usize..500,
-            overlap in 0_usize..50,
+            // Overlap must stay below max_tokens: a config where it doesn't is
+            // rejected by `SemanticChunker::new`, and this property is about
+            // empty input, not about config validation (covered separately by
+            // `invalid_configs_are_rejected_rather_than_panicking`).
+            (max_tokens, overlap) in (10_usize..500)
+                .prop_flat_map(|max| (Just(max), 0_usize..max)),
         ) {
             let chunker = create_chunker(max_tokens, overlap);
             let chunks = chunker.chunk_text("").unwrap();
@@ -332,16 +336,30 @@ mod property_tests {
                 // Calculate coverage using a bit vector
                 let mut covered = vec![false; text.len()];
                 for chunk in &chunks {
-                    for i in chunk.start_idx..chunk.end_idx {
-                        covered[i] = true;
+                    for item in covered
+                        .iter_mut()
+                        .take(chunk.end_idx)
+                        .skip(chunk.start_idx)
+                    {
+                        *item = true;
                     }
                 }
 
-                let coverage = covered.iter().filter(|&&x| x).count();
-                let coverage_ratio = coverage as f64 / text.len() as f64;
+                // Tokenizers intentionally omit surrounding whitespace from
+                // their offset ranges. Measure coverage over meaningful input
+                // instead of treating indentation before the first token (or
+                // trailing padding after the last token) as lost content.
+                let meaningful_start = text.len() - text.trim_start().len();
+                let meaningful_end = text.trim_end().len();
+                let meaningful_coverage = covered[meaningful_start..meaningful_end]
+                    .iter()
+                    .filter(|&&is_covered| is_covered)
+                    .count();
+                let meaningful_len = meaningful_end - meaningful_start;
+                let coverage_ratio = meaningful_coverage as f64 / meaningful_len as f64;
 
-                // Relax coverage requirement to 80% for short texts with sentence boundaries
-                // Oracle note: Short texts with whitespace can have lower coverage due to tokenization
+                // Relax coverage requirement to 80% for short texts with
+                // sentence boundaries.
                 prop_assert!(
                     coverage_ratio >= 0.8,
                     "Chunks should cover at least 80% of text, got {}%",
@@ -470,9 +488,9 @@ mod property_tests {
                     "First chunk should not have overlap before"
                 );
 
-                for i in 1..chunks_with_meta.len() {
+                for (i, chunk) in chunks_with_meta.iter().enumerate().skip(1) {
                     prop_assert!(
-                        chunks_with_meta[i].has_overlap_before,
+                        chunk.has_overlap_before,
                         "Chunk {} should have overlap before", i
                     );
                 }
@@ -574,25 +592,33 @@ mod property_tests {
         }
     }
 
+    /// A config whose overlap meets or exceeds `max_tokens` cannot make
+    /// progress — each chunk would start at or before the previous one, so
+    /// chunking either loops forever or silently produces nonsense.
+    ///
+    /// These two cases used to build the chunker and hope it coped. It no
+    /// longer can be built: `SemanticChunker::new` rejects the config, which
+    /// is the graceful handling these tests were asking for. The assertion
+    /// moved accordingly — the requirement is "refuse clearly", not "panic".
     #[test]
-    fn test_max_tokens_equals_overlap() {
-        let chunker = create_chunker(50, 50);
-        let text = "This is a test sentence. This is another sentence. And one more.";
-        let chunks = chunker.chunk_text(text).unwrap();
+    fn invalid_configs_are_rejected_rather_than_panicking() {
+        for (max_tokens, overlap) in [(50, 50), (20, 30)] {
+            let result = SemanticChunker::new(
+                create_test_tokenizer(),
+                ChunkerConfig {
+                    max_tokens,
+                    overlap_tokens: overlap,
+                    prefer_sentence_boundaries: false,
+                },
+            );
 
-        // Should not panic even when overlap equals max tokens
-        assert!(!chunks.is_empty());
-    }
-
-    #[test]
-    fn test_overlap_greater_than_max() {
-        // This is a configuration error, but should be handled gracefully
-        let chunker = create_chunker(20, 30);
-        let text = "This is a test sentence with enough words to span multiple chunks.";
-        let result = chunker.chunk_text(text);
-
-        // Should either work or return an error, but not panic
-        assert!(result.is_ok() || result.is_err());
+            assert!(
+                result.is_err(),
+                "config max_tokens={} overlap={} must be rejected, not accepted",
+                max_tokens,
+                overlap
+            );
+        }
     }
 
     #[test]

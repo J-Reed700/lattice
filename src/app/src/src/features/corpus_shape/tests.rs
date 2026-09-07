@@ -22,9 +22,7 @@ use futures::stream::Stream;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
-use crate::application::ports::{
-    GenerationOverride, LLMPort, RepositoryPort,
-};
+use crate::application::ports::{DocumentRepositoryPort, LLMPort};
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::domain::entities::Document;
 use crate::domain::value_objects::Checksum;
@@ -72,17 +70,6 @@ impl LLMPort for CountingMockLlm {
         _prompt: &str,
         _context: &[String],
         _images: Option<Vec<String>>,
-    ) -> Result<String> {
-        *self.calls.lock() += 1;
-        Ok(r#"{"label":"Mock Cluster","description":"A mocked description."}"#.to_string())
-    }
-
-    async fn generate_with_overrides(
-        &self,
-        _prompt: &str,
-        _context: &[String],
-        _images: Option<Vec<String>>,
-        _overrides: GenerationOverride,
     ) -> Result<String> {
         *self.calls.lock() += 1;
         Ok(r#"{"label":"Mock Cluster","description":"A mocked description."}"#.to_string())
@@ -239,7 +226,7 @@ fn build_use_case(
     emb_repo: Arc<MockEmbeddingRepository>,
     llm: Arc<dyn LLMPort>,
 ) -> RunClusteringUseCase {
-    let doc_port: Arc<dyn RepositoryPort<Document>> = doc_repo;
+    let doc_port: Arc<dyn DocumentRepositoryPort> = doc_repo;
     let emb_port: Arc<dyn crate::application::ports::EmbeddingRepositoryPort> = emb_repo;
     let cluster_repo: Arc<dyn ClusterRepositoryPort> =
         Arc::new(SqliteClusterRepository::new(pool));

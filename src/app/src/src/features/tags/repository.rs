@@ -16,8 +16,8 @@
 //! - DB models are now internal and NOT exported
 
 use crate::application::ports::{Filter, RepositoryPort};
-use crate::features::tags::entity::Tag as TagEntity;
 use crate::domain_types::TagName;
+use crate::features::tags::entity::Tag as TagEntity;
 use crate::infrastructure::persistence::mappers::{TagMapper, TagModel};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
@@ -668,22 +668,35 @@ impl RepositoryPort<TagEntity> for TagRepository {
 
             let db_models = if let Some(pattern) = &tag_filter.name_pattern {
                 // Case-insensitive partial match
-                let search_pattern = format!("%{}%", pattern.to_lowercase());
+                let search_pattern =
+                    crate::shared::sql_like::contains_pattern(&pattern.to_lowercase());
                 let limit_i64 = limit as i64;
-                sqlx::query_as!(
-                    TagModel,
+                sqlx::query(
                     r#"
-                    SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
+                    SELECT id, name, color, created_at, updated_at
                     FROM tags
-                    WHERE LOWER(name) LIKE ?
+                    WHERE LOWER(name) LIKE ? ESCAPE '\'
                     ORDER BY name ASC
                     LIMIT ?
                     "#,
-                    search_pattern,
-                    limit_i64
                 )
+                .bind(search_pattern)
+                .bind(limit_i64)
                 .fetch_all(&self.pool)
                 .await
+                .and_then(|rows| {
+                    rows.into_iter()
+                        .map(|row| {
+                            Ok(TagModel {
+                                id: row.try_get("id")?,
+                                name: row.try_get("name")?,
+                                color: row.try_get("color")?,
+                                created_at: row.try_get("created_at")?,
+                                updated_at: row.try_get("updated_at")?,
+                            })
+                        })
+                        .collect()
+                })
             } else {
                 let limit_i64 = limit as i64;
                 sqlx::query_as!(
@@ -847,7 +860,11 @@ impl RepositoryPort<TagEntity> for TagRepository {
 
 #[async_trait]
 impl crate::features::tags::TagRepositoryTrait for TagRepository {
-    async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<crate::features::tags::entity::Tag> {
+    async fn create_tag(
+        &self,
+        name: &str,
+        color: Option<&str>,
+    ) -> Result<crate::features::tags::entity::Tag> {
         use crate::shared::domain_types::{TagId, TagName};
         let entity = self.get_or_create(name, color).await?;
         Ok(crate::features::tags::entity::Tag::with_id(

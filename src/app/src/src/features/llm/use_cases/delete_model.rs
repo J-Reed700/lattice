@@ -38,10 +38,10 @@
 //! println!("Freed {} GB", response.freed_space_gb);
 //! ```
 
-use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use crate::application::ports::model_storage::ModelStoragePort;
 use crate::domain::curated_models::get_all_curated_models;
 use crate::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
+use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use crate::shared::error::AppError;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -115,9 +115,7 @@ impl DeleteModelUseCase {
         let downloaded = repository
             .find_by_model_id(model_id)
             .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Model {} is not registered", model_id))
-            })?;
+            .ok_or_else(|| AppError::NotFound(format!("Model {} is not registered", model_id)))?;
 
         let size_bytes = downloaded.file_size_bytes();
         let freed_space_gb = size_bytes as f64 / 1_000_000_000.0;
@@ -139,10 +137,7 @@ impl DeleteModelUseCase {
     /// Legacy FS-first deletion path (backwards-compatible with `new()`).
     ///
     /// Preserved verbatim for existing tests built against `MockModelStoragePort`.
-    async fn execute_legacy(
-        &self,
-        model_id: &str,
-    ) -> Result<DeleteModelResponseDto, AppError> {
+    async fn execute_legacy(&self, model_id: &str) -> Result<DeleteModelResponseDto, AppError> {
         if !self.storage.is_model_downloaded(model_id).await? {
             return Err(AppError::NotFound(format!(
                 "Model {} is not downloaded",
@@ -190,6 +185,7 @@ impl DeleteModelUseCase {
                 // Now safe to delete files
                 for file in &model_meta.files {
                     let file_path = model_path.join(&file.filename);
+                    // repository-barrier-allow: deletion verifies each model artifact before removing that resource.
                     if file_path.exists() {
                         tokio::fs::remove_file(&file_path).await.map_err(|e| {
                             AppError::FileSystem(format!(
@@ -683,6 +679,9 @@ mod db_ssot_tests {
             .find_by_model_id(model_id)
             .await
             .expect("query DB after delete");
-        assert!(row.is_none(), "DB row must be removed (authoritative delete)");
+        assert!(
+            row.is_none(),
+            "DB row must be removed (authoritative delete)"
+        );
     }
 }

@@ -17,6 +17,7 @@ use crate::application::ports::update_checker_port::{UpdateCheckerPort, UpdateIn
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::reqwest_client_builder;
 use async_trait::async_trait;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -84,30 +85,22 @@ impl UpdateCheckerAdapter {
         Ok(release)
     }
 
-    /// Compare version strings (simple semver comparison)
+    /// Compare version strings according to Semantic Versioning.
     fn is_newer_version(&self, current: &str, latest: &str) -> bool {
-        let current_parts: Vec<u32> = current
-            .trim_start_matches('v')
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-
-        let latest_parts: Vec<u32> = latest
-            .trim_start_matches('v')
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
-
-        for (c, l) in current_parts.iter().zip(latest_parts.iter()) {
-            if l > c {
-                return true;
-            } else if l < c {
-                return false;
+        let parse = |value: &str| Version::parse(value.trim().trim_start_matches('v'));
+        match (parse(current), parse(latest)) {
+            (Ok(current), Ok(latest)) => latest.cmp_precedence(&current).is_gt(),
+            (current_result, latest_result) => {
+                tracing::warn!(
+                    current,
+                    latest,
+                    current_error = ?current_result.err(),
+                    latest_error = ?latest_result.err(),
+                    "Ignoring update comparison with an invalid semantic version"
+                );
+                false
             }
         }
-
-        // If all parts are equal, check if latest has more parts
-        latest_parts.len() > current_parts.len()
     }
 }
 
@@ -201,11 +194,20 @@ mod tests {
         // Same version
         assert!(!adapter.is_newer_version("1.0.0", "1.0.0"));
         assert!(!adapter.is_newer_version("v1.0.0", "v1.0.0"));
+        assert!(!adapter.is_newer_version("1.0.0", "1.0.0+build.2"));
 
         // Older versions
         assert!(!adapter.is_newer_version("1.0.1", "1.0.0"));
         assert!(!adapter.is_newer_version("1.1.0", "1.0.9"));
         assert!(!adapter.is_newer_version("2.0.0", "1.9.9"));
+
+        // Pre-release identifiers participate in precedence.
+        assert!(adapter.is_newer_version("1.0.0-beta.1", "1.0.0"));
+        assert!(!adapter.is_newer_version("1.0.0", "1.0.0-beta.1"));
+
+        // Partial or malformed versions are not silently reinterpreted.
+        assert!(!adapter.is_newer_version("1.0", "1.0.0"));
+        assert!(!adapter.is_newer_version("not-a-version", "2.0.0"));
     }
 
     #[tokio::test]

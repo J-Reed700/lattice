@@ -7,7 +7,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::dtos::batch_dto::{
+//! use lattice::application::dtos::batch_dto::{
 //!     StartBatchFileImportRequestDto,
 //!     GetBatchStatusRequestDto,
 //! };
@@ -106,7 +106,7 @@ pub struct BatchProgressDto {
 ///
 /// # Example
 /// ```rust,no_run
-/// use vault_desktop::application::dtos::batch_dto::{
+/// use lattice::application::dtos::batch_dto::{
 ///     StartBatchUrlImportRequestDto, BatchImportOptionsDto
 /// };
 ///
@@ -135,7 +135,7 @@ pub struct StartBatchUrlImportRequestDto {
 ///
 /// # Example
 /// ```rust
-/// use vault_desktop::application::dtos::batch_dto::BatchImportOptionsDto;
+/// use lattice::application::dtos::batch_dto::BatchImportOptionsDto;
 ///
 /// let options = BatchImportOptionsDto {
 ///     extract_article: Some(true),

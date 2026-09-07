@@ -94,6 +94,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             crate::features::model_management::commands::refresh_model_catalog,
             crate::features::model_management::commands::clear_model_catalog_cache,
             crate::features::model_management::commands::get_model_catalog_stats,
+            commands::get_model_download_path,
         ])
         .build()
 }

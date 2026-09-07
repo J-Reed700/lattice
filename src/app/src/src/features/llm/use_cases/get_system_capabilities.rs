@@ -17,8 +17,8 @@
 //! println!("Available RAM: {} GB", caps.available_ram_gb);
 //! ```
 
-use crate::features::llm::dto::{GpuInfoDto, SystemCapabilitiesDto};
 use crate::application::ports::system_info::SystemInfoPort;
+use crate::features::llm::dto::{GpuInfoDto, SystemCapabilitiesDto};
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

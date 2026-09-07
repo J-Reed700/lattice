@@ -19,8 +19,8 @@ use crate::shared::error::{AppError, Result};
 ///
 /// # Example
 /// ```rust
-/// use vault_desktop::infrastructure::services::mocks::MockWebArchiveService;
-/// use vault_desktop::application::dtos::function_calling_dto::CleanArticle;
+/// use lattice::infrastructure::services::mocks::MockWebArchiveService;
+/// use lattice::application::dtos::function_calling_dto::CleanArticle;
 ///
 /// let mock = MockWebArchiveService::new();
 ///

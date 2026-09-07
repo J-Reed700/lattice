@@ -65,6 +65,30 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
     /// ```
     async fn find_file_path_by_id(&self, document_id: &str) -> Result<String>;
 
+    /// Rename a document, touching only its metadata.
+    ///
+    /// Deliberately narrow. Renaming through the full aggregate `save()` path
+    /// rewrites the document's children: the aggregate reconstructed for a
+    /// rename carries no chunks, and the save deletes every existing chunk
+    /// before inserting that empty set, cascading the embeddings away. The
+    /// document then can't be loaded ("must have at least one chunk") and has
+    /// silently vanished from search. A metadata-only edit must not go
+    /// anywhere near child rows.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::NotFound` if no document has this id
+    /// - `AppError::Database` if the update fails
+    ///
+    /// The default implementation refuses. Persistent repositories must
+    /// override it; in-memory test doubles inherit a clear failure rather
+    /// than silently succeeding without writing anything.
+    async fn rename(&self, _document_id: &str, _new_file_name: &str) -> Result<()> {
+        Err(crate::shared::error::AppError::Other(
+            "rename is not supported by this repository implementation".to_string(),
+        ))
+    }
+
     /// Check if a document exists by ID.
     ///
     /// # Arguments

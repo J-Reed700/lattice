@@ -71,8 +71,8 @@ impl std::str::FromStr for MentionType {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::entities::mention::{Mention, MentionType};
-/// use vault_desktop::domain_types::{DocumentId, ChunkId};
+/// use lattice::domain::entities::mention::{Mention, MentionType};
+/// use lattice::domain_types::{DocumentId, ChunkId};
 ///
 /// let doc_id = DocumentId::new();
 /// let chunk_id = ChunkId::new();
@@ -116,8 +116,8 @@ impl Mention {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::entities::mention::{Mention, MentionType};
-    /// use vault_desktop::domain_types::{DocumentId, ChunkId};
+    /// use lattice::domain::entities::mention::{Mention, MentionType};
+    /// use lattice::domain_types::{DocumentId, ChunkId};
     ///
     /// let mention = Mention::new(
     ///     DocumentId::new(),

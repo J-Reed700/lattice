@@ -568,10 +568,11 @@ impl ModelManager {
 
     pub async fn ensure_reranker_available(&self) -> Result<PathBuf> {
         let reranker_dir = self.model_dir.join("reranker");
-        let model_path = reranker_dir.join("model.onnx");
+        let model_path = reranker_dir.join("model.safetensors");
         let tokenizer_path = reranker_dir.join("tokenizer.json");
+        let config_path = reranker_dir.join("config.json");
 
-        if model_path.exists() && tokenizer_path.exists() {
+        if model_path.exists() && tokenizer_path.exists() && config_path.exists() {
             tracing::info!("Reranker model already exists at {:?}", reranker_dir);
             return Ok(model_path);
         }
@@ -656,7 +657,6 @@ impl ModelManager {
     async fn check_disk_space(&self) -> Result<()> {
         let mut disks = sysinfo::Disks::new_with_refreshed_list();
         disks.refresh();
-
 
         let model_dir_canonical = match self.model_dir.canonicalize() {
             Ok(path) => path,

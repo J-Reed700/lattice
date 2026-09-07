@@ -4,7 +4,7 @@ use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::warn;
 
-use super::{ChatResponse, ConversationMessage};
+use super::{ChatResponse, ConversationMessage, RetrievalTraceDto};
 
 #[derive(Debug, Clone)]
 struct MemoryToIndex {
@@ -33,6 +33,8 @@ pub(super) async fn persist_user_message_pending(
     Ok((user_msg.id, message_tokens))
 }
 
+// Turn finalization deliberately keeps its persisted inputs explicit at this boundary.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn finalize_successful_turn(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -43,6 +45,7 @@ pub(super) async fn finalize_successful_turn(
     context_len: usize,
     sources: Vec<SourceDto>,
     verification_metadata: Option<serde_json::Value>,
+    retrieval_trace: Option<RetrievalTraceDto>,
     message_tokens: usize,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
 ) -> Result<ChatResponse> {
@@ -58,6 +61,12 @@ pub(super) async fn finalize_successful_turn(
     }
     if let Some(verification) = verification_metadata {
         metadata_payload.insert("verification".to_string(), verification);
+    }
+    // Persisted so the "Searched N documents" line survives a reload. Absent
+    // when retrieval never ran; older messages have no key at all, which the
+    // frontend must read as "no trace", never as zeros.
+    if let Some(trace) = retrieval_trace {
+        metadata_payload.insert("retrieval".to_string(), serde_json::json!(trace));
     }
     let metadata = if metadata_payload.is_empty() {
         None
@@ -229,8 +238,5 @@ fn spawn_memory_indexing(
 }
 
 fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
-    embedding
-        .iter()
-        .flat_map(|value| value.to_le_bytes())
-        .collect()
+    crate::features::embedding::encoding::encode_embedding(embedding)
 }

@@ -9,12 +9,12 @@ use std::sync::Arc;
 use tokio::task;
 use uuid::Uuid;
 
-use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
-use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort;
-use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
-use crate::domain::value_objects::file_metadata::FileMetadata;
-use crate::infrastructure::indexing::extraction::ContentExtractor;
 use super::file_import_trait::{BatchFileImportServiceTrait, ProcessedFileInfo};
+use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort;
+use crate::domain::value_objects::file_metadata::FileMetadata;
+use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
+use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
+use crate::infrastructure::indexing::extraction::ContentExtractor;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
 
@@ -47,7 +47,7 @@ const MAX_FILE_SIZE: i64 = 50 * 1024 * 1024;
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::infrastructure::services::batch_file_import::BatchFileImportService;
+/// use lattice::infrastructure::services::batch_file_import::BatchFileImportService;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let service = BatchFileImportService::new(batch_job_repository);
@@ -627,8 +627,8 @@ mod tests {
             EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, RepositoryPort,
         };
         use crate::domain::entities::document::Document;
-        use crate::features::embedding::entity::Embedding;
         use crate::domain::repositories::UnitOfWorkFactory;
+        use crate::features::embedding::entity::Embedding;
         use crate::shared::result::Result as AppResult;
         use std::path::Path;
 
@@ -797,10 +797,7 @@ mod tests {
             async fn delete(&self, _document_id: &str) -> Result<(), AppError> {
                 Ok(())
             }
-            async fn find_all_paginated(
-                &self,
-                _limit: usize,
-            ) -> Result<Vec<Document>, AppError> {
+            async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>, AppError> {
                 Ok(vec![])
             }
         }

@@ -36,9 +36,9 @@ mod types;
 // Re-export public types
 pub use types::DocumentRecord;
 
+use crate::features::indexing::IndexStorageTrait;
 use crate::infrastructure::indexing::chunker::{ContextualizedChunk, TextChunk};
 use crate::infrastructure::indexing::error::Result;
-use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::{Path, PathBuf};

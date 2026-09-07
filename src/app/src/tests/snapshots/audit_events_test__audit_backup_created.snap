@@ -1,0 +1,18 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 127
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": null,
+  "action": "backup_created",
+  "resource_id": "[backup_path]",
+  "result": "success",
+  "metadata": {
+    "compression": "gzip",
+    "duration_ms": "5000",
+    "size_bytes": "52428800"
+  }
+}

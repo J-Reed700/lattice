@@ -1,5 +1,5 @@
-use crate::llm::sidecar_manager::SidecarRegistry;
 use crate::interfaces::di::Container;
+use crate::llm::sidecar_manager::SidecarRegistry;
 use std::time::Duration;
 use tauri::Manager;
 

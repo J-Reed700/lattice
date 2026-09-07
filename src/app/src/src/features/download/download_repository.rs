@@ -28,6 +28,7 @@ struct DownloadSessionRow {
     completed_at: Option<String>,
     model_name: Option<String>,
     model_id: Option<String>,
+    model_file_name: Option<String>,
 }
 
 impl TryFrom<DownloadSessionRow> for DownloadSession {
@@ -125,6 +126,7 @@ impl TryFrom<DownloadSessionRow> for DownloadSession {
             "completed_at": completed_at,
             "model_name": row.model_name,
             "model_id": row.model_id,
+            "model_file_name": row.model_file_name,
         });
 
         serde_json::from_value(json_str)
@@ -137,6 +139,28 @@ pub trait DownloadRepository: Send + Sync {
     async fn create(&self, session: &DownloadSession) -> Result<(), DownloadError>;
     async fn get(&self, id: &str) -> Result<Option<DownloadSession>, DownloadError>;
     async fn update(&self, session: &DownloadSession) -> Result<(), DownloadError>;
+
+    /// Persist transfer progress **without** touching `state`.
+    ///
+    /// Progress ticks arrive constantly and concurrently with state changes.
+    /// Writing them through the full-row `update` meant a read-modify-write:
+    /// a tick could read the row while it still said `downloading`, and land
+    /// its UPDATE *after* the owning task wrote `completed` — reverting the
+    /// row to `downloading` with stale byte counts. The session then looked
+    /// like it was downloading forever, and on next boot startup
+    /// reconciliation marked it `failed` even though the model had completed
+    /// and been registered, leaving the sessions and models tables disagreeing.
+    ///
+    /// Scoping the statement to the progress columns makes that class of
+    /// clobber impossible. The `WHERE state = 'downloading'` guard also drops
+    /// ticks that arrive after a terminal transition instead of resurrecting
+    /// the row.
+    async fn update_progress(
+        &self,
+        id: &str,
+        bytes_downloaded: u64,
+        bytes_per_second: f64,
+    ) -> Result<(), DownloadError>;
     async fn delete(&self, id: &str) -> Result<(), DownloadError>;
     async fn list(&self) -> Result<Vec<DownloadSession>, DownloadError>;
     async fn list_by_state(
@@ -202,8 +226,8 @@ impl DownloadRepository for SqliteDownloadRepository {
                 checksum_algorithm, checksum_value,
                 error_message, retry_count, max_retries,
                 created_at, updated_at, started_at, completed_at,
-                model_name, model_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model_name, model_id, model_file_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session.id())
@@ -226,6 +250,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         .bind(session.completed_at().map(|dt| dt.to_rfc3339()))
         .bind(session.model_name())
         .bind(session.model_id())
+        .bind(session.model_file_name())
         .execute(&mut *tx)
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to create session: {}", e)))?;
@@ -295,7 +320,7 @@ impl DownloadRepository for SqliteDownloadRepository {
                 checksum_algorithm = ?, checksum_value = ?,
                 error_message = ?, retry_count = ?, max_retries = ?,
                 updated_at = ?, started_at = ?, completed_at = ?,
-                model_name = ?, model_id = ?
+                model_name = ?, model_id = ?, model_file_name = ?
             WHERE id = ?
             "#,
         )
@@ -317,10 +342,47 @@ impl DownloadRepository for SqliteDownloadRepository {
         .bind(session.completed_at().map(|dt| dt.to_rfc3339()))
         .bind(session.model_name())
         .bind(session.model_id())
+        .bind(session.model_file_name())
         .bind(session.id())
         .execute(&mut *tx)
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to update session: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DownloadError::IoError(format!("Failed to commit transaction: {}", e)))?;
+
+        Ok(())
+    }
+
+    async fn update_progress(
+        &self,
+        id: &str,
+        bytes_downloaded: u64,
+        bytes_per_second: f64,
+    ) -> Result<(), DownloadError> {
+        let mut tx =
+            self.db_conn.begin_immediate().await.map_err(|e| {
+                DownloadError::IoError(format!("Failed to begin transaction: {}", e))
+            })?;
+
+        // Touches only the progress columns, and only while the row is still
+        // downloading — a tick that races a completion is dropped rather than
+        // reverting the state.
+        sqlx::query(
+            r#"
+            UPDATE download_sessions
+            SET bytes_downloaded = ?, bytes_per_second = ?, updated_at = ?
+            WHERE id = ? AND state = 'downloading'
+            "#,
+        )
+        .bind(bytes_downloaded as i64)
+        .bind(bytes_per_second)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DownloadError::IoError(format!("Failed to update progress: {}", e)))?;
 
         tx.commit()
             .await
@@ -484,6 +546,22 @@ pub mod mock {
                 return Err(DownloadError::SessionNotFound(session.id().to_string()));
             }
             sessions.insert(session.id().to_string(), session.clone());
+            Ok(())
+        }
+
+        async fn update_progress(
+            &self,
+            id: &str,
+            bytes_downloaded: u64,
+            bytes_per_second: f64,
+        ) -> Result<(), DownloadError> {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(session) = sessions.get_mut(id) {
+                // Mirror the SQL guard: only a downloading session takes ticks.
+                if *session.state() == DownloadState::Downloading {
+                    session.update_progress(bytes_downloaded, bytes_per_second);
+                }
+            }
             Ok(())
         }
 

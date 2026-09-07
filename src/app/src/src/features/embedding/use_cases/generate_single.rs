@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
-//! use vault_desktop::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
+//! use lattice::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
+//! use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
 //!
 //! # async fn example(use_case: GenerateSingleEmbeddingUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = GenerateSingleEmbeddingRequestDto {
@@ -28,10 +28,10 @@
 
 use std::sync::Arc;
 
+use crate::application::ports::EmbeddingPort;
 use crate::features::embedding::dto::{
     GenerateSingleEmbeddingRequestDto, GenerateSingleEmbeddingResponseDto,
 };
-use crate::application::ports::EmbeddingPort;
 use crate::shared::error::{AppError, Result};
 
 /// Maximum text length for embedding (10,000 characters)
@@ -81,8 +81,8 @@ impl GenerateSingleEmbeddingUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
-    /// # use vault_desktop::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
+    /// # use lattice::application::use_cases::embedding::generate_single_embedding::GenerateSingleEmbeddingUseCase;
+    /// # use lattice::application::dtos::embedding_dto::GenerateSingleEmbeddingRequestDto;
     /// # async fn example(use_case: GenerateSingleEmbeddingUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = GenerateSingleEmbeddingRequestDto {
     ///     text: "Sample document for embedding generation".to_string(),

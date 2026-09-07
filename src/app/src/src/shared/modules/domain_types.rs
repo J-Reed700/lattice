@@ -10,7 +10,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use vault_desktop::domain_types::*;
+//! use lattice::domain_types::*;
 //!
 //! // Type-safe IDs prevent mistakes
 //! let doc_id = DocumentId::new();
@@ -53,7 +53,7 @@ pub enum DomainTypeError {
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::domain_types::DocumentId;
+/// use lattice::domain_types::DocumentId;
 ///
 /// let id = DocumentId::new();
 /// let id_str = id.to_string();

@@ -452,7 +452,6 @@ impl DownloadedModel {
         &self.model_id
     }
 
-
     pub fn location(&self) -> &ModelLocation {
         &self.location
     }

@@ -31,10 +31,10 @@ use crate::domain::downloaded_model::DownloadedModel;
 use crate::domain::embedding_constants::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::features::download::manager::{
     DownloadManager, DownloadManagerService, DownloadRequest,
 };
+use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -163,6 +163,7 @@ impl DownloadDefaultModelUseCase {
             auth_token: None, // No auth required for public model
             model_name: Some(Self::DEFAULT_MODEL_NAME.to_string()),
             model_id: Some(Self::DEFAULT_MODEL_ID.to_string()),
+            model_file_name: Some(Self::MODEL_FILE.to_string()),
         };
 
         let download_id = self
@@ -198,6 +199,7 @@ impl DownloadDefaultModelUseCase {
 
     /// Ensure models directory exists
     async fn ensure_models_directory(&self) -> Result<()> {
+        // repository-barrier-allow: ensure the model artifact destination exists before download.
         if !self.models_path.exists() {
             debug!(path = %self.models_path.display(), "Creating models directory");
             tokio::fs::create_dir_all(&self.models_path)

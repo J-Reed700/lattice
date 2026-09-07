@@ -322,17 +322,13 @@ impl LLMPort for SidecarPortAdapter {
             images,
         )
         .await
-        .map_err(|e| {
-            crate::shared::error::AppError::Other(format!("LLM streaming failed: {e}"))
-        })?;
+        .map_err(|e| crate::shared::error::AppError::Other(format!("LLM streaming failed: {e}")))?;
 
         // LLMClient yields Result<String, LLMError>; LLMPort wants
         // Result<String, AppError>. Map the error type.
         use futures::StreamExt;
         let mapped = stream.map(|item| {
-            item.map_err(|e| {
-                crate::shared::error::AppError::Other(format!("Stream error: {e}"))
-            })
+            item.map_err(|e| crate::shared::error::AppError::Other(format!("Stream error: {e}")))
         });
 
         Ok(Box::new(Box::pin(mapped)))
@@ -343,7 +339,15 @@ impl LLMPort for SidecarPortAdapter {
     }
 
     fn max_context_tokens(&self) -> usize {
-        8192
+        // Report what the sidecar was actually launched with, not a constant.
+        // This is 8192 on GPU machines but 4096 CPU-only and 2048 under the
+        // low-RAM threshold; hard-coding 8192 made every downstream budget
+        // (the context-window builder's 75% slice, `available_for_rag`)
+        // overshoot the real window by 2-4x on smaller machines. The prompt
+        // then got truncated server-side, silently dropping the system prompt
+        // and the oldest history — so the model appeared to ignore its
+        // instructions, and only on lower-spec hardware.
+        self.client.context_size() as usize
     }
 
     fn count_tokens(&self, text: &str) -> usize {
@@ -802,7 +806,7 @@ mod tests {
     fn test_detect_format_safetensors_directory() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config.json"), "{}").unwrap();
-        std::fs::write(dir.path().join("model.safetensors"), &[0u8; 16]).unwrap();
+        std::fs::write(dir.path().join("model.safetensors"), [0u8; 16]).unwrap();
         assert_eq!(detect_model_format(dir.path()), ModelFormat::Safetensors);
     }
 
@@ -810,8 +814,16 @@ mod tests {
     fn test_detect_format_safetensors_sharded() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config.json"), "{}").unwrap();
-        std::fs::write(dir.path().join("model-00001-of-00002.safetensors"), &[0u8; 16]).unwrap();
-        std::fs::write(dir.path().join("model-00002-of-00002.safetensors"), &[0u8; 16]).unwrap();
+        std::fs::write(
+            dir.path().join("model-00001-of-00002.safetensors"),
+            [0u8; 16],
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("model-00002-of-00002.safetensors"),
+            [0u8; 16],
+        )
+        .unwrap();
         assert_eq!(detect_model_format(dir.path()), ModelFormat::Safetensors);
     }
 
@@ -819,7 +831,7 @@ mod tests {
     fn test_detect_format_directory_missing_config_falls_back_to_gguf() {
         // No config.json — not a valid HF safetensors layout.
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("model.safetensors"), &[0u8; 16]).unwrap();
+        std::fs::write(dir.path().join("model.safetensors"), [0u8; 16]).unwrap();
         assert_eq!(detect_model_format(dir.path()), ModelFormat::Gguf);
     }
 

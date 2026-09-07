@@ -10,7 +10,7 @@
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::shared::Result;
+/// use lattice::shared::Result;
 ///
 /// fn process_data(input: &str) -> Result<String> {
 ///     if input.is_empty() {

@@ -28,8 +28,8 @@
 //! }
 //! ```
 
-use crate::features::initialization::dto::InitializeModelsResponseDto;
 use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
+use crate::features::initialization::dto::InitializeModelsResponseDto;
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use crate::shared::result::Result;
 use std::sync::Arc;

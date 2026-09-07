@@ -6,8 +6,17 @@
 //! - Duplicate file handling
 //! - Metadata extraction
 //! - Progress tracking
+//!
+//! These run against the **real** schema, produced by the migrations in
+//! `migrations/`. An earlier version of this file hand-rolled its own tables
+//! (`files`, `chunks`) that exist nowhere in the application. Those tests
+//! passed while verifying nothing about production behaviour — and two of
+//! them referenced `text_chunks`, a table their own fixture never created,
+//! so they failed outright. Fixtures that invent a schema are worse than no
+//! fixtures: they report success for code paths that cannot work.
 
 #[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use sqlx::SqlitePool;
     use std::fs;
@@ -26,43 +35,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Create schema
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS files (
-                id TEXT PRIMARY KEY,
-                path TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                extension TEXT,
-                size_bytes INTEGER,
-                modified_at TIMESTAMP,
-                is_indexed BOOLEAN DEFAULT 0,
-                index_status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+        // Production enables foreign keys (database/connection.rs); without
+        // it these tests would not observe cascade or constraint behaviour.
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .unwrap();
 
-            CREATE TABLE IF NOT EXISTS chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id TEXT NOT NULL,
-                content TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                token_count INTEGER,
-                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS text_embeddings (
-                id TEXT PRIMARY KEY,
-                chunk_id INTEGER,
-                embedding BLOB NOT NULL,
-                dimension INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
-            );
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
         (pool, temp_dir)
     }
@@ -73,6 +53,41 @@ mod tests {
         file_path
     }
 
+    /// Insert a document row. Mirrors the column set the indexing engine
+    /// actually writes, so a schema change breaks these tests rather than
+    /// letting them drift into fiction again.
+    async fn insert_document<'e, E>(
+        executor: E,
+        id: &str,
+        path: &str,
+        name: &str,
+        status: &str,
+    ) -> sqlx::Result<()>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
+        sqlx::query(
+            "INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes, \
+             modified_at, indexed_at, checksum, status) \
+             VALUES (?, ?, ?, 'text/plain', 100, '2026-01-01T00:00:00Z', \
+             '2026-01-01T00:00:00Z', 'deadbeef', ?)",
+        )
+        .bind(id)
+        .bind(path)
+        .bind(name)
+        .bind(status)
+        .execute(executor)
+        .await
+        .map(|_| ())
+    }
+
+    async fn count(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     // ============================================================================
     // Transaction Rollback Tests
     // ============================================================================
@@ -80,112 +95,140 @@ mod tests {
     #[tokio::test]
     async fn test_indexing_transaction_rollback_on_error() {
         let (pool, temp_dir) = setup_test_db().await;
-
-        // Create test file
         let file_path = create_test_file(temp_dir.path(), "test.txt", "Test content");
 
-        // Start transaction
         let mut tx = pool.begin().await.unwrap();
 
-        // Insert file record
+        insert_document(
+            &mut *tx,
+            "doc_1",
+            file_path.to_str().unwrap(),
+            "test.txt",
+            "pending",
+        )
+        .await
+        .unwrap();
+
         sqlx::query(
-            "INSERT INTO files (id, path, name, extension, size_bytes, is_indexed)
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index, start_char, end_char) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind("file_1")
-        .bind(file_path.to_str().unwrap())
-        .bind("test.txt")
-        .bind("txt")
-        .bind(100)
-        .bind(false)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-
-        // Insert chunks
-        sqlx::query(
-            "INSERT INTO text_chunks (file_id, content, chunk_index, token_count)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind("file_1")
+        .bind("chunk_1")
+        .bind("doc_1")
         .bind("Chunk 1")
         .bind(0)
-        .bind(10)
+        .bind(0)
+        .bind(7)
         .execute(&mut *tx)
         .await
         .unwrap();
 
-        // Simulate error and rollback
         tx.rollback().await.unwrap();
 
-        // Verify nothing was committed
-        let file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(file_count, 0, "File should not exist after rollback");
-
-        let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(chunk_count, 0, "Chunks should not exist after rollback");
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM documents").await,
+            0,
+            "Document should not exist after rollback"
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM text_chunks").await,
+            0,
+            "Chunks should not exist after rollback"
+        );
     }
 
     #[tokio::test]
     async fn test_indexing_transaction_commit() {
         let (pool, temp_dir) = setup_test_db().await;
-
         let file_path = create_test_file(temp_dir.path(), "test.txt", "Test content");
 
-        // Start transaction
         let mut tx = pool.begin().await.unwrap();
 
-        // Insert complete indexing data
-        sqlx::query(
-            "INSERT INTO files (id, path, name, extension, size_bytes, is_indexed, index_status)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        insert_document(
+            &mut *tx,
+            "doc_1",
+            file_path.to_str().unwrap(),
+            "test.txt",
+            "indexed",
         )
-        .bind("file_1")
-        .bind(file_path.to_str().unwrap())
-        .bind("test.txt")
-        .bind("txt")
-        .bind(100)
-        .bind(true)
-        .bind("completed")
-        .execute(&mut *tx)
         .await
         .unwrap();
 
         for i in 0..5 {
             sqlx::query(
-                "INSERT INTO text_chunks (file_id, content, chunk_index, token_count)
-                 VALUES (?, ?, ?, ?)",
+                "INSERT INTO text_chunks (id, document_id, content, chunk_index, start_char, end_char) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
-            .bind("file_1")
+            .bind(format!("chunk_{}", i))
+            .bind("doc_1")
             .bind(format!("Chunk {}", i))
             .bind(i)
-            .bind(50)
+            .bind(0)
+            .bind(10)
             .execute(&mut *tx)
             .await
             .unwrap();
         }
 
-        // Commit transaction
         tx.commit().await.unwrap();
 
-        // Verify data was committed
-        let file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE is_indexed = 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(file_count, 1);
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM documents WHERE status = 'indexed'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(count(&pool, "SELECT COUNT(*) FROM text_chunks").await, 5);
+    }
 
-        let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks")
-            .fetch_one(&pool)
+    /// Chunks must not outlive their document. Production relies on this
+    /// cascade when a document is removed.
+    #[tokio::test]
+    async fn test_deleting_document_cascades_to_chunks() {
+        let (pool, _temp_dir) = setup_test_db().await;
+
+        insert_document(&pool, "doc_1", "/tmp/a.txt", "a.txt", "indexed")
             .await
             .unwrap();
-        assert_eq!(chunk_count, 5);
+        sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index, start_char, end_char) \
+             VALUES ('chunk_1', 'doc_1', 'body', 0, 0, 4)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM documents WHERE id = 'doc_1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM text_chunks").await,
+            0,
+            "chunks must be removed with their document"
+        );
+    }
+
+    /// A chunk referencing a nonexistent document must be refused. This is
+    /// the constraint that the re-index id bug used to trip on every edit.
+    #[tokio::test]
+    async fn test_chunk_with_unknown_document_is_rejected() {
+        let (pool, _temp_dir) = setup_test_db().await;
+
+        let result = sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index, start_char, end_char) \
+             VALUES ('chunk_1', 'no-such-doc', 'body', 0, 0, 4)",
+        )
+        .execute(&pool)
+        .await;
+
+        assert!(
+            result.is_err(),
+            "foreign keys must reject a chunk with no parent document"
+        );
     }
 
     // ============================================================================
@@ -196,7 +239,6 @@ mod tests {
     async fn test_concurrent_file_indexing() {
         let (pool, temp_dir) = setup_test_db().await;
 
-        // Create multiple test files
         let file_paths: Vec<_> = (0..10)
             .map(|i| {
                 create_test_file(
@@ -207,240 +249,113 @@ mod tests {
             })
             .collect();
 
-        // Index files concurrently
-        let handles: Vec<_> = file_paths
-            .into_iter()
-            .enumerate()
-            .map(|(i, path)| {
-                let pool_clone = pool.clone();
-                tokio::spawn(async move {
-                    sqlx::query(
-                        "INSERT INTO files (id, path, name, extension, is_indexed)
-                         VALUES (?, ?, ?, ?, ?)",
-                    )
-                    .bind(format!("file_{}", i))
-                    .bind(path.to_str().unwrap())
-                    .bind(format!("file_{}.txt", i))
-                    .bind("txt")
-                    .bind(true)
-                    .execute(&pool_clone)
-                    .await
-                    .unwrap();
-                })
-            })
-            .collect();
-
-        // All indexing operations should succeed
-        for handle in handles {
-            handle.await.unwrap();
+        let mut handles = Vec::new();
+        for (i, path) in file_paths.into_iter().enumerate() {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                insert_document(
+                    &pool,
+                    &format!("doc_{}", i),
+                    path.to_str().unwrap(),
+                    &format!("file_{}.txt", i),
+                    "indexed",
+                )
+                .await
+            }));
         }
 
-        // Verify all files were indexed
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE is_indexed = 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 10);
-    }
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
 
-    // ============================================================================
-    // Duplicate File Handling Tests
-    // ============================================================================
-
-    #[tokio::test]
-    async fn test_duplicate_file_path_rejected() {
-        let (pool, temp_dir) = setup_test_db().await;
-
-        let file_path = create_test_file(temp_dir.path(), "test.txt", "Content");
-
-        // Insert first time
-        sqlx::query("INSERT INTO files (id, path, name, extension) VALUES (?, ?, ?, ?)")
-            .bind("file_1")
-            .bind(file_path.to_str().unwrap())
-            .bind("test.txt")
-            .bind("txt")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Try to insert same path again
-        let result =
-            sqlx::query("INSERT INTO files (id, path, name, extension) VALUES (?, ?, ?, ?)")
-                .bind("file_2")
-                .bind(file_path.to_str().unwrap()) // Same path
-                .bind("test.txt")
-                .bind("txt")
-                .execute(&pool)
-                .await;
-
-        assert!(
-            result.is_err(),
-            "Duplicate path should be rejected by UNIQUE constraint"
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM documents WHERE status = 'indexed'"
+            )
+            .await,
+            10
         );
     }
 
     #[tokio::test]
+    async fn test_duplicate_file_path_rejected() {
+        let (pool, _temp_dir) = setup_test_db().await;
+
+        insert_document(&pool, "doc_1", "/tmp/same.txt", "same.txt", "indexed")
+            .await
+            .unwrap();
+
+        let result = insert_document(&pool, "doc_2", "/tmp/same.txt", "same.txt", "indexed").await;
+
+        assert!(
+            result.is_err(),
+            "file_path is UNIQUE; a second row for the same path must be refused"
+        );
+    }
+
+    // ============================================================================
+    // Status and Metadata Tests
+    // ============================================================================
+
+    #[tokio::test]
     async fn test_update_existing_file_index_status() {
-        let (pool, temp_dir) = setup_test_db().await;
+        let (pool, _temp_dir) = setup_test_db().await;
 
-        let file_path = create_test_file(temp_dir.path(), "test.txt", "Content");
+        insert_document(&pool, "doc_1", "/tmp/a.txt", "a.txt", "pending")
+            .await
+            .unwrap();
 
-        // Insert file as pending
-        sqlx::query(
-            "INSERT INTO files (id, path, name, extension, is_indexed, index_status)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind("file_1")
-        .bind(file_path.to_str().unwrap())
-        .bind("test.txt")
-        .bind("txt")
-        .bind(false)
-        .bind("pending")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Update to indexed
-        sqlx::query("UPDATE files SET is_indexed = ?, index_status = ? WHERE id = ?")
-            .bind(true)
-            .bind("completed")
-            .bind("file_1")
+        sqlx::query("UPDATE documents SET status = 'indexed' WHERE id = 'doc_1'")
             .execute(&pool)
             .await
             .unwrap();
 
-        // Verify update
-        let (is_indexed, status): (bool, String) =
-            sqlx::query_as("SELECT is_indexed, index_status FROM files WHERE id = ?")
-                .bind("file_1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-
-        assert!(is_indexed);
-        assert_eq!(status, "completed");
-    }
-
-    // ============================================================================
-    // Metadata Extraction Tests
-    // ============================================================================
-
-    #[tokio::test]
-    async fn test_file_metadata_storage() {
-        let (pool, temp_dir) = setup_test_db().await;
-
-        let file_path = create_test_file(temp_dir.path(), "document.pdf", "PDF content");
-        let metadata = fs::metadata(&file_path).unwrap();
-
-        // Insert with full metadata
-        sqlx::query(
-            "INSERT INTO files (id, path, name, extension, size_bytes, modified_at)
-             VALUES (?, ?, ?, ?, ?, datetime('now'))",
-        )
-        .bind("file_1")
-        .bind(file_path.to_str().unwrap())
-        .bind("document.pdf")
-        .bind("pdf")
-        .bind(metadata.len() as i64)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Verify metadata was stored
-        let (name, extension, size): (String, String, i64) =
-            sqlx::query_as("SELECT name, extension, size_bytes FROM files WHERE id = ?")
-                .bind("file_1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-
-        assert_eq!(name, "document.pdf");
-        assert_eq!(extension, "pdf");
-        assert_eq!(size, metadata.len() as i64);
-    }
-
-    // ============================================================================
-    // Progress Tracking Tests
-    // ============================================================================
-
-    #[tokio::test]
-    async fn test_index_status_tracking() {
-        let (pool, temp_dir) = setup_test_db().await;
-
-        let file_path = create_test_file(temp_dir.path(), "test.txt", "Content");
-
-        // Insert as pending
-        sqlx::query("INSERT INTO files (id, path, name, index_status) VALUES (?, ?, ?, ?)")
-            .bind("file_1")
-            .bind(file_path.to_str().unwrap())
-            .bind("test.txt")
-            .bind("pending")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Update to processing
-        sqlx::query("UPDATE files SET index_status = ? WHERE id = ?")
-            .bind("processing")
-            .bind("file_1")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let status: String = sqlx::query_scalar("SELECT index_status FROM files WHERE id = ?")
-            .bind("file_1")
+        let status: String = sqlx::query_scalar("SELECT status FROM documents WHERE id = 'doc_1'")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(status, "processing");
+        assert_eq!(status, "indexed");
+    }
 
-        // Update to completed
-        sqlx::query("UPDATE files SET index_status = ?, is_indexed = ? WHERE id = ?")
-            .bind("completed")
-            .bind(true)
-            .bind("file_1")
-            .execute(&pool)
+    #[tokio::test]
+    async fn test_file_metadata_storage() {
+        let (pool, _temp_dir) = setup_test_db().await;
+
+        insert_document(&pool, "doc_1", "/tmp/report.pdf", "report.pdf", "indexed")
             .await
             .unwrap();
 
-        let (status, indexed): (String, bool) =
-            sqlx::query_as("SELECT index_status, is_indexed FROM files WHERE id = ?")
-                .bind("file_1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let (name, mime, size): (String, String, i64) = sqlx::query_as(
+            "SELECT file_name, mime_type, size_bytes FROM documents WHERE id = 'doc_1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
-        assert_eq!(status, "completed");
-        assert!(indexed);
+        assert_eq!(name, "report.pdf");
+        assert_eq!(mime, "text/plain");
+        assert_eq!(size, 100);
     }
 
     #[tokio::test]
     async fn test_failed_indexing_tracking() {
-        let (pool, temp_dir) = setup_test_db().await;
+        let (pool, _temp_dir) = setup_test_db().await;
 
-        let file_path = create_test_file(temp_dir.path(), "test.txt", "Content");
+        insert_document(&pool, "doc_1", "/tmp/broken.bin", "broken.bin", "failed")
+            .await
+            .unwrap();
+        insert_document(&pool, "doc_2", "/tmp/ok.txt", "ok.txt", "indexed")
+            .await
+            .unwrap();
 
-        // Insert and mark as failed
-        sqlx::query(
-            "INSERT INTO files (id, path, name, index_status, is_indexed)
-             VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind("file_1")
-        .bind(file_path.to_str().unwrap())
-        .bind("test.txt")
-        .bind("failed")
-        .bind(false)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Query failed files
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE index_status = 'failed'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-
-        assert_eq!(count, 1);
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM documents WHERE status = 'failed'"
+            )
+            .await,
+            1
+        );
     }
 }

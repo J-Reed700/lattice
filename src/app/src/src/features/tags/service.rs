@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -13,6 +14,40 @@ use crate::features::tags::TagServiceTrait;
 /// eliminating lifetime issues and unsafe code.
 pub struct DocumentLockGuard {
     _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+const DOCUMENT_LOCK_STRIPES: usize = 64;
+
+/// Fixed-size document lock table. Hash collisions may serialize unrelated
+/// documents briefly, but memory usage remains bounded regardless of how many
+/// document ids pass through a long-running process.
+#[derive(Debug, Clone)]
+pub(crate) struct DocumentLockTable {
+    stripes: Arc<Vec<Arc<Mutex<()>>>>,
+}
+
+impl Default for DocumentLockTable {
+    fn default() -> Self {
+        Self {
+            stripes: Arc::new(
+                (0..DOCUMENT_LOCK_STRIPES)
+                    .map(|_| Arc::new(Mutex::new(())))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl DocumentLockTable {
+    pub(crate) fn lock_for(&self, document_id: &str) -> Arc<Mutex<()>> {
+        let mut hasher = DefaultHasher::new();
+        document_id.hash(&mut hasher);
+        let index = (hasher.finish() as usize) % self.stripes.len();
+        self.stripes
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(Mutex::new(())))
+    }
 }
 
 impl DocumentLockGuard {
@@ -44,31 +79,27 @@ impl DocumentLockGuard {
 
 #[derive(Debug, Clone)]
 pub struct TagService {
-    document_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    document_locks: DocumentLockTable,
     pub(crate) db_pool: SqlitePool,
 }
 
 impl TagService {
     pub fn new(db_pool: SqlitePool) -> Self {
         Self {
-            document_locks: Arc::new(Mutex::new(HashMap::new())),
+            document_locks: DocumentLockTable::default(),
             db_pool,
         }
     }
 
-    async fn get_document_lock(&self, document_id: &str) -> Arc<Mutex<()>> {
-        let mut locks = self.document_locks.lock().await;
-        locks
-            .entry(document_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+    fn get_document_lock(&self, document_id: &str) -> Arc<Mutex<()>> {
+        self.document_locks.lock_for(document_id)
     }
 
     pub async fn acquire_lock_with_timeout(
         &self,
         document_id: &str,
     ) -> Result<DocumentLockGuard, String> {
-        let lock = self.get_document_lock(document_id).await;
+        let lock = self.get_document_lock(document_id);
 
         // Use lock_owned() to get an OwnedMutexGuard that owns an Arc to the mutex
         // This eliminates lifetime issues without unsafe code
@@ -171,7 +202,9 @@ impl TagServiceTrait for TagService {
             .map_err(|e| crate::error::AppError::Database(format!("Failed to delete tag: {}", e)))
     }
 
-    async fn get_all_tags(&self) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
+    async fn get_all_tags(
+        &self,
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());

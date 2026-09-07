@@ -26,10 +26,10 @@
 //! }
 //! ```
 
+use lattice::features::download::manager::DownloadEvent;
 use std::future::Future;
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
-use lattice::features::download::manager::DownloadEvent;
 
 /// Collect download events until terminal state
 ///

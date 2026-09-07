@@ -139,6 +139,19 @@ pub struct SourceDto {
     /// Includes the primary chunk and any additional supporting chunks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_excerpts: Option<Vec<SourceChunkExcerptDto>>,
+
+    /// The number the model was told to cite this source as, i.e. the `n` in
+    /// a `[n]` footnote.
+    ///
+    /// Assigned once, over this (deduplicated) source list, and then used
+    /// verbatim when building the prompt. Previously the two sides numbered
+    /// independently: the prompt numbered the **budgeted per-chunk** list
+    /// while the UI resolved `[n]` by position in the **per-document,
+    /// score-sorted** list. Any answer citing a document that contributed
+    /// more than one chunk — or produced after budget-trimming dropped
+    /// chunks — therefore rendered footnotes that opened the wrong document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citation_id: Option<u32>,
 }
 
 /// Metadata about Q&A response generation.
@@ -230,6 +243,7 @@ mod tests {
                 section: Some("Introduction".to_string()),
                 chunk_index: Some(0),
                 chunk_excerpts: None,
+                citation_id: None,
             }],
             confidence: Some(0.85),
             metadata: Some(QAMetadataDto {
@@ -268,6 +282,7 @@ mod tests {
             section: None,
             chunk_index: None,
             chunk_excerpts: None,
+            citation_id: None,
         };
 
         let json = serde_json::to_string(&source).unwrap();

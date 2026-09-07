@@ -19,7 +19,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use vault_desktop::domain::model_management::{CompatibilityScorer, SystemCapabilities, ModelMetadata};
+//! use lattice::domain::model_management::{CompatibilityScorer, SystemCapabilities, ModelMetadata};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let capabilities = SystemCapabilities {
@@ -63,6 +63,8 @@ pub enum ModelCategory {
     Embedding,
     /// Optical Character Recognition model
     OCR,
+    /// On-device speech-to-text model (whisper family)
+    Transcription,
 }
 
 impl fmt::Display for ModelCategory {
@@ -71,6 +73,7 @@ impl fmt::Display for ModelCategory {
             ModelCategory::LLM => write!(f, "LLM"),
             ModelCategory::Embedding => write!(f, "Embedding"),
             ModelCategory::OCR => write!(f, "OCR"),
+            ModelCategory::Transcription => write!(f, "Transcription"),
         }
     }
 }
@@ -270,7 +273,7 @@ impl SystemCapabilities {
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::domain::model_management::{ModelMetadata, ModelCategory, PerformanceTier};
+/// use lattice::domain::model_management::{ModelMetadata, ModelCategory, PerformanceTier};
 ///
 /// let phi3 = ModelMetadata {
 ///     id: "phi-3-mini-4k-instruct-q4".into(),
@@ -381,8 +384,8 @@ impl ModelMetadata {
     ///
     /// # Example
     /// ```
-    /// use vault_desktop::domain::model_management::ModelMetadata;
-    /// use vault_desktop::domain::model_management::{ModelCategory, PerformanceTier};
+    /// use lattice::domain::model_management::ModelMetadata;
+    /// use lattice::domain::model_management::{ModelCategory, PerformanceTier};
     ///
     /// let model = ModelMetadata {
     ///     id: "phi-3-mini".into(),
@@ -607,7 +610,7 @@ impl ModelRecommendation {
 /// # Example
 ///
 /// ```rust
-/// use vault_desktop::domain::model_management::{CompatibilityScorer, SystemCapabilities, ModelMetadata, ModelCategory, PerformanceTier, GpuAcceleration, GpuType, CpuArchitecture};
+/// use lattice::domain::model_management::{CompatibilityScorer, SystemCapabilities, ModelMetadata, ModelCategory, PerformanceTier, GpuAcceleration, GpuType, CpuArchitecture};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let scorer = CompatibilityScorer::new();

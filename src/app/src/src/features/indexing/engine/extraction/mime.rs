@@ -111,7 +111,12 @@ pub fn supported_extensions() -> &'static [&'static str] {
         "sh", "bash", "zsh", "fish", "ps1", "psm1", "bat", "cmd", // Config/Data
         "json", "xml", "yaml", "yml", "ini", "conf", "config", // Database
         "sql", "graphql", "gql", // Data files
-        "csv", "tsv",
+        "csv", "tsv", // Audio — transcribed on-device by the transcription slice.
+        // Listed here because `BatchFileImportService` calls `ContentExtractor::is_supported`
+        // directly rather than through `ContentExtractionPort`, and would otherwise
+        // fail the whole batch fast. Extraction itself happens in
+        // `ContentExtractionAdapter`, not in `ContentExtractor`.
+        "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma",
     ]
 }
 

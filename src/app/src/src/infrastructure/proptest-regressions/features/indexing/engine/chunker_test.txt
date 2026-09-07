@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 866cebccc7e84b921dbe362688a2689c2b2f97dd65e1714497d588d1ccde7a2d # shrinks to max_tokens = 10, overlap = 10
+cc 6ec82044e20dff41ea778b52ed775fe1abe512f151f4dece94292c771ee33543 # shrinks to text = "   aaAaaAa."

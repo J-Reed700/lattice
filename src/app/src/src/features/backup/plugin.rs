@@ -32,13 +32,18 @@ pub struct RestoreBackupRequestDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportMarkdownRequestDto {
-    pub output_dir: String,
+    /// `None` means the app's exports folder, which is the only place the
+    /// backend will write. A supplied path is confined to that folder.
+    #[serde(default)]
+    pub output_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportJsonRequestDto {
-    pub output_path: String,
+    /// `None` means the app's exports folder. See `ExportMarkdownRequestDto`.
+    #[serde(default)]
+    pub output_path: Option<String>,
     pub pretty: bool,
 }
 
@@ -58,6 +63,9 @@ pub struct ExportHtmlRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct ExportResultDto {
     pub count: usize,
+    /// Where the files landed, so the UI can offer "Show in Finder" without
+    /// guessing.
+    pub output_dir: String,
 }
 
 #[tauri::command]
@@ -70,10 +78,28 @@ pub async fn plugin_create_backup(
         .await
         .map_err(ApiError::from)?;
 
+    // Report the real size and creation time. A failed metadata read keeps the
+    // old fallbacks rather than failing the backup — the file exists either way.
+    // repository-barrier-allow: reads the freshly written backup file's own metadata, not app state.
+    let (size, created_at) = match tokio::fs::metadata(&backup_path).await {
+        Ok(meta) => {
+            let created = meta
+                .modified()
+                .ok()
+                .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+            (meta.len(), created)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, path = %backup_path, "backup written but metadata unreadable");
+            (0, chrono::Utc::now().to_rfc3339())
+        }
+    };
+
     Ok(CreateBackupResultDto {
         backup_path,
-        size: 0,
-        created_at: chrono::Utc::now().to_rfc3339(),
+        size,
+        created_at,
     })
 }
 
@@ -99,9 +125,17 @@ pub async fn plugin_restore_backup(
 pub async fn plugin_list_backups(
     container: State<'_, Container>,
 ) -> Result<ListBackupsResultDto, ApiError> {
+    // `backup::list_backups_impl` scans <data_dir> for "*.lattice-backup"; backups
+    // are written by BackupAdapter to <data_dir>/backups/*.db, so that scan always
+    // returned []. Route through the port, which reads the right directory, matches
+    // the right extension, and fills in created_at, file_count and version by
+    // opening each backup.
     let data_dir = container.inner().core.data_dir().to_path_buf();
 
-    let backups = backup::list_backups_impl(data_dir)
+    let backups = container
+        .inner()
+        .backup_port()
+        .list_backups(data_dir)
         .await
         .map_err(ApiError::from)?;
 
@@ -126,11 +160,14 @@ pub async fn plugin_export_markdown(
     request: ExportMarkdownRequestDto,
     container: State<'_, Container>,
 ) -> Result<ExportResultDto, ApiError> {
-    let count = backup::export_markdown_impl(request.output_dir, container.inner())
+    let summary = backup::export_markdown_impl(request.output_dir, container.inner())
         .await
         .map_err(ApiError::from)?;
 
-    Ok(ExportResultDto { count })
+    Ok(ExportResultDto {
+        count: summary.count(),
+        output_dir: summary.output_dir,
+    })
 }
 
 #[tauri::command]
@@ -138,12 +175,15 @@ pub async fn plugin_export_markdown(
 pub async fn plugin_export_json(
     request: ExportJsonRequestDto,
     container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    backup::export_json_impl(request.output_path, request.pretty, container.inner())
+) -> Result<ExportResultDto, ApiError> {
+    let summary = backup::export_json_impl(request.output_path, request.pretty, container.inner())
         .await
         .map_err(ApiError::from)?;
 
-    Ok(())
+    Ok(ExportResultDto {
+        count: summary.count(),
+        output_dir: summary.output_dir,
+    })
 }
 
 #[tauri::command]
@@ -152,11 +192,14 @@ pub async fn plugin_export_csv(
     request: ExportCsvRequestDto,
     container: State<'_, Container>,
 ) -> Result<ExportResultDto, ApiError> {
-    let count = backup::export_csv_impl(request.output_path, container.inner())
+    let count = backup::export_csv_impl(request.output_path.clone(), container.inner())
         .await
         .map_err(ApiError::from)?;
 
-    Ok(ExportResultDto { count })
+    Ok(ExportResultDto {
+        count,
+        output_dir: request.output_path,
+    })
 }
 
 #[tauri::command]
@@ -165,11 +208,14 @@ pub async fn plugin_export_html(
     request: ExportHtmlRequestDto,
     container: State<'_, Container>,
 ) -> Result<ExportResultDto, ApiError> {
-    let count = backup::export_html_impl(request.output_dir, container.inner())
+    let count = backup::export_html_impl(request.output_dir.clone(), container.inner())
         .await
         .map_err(ApiError::from)?;
 
-    Ok(ExportResultDto { count })
+    Ok(ExportResultDto {
+        count,
+        output_dir: request.output_dir,
+    })
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

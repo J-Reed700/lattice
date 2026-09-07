@@ -1,0 +1,13 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 88
+expression: chunk
+---
+{
+  "text": "Short document that fits in one chunk.",
+  "start_idx": 0,
+  "end_idx": 39,
+  "token_count": 8,
+  "document_path": "",
+  "chunk_index": 0
+}

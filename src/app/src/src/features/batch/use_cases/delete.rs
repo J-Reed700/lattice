@@ -10,8 +10,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::DeleteBatchJobUseCase;
-//! use vault_desktop::application::dtos::batch_dto::DeleteBatchJobRequestDto;
+//! use lattice::application::use_cases::batch::DeleteBatchJobUseCase;
+//! use lattice::application::dtos::batch_dto::DeleteBatchJobRequestDto;
 //!
 //! # async fn example(use_case: DeleteBatchJobUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = DeleteBatchJobRequestDto {
@@ -26,8 +26,8 @@
 
 use std::sync::Arc;
 
-use crate::features::batch::dto::{DeleteBatchJobRequestDto, DeleteBatchJobResponseDto};
 use crate::application::ports::BatchJobRepositoryPort;
+use crate::features::batch::dto::{DeleteBatchJobRequestDto, DeleteBatchJobResponseDto};
 use crate::shared::error::{AppError, Result};
 
 /// Delete batch job use case.
@@ -71,8 +71,8 @@ impl DeleteBatchJobUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::DeleteBatchJobUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::DeleteBatchJobRequestDto;
+    /// # use lattice::application::use_cases::batch::DeleteBatchJobUseCase;
+    /// # use lattice::application::dtos::batch_dto::DeleteBatchJobRequestDto;
     /// # async fn example(use_case: DeleteBatchJobUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = DeleteBatchJobRequestDto {
     ///     job_id: "batch-job-123".to_string(),

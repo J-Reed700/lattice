@@ -30,8 +30,8 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::entities::tag::Tag;
-/// use vault_desktop::domain_types::TagName;
+/// use lattice::domain::entities::tag::Tag;
+/// use lattice::domain_types::TagName;
 ///
 /// let name = TagName::new("rust".to_string()).unwrap();
 /// let tag = Tag::new(name, "#ff5733".to_string());
@@ -60,8 +60,8 @@ impl Tag {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::entities::tag::Tag;
-    /// use vault_desktop::domain_types::TagName;
+    /// use lattice::domain::entities::tag::Tag;
+    /// use lattice::domain_types::TagName;
     ///
     /// let name = TagName::new("machine-learning".to_string()).unwrap();
     /// let tag = Tag::new(name, "#6366f1".to_string());

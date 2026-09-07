@@ -49,11 +49,11 @@ use crate::shared::result::Result;
 use super::batch_job::SqliteBatchJobRepositoryTx;
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
-use crate::features::embedding::repository_tx::SqliteEmbeddingRepositoryTx;
-use crate::features::model_management::repository_tx::SqliteModelRepositoryTx;
 use super::model_file::SqliteModelFileRepositoryTx;
 use super::search::SqliteSearchRepositoryTx;
 use super::system::SqliteSystemRepositoryTx;
+use crate::features::embedding::repository_tx::SqliteEmbeddingRepositoryTx;
+use crate::features::model_management::repository_tx::SqliteModelRepositoryTx;
 
 pub struct SqliteUnitOfWork {
     pub(crate) transaction: Option<Arc<Mutex<Transaction<'static, Sqlite>>>>,

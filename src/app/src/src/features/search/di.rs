@@ -54,7 +54,9 @@ pub async fn build(
     // persisted index dimension — that way we keep an existing index intact
     // until a model load actually proves its dimension.
     let dimension = active_embedding_dimension
-        .or_else(|| crate::infrastructure::search::vector_search::read_dimension(&usearch_index_path))
+        .or_else(|| {
+            crate::infrastructure::search::vector_search::read_dimension(&usearch_index_path)
+        })
         .unwrap_or(DEFAULT_EMBEDDING_DIM);
 
     // Compare persisted dimension against the requested one. If they differ,
@@ -68,9 +70,9 @@ pub async fn build(
 
     // USearch: single index that implements both VectorSearchPort and SearchServiceTrait.
     let usearch_index = Arc::new(
-        USearchVectorIndex::open_or_create(dimension, usearch_index_path.clone()).map_err(
-            |e| AppError::InternalError(format!("Failed to initialize USearch index: {}", e)),
-        )?,
+        USearchVectorIndex::open_or_create(dimension, usearch_index_path.clone()).map_err(|e| {
+            AppError::InternalError(format!("Failed to initialize USearch index: {}", e))
+        })?,
     );
 
     // One-time migration: rebuild from SQLite if USearch file is empty
@@ -85,15 +87,38 @@ pub async fn build(
         .await?;
 
         if !rows.is_empty() {
+            let total_rows = rows.len();
             let enriched: Vec<(String, Vec<f32>, String, String, String)> = rows
                 .into_iter()
-                .map(|(emb_id, bytes, content, chunk_id, doc_id)| {
-                    let floats = crate::shared::utils::alignment::bytes_to_f32_vec(&bytes)
+                .map(|(_emb_id, bytes, content, chunk_id, doc_id)| {
+                    let floats = crate::features::embedding::encoding::decode_embedding(&bytes)
                         .unwrap_or_default();
-                    (emb_id, floats, content, chunk_id, doc_id)
+                    // Key off the chunk, not the stored `text_embeddings.id`.
+                    // Engine-written rows historically used a bare UUID there,
+                    // so an index built from that column could never be
+                    // matched by deletion, which looks up `emb_{chunk_id}`.
+                    let key = crate::features::embedding::encoding::vector_key(&chunk_id);
+                    (key, floats, content, chunk_id, doc_id)
                 })
-                .filter(|(_, v, _, _, _)| v.len() == DEFAULT_EMBEDDING_DIM)
+                // Must compare against the *active* dimension, not the
+                // default. Hard-coding 384 here meant that under any 768- or
+                // 1024-dim model every row failed the filter and the rebuild
+                // produced a silently empty index.
+                .filter(|(_, v, _, _, _)| v.len() == dimension)
                 .collect();
+
+            let dropped = total_rows - enriched.len();
+            if dropped > 0 {
+                // A silent filter is what let the dimension bug hide. If rows
+                // are being discarded, say so and say why.
+                tracing::warn!(
+                    dropped,
+                    total = total_rows,
+                    expected_dimension = dimension,
+                    "Discarded embeddings during USearch rebuild: wrong dimension or undecodable. \
+                     They will be absent from vector search until re-indexed."
+                );
+            }
 
             if !enriched.is_empty() {
                 tracing::info!(
@@ -117,8 +142,7 @@ pub async fn build(
     let vector_search = usearch_index.clone() as Arc<dyn VectorSearchPort>;
     let search_service = usearch_index.clone() as Arc<dyn SearchServiceTrait>;
 
-    let text_search =
-        Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
+    let text_search = Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
 

@@ -89,10 +89,7 @@ fn keyring_guarded<T>(
 ) -> Result<T, Box<dyn Error>> {
     match std::panic::catch_unwind(op) {
         Ok(result) => result,
-        Err(_) => Err(Box::new(io::Error::new(
-            io::ErrorKind::Other,
-            "Keyring unavailable",
-        ))),
+        Err(_) => Err(Box::new(io::Error::other("Keyring unavailable"))),
     }
 }
 

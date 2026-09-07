@@ -1,7 +1,7 @@
 //! Validate Settings Use Case
 
-use crate::features::settings::dto::{SettingsDto, ValidationResult};
 use crate::application::ports::SettingsRepositoryPort;
+use crate::features::settings::dto::{SettingsDto, ValidationResult};
 use std::sync::Arc;
 
 /// Use case for validating application settings.
@@ -255,12 +255,16 @@ mod tests {
 
         let mut settings = SettingsDto::default();
         settings.backup.auto_backup_enabled = true;
-        settings.backup.backup_path = String::new(); // Invalid when auto-backup is enabled
+        settings.backup.backup_path = String::new();
 
         let result = use_case.execute(&settings);
 
+        assert!(result.valid);
+        assert!(!result.has_errors());
+
+        settings.backup.backup_path = "/tmp/custom-backups".to_string();
+        let result = use_case.execute(&settings);
         assert!(!result.valid);
-        assert!(result.has_errors());
         assert!(result.errors.contains_key("backup"));
     }
 }

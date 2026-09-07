@@ -10,9 +10,9 @@
 mod common;
 
 use common::download_helpers::*;
+use lattice::features::download::manager::DownloadEvent;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use lattice::features::download::manager::DownloadEvent;
 
 #[tokio::test]
 async fn test_helpers_integrate_correctly() {

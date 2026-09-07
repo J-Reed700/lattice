@@ -1,0 +1,6 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 74
+expression: chunks
+---
+[]

@@ -1,13 +1,13 @@
-use crate::infrastructure::qa::prompts::{build_user_prompt, SYSTEM_PROMPT};
-use crate::infrastructure::qa::tokenizer::{count_tokens, truncate_to_tokens};
-use crate::infrastructure::qa::types::{QAError, SourceReference, StreamChunk};
-use crate::infrastructure::search::service::SearchResult;
-use crate::infrastructure::services::context_manager::LLMContext;
 /// Q&A Engine with RAG Pipeline
 ///
 /// A complete RAG (Retrieval-Augmented Generation) implementation that combines
 /// semantic search with LLM generation to answer questions using your knowledge base.
 use crate::features::qa::QAEngineTrait;
+use crate::infrastructure::qa::prompts::{build_user_prompt, SYSTEM_PROMPT};
+use crate::infrastructure::qa::tokenizer::{count_tokens, truncate_to_tokens};
+use crate::infrastructure::qa::types::{QAError, SourceReference, StreamChunk};
+use crate::infrastructure::search::service::SearchResult;
+use crate::infrastructure::services::context_manager::LLMContext;
 use crate::llm::traits::{ChatMessage, LLMClient};
 use async_trait::async_trait;
 use std::pin::Pin;
@@ -74,8 +74,8 @@ impl QAEngine {
     ///
     /// # Examples
     /// ```no_run
-    /// use vault_desktop::qa::QAEngine;
-    /// use vault_desktop::llm::{OllamaClient, LLMClient};
+    /// use lattice::qa::QAEngine;
+    /// use lattice::llm::{OllamaClient, LLMClient};
     /// use std::sync::Arc;
     ///
     /// let client = Arc::new(OllamaClient::new("http://localhost:11434", "llama3.1:8b".to_string()));

@@ -1,0 +1,13 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 195
+expression: chunk
+---
+{
+  "text": "Special chars: \"quotes\", 'apostrophes', & symbols, <tags>, @mentions",
+  "start_idx": 0,
+  "end_idx": 69,
+  "token_count": 15,
+  "document_path": "",
+  "chunk_index": 0
+}

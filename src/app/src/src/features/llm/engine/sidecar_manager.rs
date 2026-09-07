@@ -52,7 +52,6 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::timeout;
 
-
 pub const SIDECAR_BIN: &str = "binaries/llama-server";
 const READY_NEEDLE: &str = "HTTP server listening";
 const READINESS_TIMEOUT: Duration = Duration::from_secs(180);
@@ -112,7 +111,6 @@ impl SidecarConfig {
         }
     }
 
-
     pub fn from_capabilities(model_path: PathBuf, capabilities: &SystemCapabilities) -> Self {
         let has_accelerator = capabilities
             .gpu
@@ -163,6 +161,16 @@ pub struct SidecarHandle {
     /// path runs from a sync Tauri callback. `Option` so the kill
     /// owner takes the child exactly once.
     child: Arc<SyncMutex<Option<CommandChild>>>,
+
+    /// The `--ctx-size` this server was actually launched with.
+    ///
+    /// Not a constant: it is 8192 on GPU machines, 4096 CPU-only, and 2048
+    /// under the low-RAM threshold. Callers that budget a prompt must use
+    /// this value — reporting a fixed 8192 upstream meant every budget
+    /// overshot the real window by 2–4x on smaller machines, so llama-server
+    /// silently truncated the prompt server-side and the system prompt and
+    /// oldest history simply vanished.
+    context_size: u32,
 }
 
 impl SidecarHandle {
@@ -170,6 +178,11 @@ impl SidecarHandle {
     /// `http://127.0.0.1:53412`. Pass to `SidecarLLMClient`.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// Context window, in tokens, that this sidecar was launched with.
+    pub fn context_size(&self) -> u32 {
+        self.context_size
     }
 
     /// Explicitly kill the sidecar. After this returns, the handle is
@@ -405,7 +418,10 @@ impl SidecarRegistry {
     /// Number of currently-tracked live entries. For diagnostics.
     pub fn live_count(&self) -> usize {
         let entries = self.entries.lock();
-        entries.iter().filter(|e| e.child.strong_count() > 0).count()
+        entries
+            .iter()
+            .filter(|e| e.child.strong_count() > 0)
+            .count()
     }
 }
 
@@ -443,9 +459,9 @@ impl JobObjectGuard {
     fn create() -> Result<Self, String> {
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::JobObjects::{
-            CreateJobObjectW, SetInformationJobObject,
-            JobObjectExtendedLimitInformation, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
 
         // SAFETY: CreateJobObjectW with null `name` and null security
@@ -455,10 +471,8 @@ impl JobObjectGuard {
         // and we can convert to a Rust error. No memory borrowed across
         // the FFI boundary.
         #[allow(unsafe_code)]
-        let handle: HANDLE = unsafe {
-            CreateJobObjectW(None, windows::core::PCWSTR::null())
-        }
-        .map_err(|e| format!("CreateJobObjectW failed: {e}"))?;
+        let handle: HANDLE = unsafe { CreateJobObjectW(None, windows::core::PCWSTR::null()) }
+            .map_err(|e| format!("CreateJobObjectW failed: {e}"))?;
 
         if handle.is_invalid() {
             return Err("CreateJobObjectW returned invalid handle".to_string());
@@ -518,16 +532,14 @@ impl JobObjectGuard {
         // process is alive and we have permission to inspect it
         // (we spawned it).
         #[allow(unsafe_code)]
-        let child_handle = unsafe {
-            OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid)
-        }
-        .map_err(|e| format!("OpenProcess(pid={pid}) failed: {e}"))?;
+        let child_handle =
+            unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid) }
+                .map_err(|e| format!("OpenProcess(pid={pid}) failed: {e}"))?;
 
         // SAFETY: Both handles are valid — we created `self.handle`
         // in `create()` and just opened `child_handle`.
         #[allow(unsafe_code)]
-        let assign_result =
-            unsafe { AssignProcessToJobObject(self.handle, child_handle) };
+        let assign_result = unsafe { AssignProcessToJobObject(self.handle, child_handle) };
 
         // Always close the child handle once assignment completes;
         // the process stays alive (Windows holds its own ref), the
@@ -537,8 +549,7 @@ impl JobObjectGuard {
             let _ = CloseHandle(child_handle);
         }
 
-        assign_result
-            .map_err(|e| format!("AssignProcessToJobObject(pid={pid}) failed: {e}"))?;
+        assign_result.map_err(|e| format!("AssignProcessToJobObject(pid={pid}) failed: {e}"))?;
         Ok(())
     }
 }
@@ -732,10 +743,7 @@ impl SidecarManager {
     ///   `"HTTP server listening"` within `READINESS_TIMEOUT`.
     /// - `LLMError::GenerationFailed` if the sidecar exits during
     ///   startup (typically a corrupt GGUF or unsupported architecture).
-    pub async fn start(
-        app: &AppHandle,
-        config: SidecarConfig,
-    ) -> Result<SidecarHandle, LLMError> {
+    pub async fn start(app: &AppHandle, config: SidecarConfig) -> Result<SidecarHandle, LLMError> {
         // 1. Validate the model file exists. llama-server's error path
         //    on a missing file is fine, but failing fast here gives a
         //    cleaner error surface to the UI.
@@ -772,9 +780,7 @@ impl SidecarManager {
         let (rx, child) = app
             .shell()
             .sidecar(SIDECAR_BIN)
-            .map_err(|err| {
-                LLMError::Other(format!("Failed to locate sidecar binary: {err}"))
-            })?
+            .map_err(|err| LLMError::Other(format!("Failed to locate sidecar binary: {err}")))?
             .args(args)
             .spawn()
             .map_err(|err| {
@@ -825,19 +831,24 @@ impl SidecarManager {
             return Err(err);
         }
 
+        // Recorded explicitly so a mismatch between what the sidecar runs and
+        // what prompt budgeting assumes is visible in the log rather than
+        // showing up as mysteriously truncated context on smaller machines.
+        tracing::info!(
+            context_size = config.context_size,
+            "llama-server ready; prompt budgeting will use this context window"
+        );
+
         Ok(SidecarHandle {
             endpoint,
             child: child_arc,
+            context_size: config.context_size,
         })
     }
 }
 
-
 fn is_startup_failure(err: &LLMError) -> bool {
-    matches!(
-        err,
-        LLMError::Timeout | LLMError::GenerationFailed(_)
-    )
+    matches!(err, LLMError::Timeout | LLMError::GenerationFailed(_))
 }
 
 /// Picks an ephemeral TCP port by binding to `127.0.0.1:0`, reading
@@ -857,7 +868,6 @@ fn pick_free_port() -> Result<u16, LLMError> {
     Ok(port)
 }
 
-
 fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
     vec![
         "-m".to_string(),
@@ -872,7 +882,6 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
         config.context_size.to_string(),
     ]
 }
-
 
 /// Spawn a long-lived event-drain task for a sidecar. Returns once the
 /// readiness needle appears on stderr (or hits a timeout/crash) and
@@ -905,8 +914,10 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
 /// Returns a `oneshot::Receiver<Result<(), LLMError>>` so the caller
 /// can `await` readiness while the drain task owns the
 /// `CommandEvent` stream. The oneshot fires exactly once:
+///
 /// - `Ok(())` when stderr emits the readiness needle, or
 /// - `Err(...)` if the sidecar terminates / errors before readiness.
+///
 /// After that signal, the drain keeps running for stderr capture
 /// even though the caller has moved on.
 fn spawn_event_drain(
@@ -942,9 +953,7 @@ fn spawn_event_drain(
                         tracing::debug!(target: "llama_server", "{}", trimmed);
                     }
                     if !readiness_signaled && trimmed.contains(READY_NEEDLE) {
-                        tracing::info!(
-                            "llama-server sidecar ready on http://127.0.0.1:{port}"
-                        );
+                        tracing::info!("llama-server sidecar ready on http://127.0.0.1:{port}");
                         signal_ready(&mut ready_tx, Ok(()));
                         readiness_signaled = true;
                     }
@@ -1093,7 +1102,10 @@ mod tests {
         assert_eq!(cfg.context_size, 4096);
     }
 
-    fn make_caps(gpu_vendor: Option<crate::llm::system::GPUVendor>, ram_gb: f64) -> SystemCapabilities {
+    fn make_caps(
+        gpu_vendor: Option<crate::llm::system::GPUVendor>,
+        ram_gb: f64,
+    ) -> SystemCapabilities {
         use crate::llm::system::{GPUInfo, Platform};
         SystemCapabilities {
             total_ram_gb: ram_gb,

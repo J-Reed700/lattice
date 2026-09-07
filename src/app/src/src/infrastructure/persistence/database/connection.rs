@@ -146,22 +146,15 @@ impl DatabaseConnection {
         Ok(())
     }
 
-
     pub async fn begin_immediate(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>> {
         tracing::info!("→ begin_immediate: Starting transaction acquisition...");
         let pool = self.pool.clone();
         let result = retry_with_backoff(
             RetryConfig::default(),
             || async {
-                tracing::info!("→ begin_immediate: Calling pool.begin()...");
-                let mut tx = pool.begin().await?;
-                tracing::info!(
-                    "→ begin_immediate: Swapping to IMMEDIATE mode (ROLLBACK; BEGIN IMMEDIATE)..."
-                );
-                sqlx::query("ROLLBACK; BEGIN IMMEDIATE")
-                    .execute(&mut *tx)
-                    .await?;
-                tracing::info!("✓ begin_immediate: Swapped to IMMEDIATE mode successfully");
+                tracing::info!("→ begin_immediate: Calling pool.begin_with()...");
+                let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+                tracing::info!("✓ begin_immediate: Transaction acquired successfully");
                 Ok(tx)
             },
             |e: &AppError| {

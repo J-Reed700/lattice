@@ -1,8 +1,8 @@
-use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
-use crate::features::qa::dto::SourceDto;
 use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
+use crate::features::qa::dto::SourceDto;
+use crate::features::settings::dto::{LLMPromptSettingsDto, ToolOutputSettingsDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use crate::shared::text_utils::safe_truncate;
@@ -43,10 +43,106 @@ pub struct ToolLoopOutcome {
     pub timings: ToolLoopTimingMetrics,
 }
 
+/// Emits `llm-stream` events tagged with the turn they belong to.
+///
+/// `llm-stream` is a single global Tauri channel with more than one producer
+/// (this tool loop and the QA service), and the payloads previously carried no
+/// identity at all. Any consumer therefore had to accept every event on the
+/// channel, so a second concurrent generation — a query rewrite running during
+/// a chat turn, or a resend whose predecessor's listener was still attached —
+/// interleaved its tokens into the wrong bubble.
+///
+/// Tagging every emit with `conversation_id` and a per-turn `request_id` lets
+/// each consumer keep only what is addressed to it.
+pub(super) struct StreamEmitter<'a, R: tauri::Runtime> {
+    window: &'a tauri::Window<R>,
+    conversation_id: String,
+    request_id: String,
+    /// Whether a terminal `done` has been emitted for this turn.
+    done_sent: bool,
+}
+
+impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
+    pub(super) fn new(
+        window: &'a tauri::Window<R>,
+        conversation_id: &str,
+        request_id: &str,
+    ) -> Self {
+        Self {
+            window,
+            conversation_id: conversation_id.to_string(),
+            request_id: request_id.to_string(),
+            done_sent: false,
+        }
+    }
+
+    pub(super) fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    /// Emit a content chunk.
+    pub(super) fn content(&self, chunk: &str) -> Result<()> {
+        self.emit(serde_json::json!({
+            "conversationId": self.conversation_id,
+            "requestId": self.request_id,
+            "content": chunk,
+            "done": false,
+        }))
+    }
+
+    /// Emit a non-fatal status update (e.g. a retry notice).
+    pub(super) fn status(&self, status: &str, attempt: usize) {
+        if let Err(e) = self.emit(serde_json::json!({
+            "conversationId": self.conversation_id,
+            "requestId": self.request_id,
+            "content": "",
+            "done": false,
+            "status": status,
+            "attempt": attempt,
+        })) {
+            warn!(error = %e, "Failed to emit stream status");
+        }
+    }
+
+    /// Emit the terminal event. Idempotent, so belt-and-braces calls on
+    /// several exit paths cannot produce duplicates.
+    pub(super) fn done(&mut self) {
+        if self.done_sent {
+            return;
+        }
+        self.done_sent = true;
+        if let Err(e) = self.emit(serde_json::json!({
+            "conversationId": self.conversation_id,
+            "requestId": self.request_id,
+            "done": true,
+        })) {
+            warn!(error = %e, "Failed to emit stream completion");
+        }
+    }
+
+    fn emit(&self, payload: serde_json::Value) -> Result<()> {
+        self.window
+            .emit("llm-stream", payload)
+            .map_err(|e| AppError::InvalidState(format!("Frontend disconnected: {}", e)))
+    }
+}
+
+impl<R: tauri::Runtime> Drop for StreamEmitter<'_, R> {
+    /// Guarantee a terminal event on **every** exit path, including the error
+    /// returns scattered through the tool loop. Without this the UI stays
+    /// stuck "generating" unless the outer invoke happens to reject.
+    fn drop(&mut self) {
+        self.done();
+    }
+}
+
+// The tool loop is a turn-level orchestration boundary with explicit runtime inputs.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conv_id: &str,
+    request_id: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     window: &tauri::Window<R>,
     context: &[String],
@@ -74,6 +170,10 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         "chat_with_conversation: tool loop begin"
     );
 
+    // Owns the terminal `done` event via Drop, so no error path can leave the
+    // UI generating forever.
+    let mut emitter = StreamEmitter::new(window, conv_id, request_id);
+
     let base_prompt = enhanced_message.to_string();
     let mut tool_context = context.to_vec();
     let mut current_prompt = base_prompt.clone();
@@ -81,8 +181,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
         timings.iterations = (iteration + 1) as u32;
-        if is_cancel_requested(conv_id) {
-            emit_cancelled_stream(window);
+        if is_cancel_requested(request_id) {
+            emit_cancelled_stream(window, conv_id, request_id);
             return Err(cancellation_error());
         }
         info!(
@@ -102,8 +202,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
                 let stream_future = async {
                     loop {
-                        if is_cancel_requested(conv_id) {
-                            emit_cancelled_stream(window);
+                        if is_cancel_requested(request_id) {
+                            emit_cancelled_stream(window, conv_id, request_id);
                             return Err(cancellation_error());
                         }
 
@@ -123,18 +223,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                         match chunk_result {
                             Ok(StreamChunk::Content(chunk)) => {
                                 full_response.push_str(&chunk);
-                                if let Err(e) = window.emit(
-                                    "llm-stream",
-                                    serde_json::json!({
-                                        "content": chunk,
-                                        "done": false
-                                    }),
-                                ) {
+                                if let Err(e) = emitter.content(&chunk) {
                                     error!("Failed to emit stream chunk: {}", e);
-                                    return Err(AppError::InvalidState(format!(
-                                        "Frontend disconnected: {}",
-                                        e
-                                    )));
+                                    return Err(e);
                                 }
                             }
                             Ok(StreamChunk::ToolCalls(calls)) => {
@@ -168,17 +259,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 );
                                 timings.empty_response_retries =
                                     timings.empty_response_retries.saturating_add(1);
-                                if let Err(e) = window.emit(
-                                    "llm-stream",
-                                    serde_json::json!({
-                                        "content": "",
-                                        "done": false,
-                                        "status": "retrying",
-                                        "attempt": iteration + 2
-                                    }),
-                                ) {
-                                    warn!("Failed to emit retrying status: {}", e);
-                                }
+                                emitter.status("retrying", iteration + 2);
                                 tool_context
                                     .push(format!("System: [{}]", EMPTY_RESPONSE_RETRY_HINT));
                                 let retry_prompt = render_tool_followup_prompt(
@@ -189,11 +270,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 current_prompt = format!("{base_prompt}\n\n{retry_prompt}");
                                 continue;
                             }
-                            if let Err(e) =
-                                window.emit("llm-stream", serde_json::json!({ "done": true }))
-                            {
-                                warn!("Failed to emit stream completion: {}", e);
-                            }
+                            emitter.done();
                             tracing::info!(
                                 conversation_id = conv_id,
                                 response_len = response_text.len(),
@@ -219,8 +296,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                         for tc in &tool_calls {
                             let tool_call_start = Instant::now();
                             timings.tool_call_count = timings.tool_call_count.saturating_add(1);
-                            if is_cancel_requested(conv_id) {
-                                emit_cancelled_stream(window);
+                            if is_cancel_requested(request_id) {
+                                emit_cancelled_stream(window, conv_id, request_id);
                                 return Err(cancellation_error());
                             }
                             let resolved_tool = canonical_tool_name(tc.name.as_str());
@@ -355,10 +432,10 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     }
                     Ok(Err(e)) => return Err(e),
                     Err(_) => {
-                        timings.llm_stream_ms = timings
+                        let llm_stream_ms = timings
                             .llm_stream_ms
                             .saturating_add(elapsed_ms(llm_iteration_start));
-                        error!("LLM generation timed out after 5 minutes");
+                        error!(llm_stream_ms, "LLM generation timed out after 5 minutes");
                         return Err(AppError::ServiceNotAvailable(
                             "LLM generation timed out. The model may be overloaded.".into(),
                         ));
@@ -366,10 +443,10 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                 }
             }
             Err(e) => {
-                timings.llm_stream_ms = timings
+                let llm_stream_ms = timings
                     .llm_stream_ms
                     .saturating_add(elapsed_ms(llm_iteration_start));
-                error!("Failed to start LLM stream: {}", e);
+                error!(llm_stream_ms, error = %e, "Failed to start LLM stream");
                 return Err(e);
             }
         }
@@ -388,9 +465,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         total_ms = elapsed_ms(tool_loop_start),
         "Tool calling loop exhausted iterations"
     );
-    if let Err(e) = window.emit("llm-stream", serde_json::json!({ "done": true })) {
-        warn!("Failed to emit stream completion: {}", e);
-    }
+    emitter.done();
     Err(AppError::Other(
         "Tool calling loop exceeded maximum iterations without producing a final response".into(),
     ))
@@ -464,6 +539,7 @@ fn collect_tool_sources(
                     section: None,
                     chunk_index: Some(1),
                     chunk_excerpts: None,
+                    citation_id: None,
                 }];
             }
             Vec::new()
@@ -520,6 +596,7 @@ fn collect_tool_sources(
                     section: None,
                     chunk_index: Some(1),
                     chunk_excerpts: None,
+                    citation_id: None,
                 }];
             }
             Vec::new()
@@ -543,9 +620,7 @@ fn is_tool_allowed(
     tool_name: &str,
     tools_ref: Option<&[crate::application::ports::ToolDefinition]>,
 ) -> bool {
-    tools_ref.map_or(false, |tools| {
-        tools.iter().any(|tool| tool.name.as_str() == tool_name)
-    })
+    tools_ref.is_some_and(|tools| tools.iter().any(|tool| tool.name.as_str() == tool_name))
 }
 
 fn available_tool_names(
@@ -568,10 +643,16 @@ fn available_tool_names(
     names
 }
 
-fn emit_cancelled_stream<R: tauri::Runtime>(window: &tauri::Window<R>) {
+fn emit_cancelled_stream<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    conversation_id: &str,
+    request_id: &str,
+) {
     if let Err(e) = window.emit(
         "llm-stream",
         serde_json::json!({
+            "conversationId": conversation_id,
+            "requestId": request_id,
             "done": true,
             "status": "cancelled"
         }),

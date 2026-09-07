@@ -10,8 +10,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::search::semantic_search::SemanticSearchUseCase;
-//! use vault_desktop::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+//! use lattice::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+//! use lattice::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
 //!
 //! # async fn example(use_case: SemanticSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = SearchRequestDto {
@@ -33,9 +33,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::features::search::dto::{SearchRequestDto, SearchResponseDto};
 use crate::features::search::mapper::SearchMapper;
-use crate::application::ports::{EmbeddingPort, VectorSearchPort};
 use crate::shared::error::Result;
 
 /// Semantic search use case.
@@ -63,9 +63,9 @@ impl SemanticSearchUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+    /// use lattice::application::use_cases::search::semantic_search::SemanticSearchUseCase;
     /// # use std::sync::Arc;
-    /// # use vault_desktop::application::ports::{EmbeddingPort, VectorSearchPort};
+    /// # use lattice::application::ports::{EmbeddingPort, VectorSearchPort};
     ///
     /// # fn example(embedder: Arc<dyn EmbeddingPort>, searcher: Arc<dyn VectorSearchPort>) {
     /// let use_case = SemanticSearchUseCase::new(embedder, searcher);
@@ -101,8 +101,8 @@ impl SemanticSearchUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::search::semantic_search::SemanticSearchUseCase;
-    /// # use vault_desktop::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
+    /// # use lattice::application::use_cases::search::semantic_search::SemanticSearchUseCase;
+    /// # use lattice::application::dtos::search_dto::{SearchRequestDto, SearchModeDto};
     /// # async fn example(use_case: SemanticSearchUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = SearchRequestDto {
     ///     query: "semantic search".to_string(),

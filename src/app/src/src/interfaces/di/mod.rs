@@ -91,7 +91,6 @@ pub use modules::{
 };
 
 // Legacy exports (for backward compatibility)
-use crate::infrastructure::persistence::repositories::mocks::*;
 #[cfg(test)]
 use crate::features::embedding::mocks::MockEmbeddingService;
 #[cfg(test)]
@@ -100,6 +99,7 @@ use crate::features::mentions::mocks::MockMentionRepository;
 use crate::features::search::mocks::MockSearchService;
 #[cfg(test)]
 use crate::features::tags::mocks::MockTagRepository;
+use crate::infrastructure::persistence::repositories::mocks::*;
 use crate::shared::error::{AppError, Result};
 // MockDocumentRepository is in infrastructure/persistence/repositories::mocks (imported via line 89)
 // Note: MockChunkRepository is in infrastructure::persistence::repositories::mocks, not services::mocks
@@ -109,6 +109,10 @@ use crate::infrastructure::persistence::repositories::mocks::MockEmbeddingReposi
 use crate::application::ports::{
     ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
 };
+use crate::features::embedding::service::EmbeddingService;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::search::SearchServiceTrait;
+use crate::features::tags::TagRepositoryTrait;
 use crate::infrastructure::persistence::repositories::traits::{
     DocumentRepositoryTrait,
     /* ChunkRepositoryTrait removed - DDD */
@@ -118,11 +122,7 @@ use crate::infrastructure::persistence::repositories::traits::{
 use crate::infrastructure::persistence::repositories::{
     ChunkRepository, DocumentRepository, EmbeddingRepository, MentionRepository, TagRepository,
 };
-use crate::features::embedding::service::EmbeddingService;
-use crate::features::tags::TagRepositoryTrait;
 use crate::infrastructure::services::traits::*;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::search::SearchServiceTrait;
 
 // ============================================================================
 // Production Container
@@ -634,7 +634,10 @@ mod tests_basic {
             .embed_single("Test content")
             .await?;
 
-        assert_eq!(embedding.len(), crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM);
+        assert_eq!(
+            embedding.len(),
+            crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM
+        );
 
         // Store embedding
         let emb_id = container

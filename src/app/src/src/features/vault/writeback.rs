@@ -1,4 +1,5 @@
-//! Mirrors notes to markdown files on disk.
+//! Mirrors notes to markdown files on disk, and puts the mirrored file into
+//! the corpus so a journal page is retrievable like any other document.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,6 +30,19 @@ pub fn spawn_sync_workspace_note(
     });
 }
 
+/// Removes a note's markdown file from the vault.
+///
+/// Must go through the writer queue rather than deleting inline from the
+/// command: the queue serializes against in-flight writes for the same note,
+/// and it stamps the suppression registry so the watcher doesn't observe the
+/// removal as an external change. Deleting the file directly would race a
+/// pending `WorkspaceNote` write, which could re-create the file we just
+/// removed.
+pub fn spawn_delete_workspace_note(container: &Container, id: String) {
+    let handle = container.vault_writer();
+    handle.submit(VaultWriteJob::DeleteWorkspaceNote { id });
+}
+
 pub enum VaultWriteJob {
     WorkspaceNote {
         id: String,
@@ -38,10 +52,46 @@ pub enum VaultWriteJob {
         updated_at: String,
         tags: Vec<String>,
     },
+    DeleteWorkspaceNote {
+        id: String,
+    },
     Backfill {
         pool: SqlitePool,
         vault_root: PathBuf,
     },
+}
+
+/// What the corpus should do about a note whose markdown file just changed.
+///
+/// Journal pages are written through to the vault but were historically never
+/// indexed, so "retrieval over your journal" never happened. This is the one
+/// decision that closes that gap; it is pure so it can be tested without a
+/// container, a pool, or a disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteIndexAction {
+    /// Submit the file to the indexing pipeline.
+    Index,
+    /// Nothing to retrieve — an empty page is not worth a document row.
+    Skip,
+    /// The file is gone; drop it from the index.
+    Remove,
+}
+
+/// The note-sync event the action is decided from.
+#[derive(Debug, Clone, Copy)]
+pub enum NoteSyncOutcome<'a> {
+    /// The markdown file was written successfully, with this note body.
+    Written { body: &'a str },
+    /// The markdown file was removed.
+    Deleted,
+}
+
+pub fn note_index_action(outcome: NoteSyncOutcome<'_>) -> NoteIndexAction {
+    match outcome {
+        NoteSyncOutcome::Written { body } if body.trim().is_empty() => NoteIndexAction::Skip,
+        NoteSyncOutcome::Written { .. } => NoteIndexAction::Index,
+        NoteSyncOutcome::Deleted => NoteIndexAction::Remove,
+    }
 }
 
 #[derive(Clone)]
@@ -125,8 +175,7 @@ async fn run_worker(
                 tags,
             } => {
                 let target = vault_root.join("notes").join(format!("{}.md", id));
-                let frontmatter =
-                    build_frontmatter(&id, &title, &created_at, &updated_at, &tags);
+                let frontmatter = build_frontmatter(&id, &title, &created_at, &updated_at, &tags);
                 let document = format!("{}\n\n{}", frontmatter, body);
                 if let Err(e) = atomic_write(&target, &document).await {
                     tracing::warn!(
@@ -141,6 +190,51 @@ async fn run_worker(
                     // and bounce it back through SQL → vault → ...
                     suppression.mark_written(target.clone()).await;
                     tracing::debug!(target = %target.display(), "vault worker: workspace note synced");
+                    apply_note_index_action(
+                        &app_handle,
+                        &target,
+                        note_index_action(NoteSyncOutcome::Written { body: &body }),
+                    )
+                    .await;
+                }
+            }
+            VaultWriteJob::DeleteWorkspaceNote { id } => {
+                let target = vault_root.join("notes").join(format!("{}.md", id));
+
+                // Mark before unlinking. The watcher keys suppression on the
+                // path, and a delete event can reach it before this await
+                // returns; marking first closes that window.
+                suppression.mark_written(target.clone()).await;
+
+                match tokio::fs::remove_file(&target).await {
+                    Ok(()) => {
+                        tracing::debug!(target = %target.display(), "vault worker: workspace note removed");
+                        apply_note_index_action(
+                            &app_handle,
+                            &target,
+                            note_index_action(NoteSyncOutcome::Deleted),
+                        )
+                        .await;
+                    }
+                    // Already gone is the desired end state, not a failure —
+                    // the user may have deleted it from the vault side first.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        tracing::debug!(target = %target.display(), "vault worker: note file already absent");
+                        apply_note_index_action(
+                            &app_handle,
+                            &target,
+                            note_index_action(NoteSyncOutcome::Deleted),
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target = %target.display(),
+                            error = %e,
+                            "vault worker: workspace note delete failed"
+                        );
+                        emit_write_error(&app_handle, Some(&id), &target, &e.to_string());
+                    }
                 }
             }
             VaultWriteJob::Backfill {
@@ -187,6 +281,68 @@ fn emit_write_error(
     }
 }
 
+/// Puts a mirrored journal page into (or takes it out of) the corpus, so the
+/// vault's own notes are retrievable alongside imported documents.
+///
+/// The writer queue is constructed before the DI container exists, so it cannot
+/// hold one — it reaches the container through the Tauri state the app manages
+/// at boot, the same way every command does. A missing handle or container
+/// (boot order, test fixtures) is a silent no-op: the markdown mirror is durable
+/// either way, and the next edit retries the indexing.
+///
+/// Runs inline in the worker on purpose. The queue is FIFO, so indexing the same
+/// note twice concurrently is impossible; the cost is that the next note's mirror
+/// waits, which is latency, not data loss.
+async fn apply_note_index_action(
+    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    target: &Path,
+    action: NoteIndexAction,
+) {
+    use tauri::Manager;
+
+    if matches!(action, NoteIndexAction::Skip) {
+        tracing::debug!(target = %target.display(), "vault worker: empty note — not indexed");
+        return;
+    }
+
+    let handle = {
+        let guard = match app_handle.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        match guard.as_ref() {
+            Some(h) => h.clone(),
+            None => return,
+        }
+    };
+    let Some(container) = handle.try_state::<Container>() else {
+        tracing::debug!("vault worker: container not in Tauri state yet — note not indexed");
+        return;
+    };
+
+    let path = target.to_string_lossy().to_string();
+    let outcome = match action {
+        NoteIndexAction::Index => {
+            crate::features::file::plugin::commands::index_file(path.clone(), None, container)
+                .await
+                .map(|_| ())
+        }
+        // `Skip` returned above; `Remove` is the only case left.
+        _ => crate::features::file::plugin::commands::remove_indexed_file(path.clone(), container)
+            .await,
+    };
+
+    match outcome {
+        Ok(()) => tracing::debug!(target = %path, ?action, "vault worker: note index updated"),
+        Err(e) => tracing::warn!(
+            target = %path,
+            error = %e.message,
+            ?action,
+            "vault worker: note index update failed"
+        ),
+    }
+}
+
 async fn run_backfill(
     pool: SqlitePool,
     vault_root: PathBuf,
@@ -220,6 +376,12 @@ async fn run_backfill(
         match atomic_write(&target, &document).await {
             Ok(()) => {
                 suppression.mark_written(target.clone()).await;
+                apply_note_index_action(
+                    app_handle,
+                    &target,
+                    note_index_action(NoteSyncOutcome::Written { body: &row.content }),
+                )
+                .await;
                 succeeded += 1;
             }
             Err(e) => {
@@ -311,6 +473,42 @@ async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_empty_write_is_indexed() {
+        assert_eq!(
+            note_index_action(NoteSyncOutcome::Written {
+                body: "Read three papers on retrieval today."
+            }),
+            NoteIndexAction::Index
+        );
+    }
+
+    #[test]
+    fn empty_write_is_skipped() {
+        assert_eq!(
+            note_index_action(NoteSyncOutcome::Written { body: "" }),
+            NoteIndexAction::Skip
+        );
+    }
+
+    #[test]
+    fn whitespace_only_write_is_skipped() {
+        assert_eq!(
+            note_index_action(NoteSyncOutcome::Written {
+                body: "   \n\t  \r\n "
+            }),
+            NoteIndexAction::Skip
+        );
+    }
+
+    #[test]
+    fn delete_removes_from_the_index() {
+        assert_eq!(
+            note_index_action(NoteSyncOutcome::Deleted),
+            NoteIndexAction::Remove
+        );
+    }
 
     #[test]
     fn frontmatter_with_tags_roundtrips() {
@@ -409,7 +607,11 @@ mod tests {
         while let Some(entry) = entries.next_entry().await.unwrap() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            assert!(!name.contains(".tmp"), "unexpected leftover tmp file: {}", name);
+            assert!(
+                !name.contains(".tmp"),
+                "unexpected leftover tmp file: {}",
+                name
+            );
             count += 1;
         }
         assert_eq!(count, 1);
@@ -436,11 +638,10 @@ mod tests {
         drop(tx);
         worker.await.unwrap();
 
-        let final_contents = tokio::fs::read_to_string(
-            vault_root.join("notes").join("ordering-test.md"),
-        )
-        .await
-        .unwrap();
+        let final_contents =
+            tokio::fs::read_to_string(vault_root.join("notes").join("ordering-test.md"))
+                .await
+                .unwrap();
         assert_eq!(
             final_contents, "version-49",
             "FIFO worker must end at the last submitted version"

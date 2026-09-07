@@ -218,8 +218,8 @@ impl ExecuteFunctionUseCase {
 mod tests {
     use super::*;
     use crate::features::function_calling::domain::ToolDefinition;
-    use crate::features::function_calling::registry::FunctionRegistry;
     use crate::features::function_calling::mocks::MockFunctionExecutor;
+    use crate::features::function_calling::registry::FunctionRegistry;
     use serde_json::json;
 
     #[tokio::test]

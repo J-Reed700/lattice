@@ -116,7 +116,9 @@ fn is_keyword_term_specific(term: &str, hyde_present: bool) -> bool {
         return true;
     }
 
-    let len = term_tokens[0].len();
+    let Some(len) = term_tokens.first().map(String::len) else {
+        return false;
+    };
     if hyde_present {
         // With HyDE available, suppress short conversational singletons.
         len >= 5

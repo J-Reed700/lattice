@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::StartBatchFileImportUseCase;
-//! use vault_desktop::application::dtos::batch_dto::StartBatchFileImportRequestDto;
+//! use lattice::application::use_cases::batch::StartBatchFileImportUseCase;
+//! use lattice::application::dtos::batch_dto::StartBatchFileImportRequestDto;
 //!
 //! # async fn example(use_case: StartBatchFileImportUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = StartBatchFileImportRequestDto {
@@ -36,14 +36,14 @@ use std::time::Instant;
 use tracing::{info, instrument};
 use uuid::Uuid;
 
+use crate::application::ports::BatchJobRepositoryPort;
+use crate::domain::repositories::UnitOfWorkFactory;
 use crate::features::batch::dto::{
     StartBatchFileImportRequestDto, StartBatchFileImportResponseDto,
 };
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
-use crate::application::ports::BatchJobRepositoryPort;
 use crate::features::indexing::use_cases::index_file::PrepareForIndexingOutcome;
 use crate::features::indexing::use_cases::IndexFileUseCase;
-use crate::domain::repositories::UnitOfWorkFactory;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
 
@@ -110,8 +110,8 @@ impl StartBatchFileImportUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::StartBatchFileImportUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::StartBatchFileImportRequestDto;
+    /// # use lattice::application::use_cases::batch::StartBatchFileImportUseCase;
+    /// # use lattice::application::dtos::batch_dto::StartBatchFileImportRequestDto;
     /// # async fn example(use_case: StartBatchFileImportUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = StartBatchFileImportRequestDto {
     ///     file_paths: vec!["/docs/file1.txt".to_string()],
@@ -305,12 +305,8 @@ impl StartBatchFileImportUseCase {
                     .prepare_for_indexing(index_request)
                     .await
                 {
-                    Ok(PrepareForIndexingOutcome::Prepared((
-                        aggregate,
-                        embedding_entries,
-                        library_path,
-                        imported_new,
-                    ))) => {
+                    Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
+                        let (aggregate, embedding_entries, library_path, imported_new) = *prepared;
                         let file_duration = file_start.elapsed();
                         let chunks_created = aggregate.chunks().len();
                         let document_id = aggregate.document().id().to_string();
@@ -890,10 +886,10 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    use crate::features::indexing::dto::IndexFileResponseDto;
     use crate::application::ports::batch_job_repository_port::{
         BatchJobItem, BatchJobStatus as PortBatchJobStatus, BatchJobSummary,
     };
+    use crate::features::indexing::dto::IndexFileResponseDto;
 
     // Mock UnitOfWorkFactory
     struct MockUoWFactory;
@@ -1042,8 +1038,8 @@ mod tests {
             EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, RepositoryPort,
         };
         use crate::domain::entities::document::Document;
-        use crate::features::embedding::entity::Embedding;
         use crate::domain::repositories::UnitOfWorkFactory;
+        use crate::features::embedding::entity::Embedding;
         use std::path::Path;
 
         struct MockFileStorage;

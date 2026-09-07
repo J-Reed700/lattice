@@ -76,6 +76,9 @@ pub enum ModelType {
 
     /// Language models (chat, completion, instruction following).
     LanguageModel,
+
+    /// Speech-to-text models (whisper family) used by audio ingest.
+    Transcription,
 }
 
 impl ModelType {
@@ -96,6 +99,12 @@ impl ModelType {
             Self::Vision => "vision",
             Self::Reranker => "reranker",
             Self::LanguageModel => "language_model",
+            // The `models.model_type` CHECK constraint predates this variant and
+            // SQLite cannot relax a CHECK without rebuilding the table. `'custom'`
+            // is in the allowed set and is written by nothing else, so the mapping
+            // is a bijection. Rename to 'transcription' the next time `models` is
+            // rebuilt for another reason.
+            Self::Transcription => "custom",
         }
     }
 
@@ -109,6 +118,9 @@ impl ModelType {
             // Legacy compatibility
             "embedding" => Ok(Self::TextEmbeddings),
             "chat" => Ok(Self::LanguageModel),
+            // See `to_db_string`: transcription models round-trip through the
+            // legacy `custom` slot until the `models` table is rebuilt.
+            "custom" | "transcription" => Ok(Self::Transcription),
             _ => Err(format!("Invalid model type: {}", s)),
         }
     }

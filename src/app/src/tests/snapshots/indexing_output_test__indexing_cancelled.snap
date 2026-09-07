@@ -1,0 +1,8 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 147
+expression: event
+---
+{
+  "type": "Cancelled"
+}

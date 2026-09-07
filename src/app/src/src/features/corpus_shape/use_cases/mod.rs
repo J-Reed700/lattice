@@ -2,4 +2,6 @@
 
 pub mod run_clustering;
 
-pub use run_clustering::{RunClusteringOutcome, RunClusteringUseCase};
+pub use run_clustering::{
+    ClusterProgress, ProgressSink, RunClusteringOutcome, RunClusteringUseCase,
+};

@@ -1,0 +1,11 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 101
+expression: event
+---
+{
+  "type": "FileStarted",
+  "path": "[file_path]",
+  "current": 1,
+  "total": 150
+}

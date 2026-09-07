@@ -11,8 +11,8 @@ pub mod model_storage_adapter;
 pub mod models;
 pub mod noop_client;
 pub mod ollama_client;
-pub mod sidecar_manager;
 pub mod sidecar_client;
+pub mod sidecar_manager;
 pub mod traits;
 pub mod types;
 
@@ -25,8 +25,6 @@ pub use circuit_breaker::{
 pub use factory::{
     create_llm, create_llm_with_fallback, find_local_model, is_ollama_available, LLMConfig,
 };
-pub use sidecar_client::SidecarLLMClient;
-pub use sidecar_manager::{SidecarConfig, SidecarHandle, SidecarManager};
 pub use model_catalog_adapter::HardcodedModelCatalog;
 pub use model_storage_adapter::FilesystemModelStorage;
 pub use models::{
@@ -35,6 +33,8 @@ pub use models::{
 };
 pub use noop_client::NoOpLLMClient;
 pub use ollama_client::OllamaClient;
+pub use sidecar_client::SidecarLLMClient;
+pub use sidecar_manager::{SidecarConfig, SidecarHandle, SidecarManager};
 pub use system::{detect_capabilities, GPUInfo, GPUVendor, Platform, SystemCapabilities};
 pub use traits::{GenerationConfig, LLMClient};
 pub use types::*;
@@ -43,8 +43,8 @@ pub use types::*;
 // Model Download Utilities
 // ============================================================================
 
-use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::application::ports::model_storage::ModelStoragePort;
+use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::features::llm::use_cases::DownloadModelUseCase;
 use crate::shared::error::Result;
 use std::path::PathBuf;

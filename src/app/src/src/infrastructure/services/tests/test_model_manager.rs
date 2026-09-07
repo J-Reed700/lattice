@@ -482,7 +482,11 @@ async fn test_ensure_reranker_available_downloads() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let mut server = create_mock_server().await;
 
-    let _m1 = mock_file_response(&mut server, "/reranker/model.onnx", b"reranker_model");
+    let _m1 = mock_file_response(
+        &mut server,
+        "/reranker/model.safetensors",
+        b"reranker_model",
+    );
     let _m2 = mock_file_response(
         &mut server,
         "/reranker/tokenizer.json",
@@ -508,6 +512,9 @@ async fn test_is_reranker_ready() {
     fs::write(manager.get_reranker_tokenizer_path(), b"tokenizer")
         .await
         .expect("Failed to write tokenizer");
+    fs::write(temp_dir.path().join("reranker/config.json"), b"{}")
+        .await
+        .expect("Failed to write config");
 
     // Act
     let is_ready = manager.is_reranker_ready().await;
@@ -527,7 +534,10 @@ async fn test_get_reranker_paths() {
     let tokenizer_path = manager.get_reranker_tokenizer_path();
 
     // Assert
-    assert_eq!(model_path, temp_dir.path().join("reranker/model.onnx"));
+    assert_eq!(
+        model_path,
+        temp_dir.path().join("reranker/model.safetensors")
+    );
     assert_eq!(
         tokenizer_path,
         temp_dir.path().join("reranker/tokenizer.json")

@@ -3,8 +3,8 @@ use crate::domain::events::model_download_events::*;
 use crate::domain::repositories::unit_of_work::ModelFileRepositoryPort;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::model_status::FileStatus;
-use crate::infrastructure::event_bus::EventBus;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::infrastructure::event_bus::EventBus;
 use crate::persistence::repositories::model_file::SqliteModelFileRepository;
 use chrono::Utc;
 use std::path::PathBuf;
@@ -22,14 +22,12 @@ pub struct DownloadSaga {
 }
 
 impl DownloadSaga {
-    fn select_primary_model_file<'a>(
-        files: &'a [crate::domain::entities::model_file::ModelFile],
-    ) -> Option<&'a crate::domain::entities::model_file::ModelFile> {
+    fn select_primary_model_file(
+        files: &[crate::domain::entities::model_file::ModelFile],
+    ) -> Option<&crate::domain::entities::model_file::ModelFile> {
         files
             .iter()
-            .find(|file| {
-                file.file_name == "model.onnx" || file.file_name.ends_with("/model.onnx")
-            })
+            .find(|file| file.file_name == "model.onnx" || file.file_name.ends_with("/model.onnx"))
             .or_else(|| {
                 files.iter().find(|file| {
                     file.file_name.ends_with(".onnx") && !file.file_name.ends_with(".onnx_data")
@@ -50,8 +48,9 @@ impl DownloadSaga {
     ) -> Option<ModelLocation> {
         let path = PathBuf::from(&primary.file_path);
         if primary.file_name == "config.json" {
-            path.parent()
-                .map(|p| ModelLocation::LocalDirectory { path: p.to_path_buf() })
+            path.parent().map(|p| ModelLocation::LocalDirectory {
+                path: p.to_path_buf(),
+            })
         } else {
             Some(ModelLocation::LocalFile { path })
         }
@@ -71,9 +70,8 @@ impl DownloadSaga {
         }
     }
 
-    /// Run the saga until either the event bus closes or `cancel`
-    /// fires. See ConversationSummarySaga::start for the rationale on
-    /// the select! biased shape.
+    /// Run the saga until either the event bus closes or `cancel` fires.
+    /// The biased select makes shutdown win when both branches are ready.
     pub async fn start(&self, cancel: CancellationToken) {
         let mut receiver = self.event_bus.subscribe();
 
@@ -301,7 +299,11 @@ impl DownloadSaga {
             // First-download-wins: only auto-activate when the slot is
             // empty so a deliberate user assignment is never stolen.
             if downloaded_model.is_embedding_model() {
-                match self.downloaded_model_repo.get_active_embedding_model().await {
+                match self
+                    .downloaded_model_repo
+                    .get_active_embedding_model()
+                    .await
+                {
                     Ok(None) => {
                         if let Err(e) = self
                             .downloaded_model_repo

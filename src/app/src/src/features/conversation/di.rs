@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::features::conversation::ConversationServiceTrait;
 use crate::features::conversation::use_cases::CreateConversationUseCase;
+use crate::features::conversation::ConversationServiceTrait;
 use crate::infrastructure::services::ConversationService;
 
 #[derive(Clone)]

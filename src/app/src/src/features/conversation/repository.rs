@@ -17,7 +17,7 @@ use crate::domain::conversation::{
 };
 use crate::domain_types::ConversationId;
 use crate::infrastructure::persistence::mappers::{
-    ConversationRowMapper, ConversationMessageMapper, ConversationMessageModel, ConversationModel,
+    ConversationMessageMapper, ConversationMessageModel, ConversationModel, ConversationRowMapper,
     DocumentReferenceMapper, DocumentReferenceModel,
 };
 use crate::shared::error::{AppError, Result};
@@ -317,7 +317,11 @@ impl ConversationRepository {
         Ok(Some(aggregate))
     }
 
-    pub async fn find_all(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Conversation>> {
+    pub async fn find_all(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<Conversation>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -721,10 +725,7 @@ impl ConversationRepository {
         })?;
 
         tx.commit().await.map_err(|e| {
-            AppError::Database(format!(
-                "Failed to commit add_document_reference: {}",
-                e
-            ))
+            AppError::Database(format!("Failed to commit add_document_reference: {}", e))
         })?;
 
         Ok(())
@@ -805,6 +806,483 @@ impl ConversationRepository {
                 AppError::Database(format!("Failed to check conversation existence: {}", e))
             })
     }
+
+    // ---------------------------------------------------------------
+    // Branching: truncate / take-last-turn / fork
+    // (BRIEF rank 4, contract §4.2). No schema change — a branch is a
+    // sibling conversation with copied messages, not a parent pointer.
+    //
+    // Every ordering here is `(created_at, rowid)`. `created_at` is an
+    // RFC 3339 TEXT column and ids are random UUIDs, so two messages
+    // written inside the same second would otherwise order arbitrarily
+    // and a truncate could delete the wrong turn.
+    // ---------------------------------------------------------------
+
+    /// Delete every message created after `message_id` in `conversation_id`,
+    /// and `message_id` itself when `inclusive`.
+    ///
+    /// Also deletes `conversation_message_bookmarks` rows for the removed
+    /// messages in the same transaction: a bookmark that outlived its message
+    /// is a reference the ReferenceInbox cannot open.
+    ///
+    /// Returns the number of messages deleted.
+    pub async fn truncate_after(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+        inclusive: bool,
+    ) -> Result<u64> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin truncate: {}", e)))?;
+
+        let anchor = Self::load_message_position(&mut tx, conversation_id, message_id).await?;
+        let anchor = match anchor {
+            Some(anchor) => anchor,
+            None => {
+                return Err(AppError::NotFound(format!(
+                    "Message {} is not in conversation {}",
+                    message_id, conversation_id
+                )))
+            }
+        };
+
+        let mut ids =
+            Self::load_message_ids_after(&mut tx, conversation_id, &anchor).await?;
+        if inclusive {
+            ids.push(message_id.to_string());
+        }
+
+        let deleted = Self::delete_message_ids(&mut tx, conversation_id, &ids).await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit truncate: {}", e)))?;
+
+        Ok(deleted)
+    }
+
+    /// Delete the trailing assistant/system messages that follow the last user
+    /// message, plus that user message, and return its content and token count.
+    ///
+    /// This is what makes regenerate not duplicate the question: the chat flow
+    /// re-persists the returned content through its normal pending → completed
+    /// path, so the thread ends up with exactly one copy of the user turn.
+    ///
+    /// Returns `None` when the conversation has no user message; nothing is
+    /// deleted in that case.
+    pub async fn take_last_user_turn(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<(String, i64)>> {
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            AppError::Database(format!("Failed to begin take_last_user_turn: {}", e))
+        })?;
+
+        #[derive(sqlx::FromRow)]
+        struct LastUserRow {
+            id: String,
+            content: String,
+            tokens: i64,
+            created_at: String,
+            rowid: i64,
+        }
+
+        let row = sqlx::query_as::<_, LastUserRow>(
+            r#"
+            SELECT id, content, tokens, created_at, rowid
+            FROM conversation_messages
+            WHERE conversation_id = ? AND role = 'user'
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to load last user message: {}", e)))?;
+
+        let row = match row {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+
+        let anchor = MessagePosition {
+            created_at: row.created_at.clone(),
+            rowid: row.rowid,
+        };
+        let mut ids = Self::load_message_ids_after(&mut tx, conversation_id, &anchor).await?;
+        ids.push(row.id.clone());
+
+        Self::delete_message_ids(&mut tx, conversation_id, &ids).await?;
+
+        tx.commit().await.map_err(|e| {
+            AppError::Database(format!("Failed to commit take_last_user_turn: {}", e))
+        })?;
+
+        Ok(Some((row.content, row.tokens)))
+    }
+
+    /// Create a sibling conversation in the same space and copy messages up to
+    /// and including `up_to_message_id` (all when `None`), preserving role,
+    /// content, tokens, metadata, status and relative ordering with fresh ids.
+    /// Also copies `conversation_documents` and `conversation_web_sources`.
+    ///
+    /// Deliberately does **not** copy `conversation_summaries` (it points at
+    /// message ids that mean something else in the new thread) or
+    /// `conversation_memory_vectors` (keyed `UNIQUE(message_id)`, regenerated
+    /// on the next turn).
+    ///
+    /// An `up_to_message_id` that is not in the conversation copies **zero**
+    /// messages — an unknown anchor must never be read as "copy everything".
+    ///
+    /// Returns `(new conversation id, copied message count)`.
+    pub async fn fork(
+        &self,
+        conversation_id: &str,
+        up_to_message_id: Option<&str>,
+        new_id: &str,
+        new_title: &str,
+    ) -> Result<(String, u32)> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin fork: {}", e)))?;
+
+        #[derive(sqlx::FromRow)]
+        struct SourceConversationRow {
+            model_name: String,
+            system_prompt: Option<String>,
+            space_id: String,
+        }
+
+        let source = sqlx::query_as::<_, SourceConversationRow>(
+            r#"
+            SELECT model_name, system_prompt, space_id
+            FROM conversations
+            WHERE id = ?
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to load conversation to fork: {}", e)))?
+        .ok_or_else(|| AppError::NotFound(format!("Conversation {} not found", conversation_id)))?;
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO conversations
+                (id, title, model_name, system_prompt, space_id,
+                 created_at, updated_at, message_count, total_tokens)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+            "#,
+        )
+        .bind(new_id)
+        .bind(new_title)
+        .bind(&source.model_name)
+        .bind(&source.system_prompt)
+        .bind(&source.space_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to create branch conversation: {}", e)))?;
+
+        #[derive(sqlx::FromRow)]
+        struct CopyRow {
+            role: String,
+            content: String,
+            tokens: i64,
+            created_at: String,
+            metadata: Option<String>,
+            status: String,
+        }
+
+        let rows: Vec<CopyRow> = match up_to_message_id {
+            Some(anchor_id) => {
+                match Self::load_message_position(&mut tx, conversation_id, anchor_id).await? {
+                    Some(anchor) => sqlx::query_as::<_, CopyRow>(
+                        r#"
+                        SELECT role, content, tokens, created_at, metadata, status
+                        FROM conversation_messages
+                        WHERE conversation_id = ?
+                          AND (created_at < ? OR (created_at = ? AND rowid <= ?))
+                        ORDER BY created_at ASC, rowid ASC
+                        "#,
+                    )
+                    .bind(conversation_id)
+                    .bind(&anchor.created_at)
+                    .bind(&anchor.created_at)
+                    .bind(anchor.rowid)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(|e| {
+                        AppError::Database(format!("Failed to read messages to copy: {}", e))
+                    })?,
+                    // Unknown anchor: copy nothing rather than everything.
+                    None => Vec::new(),
+                }
+            }
+            None => sqlx::query_as::<_, CopyRow>(
+                r#"
+                SELECT role, content, tokens, created_at, metadata, status
+                FROM conversation_messages
+                WHERE conversation_id = ?
+                ORDER BY created_at ASC, rowid ASC
+                "#,
+            )
+            .bind(conversation_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to read messages to copy: {}", e)))?,
+        };
+
+        let mut copied: u32 = 0;
+        let mut total_tokens: i64 = 0;
+        for row in &rows {
+            let message_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_messages
+                    (id, conversation_id, role, content, tokens, created_at, metadata, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&message_id)
+            .bind(new_id)
+            .bind(&row.role)
+            .bind(&row.content)
+            .bind(row.tokens)
+            .bind(&row.created_at)
+            .bind(&row.metadata)
+            .bind(&row.status)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to copy message: {}", e)))?;
+            copied += 1;
+            total_tokens += row.tokens;
+        }
+
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO conversation_documents
+                (conversation_id, document_id, chunk_id, relevance_score, added_at)
+            SELECT ?, document_id, chunk_id, relevance_score, added_at
+            FROM conversation_documents
+            WHERE conversation_id = ?
+            "#,
+        )
+        .bind(new_id)
+        .bind(conversation_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to copy linked documents: {}", e)))?;
+
+        #[derive(sqlx::FromRow)]
+        struct WebSourceRow {
+            url: String,
+            normalized_url: String,
+            title: Option<String>,
+            excerpt: Option<String>,
+            relevance_score: Option<f64>,
+            added_at: String,
+        }
+
+        let web_sources = sqlx::query_as::<_, WebSourceRow>(
+            r#"
+            SELECT url, normalized_url, title, excerpt, relevance_score, added_at
+            FROM conversation_web_sources
+            WHERE conversation_id = ?
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to read web sources to copy: {}", e)))?;
+
+        for source in &web_sources {
+            sqlx::query(
+                r#"
+                INSERT OR IGNORE INTO conversation_web_sources
+                    (id, conversation_id, url, normalized_url, title, excerpt,
+                     relevance_score, added_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(new_id)
+            .bind(&source.url)
+            .bind(&source.normalized_url)
+            .bind(&source.title)
+            .bind(&source.excerpt)
+            .bind(source.relevance_score)
+            .bind(&source.added_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to copy web source: {}", e)))?;
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET message_count = ?, total_tokens = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(copied as i64)
+        .bind(total_tokens)
+        .bind(&now)
+        .bind(new_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to set branch counts: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit fork: {}", e)))?;
+
+        Ok((new_id.to_string(), copied))
+    }
+
+    /// `(created_at, rowid)` of one message, scoped to its conversation.
+    async fn load_message_position(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        conversation_id: &str,
+        message_id: &str,
+    ) -> Result<Option<MessagePosition>> {
+        sqlx::query_as::<_, MessagePosition>(
+            r#"
+            SELECT created_at, rowid
+            FROM conversation_messages
+            WHERE id = ? AND conversation_id = ?
+            "#,
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to locate message: {}", e)))
+    }
+
+    /// Ids of every message strictly after `anchor`, oldest first.
+    async fn load_message_ids_after(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        conversation_id: &str,
+        anchor: &MessagePosition,
+    ) -> Result<Vec<String>> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT id
+            FROM conversation_messages
+            WHERE conversation_id = ?
+              AND (created_at > ? OR (created_at = ? AND rowid > ?))
+            ORDER BY created_at ASC, rowid ASC
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(&anchor.created_at)
+        .bind(&anchor.created_at)
+        .bind(anchor.rowid)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to list messages to remove: {}", e)))
+    }
+
+    /// Delete messages (and their bookmarks) by id, then recount the
+    /// conversation. Runs inside the caller's transaction so a partial
+    /// truncate can never be observed.
+    async fn delete_message_ids(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        conversation_id: &str,
+        message_ids: &[String],
+    ) -> Result<u64> {
+        if message_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let placeholders = vec!["?"; message_ids.len()].join(",");
+
+        // Bookmarks first: `conversation_message_bookmarks` only cascades when
+        // SQLite foreign keys are enabled, and a dangling bookmark is worse
+        // than a redundant delete.
+        let bookmark_sql = format!(
+            "DELETE FROM conversation_message_bookmarks WHERE message_id IN ({})",
+            placeholders
+        );
+        let mut bookmark_query = sqlx::query(&bookmark_sql);
+        for id in message_ids {
+            bookmark_query = bookmark_query.bind(id);
+        }
+        bookmark_query
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to delete bookmarks: {}", e)))?;
+
+        let sql = format!(
+            "DELETE FROM conversation_messages WHERE conversation_id = ? AND id IN ({})",
+            placeholders
+        );
+        let mut query = sqlx::query(&sql).bind(conversation_id);
+        for id in message_ids {
+            query = query.bind(id);
+        }
+        let deleted = query
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to delete messages: {}", e)))?
+            .rows_affected();
+
+        #[derive(sqlx::FromRow)]
+        struct MessageStats {
+            count: i64,
+            total: i64,
+        }
+
+        let stats = sqlx::query_as::<_, MessageStats>(
+            r#"
+            SELECT COUNT(*) as count, COALESCE(SUM(tokens), 0) as total
+            FROM conversation_messages
+            WHERE conversation_id = ?
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to recount messages: {}", e)))?;
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET message_count = ?, total_tokens = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(stats.count)
+        .bind(stats.total)
+        .bind(&now)
+        .bind(conversation_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to update conversation stats: {}", e)))?;
+
+        Ok(deleted)
+    }
+}
+
+/// Position of a message in its conversation: `(created_at, rowid)`.
+///
+/// `created_at` alone is not a key — RFC 3339 TEXT at second resolution ties
+/// constantly, and message ids are random UUIDs, so `rowid` is what makes the
+/// order deterministic.
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct MessagePosition {
+    created_at: String,
+    rowid: i64,
 }
 
 #[cfg(test)]
@@ -846,7 +1324,30 @@ mod tests {
                 tokens INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT,
+                status TEXT NOT NULL DEFAULT 'completed',
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE conversation_message_bookmarks (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                title TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (conversation_id, message_id)
+            );
+
+            CREATE TABLE conversation_web_sources (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                normalized_url TEXT NOT NULL,
+                title TEXT,
+                excerpt TEXT,
+                relevance_score REAL,
+                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (conversation_id, normalized_url)
             );
 
             CREATE TABLE conversation_documents (
@@ -1220,5 +1721,381 @@ mod tests {
         assert_eq!(refs[0].document_id, "doc-123");
         assert_eq!(refs[0].chunk_id, Some("chunk-456".to_string()));
         assert_eq!(refs[0].relevance_score, Some(0.95));
+    }
+
+    // ---------------------------------------------------------------
+    // Branching (BRIEF rank 4, contract §4.2)
+    // ---------------------------------------------------------------
+
+    /// Insert a message at a controlled `created_at` so ordering is testable.
+    async fn seed_message(
+        pool: &SqlitePool,
+        conversation_id: &str,
+        id: &str,
+        role: &str,
+        content: &str,
+        tokens: i64,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_messages
+                (id, conversation_id, role, content, tokens, created_at, metadata, status)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, 'completed')
+            "#,
+        )
+        .bind(id)
+        .bind(conversation_id)
+        .bind(role)
+        .bind(content)
+        .bind(tokens)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET message_count = message_count + 1, total_tokens = total_tokens + ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(tokens)
+        .bind(conversation_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn message_ids(pool: &SqlitePool, conversation_id: &str) -> Vec<String> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT id FROM conversation_messages WHERE conversation_id = ? \
+             ORDER BY created_at ASC, rowid ASC",
+        )
+        .bind(conversation_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn conversation_counts(pool: &SqlitePool, conversation_id: &str) -> (i64, i64) {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT message_count, total_tokens FROM conversations WHERE id = ?",
+        )
+        .bind(conversation_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// A four-message thread: user → assistant → user → assistant.
+    async fn seed_thread(pool: &SqlitePool) -> String {
+        sqlx::query(
+            "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
+             VALUES ('conv-1', 'Thread', 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        seed_message(pool, "conv-1", "m1", "user", "first question", 1, "2026-09-01T10:00:00Z").await;
+        seed_message(pool, "conv-1", "m2", "assistant", "first answer", 2, "2026-09-01T10:00:01Z").await;
+        seed_message(pool, "conv-1", "m3", "user", "second question", 4, "2026-09-01T10:00:02Z").await;
+        seed_message(pool, "conv-1", "m4", "assistant", "second answer", 8, "2026-09-01T10:00:03Z").await;
+
+        "conv-1".to_string()
+    }
+
+    #[tokio::test]
+    async fn test_truncate_after_exclusive() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let repo = ConversationRepository::new(pool.clone());
+
+        let deleted = repo
+            .truncate_after(&conversation_id, "m2", false)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 2);
+        assert_eq!(message_ids(&pool, &conversation_id).await, vec!["m1", "m2"]);
+        assert_eq!(conversation_counts(&pool, &conversation_id).await, (2, 3));
+    }
+
+    #[tokio::test]
+    async fn test_truncate_after_inclusive() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let repo = ConversationRepository::new(pool.clone());
+
+        let deleted = repo
+            .truncate_after(&conversation_id, "m2", true)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 3);
+        assert_eq!(message_ids(&pool, &conversation_id).await, vec!["m1"]);
+        assert_eq!(conversation_counts(&pool, &conversation_id).await, (1, 1));
+    }
+
+    #[tokio::test]
+    async fn test_truncate_after_deletes_orphaned_bookmarks() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+
+        for (bookmark_id, message_id) in [("b1", "m2"), ("b2", "m4")] {
+            sqlx::query(
+                "INSERT INTO conversation_message_bookmarks (id, conversation_id, message_id, created_at) \
+                 VALUES (?, ?, ?, '2026-09-01T11:00:00Z')",
+            )
+            .bind(bookmark_id)
+            .bind(&conversation_id)
+            .bind(message_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let repo = ConversationRepository::new(pool.clone());
+        repo.truncate_after(&conversation_id, "m2", false)
+            .await
+            .unwrap();
+
+        let surviving = sqlx::query_scalar::<_, String>(
+            "SELECT message_id FROM conversation_message_bookmarks",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(surviving, vec!["m2"], "only the surviving message keeps its bookmark");
+    }
+
+    #[tokio::test]
+    async fn test_truncate_after_same_second_ordering() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
+             VALUES ('conv-2', 'Tied', 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // All three share an identical timestamp; only rowid separates them.
+        seed_message(&pool, "conv-2", "t1", "user", "a", 1, "2026-09-01T10:00:00Z").await;
+        seed_message(&pool, "conv-2", "t2", "assistant", "b", 1, "2026-09-01T10:00:00Z").await;
+        seed_message(&pool, "conv-2", "t3", "user", "c", 1, "2026-09-01T10:00:00Z").await;
+
+        let repo = ConversationRepository::new(pool.clone());
+        let deleted = repo.truncate_after("conv-2", "t1", false).await.unwrap();
+
+        assert_eq!(deleted, 2);
+        assert_eq!(message_ids(&pool, "conv-2").await, vec!["t1"]);
+    }
+
+    #[tokio::test]
+    async fn test_take_last_user_turn_removes_trailing_assistants_only() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let repo = ConversationRepository::new(pool.clone());
+
+        let taken = repo
+            .take_last_user_turn(&conversation_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(taken.0, "second question");
+        assert_eq!(taken.1, 4);
+        assert_eq!(
+            message_ids(&pool, &conversation_id).await,
+            vec!["m1", "m2"],
+            "the earlier user→assistant prefix is untouched"
+        );
+        assert_eq!(conversation_counts(&pool, &conversation_id).await, (2, 3));
+    }
+
+    #[tokio::test]
+    async fn test_take_last_user_turn_none_when_no_user_message() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, title, model_name, space_id, created_at, updated_at) \
+             VALUES ('conv-3', 'System only', 'model', 'space_general', '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        seed_message(&pool, "conv-3", "s1", "system", "be helpful", 1, "2026-09-01T10:00:00Z").await;
+
+        let repo = ConversationRepository::new(pool.clone());
+        assert!(repo.take_last_user_turn("conv-3").await.unwrap().is_none());
+        assert_eq!(message_ids(&pool, "conv-3").await, vec!["s1"]);
+    }
+
+    #[tokio::test]
+    async fn test_fork_copies_messages_up_to() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let repo = ConversationRepository::new(pool.clone());
+
+        let (new_id, copied) = repo
+            .fork(&conversation_id, Some("m2"), "conv-branch", "Thread · branch")
+            .await
+            .unwrap();
+
+        assert_eq!(new_id, "conv-branch");
+        assert_eq!(copied, 2);
+
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: String,
+            role: String,
+            content: String,
+            tokens: i64,
+            status: String,
+        }
+
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, role, content, tokens, status FROM conversation_messages \
+             WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC",
+        )
+        .bind("conv-branch")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].role, "user");
+        assert_eq!(rows[0].content, "first question");
+        assert_eq!(rows[0].tokens, 1);
+        assert_eq!(rows[0].status, "completed");
+        assert_eq!(rows[1].content, "first answer");
+        assert!(rows.iter().all(|r| r.id != "m1" && r.id != "m2"), "copies get fresh ids");
+
+        let (title, space_id) = sqlx::query_as::<_, (String, String)>(
+            "SELECT title, space_id FROM conversations WHERE id = ?",
+        )
+        .bind("conv-branch")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(title.ends_with("· branch"));
+        assert_eq!(space_id, "space_general");
+        assert_eq!(conversation_counts(&pool, "conv-branch").await, (2, 3));
+    }
+
+    #[tokio::test]
+    async fn test_fork_copies_all_when_none() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let repo = ConversationRepository::new(pool.clone());
+
+        let (_, copied) = repo
+            .fork(&conversation_id, None, "conv-branch-all", "Thread · branch")
+            .await
+            .unwrap();
+
+        assert_eq!(copied, 4);
+        assert_eq!(message_ids(&pool, "conv-branch-all").await.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_fork_unknown_anchor_copies_nothing() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let repo = ConversationRepository::new(pool.clone());
+
+        let (_, copied) = repo
+            .fork(
+                &conversation_id,
+                Some("does-not-exist"),
+                "conv-branch-empty",
+                "Thread · branch",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(copied, 0, "an unknown anchor must not be read as 'copy everything'");
+    }
+
+    #[tokio::test]
+    async fn test_fork_copies_linked_documents_and_web_sources() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO conversation_documents (conversation_id, document_id, chunk_id, relevance_score, added_at) \
+             VALUES (?, 'doc-1', 'chunk-1', 0.9, '2026-09-01T10:00:00Z')",
+        )
+        .bind(&conversation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO conversation_web_sources (id, conversation_id, url, normalized_url, title, excerpt, relevance_score, added_at) \
+             VALUES ('ws-1', ?, 'https://example.com/a', 'example.com/a', 'A', 'excerpt', 0.5, '2026-09-01T10:00:00Z')",
+        )
+        .bind(&conversation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let repo = ConversationRepository::new(pool.clone());
+        repo.fork(&conversation_id, None, "conv-branch-links", "Thread · branch")
+            .await
+            .unwrap();
+
+        let doc_ids = sqlx::query_scalar::<_, String>(
+            "SELECT document_id FROM conversation_documents WHERE conversation_id = ?",
+        )
+        .bind("conv-branch-links")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(doc_ids, vec!["doc-1"]);
+
+        let web_ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM conversation_web_sources WHERE conversation_id = ?",
+        )
+        .bind("conv-branch-links")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(web_ids.len(), 1);
+        assert_ne!(web_ids[0], "ws-1", "the copy gets a fresh primary key");
+    }
+
+    #[tokio::test]
+    async fn test_fork_does_not_touch_original() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let conversation_id = seed_thread(&pool).await;
+        let before = conversation_counts(&pool, &conversation_id).await;
+
+        let repo = ConversationRepository::new(pool.clone());
+        repo.fork(&conversation_id, Some("m2"), "conv-branch-2", "Thread · branch")
+            .await
+            .unwrap();
+
+        assert_eq!(conversation_counts(&pool, &conversation_id).await, before);
+        assert_eq!(
+            message_ids(&pool, &conversation_id).await,
+            vec!["m1", "m2", "m3", "m4"]
+        );
     }
 }

@@ -228,7 +228,11 @@ pub async fn store_file_metadata_only(
 
     let doc_id = Uuid::new_v4().to_string();
 
-    sqlx::query!(
+    // Return the id the row actually has, not the one we generated. On a
+    // re-store the DO UPDATE branch leaves `id` alone, so handing the caller
+    // the generated UUID pointed them at a document that does not exist.
+    // Non-macro form to avoid regenerating the offline sqlx cache.
+    let actual_id: String = sqlx::query_scalar(
         r#"
         INSERT INTO documents (
             id, file_path, file_name, mime_type,
@@ -241,18 +245,19 @@ pub async fn store_file_metadata_only(
             checksum = excluded.checksum,
             status = 'stored',
             updated_at = CURRENT_TIMESTAMP
+        RETURNING id
         "#,
-        doc_id,
-        path_str,
-        filename,
-        mime_type,
-        size_bytes,
-        modified_at_str,
-        indexed_at,
-        checksum,
     )
-    .execute(pool)
+    .bind(&doc_id)
+    .bind(&path_str)
+    .bind(&filename)
+    .bind(mime_type)
+    .bind(size_bytes)
+    .bind(&modified_at_str)
+    .bind(&indexed_at)
+    .bind(&checksum)
+    .fetch_one(pool)
     .await?;
 
-    Ok(doc_id)
+    Ok(actual_id)
 }

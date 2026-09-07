@@ -7,17 +7,17 @@
 //! See infrastructure/extraction/tag_generator.rs for prompt helpers.
 
 use crate::application::ports::{LLMPort, RepositoryPort};
+use crate::features::tags::dto::TagWithCountDto as TagWithCount;
+use crate::features::tags::entity::Tag;
 use crate::features::tags::generator::{
     DocumentMetadata, TagGenerator, TAG_GENERATION_SYSTEM_PROMPT,
 };
-use crate::infrastructure::persistence::repositories::{DocumentRepositoryImpl, TagRepository};
-use crate::features::tags::service::DocumentLockGuard;
+use crate::features::tags::service::{DocumentLockGuard, DocumentLockTable};
 use crate::features::tags::TagServiceTrait;
-use crate::features::tags::entity::Tag; use crate::features::tags::dto::TagWithCountDto as TagWithCount;
+use crate::infrastructure::persistence::repositories::{DocumentRepositoryImpl, TagRepository};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -27,7 +27,7 @@ use tracing::warn;
 #[derive(Clone)]
 pub struct TagServiceImpl {
     pub(crate) db_pool: SqlitePool,
-    document_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    document_locks: DocumentLockTable,
     llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
 }
 
@@ -36,18 +36,14 @@ impl TagServiceImpl {
     pub fn new(db_pool: SqlitePool, llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>) -> Self {
         Self {
             db_pool,
-            document_locks: Arc::new(Mutex::new(HashMap::new())),
+            document_locks: DocumentLockTable::default(),
             llm_cache,
         }
     }
 
     /// Get or create a document lock
-    async fn get_document_lock(&self, document_id: &str) -> Arc<Mutex<()>> {
-        let mut locks = self.document_locks.lock().await;
-        locks
-            .entry(document_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+    fn get_document_lock(&self, document_id: &str) -> Arc<Mutex<()>> {
+        self.document_locks.lock_for(document_id)
     }
 
     /// Merge existing tags with new tags, removing duplicates (case-insensitive)
@@ -337,7 +333,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn acquire_lock_with_timeout(&self, document_id: &str) -> Result<DocumentLockGuard> {
-        let lock = self.get_document_lock(document_id).await;
+        let lock = self.get_document_lock(document_id);
 
         // Use lock_owned() to get an OwnedMutexGuard that owns an Arc to the mutex
         // This eliminates lifetime issues without unsafe code
@@ -358,7 +354,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn acquire_lock(&self, document_id: &str) -> Result<DocumentLockGuard> {
-        let lock = self.get_document_lock(document_id).await;
+        let lock = self.get_document_lock(document_id);
         // Use lock_owned() to get an OwnedMutexGuard that owns an Arc to the mutex
         let guard = lock.lock_owned().await;
         Ok(DocumentLockGuard::new(guard))

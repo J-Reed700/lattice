@@ -12,7 +12,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::domain::error::DomainError;
+//! use lattice::domain::error::DomainError;
 //!
 //! fn validate_document(id: &str) -> Result<(), DomainError> {
 //!     if id.is_empty() {
@@ -40,7 +40,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let error = DomainError::EntityNotFound {
     ///     entity_type: "Document".to_string(),
     ///     identifier: "doc-123".to_string(),
@@ -59,7 +59,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let error = DomainError::InvalidState {
     ///     details: "Document is archived and cannot be modified".to_string(),
     /// };
@@ -73,7 +73,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let error = DomainError::ValidationFailed {
     ///     field: "email".to_string(),
     ///     reason: "Invalid email format".to_string(),
@@ -89,7 +89,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// # use std::path::PathBuf;
     /// let error = DomainError::UnsupportedFileType {
     ///     path: PathBuf::from("/path/to/file.xyz"),
@@ -108,7 +108,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// # use std::path::PathBuf;
     /// let error = DomainError::FileTooLarge {
     ///     path: PathBuf::from("/path/to/huge.pdf"),
@@ -130,7 +130,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let error = DomainError::ConcurrentModification {
     ///     resource: "Document doc-123".to_string(),
     ///     details: "Version mismatch: expected v2, found v3".to_string(),
@@ -146,7 +146,7 @@ pub enum DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let error = DomainError::ConstraintViolation {
     ///     constraint: "A document must have at least one chunk".to_string(),
     /// };
@@ -162,7 +162,7 @@ impl DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let not_found = DomainError::EntityNotFound {
     ///     entity_type: "Document".to_string(),
     ///     identifier: "doc-123".to_string(),
@@ -187,7 +187,7 @@ impl DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let validation = DomainError::ValidationFailed {
     ///     field: "email".to_string(),
     ///     reason: "Invalid format".to_string(),
@@ -221,7 +221,7 @@ impl DomainError {
     /// # Examples
     ///
     /// ```rust
-    /// # use vault_desktop::domain::error::DomainError;
+    /// # use lattice::domain::error::DomainError;
     /// let concurrent = DomainError::ConcurrentModification {
     ///     resource: "Document".to_string(),
     ///     details: "Version conflict".to_string(),

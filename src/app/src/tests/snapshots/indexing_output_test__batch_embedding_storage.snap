@@ -1,0 +1,36 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 252
+expression: batch_data
+---
+{
+  "batch_id": "[batch_id]",
+  "embeddings": [
+    {
+      "chunk_id": "chunk1",
+      "embedding": [
+        0.1,
+        0.2,
+        0.3
+      ]
+    },
+    {
+      "chunk_id": "chunk2",
+      "embedding": [
+        0.4,
+        0.5,
+        0.6
+      ]
+    },
+    {
+      "chunk_id": "chunk3",
+      "embedding": [
+        0.7,
+        0.8,
+        0.9
+      ]
+    }
+  ],
+  "processing_time_ms": 450,
+  "total_count": 3
+}

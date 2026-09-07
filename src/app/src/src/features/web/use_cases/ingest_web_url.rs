@@ -13,8 +13,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-//! use vault_desktop::application::dtos::web_dto::IngestWebUrlRequestDto;
+//! use lattice::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
+//! use lattice::application::dtos::web_dto::IngestWebUrlRequestDto;
 //!
 //! # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IngestWebUrlRequestDto {
@@ -81,8 +81,8 @@ impl IngestWebUrlUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
-    /// # use vault_desktop::application::dtos::web_dto::IngestWebUrlRequestDto;
+    /// # use lattice::application::use_cases::web::ingest_web_url::IngestWebUrlUseCase;
+    /// # use lattice::application::dtos::web_dto::IngestWebUrlRequestDto;
     /// # async fn example(use_case: IngestWebUrlUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = IngestWebUrlRequestDto {
     ///     url: "https://blog.example.com/article".to_string(),

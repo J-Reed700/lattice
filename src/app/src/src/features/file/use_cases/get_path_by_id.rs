@@ -2,8 +2,8 @@
 //!
 //! Retrieves the file path for a document by its ID.
 
-use crate::features::file::dto::{GetFilePathByIdRequestDto, GetFilePathByIdResponseDto};
 use crate::application::ports::{DocumentRepositoryPort, FileStoragePort};
+use crate::features::file::dto::{GetFilePathByIdRequestDto, GetFilePathByIdResponseDto};
 use crate::infrastructure::security::FileAccessConfig;
 use crate::shared::error::{AppError, Result};
 use std::path::PathBuf;

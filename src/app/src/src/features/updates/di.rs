@@ -18,7 +18,9 @@ pub fn build() -> UpdatesDi {
 
     UpdatesDi {
         check_for_updates_use_case: Arc::new(CheckForUpdatesUseCase::new(update_checker.clone())),
-        get_current_version_use_case: Arc::new(GetCurrentVersionUseCase::new(update_checker.clone())),
+        get_current_version_use_case: Arc::new(GetCurrentVersionUseCase::new(
+            update_checker.clone(),
+        )),
         update_checker,
     }
 }

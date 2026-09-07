@@ -52,7 +52,7 @@ impl Default for CircuitBreakerConfig {
 /// # Example
 ///
 /// ```no_run
-/// use vault_desktop::llm::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+/// use lattice::llm::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let cb = CircuitBreaker::new(CircuitBreakerConfig::default());

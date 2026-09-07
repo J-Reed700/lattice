@@ -11,14 +11,14 @@
 //! Hybrid Search Integration Tests
 //!
 //! Tests the HybridSearchService combining vector and BM25 search.
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
-use std::sync::Arc;
+use lattice::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use lattice::infrastructure::search::bm25::BM25Search;
 use lattice::infrastructure::search::hybrid::{HybridSearchService, SearchMode};
 use lattice::infrastructure::search::vector_search::USearchVectorIndex;
 use lattice::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
-use lattice::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Setup test database with schema
 async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
@@ -31,13 +31,13 @@ async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
     sqlx::query(
         "CREATE TABLE documents (
             id TEXT PRIMARY KEY,
-            file_id TEXT,
             file_name TEXT NOT NULL,
-            file_path TEXT,
+            file_path TEXT NOT NULL,
+            file_type TEXT,
             mime_type TEXT,
-            size_bytes INTEGER,
+            size_bytes INTEGER NOT NULL,
             created_at TEXT NOT NULL,
-            updated_at TEXT
+            updated_at TEXT NOT NULL
         )",
     )
     .execute(&pool)
@@ -49,6 +49,8 @@ async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
             document_id TEXT NOT NULL,
             content TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,
+            start_char INTEGER,
+            end_char INTEGER,
             FOREIGN KEY (document_id) REFERENCES documents(id)
         )",
     )
@@ -56,8 +58,8 @@ async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
     .await?;
 
     sqlx::query(
-        "CREATE VIRTUAL TABLE documents_fts USING fts5(
-            document_id UNINDEXED,
+        "CREATE VIRTUAL TABLE chunks_fts USING fts5(
+            chunk_id UNINDEXED,
             content,
             tokenize='porter unicode61 remove_diacritics 2'
         )",
@@ -72,10 +74,12 @@ async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
 async fn insert_test_documents(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
     // Insert documents
     sqlx::query(
-        "INSERT INTO documents (id, file_name, mime_type, size_bytes, created_at) VALUES
-         ('doc1', 'rust.txt', 'text/plain', 1024, '2024-01-01'),
-         ('doc2', 'python.txt', 'text/plain', 2048, '2024-01-02'),
-         ('doc3', 'ml.txt', 'text/plain', 3072, '2024-01-03')",
+        "INSERT INTO documents (
+            id, file_name, file_path, file_type, mime_type, size_bytes, created_at, updated_at
+         ) VALUES
+         ('doc1', 'rust.txt', '/docs/rust.txt', 'txt', 'text/plain', 1024, '2024-01-01', '2024-01-01'),
+         ('doc2', 'python.txt', '/docs/python.txt', 'txt', 'text/plain', 2048, '2024-01-02', '2024-01-02'),
+         ('doc3', 'ml.txt', '/docs/ml.txt', 'txt', 'text/plain', 3072, '2024-01-03', '2024-01-03')",
     )
     .execute(pool)
     .await?;
@@ -92,7 +96,7 @@ async fn insert_test_documents(pool: &SqlitePool) -> Result<(), Box<dyn std::err
 
     // Insert into FTS
     sqlx::query(
-        "INSERT INTO documents_fts (document_id, content) VALUES
+        "INSERT INTO chunks_fts (chunk_id, content) VALUES
          ('chunk1', 'Rust is a systems programming language focused on safety and performance'),
          ('chunk2', 'Python is a high-level programming language known for simplicity'),
          ('chunk3', 'Machine learning with neural networks and deep learning frameworks')",
@@ -137,7 +141,8 @@ async fn test_hybrid_search_keyword_mode() -> Result<(), Box<dyn std::error::Err
     let service = create_hybrid_search_service(pool).await?;
 
     // Execute keyword-only search
-    let results = service.search("programming", 10).await?;
+    let results =
+        HybridSearchTrait::search(&service, "programming", &[], 10, SearchMode::Keyword).await?;
 
     // Verify
     assert!(!results.is_empty(), "Should return results");
@@ -176,11 +181,13 @@ async fn test_hybrid_search_vector_mode() -> Result<(), Box<dyn std::error::Erro
     let query_embedding = vec![0.1f32; 384];
 
     // Execute vector-only search
-    let results = service.search("test", 10).await?;
+    let results =
+        HybridSearchTrait::search(&service, "test", &query_embedding, 10, SearchMode::Vector)
+            .await?;
 
     // Verify - may be empty since we have no real embeddings indexed
     // But should not error
-    assert!(results.is_empty() || !results.is_empty());
+    assert!(results.is_empty(), "The test vector index starts empty");
 
     if !results.is_empty() {
         // If we got results, verify vector scores are populated
@@ -214,7 +221,14 @@ async fn test_hybrid_search_hybrid_mode() -> Result<(), Box<dyn std::error::Erro
     let query_embedding = vec![0.1f32; 384];
 
     // Execute hybrid search (combines both)
-    let results = service.search("programming", 10).await?;
+    let results = HybridSearchTrait::search(
+        &service,
+        "programming",
+        &query_embedding,
+        10,
+        SearchMode::Hybrid,
+    )
+    .await?;
 
     // Verify - should have results from BM25 at minimum
     assert!(!results.is_empty(), "Should return results from BM25");
@@ -237,11 +251,11 @@ async fn test_hybrid_search_empty_query() -> Result<(), Box<dyn std::error::Erro
     let service = create_hybrid_search_service(pool).await?;
 
     // Test keyword mode with empty query - should error
-    let result = service.search("", 10).await;
+    let result = HybridSearchTrait::search(&service, "", &[], 10, SearchMode::Keyword).await;
     assert!(result.is_err(), "Empty query should error in keyword mode");
 
     // Test vector mode with empty embedding - should error
-    let result = service.search("test", 10).await;
+    let result = HybridSearchTrait::search(&service, "test", &[], 10, SearchMode::Vector).await;
     assert!(
         result.is_err(),
         "Empty embedding should error in vector mode"
@@ -258,16 +272,18 @@ async fn test_hybrid_search_fallback_behavior() -> Result<(), Box<dyn std::error
     let service = create_hybrid_search_service(pool).await?;
 
     // Test hybrid mode with no embedding - should fall back to keyword only
-    let results = service.search("programming", 10).await?;
+    let results =
+        HybridSearchTrait::search(&service, "programming", &[], 10, SearchMode::Hybrid).await?;
 
     assert!(!results.is_empty(), "Should fall back to keyword search");
 
     // Test hybrid mode with no text - should fall back to vector only
     let query_embedding = vec![0.1f32; 384];
-    let results = service.search("", 10).await?;
+    let results =
+        HybridSearchTrait::search(&service, "", &query_embedding, 10, SearchMode::Hybrid).await?;
 
     // Should not error, but may be empty if no vectors indexed
-    assert!(results.is_empty() || !results.is_empty());
+    assert!(results.is_empty(), "The test vector index starts empty");
 
     Ok(())
 }

@@ -11,6 +11,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use url::Url;
 
 /// Minimum reasonable file size for ML model files (10 KB)
 /// Content-Length below this threshold is likely a redirect/error page
@@ -18,6 +19,37 @@ const MIN_VALID_MODEL_SIZE: u64 = 10 * 1024; // 10 KB
 
 /// HTTP status codes that are typically transient and safe to retry.
 const RETRYABLE_HTTP_STATUSES: [u16; 8] = [408, 409, 425, 429, 500, 502, 503, 504];
+
+fn resolve_redirect_location(request_url: &str, location: &str) -> Result<String, DownloadError> {
+    let base =
+        Url::parse(request_url).map_err(|error| DownloadError::InvalidUrl(error.to_string()))?;
+    base.join(location)
+        .map(|url| url.to_string())
+        .map_err(|error| DownloadError::InvalidResponse(format!("Invalid redirect URL: {error}")))
+}
+
+fn is_trusted_model_host(host: &str) -> bool {
+    host == "huggingface.co"
+        || host.ends_with(".huggingface.co")
+        || host == "hf.co"
+        || host.ends_with(".hf.co")
+}
+
+fn may_forward_authorization(source: &str, target: &str) -> bool {
+    let (Ok(source), Ok(target)) = (Url::parse(source), Url::parse(target)) else {
+        return false;
+    };
+    if source.origin() == target.origin() {
+        return true;
+    }
+
+    match (source.host_str(), target.host_str()) {
+        (Some(source_host), Some(target_host)) => {
+            is_trusted_model_host(source_host) && is_trusted_model_host(target_host)
+        }
+        _ => false,
+    }
+}
 
 pub type ProgressCallback = Arc<dyn Fn(u64, f64) + Send + Sync>;
 
@@ -37,32 +69,6 @@ pub trait DownloadEngine: Send + Sync {
     async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError>;
 
     async fn supports_resume(&self, url: &str) -> Result<bool, DownloadError>;
-
-    /// Download all files for a model
-    ///
-    /// Downloads multiple files sequentially. If any file fails, all previously
-    /// downloaded files are cleaned up to maintain atomicity.
-    ///
-    /// # Arguments
-    /// - `model_id` - Unique identifier for the model (for logging)
-    /// - `files` - Vector of ModelFile metadata with URLs and expected sizes
-    /// - `dest_dir` - Directory where files will be downloaded
-    ///
-    /// # Returns
-    /// Vector of PathBuf for successfully downloaded files
-    ///
-    /// # Errors
-    /// - DownloadError::NetworkError if download fails
-    /// - DownloadError::ValidationFailed if size mismatch
-    ///
-    /// # Atomicity
-    /// If download fails, all previously downloaded files are deleted
-    async fn download_model_files(
-        &self,
-        model_id: &str,
-        files: Vec<crate::domain::model_metadata::ModelFileMetadata>,
-        dest_dir: &std::path::Path,
-    ) -> Result<Vec<std::path::PathBuf>, DownloadError>;
 }
 
 #[derive(Debug)]
@@ -114,32 +120,37 @@ impl HttpDownloadEngine {
 
         let dest_path = destination.parent().unwrap_or(destination);
 
-        for disk in &disks {
-            if dest_path.starts_with(disk.mount_point()) {
-                let available_bytes = disk.available_space();
+        // Several mount points can prefix one path (`/` and
+        // `/Volumes/External` on macOS). The most specific/longest mount is
+        // the volume that actually owns the destination.
+        if let Some(disk) = disks
+            .iter()
+            .filter(|disk| dest_path.starts_with(disk.mount_point()))
+            .max_by_key(|disk| mount_point_specificity(disk.mount_point()))
+        {
+            let available_bytes = disk.available_space();
 
-                debug!(
-                    mount_point = %disk.mount_point().display(),
-                    available_bytes = available_bytes,
-                    required_bytes = required_bytes,
-                    "Checking disk space"
+            debug!(
+                mount_point = %disk.mount_point().display(),
+                available_bytes = available_bytes,
+                required_bytes = required_bytes,
+                "Checking disk space"
+            );
+
+            if available_bytes < required_bytes {
+                error!(
+                    available = available_bytes,
+                    required = required_bytes,
+                    deficit = required_bytes - available_bytes,
+                    "Insufficient disk space"
                 );
-
-                if available_bytes < required_bytes {
-                    error!(
-                        available = available_bytes,
-                        required = required_bytes,
-                        deficit = required_bytes - available_bytes,
-                        "Insufficient disk space"
-                    );
-                    return Err(DownloadError::InsufficientDiskSpace {
-                        required: required_bytes,
-                        available: available_bytes,
-                    });
-                }
-
-                return Ok(());
+                return Err(DownloadError::InsufficientDiskSpace {
+                    required: required_bytes,
+                    available: available_bytes,
+                });
             }
+
+            return Ok(());
         }
 
         warn!(
@@ -471,6 +482,10 @@ impl HttpDownloadEngine {
     }
 }
 
+fn mount_point_specificity(path: &Path) -> usize {
+    path.components().count()
+}
+
 /// Validates whether a Content-Length value from HEAD response is reliable.
 ///
 /// Returns false if:
@@ -494,6 +509,17 @@ fn is_content_length_valid(content_length: Option<u64>) -> bool {
 impl DownloadEngine for HttpDownloadEngine {
     async fn download(&self, options: DownloadOptions) -> Result<DownloadResult, DownloadError> {
         let (expected_total_bytes, final_url) = self.get_file_size(&options.url).await?;
+        let auth_token = options.auth_token.as_ref().filter(|_| {
+            let allowed = may_forward_authorization(&options.url, &final_url);
+            if !allowed {
+                warn!(
+                    source_url = %options.url,
+                    target_url = %final_url,
+                    "Refusing to forward download authorization to an untrusted redirect target"
+                );
+            }
+            allowed
+        });
 
         debug!(
             original_url = %options.url,
@@ -511,7 +537,7 @@ impl DownloadEngine for HttpDownloadEngine {
             &options.destination,
             options.resume_from,
             options.progress_callback,
-            options.auth_token.as_ref(),
+            auth_token,
             expected_total_bytes,
         )
         .await
@@ -543,7 +569,12 @@ impl DownloadEngine for HttpDownloadEngine {
                     if let Ok(size) = size_str.parse::<u64>() {
                         // Get the redirect location
                         let final_url = if let Some(location) = response.headers().get("location") {
-                            location.to_str().unwrap_or(url).to_string()
+                            let location = location.to_str().map_err(|error| {
+                                DownloadError::InvalidResponse(format!(
+                                    "Redirect Location is not valid text: {error}"
+                                ))
+                            })?;
+                            resolve_redirect_location(url, location)?
                         } else {
                             url.to_string()
                         };
@@ -759,87 +790,6 @@ impl DownloadEngine for HttpDownloadEngine {
 
         Ok(supports_resume)
     }
-
-    async fn download_model_files(
-        &self,
-        model_id: &str,
-        files: Vec<crate::domain::model_metadata::ModelFileMetadata>,
-        dest_dir: &std::path::Path,
-    ) -> Result<Vec<PathBuf>, DownloadError> {
-        let mut downloaded_paths = Vec::new();
-        let total_files = files.len();
-
-        info!(
-            model_id = %model_id,
-            file_count = total_files,
-            "Starting multi-file model download"
-        );
-
-        for (index, file) in files.iter().enumerate() {
-            info!(
-                "Downloading file {}/{}: {} ({} bytes)",
-                index + 1,
-                total_files,
-                file.filename,
-                file.size_bytes
-            );
-
-            let dest_path = dest_dir.join(&file.filename);
-
-            // Download this file
-            match self
-                .download(DownloadOptions {
-                    url: file.url.clone(),
-                    destination: dest_path.clone(),
-                    resume_from: None,
-                    progress_callback: None,
-                    auth_token: None,
-                })
-                .await
-            {
-                Ok(result) => {
-                    // Verify size matches expected
-                    if result.bytes_downloaded != file.size_bytes {
-                        warn!(
-                            expected = file.size_bytes,
-                            actual = result.bytes_downloaded,
-                            filename = %file.filename,
-                            "Downloaded file size mismatch"
-                        );
-                    }
-                    downloaded_paths.push(dest_path);
-                }
-                Err(e) => {
-                    // Cleanup on failure - delete all previously downloaded files
-                    error!(
-                        filename = %file.filename,
-                        error = %e,
-                        "Failed to download file, cleaning up"
-                    );
-
-                    for path in &downloaded_paths {
-                        if let Err(cleanup_err) = tokio::fs::remove_file(path).await {
-                            warn!(
-                                path = %path.display(),
-                                error = %cleanup_err,
-                                "Failed to cleanup file after download failure"
-                            );
-                        }
-                    }
-
-                    return Err(e);
-                }
-            }
-        }
-
-        info!(
-            model_id = %model_id,
-            file_count = total_files,
-            "Successfully downloaded all model files"
-        );
-
-        Ok(downloaded_paths)
-    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -858,6 +808,11 @@ pub mod mock {
         permanent_failure: Arc<Mutex<Option<String>>>,
         network_error: Arc<Mutex<Option<String>>>,
         http_error: Arc<Mutex<Option<(u16, String)>>>,
+        /// Makes `download` block until cancelled, so tests can exercise
+        /// pause/cancel against a transfer that is genuinely in flight.
+        /// Without it the mock returns instantly and any test that pauses is
+        /// racing the completion.
+        stall: Arc<Mutex<bool>>,
     }
 
     impl MockDownloadEngine {
@@ -871,7 +826,14 @@ pub mod mock {
                 permanent_failure: Arc::new(Mutex::new(None)),
                 network_error: Arc::new(Mutex::new(None)),
                 http_error: Arc::new(Mutex::new(None)),
+                stall: Arc::new(Mutex::new(false)),
             }
+        }
+
+        /// Park `download` indefinitely so pause/cancel can be tested
+        /// against an in-flight transfer.
+        pub fn set_stall(&self, stall: bool) {
+            *self.stall.lock().unwrap() = stall;
         }
 
         pub fn set_file_size(&self, url: &str, size: Option<u64>) {
@@ -950,6 +912,15 @@ pub mod mock {
             // Record call for verification (CRITICAL for Test 16)
             self.download_calls.lock().unwrap().push(options.clone());
 
+            // Simulate a long transfer: park here until the caller's
+            // `tokio::select!` drops this future because it was told to stop.
+            if *self.stall.lock().unwrap() {
+                if let Some(callback) = options.progress_callback.as_ref() {
+                    callback(1, 1024.0);
+                }
+                std::future::pending::<()>().await;
+            }
+
             // Check for permanent failure
             if let Some(error) = self.permanent_failure.lock().unwrap().as_ref() {
                 return Err(DownloadError::ValidationFailed(error.clone()));
@@ -1016,29 +987,48 @@ pub mod mock {
             let supports = self.supports_resume.lock().unwrap();
             Ok(*supports.get(url).unwrap_or(&true))
         }
-
-        async fn download_model_files(
-            &self,
-            _model_id: &str,
-            files: Vec<crate::domain::model_metadata::ModelFileMetadata>,
-            dest_dir: &std::path::Path,
-        ) -> Result<Vec<PathBuf>, DownloadError> {
-            let mut downloaded_paths = Vec::new();
-
-            for file in files.iter() {
-                let dest_path = dest_dir.join(&file.filename);
-                // Mock successful download
-                downloaded_paths.push(dest_path);
-            }
-
-            Ok(downloaded_paths)
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_mount_is_more_specific_than_root_mount() {
+        assert!(
+            mount_point_specificity(Path::new("/Volumes/External"))
+                > mount_point_specificity(Path::new("/"))
+        );
+    }
+
+    #[test]
+    fn redirect_location_is_resolved_against_request_url() {
+        assert_eq!(
+            resolve_redirect_location(
+                "https://huggingface.co/org/model/resolve/main/model.gguf",
+                "../../blobs/abc"
+            )
+            .expect("resolve relative redirect"),
+            "https://huggingface.co/org/model/blobs/abc"
+        );
+    }
+
+    #[test]
+    fn authorization_is_not_forwarded_to_untrusted_redirects() {
+        assert!(may_forward_authorization(
+            "https://huggingface.co/org/model/resolve/main/model.gguf",
+            "https://cdn-lfs.hf.co/file"
+        ));
+        assert!(!may_forward_authorization(
+            "https://huggingface.co/org/model/resolve/main/model.gguf",
+            "https://downloads.example.com/file"
+        ));
+        assert!(may_forward_authorization(
+            "https://models.example.com/file",
+            "https://models.example.com/other"
+        ));
+    }
 
     fn temp_path(file_name: &str) -> PathBuf {
         std::env::temp_dir().join(file_name)

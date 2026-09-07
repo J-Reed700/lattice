@@ -1,29 +1,27 @@
 use crate::application::ports::{
     DocumentRepository, MentionRepositoryPort, RepositoryPort, SettingsRepositoryPort,
 };
-use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::domain::entities::Document;
 use crate::domain::events::model_download_events::ModelDownloadEvent;
-use crate::infrastructure::event_bus::EventBus;
 use crate::features::download::events::infra_events::DownloadEventBridge;
-use crate::infrastructure::indexing;
-use crate::infrastructure::persistence::repositories::summary_repository::SummaryRepository;
-use crate::infrastructure::persistence::repositories::DocumentRepository as DddDocumentRepository;
-use crate::infrastructure::sagas::conversation_summary_saga::ConversationSummarySaga;
 use crate::features::download::manager::DownloadManager;
 use crate::features::download::saga::DownloadSaga;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::indexing::use_cases::IndexFileUseCase;
+use crate::features::indexing::IndexStorageTrait;
 #[cfg(test)]
 use crate::features::search::mocks::MockSearchService;
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
+use crate::infrastructure::event_bus::EventBus;
+use crate::infrastructure::indexing;
+use crate::infrastructure::persistence::repositories::DocumentRepository as DddDocumentRepository;
 use crate::infrastructure::services::traits::{
     FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
 };
+use crate::interfaces::commands;
 use crate::shared::utils::supervised_task::supervise_cancellable;
 use tokio_util::sync::CancellationToken;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::IndexStorageTrait;
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
-use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
-use crate::interfaces::commands;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use crate::infrastructure::search::bm25::BM25Search;
 use crate::infrastructure::search::hybrid::HybridSearchService;
@@ -335,6 +333,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
         tracing::info!("✓ DI Container initialized");
 
+        // File-access policy starts at "app data directory only"; widen it to
+        // the user's vault and indexed folders now that settings are readable.
+        // Without this, indexed documents can't be opened at all.
+        if let Err(e) = container.refresh_allowed_roots().await {
+            tracing::warn!(error = %e, "failed to compute file-access allowed roots");
+        }
+
         let batch_repo = container.batch_job_repository();
         tokio::spawn(async move {
             match batch_repo.list_batch_jobs(Some(500), Some(0)).await {
@@ -426,8 +431,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     let reconcile_grace = chrono::Duration::seconds(30);
     let model_repo_for_cleanup = Arc::new(
         crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
-            container.db_pool().clone()
-        )
+            container.db_pool().clone(),
+        ),
     );
 
     let model_dir_for_cleanup = model_dir.clone();
@@ -487,28 +492,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     let shutdown_token = CancellationToken::new();
     app_handle.manage(shutdown_token.clone());
 
-    tracing::info!("Initializing conversation summary saga...");
-    let summary_repo = Arc::new(SummaryRepository::new(container.db_pool().clone()));
-    let conversation_summary_saga = Arc::new(ConversationSummarySaga::new(
-        container.conversation_command_rx(),
-        summary_repo,
-    ));
-    let summary_saga_listener = Arc::clone(&conversation_summary_saga);
-    let summary_saga_cancel = shutdown_token.clone();
-    supervise_cancellable(
-        "conversation_summary_saga",
-        shutdown_token.clone(),
-        move || {
-            let saga = Arc::clone(&summary_saga_listener);
-            let cancel = summary_saga_cancel.clone();
-            async move {
-                tracing::info!("ConversationSummarySaga event listener started");
-                saga.start(cancel).await;
-            }
-        },
-    );
-    tracing::info!("Conversation summary saga initialized");
-
     // === Wire DownloadSaga into application initialization ===
     // DownloadSaga exists but was never subscribed to events, so completions were missed.
 
@@ -523,8 +506,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     // Step 2: Create repositories needed by DownloadSaga
     let downloaded_model_repository = Arc::new(
         crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
-            container.db_pool().clone()
-        )
+            container.db_pool().clone(),
+        ),
     );
 
     let model_file_repository = Arc::new(
@@ -550,18 +533,14 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     let saga_for_listener = Arc::clone(&download_saga);
     let download_saga_cancel = shutdown_token.clone();
-    supervise_cancellable(
-        "download_saga",
-        shutdown_token.clone(),
-        move || {
-            let saga = Arc::clone(&saga_for_listener);
-            let cancel = download_saga_cancel.clone();
-            async move {
-                tracing::info!("DownloadSaga event listener started");
-                saga.start(cancel).await;
-            }
-        },
-    );
+    supervise_cancellable("download_saga", shutdown_token.clone(), move || {
+        let saga = Arc::clone(&saga_for_listener);
+        let cancel = download_saga_cancel.clone();
+        async move {
+            tracing::info!("DownloadSaga event listener started");
+            saga.start(cancel).await;
+        }
+    });
 
     tracing::info!("Starting download event bridge...");
     let event_rx_arc = download_manager.subscribe_to_events();

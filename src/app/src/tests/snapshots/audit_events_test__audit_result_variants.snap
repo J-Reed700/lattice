@@ -1,0 +1,27 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 212
+expression: snapshot_data
+---
+[
+  {
+    "result": "success",
+    "type": "success"
+  },
+  {
+    "result": {
+      "failure": {
+        "reason": "Operation failed due to network error"
+      }
+    },
+    "type": "failure"
+  },
+  {
+    "result": {
+      "denied": {
+        "reason": "Access denied: insufficient permissions"
+      }
+    },
+    "type": "denied"
+  }
+]

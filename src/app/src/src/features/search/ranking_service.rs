@@ -18,7 +18,7 @@ use std::collections::HashMap;
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::services::SearchRankingService;
+/// use lattice::domain::services::SearchRankingService;
 ///
 /// let ranking_service = SearchRankingService::new();
 ///
@@ -51,7 +51,7 @@ impl SearchRankingService {
     /// # Example
     ///
     /// ```rust
-    /// use vault_desktop::domain::services::SearchRankingService;
+    /// use lattice::domain::services::SearchRankingService;
     ///
     /// let service = SearchRankingService::with_rrf_k(30.0);
     /// ```

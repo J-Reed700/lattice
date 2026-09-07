@@ -1,6 +1,6 @@
 //! LLM management commands for local inference.
-use crate::features::llm::dto::*;
 use crate::audit_success;
+use crate::features::llm::dto::*;
 use crate::infrastructure::audit::AuditAction;
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;

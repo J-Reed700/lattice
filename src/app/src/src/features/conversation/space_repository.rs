@@ -4,7 +4,6 @@
 //! local-owner collaborator_profile row lives here. Tauri commands and
 //! services should call this repository instead of inlining sqlx queries.
 
-
 use chrono::Utc;
 use sqlx::SqlitePool;
 
@@ -128,6 +127,5 @@ impl ConversationSpaceRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch created space: {}", e)))
-
     }
 }

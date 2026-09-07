@@ -72,8 +72,8 @@ impl DocumentMapper {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::persistence::mappers::DocumentMapper;
-    /// use vault_desktop::domain::entities::Document;
+    /// use lattice::infrastructure::persistence::mappers::DocumentMapper;
+    /// use lattice::domain::entities::Document;
     ///
     /// let entity = Document::new(/* ... */);
     /// let db_model = DocumentMapper::to_model(&entity);
@@ -120,7 +120,7 @@ impl DocumentMapper {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::persistence::mappers::DocumentMapper;
+    /// use lattice::infrastructure::persistence::mappers::DocumentMapper;
     ///
     /// let db_model = /* from database */;
     /// let entity = DocumentMapper::to_entity(&db_model)?;

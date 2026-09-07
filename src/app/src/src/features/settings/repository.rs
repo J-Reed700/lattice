@@ -12,12 +12,12 @@
 //! - **Default Settings**: Factory for sensible defaults
 //! - **Validation**: Integrated validation for all read/write operations
 //! - **Import/Export**: Support for settings backup and migration
-//! - **Thread Safety**: Uses async file I/O with proper locking
+//! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
+use crate::application::ports::{merge_json_update, SettingsRepositoryPort};
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
 };
-use crate::application::ports::SettingsRepositoryPort;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use serde_json;
@@ -73,9 +73,15 @@ impl Default for SettingsFile {
 ///
 /// # Thread Safety
 ///
-/// This implementation is thread-safe through async file operations.
-/// Multiple concurrent reads are safe. Writes are serialized through
-/// the file system's atomic rename operation.
+/// Multiple concurrent reads are safe. `update` and `reset` hold
+/// `write_lock` across their whole read-merge-write cycle, so concurrent
+/// updates to different categories cannot lose each other. Each write goes
+/// to a uniquely-named temp file before an atomic rename, so a write that
+/// is interrupted never leaves partial JSON in place.
+///
+/// Note that `save_all` on its own is *not* serialized against `update` —
+/// it is a whole-document overwrite, and the caller is responsible for
+/// having read the state it is overwriting.
 ///
 /// # Example
 ///
@@ -92,6 +98,15 @@ impl Default for SettingsFile {
 pub struct SettingsRepository {
     /// Path to settings file
     settings_path: PathBuf,
+    /// Serializes the read-modify-write cycle in `update` / `reset`.
+    ///
+    /// Those operations are `get_all()` → merge one category → `save_all()`.
+    /// Without a lock, two concurrent updates to different categories both
+    /// read the same base state and the second write silently reverts the
+    /// first — the UI reports success for both. The repository is shared
+    /// behind an `Arc`, so a single mutex here is enough to make the whole
+    /// cycle atomic.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl SettingsRepository {
@@ -112,6 +127,7 @@ impl SettingsRepository {
     /// - Cannot read or write settings file
     /// - Settings file is corrupted
     pub async fn new(app_data_dir: PathBuf) -> Result<Self> {
+        // repository-barrier-allow: this repository's resource is the settings file and its containing directory.
         // Ensure app data directory exists
         if !app_data_dir.exists() {
             fs::create_dir_all(&app_data_dir).await.map_err(|e| {
@@ -124,12 +140,14 @@ impl SettingsRepository {
 
         // Salvage stale data from a prior DI bug that wrote
         // settings.json/settings.json instead of settings.json.
+        // repository-barrier-allow: repair a historical malformed settings-file path on disk.
         if settings_path.is_dir() {
             tracing::warn!(
                 "Found stray settings.json directory at {}; salvaging",
                 settings_path.display()
             );
             let nested = settings_path.join(SETTINGS_FILE_NAME);
+            // repository-barrier-allow: salvage the nested settings file from that malformed path.
             let salvaged_contents = if nested.is_file() {
                 fs::read_to_string(&nested).await.ok()
             } else {
@@ -147,8 +165,12 @@ impl SettingsRepository {
             }
         }
 
-        let repository = Self { settings_path };
+        let repository = Self {
+            settings_path,
+            write_lock: tokio::sync::Mutex::new(()),
+        };
 
+        // repository-barrier-allow: the settings repository owns existence of its file resource.
         // Initialize with defaults if file doesn't exist
         if !repository.settings_path.exists() {
             repository
@@ -161,8 +183,12 @@ impl SettingsRepository {
         // so subsequent boots are no-ops. Failure to migrate is logged but
         // not fatal — better to start with stale config.json than refuse to
         // boot the app.
+        // repository-barrier-allow: detect the legacy settings file this repository migrates.
         if legacy_config_path.exists() {
-            if let Err(err) = repository.migrate_legacy_app_config(&legacy_config_path).await {
+            if let Err(err) = repository
+                .migrate_legacy_app_config(&legacy_config_path)
+                .await
+            {
                 tracing::warn!(
                     "Legacy config.json migration failed (non-fatal): {err}. \
                      The file will remain on disk; settings.json defaults are in use."
@@ -190,16 +216,15 @@ impl SettingsRepository {
     /// On success, the legacy `config.json` is deleted so the migration
     /// runs once and only once.
     async fn migrate_legacy_app_config(&self, legacy_path: &Path) -> Result<()> {
-        let raw = fs::read_to_string(legacy_path).await.map_err(|e| {
-            AppError::Storage(format!("Failed to read legacy config.json: {e}"))
-        })?;
+        let raw = fs::read_to_string(legacy_path)
+            .await
+            .map_err(|e| AppError::Storage(format!("Failed to read legacy config.json: {e}")))?;
 
         // Use the same JsonValidator the old ConfigService used for
         // consistency on size/depth limits.
         let legacy: LegacyAppConfig =
             crate::security::json_validator::JsonValidator::safe_deserialize::<LegacyAppConfig>(
-                &raw,
-                10_000_000, // 10 MB
+                &raw, 10_000_000, // 10 MB
                 50,         // max depth
             )
             .map_err(|e| {
@@ -219,8 +244,7 @@ impl SettingsRepository {
 
         // Exclude patterns: only overwrite if settings.json still has the
         // unmodified default. Avoids clobbering user customizations.
-        if settings_file.settings.indexing.exclude_patterns
-            == defaults.indexing.exclude_patterns
+        if settings_file.settings.indexing.exclude_patterns == defaults.indexing.exclude_patterns
             && !legacy.exclude_patterns.is_empty()
         {
             settings_file.settings.indexing.exclude_patterns = legacy.exclude_patterns;
@@ -241,8 +265,7 @@ impl SettingsRepository {
         {
             settings_file.settings.llm.ollama_url = legacy.ollama_endpoint;
         }
-        if settings_file.settings.llm.model == defaults.llm.model
-            && !legacy.ollama_model.is_empty()
+        if settings_file.settings.llm.model == defaults.llm.model && !legacy.ollama_model.is_empty()
         {
             settings_file.settings.llm.model = legacy.ollama_model;
         }
@@ -291,8 +314,9 @@ impl SettingsRepository {
                         }
                     }
                     Err(e) => {
-                        // Corrupted file - restore defaults
-                        tracing::warn!("Settings file corrupted, restoring defaults: {}", e);
+                        // Preserve the unparseable file before falling back —
+                        // it is the only copy of the user's configuration.
+                        self.quarantine_corrupt_settings(&e.to_string()).await;
                         let defaults = SettingsFile::default();
                         self.write_settings_file(&defaults).await?;
                         Ok(defaults)
@@ -313,32 +337,91 @@ impl SettingsRepository {
     ///
     /// Writes to a temporary file first, then renames to ensure atomicity.
     /// This prevents corruption if the application crashes during write.
+    ///
+    /// The temp filename is unique per write. A single shared `settings.tmp`
+    /// is not safe: `File::create` truncates, so a second writer can truncate
+    /// and rewrite the temp file while the first sits between `sync_all` and
+    /// `rename`, renaming half-written JSON into place. That torn file then
+    /// fails to parse on the next read.
     async fn write_settings_file(&self, settings_file: &SettingsFile) -> Result<()> {
         // Serialize to JSON with pretty printing
         let json = serde_json::to_string_pretty(settings_file)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
 
-        // Write to temporary file
-        let temp_path = self.settings_path.with_extension(TEMP_SUFFIX);
-        let mut file = fs::File::create(&temp_path).await.map_err(|e| {
-            AppError::Storage(format!("Failed to create temp settings file: {}", e))
-        })?;
+        let temp_path = self.unique_temp_path();
 
-        file.write_all(json.as_bytes())
-            .await
-            .map_err(|e| AppError::Storage(format!("Failed to write temp settings file: {}", e)))?;
+        // Scoped so the handle is closed before the rename.
+        {
+            let mut file = fs::File::create(&temp_path).await.map_err(|e| {
+                AppError::Storage(format!("Failed to create temp settings file: {}", e))
+            })?;
 
-        // Ensure all data is flushed to disk
-        file.sync_all()
-            .await
-            .map_err(|e| AppError::Storage(format!("Failed to sync temp settings file: {}", e)))?;
+            file.write_all(json.as_bytes()).await.map_err(|e| {
+                AppError::Storage(format!("Failed to write temp settings file: {}", e))
+            })?;
+
+            // Ensure all data is flushed to disk
+            file.sync_all().await.map_err(|e| {
+                AppError::Storage(format!("Failed to sync temp settings file: {}", e))
+            })?;
+        }
 
         // Atomic rename - this is the critical operation
-        fs::rename(&temp_path, &self.settings_path)
-            .await
-            .map_err(|e| AppError::Storage(format!("Failed to rename settings file: {}", e)))?;
+        if let Err(e) = fs::rename(&temp_path, &self.settings_path).await {
+            // Don't leave the temp file behind on a failed rename.
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(AppError::Storage(format!(
+                "Failed to rename settings file: {}",
+                e
+            )));
+        }
 
         Ok(())
+    }
+
+    /// A temp path unique to this write, alongside the real settings file so
+    /// the rename stays within one filesystem.
+    fn unique_temp_path(&self) -> PathBuf {
+        let file_name = self
+            .settings_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| SETTINGS_FILE_NAME.to_string());
+        let unique = format!(".{}.{}{}", file_name, uuid::Uuid::new_v4(), TEMP_SUFFIX);
+        match self.settings_path.parent() {
+            Some(dir) => dir.join(unique),
+            None => PathBuf::from(unique),
+        }
+    }
+
+    /// Move an unparseable settings file aside instead of destroying it.
+    ///
+    /// Overwriting with defaults is unrecoverable: vault path, indexed
+    /// folders, model roles and privacy flags are all gone with no copy. A
+    /// parse failure is not proof the contents are worthless — a hand-edit
+    /// typo, a torn write, or a field from a newer version all land here.
+    async fn quarantine_corrupt_settings(&self, reason: &str) {
+        let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let quarantine = self
+            .settings_path
+            .with_extension(format!("json.corrupt-{}", stamp));
+
+        match fs::rename(&self.settings_path, &quarantine).await {
+            Ok(()) => tracing::error!(
+                original = %self.settings_path.display(),
+                preserved_at = %quarantine.display(),
+                reason,
+                "Settings file could not be parsed; preserved a copy and continuing with defaults. \
+                 Recover values from the preserved file."
+            ),
+            Err(e) => tracing::error!(
+                original = %self.settings_path.display(),
+                error = %e,
+                reason,
+                "Settings file could not be parsed AND could not be preserved; \
+                 continuing with defaults"
+            ),
+        }
     }
 
     /// Migrate settings from older version to current version.
@@ -989,11 +1072,17 @@ impl SettingsRepository {
             );
         }
 
-        // Validate backup settings
-        if settings.backup.auto_backup_enabled && settings.backup.backup_path.is_empty() {
+        // Validate backup settings.
+        //
+        // `backup_path` is intentionally empty: scheduled backups always use
+        // the application-owned backups directory. The field is retained for
+        // settings-file compatibility, but accepting an arbitrary value here
+        // would only defer a guaranteed adapter rejection until the scheduler
+        // runs. Reject it while saving so the failure is immediate and visible.
+        if !settings.backup.backup_path.is_empty() {
             result.add_error(
                 "backup",
-                "backup_path is required when auto-backup is enabled".to_string(),
+                "custom backup locations are not supported; leave backup_path empty to use the application's protected backups directory".to_string(),
             );
         }
         if settings.backup.backup_retention_days == 0 {
@@ -1027,7 +1116,12 @@ impl SettingsRepository {
             .clone();
 
         for (key, value) in updates {
-            category_map.insert(key.clone(), value.clone());
+            match category_map.get_mut(key) {
+                Some(existing) => merge_json_update(existing, value.clone()),
+                None => {
+                    category_map.insert(key.clone(), value.clone());
+                }
+            }
         }
 
         Ok(serde_json::Value::Object(category_map))
@@ -1053,6 +1147,7 @@ impl SettingsRepositoryPort for SettingsRepository {
             SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
             SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
             SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
+            SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
         };
 
         Ok(value)
@@ -1081,6 +1176,10 @@ impl SettingsRepositoryPort for SettingsRepository {
         category: Option<SettingsCategory>,
         updates: HashMap<String, serde_json::Value>,
     ) -> Result<SettingsDto> {
+        // Held for the whole read-merge-write cycle. Dropping it earlier
+        // reintroduces the lost-update race this lock exists to prevent.
+        let _guard = self.write_lock.lock().await;
+
         let mut settings = self.get_all().await?;
 
         match category {
@@ -1095,6 +1194,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
                     SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
                     SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
+                    SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
                 };
 
                 let merged = self.merge_category_updates(category_value, &updates)?;
@@ -1125,6 +1225,9 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Vault => {
                         settings.vault = serde_json::from_value(merged)?;
                     }
+                    SettingsCategory::Onboarding => {
+                        settings.onboarding = serde_json::from_value(merged)?;
+                    }
                 }
             }
             None => {
@@ -1135,7 +1238,12 @@ impl SettingsRepositoryPort for SettingsRepository {
                 })?;
 
                 for (key, value) in updates {
-                    settings_map.insert(key, value);
+                    match settings_map.get_mut(&key) {
+                        Some(existing) => merge_json_update(existing, value),
+                        None => {
+                            settings_map.insert(key, value);
+                        }
+                    }
                 }
 
                 settings = serde_json::from_value(serde_json::Value::Object(settings_map.clone()))?;
@@ -1149,6 +1257,9 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 
     async fn reset(&self, category: Option<SettingsCategory>) -> Result<SettingsDto> {
+        // Same read-modify-write cycle as `update`, same lock.
+        let _guard = self.write_lock.lock().await;
+
         let mut settings = self.get_all().await?;
 
         match category {
@@ -1163,6 +1274,7 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Backup => settings.backup = Default::default(),
                     SettingsCategory::Privacy => settings.privacy = Default::default(),
                     SettingsCategory::Vault => settings.vault = Default::default(),
+                    SettingsCategory::Onboarding => settings.onboarding = Default::default(),
                 }
             }
             None => {
@@ -1243,6 +1355,7 @@ impl SettingsRepositoryPort for SettingsRepository {
 
     fn validate_folder_path(&self, path: &str) -> bool {
         let path = Path::new(path);
+        // repository-barrier-allow: settings validation checks a user-selected folder resource.
         path.exists() && path.is_dir()
     }
 }
@@ -1254,6 +1367,7 @@ impl SettingsRepositoryPort for SettingsRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     async fn create_test_repository() -> (SettingsRepository, TempDir) {
@@ -1262,6 +1376,145 @@ mod tests {
             .await
             .unwrap();
         (repo, temp_dir)
+    }
+
+    /// Concurrent updates to *different* categories must all survive. Before
+    /// the write lock, each caller read the same base state and the last
+    /// writer reverted every earlier one, while the UI reported success for
+    /// all of them.
+    #[tokio::test]
+    async fn concurrent_updates_to_distinct_categories_do_not_lose_writes() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo = Arc::new(
+            SettingsRepository::new(temp_dir.path().to_path_buf())
+                .await
+                .unwrap(),
+        );
+
+        let mut handles = Vec::new();
+
+        {
+            let repo = Arc::clone(&repo);
+            handles.push(tokio::spawn(async move {
+                let mut updates = HashMap::new();
+                updates.insert("maxResults".to_string(), serde_json::json!(42));
+                repo.update(Some(SettingsCategory::Search), updates).await
+            }));
+        }
+        {
+            let repo = Arc::clone(&repo);
+            handles.push(tokio::spawn(async move {
+                let mut updates = HashMap::new();
+                updates.insert("chunkSize".to_string(), serde_json::json!(1234));
+                repo.update(Some(SettingsCategory::Indexing), updates).await
+            }));
+        }
+        {
+            let repo = Arc::clone(&repo);
+            handles.push(tokio::spawn(async move {
+                let mut updates = HashMap::new();
+                updates.insert("telemetryEnabled".to_string(), serde_json::json!(true));
+                repo.update(Some(SettingsCategory::Privacy), updates).await
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap().expect("update should succeed");
+        }
+
+        let settings = repo.get_all().await.unwrap();
+        assert_eq!(settings.search.max_results, 42, "search update was lost");
+        assert_eq!(
+            settings.indexing.chunk_size, 1234,
+            "indexing update was lost"
+        );
+        assert!(
+            settings.privacy.telemetry_enabled,
+            "privacy update was lost"
+        );
+    }
+
+    /// An unparseable settings file must be preserved, not overwritten. It is
+    /// the only copy of the user's vault path, indexed folders and model roles.
+    #[tokio::test]
+    async fn corrupt_settings_file_is_quarantined_not_destroyed() {
+        let temp_dir = TempDir::new().unwrap();
+        let settings_path = temp_dir.path().join(SETTINGS_FILE_NAME);
+
+        let garbage = "{ this is not valid json";
+        fs::write(&settings_path, garbage).await.unwrap();
+
+        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        // Reading falls back to defaults...
+        let settings = repo.get_all().await.unwrap();
+        assert_eq!(settings.indexing.chunk_size, 800);
+
+        // ...but the original bytes still exist somewhere.
+        let mut preserved = Vec::new();
+        let mut entries = tokio::fs::read_dir(temp_dir.path()).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.contains(".corrupt-") {
+                preserved.push(tokio::fs::read_to_string(entry.path()).await.unwrap());
+            }
+        }
+
+        assert_eq!(
+            preserved.len(),
+            1,
+            "expected exactly one quarantined settings file"
+        );
+        assert_eq!(
+            preserved[0], garbage,
+            "quarantined file must hold the original bytes verbatim"
+        );
+    }
+
+    /// Every write must use its own temp file, so a concurrent writer can't
+    /// truncate the file another writer is about to rename into place.
+    #[tokio::test]
+    async fn concurrent_saves_never_leave_unparseable_settings() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo = Arc::new(
+            SettingsRepository::new(temp_dir.path().to_path_buf())
+                .await
+                .unwrap(),
+        );
+        let settings_path = temp_dir.path().join(SETTINGS_FILE_NAME);
+
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let repo = Arc::clone(&repo);
+            handles.push(tokio::spawn(async move {
+                let mut updates = HashMap::new();
+                updates.insert("maxResults".to_string(), serde_json::json!(i + 1));
+                repo.update(Some(SettingsCategory::Search), updates).await
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap().expect("update should succeed");
+        }
+
+        let contents = fs::read_to_string(&settings_path).await.unwrap();
+        serde_json::from_str::<SettingsFile>(&contents)
+            .expect("settings file must remain parseable after concurrent writes");
+
+        // And no temp files should be left lying around.
+        let mut leftovers = Vec::new();
+        let mut entries = tokio::fs::read_dir(temp_dir.path()).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with(TEMP_SUFFIX) {
+                leftovers.push(name);
+            }
+        }
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {:?}",
+            leftovers
+        );
     }
 
     #[tokio::test]
@@ -1671,8 +1924,7 @@ mod tests {
         let settings2 = repo2.get_all().await.unwrap();
 
         assert_eq!(
-            settings2.llm.ollama_url,
-            "https://my-custom-ollama.example.com",
+            settings2.llm.ollama_url, "https://my-custom-ollama.example.com",
             "user customization must survive the migration"
         );
         assert!(!temp_dir.path().join("config.json").exists());
@@ -1743,7 +1995,10 @@ mod tests {
 
         // Now `settings.json` must be a regular file.
         let meta = std::fs::metadata(&stray).unwrap();
-        assert!(meta.is_file(), "settings.json must be a file after self-heal");
+        assert!(
+            meta.is_file(),
+            "settings.json must be a file after self-heal"
+        );
 
         // get_all should work — defaults applied since no salvage was
         // possible (empty stray dir).

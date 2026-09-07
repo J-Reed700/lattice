@@ -125,8 +125,8 @@ impl ResetSettingsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::settings::dto::UpdateSettingsRequestDto;
     use crate::application::ports::MockSettingsRepository;
+    use crate::features::settings::dto::UpdateSettingsRequestDto;
     use crate::features::settings::use_cases::update::UpdateSettingsUseCase;
     use serde_json::json;
     use std::collections::HashMap;

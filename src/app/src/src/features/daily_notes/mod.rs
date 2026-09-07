@@ -13,3 +13,7 @@
 
 pub mod commands;
 pub mod plugin;
+pub mod repository;
+
+#[cfg(test)]
+mod tests;

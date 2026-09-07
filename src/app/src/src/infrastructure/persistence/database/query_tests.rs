@@ -35,7 +35,7 @@ mod tests {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS chunks (
+            CREATE TABLE IF NOT EXISTS text_chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 document_id TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -43,7 +43,7 @@ mod tests {
                 FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
             );
 
-            CREATE INDEX idx_chunks_document_id ON chunks(document_id);
+            CREATE INDEX idx_text_chunks_document_id ON text_chunks(document_id);
             "#,
         )
         .execute(&pool)

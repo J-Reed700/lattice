@@ -10,8 +10,8 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::services::function_executor::FunctionExecutor;
-//! use vault_desktop::domain::function_call::FunctionCall;
+//! use lattice::infrastructure::services::function_executor::FunctionExecutor;
+//! use lattice::domain::function_call::FunctionCall;
 //! use serde_json::json;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,20 +29,20 @@
 //! # }
 //! ```
 
-use crate::features::function_calling::dto::*;
-use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::application::ports::{
     ChunkRepositoryPort, DocumentRepository, FavoritesRepositoryPort, FileStoragePort,
     RecentDocumentsRepositoryPort,
 };
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
-use crate::infrastructure::search::hybrid::{HybridSearchResult, SearchMode as HybridSearchMode};
-use crate::infrastructure::search::service::SearchResult as InfraSearchResult;
 use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
+use crate::features::function_calling::dto::*;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::settings::dto::CustomToolSettingsDto;
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::WebServiceTrait;
+use crate::infrastructure::search::hybrid::{HybridSearchResult, SearchMode as HybridSearchMode};
+use crate::infrastructure::search::service::SearchResult as InfraSearchResult;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -1405,8 +1405,6 @@ impl FunctionExecutorTrait for FunctionExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::favorites::dto::FavoriteDto;
-    use crate::features::recent::dto::RecentDocumentDto;
     use crate::application::ports::DocumentRepositoryPort;
     use crate::application::ports::{
         ChunkRepositoryPort, FavoritesRepositoryPort, FileMetadata, FileStoragePort,
@@ -1415,13 +1413,15 @@ mod tests {
     use crate::domain::entities::Document;
     use crate::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
     use crate::domain::value_objects::Checksum;
-    use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
-    use crate::features::function_calling::registry::FunctionRegistry;
     use crate::features::embedding::mocks::MockEmbeddingService;
+    use crate::features::favorites::dto::FavoriteDto;
     use crate::features::function_calling::mocks::MockFunctionRegistry;
+    use crate::features::function_calling::registry::FunctionRegistry;
+    use crate::features::recent::dto::RecentDocumentDto;
     use crate::features::search::mocks::{MockBM25Search, MockHybridSearch, MockSearchService};
     use crate::features::tags::mocks::MockTagService;
     use crate::features::web::mocks::MockWebService;
+    use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
     use crate::RepositoryPort;
     use async_trait::async_trait;
     use std::path::{Path, PathBuf};
@@ -1664,7 +1664,10 @@ mod tests {
         }
 
         async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>> {
-            Ok(vec![self.document.clone()].into_iter().take(limit).collect())
+            Ok(vec![self.document.clone()]
+                .into_iter()
+                .take(limit)
+                .collect())
         }
     }
 

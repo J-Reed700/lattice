@@ -20,6 +20,13 @@ use petal_neighbors::distance::Euclidean;
 
 use crate::shared::error::{AppError, Result};
 
+/// Hard cap on documents fed to one clustering run.
+///
+/// The pure stage is O(n²·d): at n = 4 000, d = 384 that is a few seconds on a
+/// blocking thread; an unbounded vault would wedge the run. Callers take the
+/// most recently indexed documents, which are the ones worth grouping.
+pub const MAX_CLUSTERING_DOCS: usize = 4_000;
+
 /// Default `min_cluster_size` — clusters with fewer members are relabelled as noise.
 pub const DEFAULT_MIN_CLUSTER_SIZE: usize = 5;
 

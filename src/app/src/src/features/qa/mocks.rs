@@ -3,11 +3,11 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::infrastructure::search::service::SearchResult;
-#[cfg(test)]
 use super::traits::{ConversationalQAServiceTrait, QAEngineTrait};
 #[cfg(test)]
 use crate::features::conversation::ConversationServiceTrait;
+#[cfg(test)]
+use crate::infrastructure::search::service::SearchResult;
 #[cfg(test)]
 use crate::shared::error::Result;
 #[cfg(test)]

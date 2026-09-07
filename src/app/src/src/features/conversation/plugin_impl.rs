@@ -2,6 +2,14 @@
 //!
 //! Migrated from ipc/domains/conversation.rs as part of Operation Scorched Earth Batch 4
 
+use crate::features::conversation::chat::{
+    chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
+};
+use crate::features::conversation::branching_dto::{
+    ForkConversationRequestDto, ForkConversationResponseDto,
+    TruncateConversationAfterRequestDto, TruncateConversationAfterResponseDto,
+};
+use crate::features::conversation::commands as conversation;
 use crate::features::conversation::dto::{
     CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
     DeleteConversationResponseDto, GetConversationMessagesRequestDto,
@@ -25,10 +33,7 @@ use crate::features::conversation::space_dto::{
     UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
-use crate::features::conversation::commands as conversation;
-use crate::features::conversation::chat::{
-    chat_with_conversation_impl as run_chat_with_conversation_impl, ChatResponse, ToolPreferences,
-};
+use crate::infrastructure::persistence::repositories::ConversationRepository;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use crate::shared::error::AppError;
@@ -44,6 +49,13 @@ const JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX: usize = 24;
 const JOURNAL_SYNTHESIS_MESSAGE_CHAR_LIMIT: usize = 900;
 const JOURNAL_SYNTHESIS_ENTRY_CHAR_LIMIT: usize = 6000;
 const JOURNAL_SYNTHESIS_CHUNK_CHAR_LIMIT: usize = 14000;
+const WEEK_SYNTHESIS_DAYS: i64 = 7;
+const WEEK_SYNTHESIS_MAX_CONVERSATIONS: usize = 12;
+const WEEK_SYNTHESIS_MAX_REFERENCES: usize = 20;
+const WEEK_SYNTHESIS_MAX_NOTES: usize = 8;
+const WEEK_SYNTHESIS_CANDIDATE_SCAN: i64 = 200;
+const WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT: usize = 600;
+const WEEK_SYNTHESIS_PAGE_TITLE_PREFIX: &str = "Week of ";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationStateRow {
@@ -168,6 +180,16 @@ pub struct SynthesizeJournalEntriesRequestDto {
     pub max_entries: Option<usize>,
 }
 
+/// One source a synthesis drew on. `kind` is "conversation", "reference" or
+/// "note"; `id` is that source's own id.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesisCitationDto {
+    pub kind: String,
+    pub id: String,
+    pub title: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SynthesizeJournalEntriesResponseDto {
@@ -176,15 +198,39 @@ pub struct SynthesizeJournalEntriesResponseDto {
     pub entry_count: usize,
     pub chunk_count: usize,
     pub conversation_ids: Vec<String>,
+    pub citations: Vec<SynthesisCitationDto>,
+}
+
+/// What a synthesis entry was built from. Conversations keep today's meaning;
+/// references and notes only ever appear under the "week" scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SynthesisEntryKind {
+    Conversation,
+    Reference,
+    Note,
+}
+
+impl SynthesisEntryKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            SynthesisEntryKind::Conversation => "conversation",
+            SynthesisEntryKind::Reference => "reference",
+            SynthesisEntryKind::Note => "note",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 struct JournalSynthesisEntry {
+    /// Empty for reference and note entries.
     conversation_id: String,
     title: String,
     updated_at: String,
     message_count: usize,
     transcript: String,
+    kind: SynthesisEntryKind,
+    /// Conversation id, passage reference id, or workspace note id.
+    source_id: String,
 }
 
 async fn fetch_conversation_state(
@@ -677,6 +723,7 @@ pub async fn chat_with_conversation_wrapper_impl(
     message: String,
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
+    request_id: Option<String>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     let convo_id_for_log = conversation_id.clone().unwrap_or_else(|| "NEW".to_string());
@@ -693,6 +740,7 @@ pub async fn chat_with_conversation_wrapper_impl(
         message,
         tool_preferences,
         cancel_only,
+        request_id,
         window,
     );
     match Box::pin(fut).await {
@@ -722,6 +770,7 @@ pub async fn chat_with_conversation_impl(
     message: String,
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
+    request_id: Option<String>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     chat_with_conversation_wrapper_impl(
@@ -730,9 +779,201 @@ pub async fn chat_with_conversation_impl(
         message,
         tool_preferences,
         cancel_only,
+        request_id,
         window,
     )
     .await
+}
+
+/// Normalizes the requested synthesis scope. Anything unrecognised falls back
+/// to "deck", which is the historical behaviour.
+fn normalize_synthesis_scope(raw: Option<&str>) -> String {
+    let scope = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("deck")
+        .to_lowercase();
+
+    match scope.as_str() {
+        "current" | "deck" | "pinned" | "conversation" | "week" => scope,
+        _ => "deck".to_string(),
+    }
+}
+
+/// Maps the selected entries onto the sources the response reports.
+fn build_synthesis_citations(entries: &[JournalSynthesisEntry]) -> Vec<SynthesisCitationDto> {
+    entries
+        .iter()
+        .map(|entry| SynthesisCitationDto {
+            kind: entry.kind.as_str().to_string(),
+            id: entry.source_id.clone(),
+            title: entry.title.clone(),
+        })
+        .collect()
+}
+
+/// Whether a timestamp falls inside the trailing week ending at `now`.
+///
+/// Pure so the week cutoff is testable without a database or a clock.
+fn is_within_week(updated_at: chrono::DateTime<Utc>, now: chrono::DateTime<Utc>) -> bool {
+    updated_at >= now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS)
+}
+
+/// A weekly synthesis must not eat its own output: a page it previously wrote
+/// would otherwise be summarised on the next run, and the page degenerates.
+fn is_week_synthesis_page(title: &str) -> bool {
+    title.trim_start().starts_with(WEEK_SYNTHESIS_PAGE_TITLE_PREFIX)
+}
+
+/// Sorts newest first, tolerating unparseable stored timestamps.
+fn sort_entries_by_recency(entries: &mut [JournalSynthesisEntry]) {
+    entries.sort_by(|left, right| {
+        let left_time = crate::shared::time::parse_db_timestamp(&left.updated_at)
+            .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
+        let right_time = crate::shared::time::parse_db_timestamp(&right.updated_at)
+            .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
+        right_time.cmp(&left_time)
+    });
+}
+
+/// Selects everything from the last seven days worth synthesizing:
+/// conversations, saved passages, and journal pages.
+///
+/// Conversations are filtered in Rust against parsed `DateTime<Utc>` values
+/// and notes go through `date(updated_at) BETWEEN …`, because raw `>=` string
+/// comparison over mixed canonical/legacy SQLite timestamps compares wrongly.
+async fn select_week_entries(
+    container: &Container,
+    max_entries: usize,
+) -> Result<Vec<JournalSynthesisEntry>, ApiError> {
+    let now = Utc::now();
+    let mut entries: Vec<JournalSynthesisEntry> = Vec::new();
+
+    // (a) Conversations — typed, already ordered updated_at DESC.
+    let candidates = conversation::list_conversations_impl(
+        container,
+        Some(WEEK_SYNTHESIS_CANDIDATE_SCAN),
+        Some(0),
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    let mut used_conversations = 0usize;
+    for candidate in candidates {
+        if used_conversations >= WEEK_SYNTHESIS_MAX_CONVERSATIONS {
+            break;
+        }
+        if !is_within_week(candidate.updated_at, now) {
+            continue;
+        }
+        let conversation_id = candidate.id.to_string();
+        let messages =
+            conversation::get_conversation_messages_impl(container, conversation_id.clone())
+                .await
+                .map_err(ApiError::from)?;
+        let transcript = build_synthesis_transcript(&messages);
+        if transcript.is_empty() {
+            continue;
+        }
+        used_conversations += 1;
+        entries.push(JournalSynthesisEntry {
+            conversation_id: conversation_id.clone(),
+            title: candidate.title,
+            updated_at: crate::shared::time::format_db_timestamp(candidate.updated_at),
+            message_count: messages.len(),
+            transcript,
+            kind: SynthesisEntryKind::Conversation,
+            source_id: conversation_id,
+        });
+    }
+
+    // (b) Saved passages — our own table, always written canonically.
+    let cutoff = crate::shared::time::format_db_timestamp(
+        now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS),
+    );
+    let references = crate::features::references::repository::PassageReferenceRepository::new(
+        container.db_pool().clone(),
+    )
+    .list_created_since(&cutoff, WEEK_SYNTHESIS_MAX_REFERENCES as i64)
+    .await
+    .map_err(ApiError::from)?;
+
+    for record in references {
+        let mut lines = vec![format!(
+            "SAVED PASSAGE from {}{}",
+            record.file_name,
+            record
+                .locator
+                .as_deref()
+                .map(|locator| format!(" ({locator})"))
+                .unwrap_or_default(),
+        )];
+        lines.push(truncate_for_synthesis(
+            &record.text,
+            WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT,
+        ));
+        if let Some(note) = record.note.as_deref().filter(|n| !n.trim().is_empty()) {
+            lines.push(format!(
+                "MY NOTE: {}",
+                truncate_for_synthesis(note, WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT)
+            ));
+        }
+        let title = record
+            .title
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| record.file_name.clone());
+
+        entries.push(JournalSynthesisEntry {
+            conversation_id: String::new(),
+            title,
+            updated_at: record.created_at.clone(),
+            message_count: 0,
+            transcript: lines.join("\n"),
+            kind: SynthesisEntryKind::Reference,
+            source_id: record.id.clone(),
+        });
+    }
+
+    // (c) Journal pages — date() on both sides handles legacy timestamps.
+    let start_date = (now - chrono::Duration::days(WEEK_SYNTHESIS_DAYS))
+        .format("%Y-%m-%d")
+        .to_string();
+    let end_date = now.format("%Y-%m-%d").to_string();
+    let notes = crate::features::daily_notes::repository::DailyNotesRepository::new(
+        container.db_pool().clone(),
+    )
+    .list_in_date_range(&start_date, &end_date)
+    .await
+    .map_err(ApiError::from)?;
+
+    let mut used_notes = 0usize;
+    for note in notes {
+        if used_notes >= WEEK_SYNTHESIS_MAX_NOTES {
+            break;
+        }
+        if note.content.trim().is_empty() || is_week_synthesis_page(&note.title) {
+            continue;
+        }
+        used_notes += 1;
+        entries.push(JournalSynthesisEntry {
+            conversation_id: String::new(),
+            title: note.title.clone(),
+            updated_at: note.updated_at.clone(),
+            message_count: 0,
+            transcript: format!(
+                "JOURNAL PAGE: {}\n{}",
+                note.title,
+                truncate_for_synthesis(&note.content, WEEK_SYNTHESIS_SOURCE_CHAR_LIMIT)
+            ),
+            kind: SynthesisEntryKind::Note,
+            source_id: note.id.clone(),
+        });
+    }
+
+    sort_entries_by_recency(&mut entries);
+    entries.truncate(max_entries);
+    Ok(entries)
 }
 
 pub async fn synthesize_journal_entries_impl(
@@ -740,18 +981,7 @@ pub async fn synthesize_journal_entries_impl(
     container: &Container,
     window: tauri::Window,
 ) -> Result<SynthesizeJournalEntriesResponseDto, ApiError> {
-    let scope = request
-        .scope
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("deck")
-        .to_lowercase();
-
-    let normalized_scope = match scope.as_str() {
-        "current" | "deck" | "pinned" => scope,
-        _ => "deck".to_string(),
-    };
+    let normalized_scope = normalize_synthesis_scope(request.scope.as_deref());
 
     let mut seen = HashSet::new();
     let mut conversation_ids = Vec::new();
@@ -765,52 +995,66 @@ pub async fn synthesize_journal_entries_impl(
         }
     }
 
-    if conversation_ids.is_empty() {
-        return Err(ApiError::from(AppError::InvalidInput(
-            "At least one conversation ID is required for journal synthesis".to_string(),
-        )));
-    }
-
     let max_entries = request
         .max_entries
         .unwrap_or(JOURNAL_SYNTHESIS_ENTRY_LIMIT_DEFAULT)
         .clamp(1, JOURNAL_SYNTHESIS_ENTRY_LIMIT_MAX);
 
-    if conversation_ids.len() > max_entries {
-        conversation_ids.truncate(max_entries);
-    }
-
-    let mut entries = Vec::new();
-    for conversation_id in &conversation_ids {
-        let conversation = conversation::get_conversation_impl(container, conversation_id.clone())
-            .await
-            .map_err(ApiError::from)?;
-        let Some(conversation) = conversation else {
-            continue;
-        };
-
-        let messages =
-            conversation::get_conversation_messages_impl(container, conversation_id.clone())
-                .await
-                .map_err(ApiError::from)?;
-        let transcript = build_synthesis_transcript(&messages);
-        if transcript.is_empty() {
-            continue;
+    // The "week" scope selects server-side, so it carries no conversation ids.
+    // Every other scope still requires an explicit selection.
+    let entries = if normalized_scope == "week" {
+        select_week_entries(container, max_entries).await?
+    } else {
+        if conversation_ids.is_empty() {
+            return Err(ApiError::from(AppError::InvalidInput(
+                "At least one conversation ID is required for journal synthesis".to_string(),
+            )));
         }
 
-        entries.push(JournalSynthesisEntry {
-            conversation_id: conversation.id.to_string(),
-            title: conversation.title,
-            updated_at: conversation.updated_at.to_rfc3339(),
-            message_count: messages.len(),
-            transcript,
-        });
-    }
+        if conversation_ids.len() > max_entries {
+            conversation_ids.truncate(max_entries);
+        }
+
+        let mut selected = Vec::new();
+        for conversation_id in &conversation_ids {
+            let conversation =
+                conversation::get_conversation_impl(container, conversation_id.clone())
+                    .await
+                    .map_err(ApiError::from)?;
+            let Some(conversation) = conversation else {
+                continue;
+            };
+
+            let messages =
+                conversation::get_conversation_messages_impl(container, conversation_id.clone())
+                    .await
+                    .map_err(ApiError::from)?;
+            let transcript = build_synthesis_transcript(&messages);
+            if transcript.is_empty() {
+                continue;
+            }
+
+            let id = conversation.id.to_string();
+            selected.push(JournalSynthesisEntry {
+                conversation_id: id.clone(),
+                title: conversation.title,
+                updated_at: conversation.updated_at.to_rfc3339(),
+                message_count: messages.len(),
+                transcript,
+                kind: SynthesisEntryKind::Conversation,
+                source_id: id,
+            });
+        }
+        selected
+    };
 
     if entries.is_empty() {
-        return Err(ApiError::from(AppError::InvalidInput(
-            "No synthesizable message content found in selected conversations".to_string(),
-        )));
+        let message = if normalized_scope == "week" {
+            "Nothing from the past week to synthesize."
+        } else {
+            "No synthesizable message content found in selected conversations"
+        };
+        return Err(ApiError::from(AppError::InvalidInput(message.to_string())));
     }
 
     let chunks = chunk_journal_synthesis_entries(&entries);
@@ -835,6 +1079,7 @@ pub async fn synthesize_journal_entries_impl(
                 map_prompt,
                 Some(tool_preferences.clone()),
                 None,
+                None,
                 window.clone(),
             )
             .await
@@ -856,6 +1101,7 @@ pub async fn synthesize_journal_entries_impl(
             reduce_prompt,
             Some(tool_preferences.clone()),
             None,
+            None,
             window.clone(),
         )
         .await
@@ -875,8 +1121,10 @@ pub async fn synthesize_journal_entries_impl(
             chunk_count: chunks.len(),
             conversation_ids: entries
                 .iter()
+                .filter(|entry| entry.kind == SynthesisEntryKind::Conversation)
                 .map(|entry| entry.conversation_id.clone())
                 .collect(),
+            citations: build_synthesis_citations(&entries),
         })
     }
     .await;
@@ -894,7 +1142,7 @@ pub async fn create_conversation_space(
 ) -> Result<ConversationSpaceDto, ApiError> {
     conversation::create_conversation_space_impl(container, request)
         .await
-        .map_err(|e | ApiError::from(e))
+        .map_err(ApiError::from)
 }
 
 pub async fn list_conversation_spaces_impl(
@@ -1643,7 +1891,7 @@ pub async fn add_conversation_to_journal_impl(
     )
     .bind(journal_space_id)
     .bind(conversation_id)
-    .bind(Utc::now().to_rfc3339())
+    .bind(crate::shared::time::now_db_timestamp())
     .execute(container.db_pool())
     .await
     .map_err(|e| {
@@ -1815,28 +2063,26 @@ pub async fn list_journal_conversations_impl(
 
     let conversations = rows
         .into_iter()
-        .map(
-            |row| crate::features::conversation::dto::ConversationDto {
-                id: row.id,
-                title: row.title,
-                model_name: row.model_name,
-                system_prompt: row.system_prompt,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                message_count: row.message_count,
-                total_tokens: row.total_tokens,
-                space_id: Some(row.space_id),
-                is_saved: Some(row.is_saved != 0),
-                is_bookmarked: Some(row.is_bookmarked != 0),
-                is_pinned: Some(row.is_pinned != 0),
-                is_archived: Some(row.is_archived != 0),
-                saved_at: row.saved_at,
-                bookmarked_at: row.bookmarked_at,
-                pinned_at: row.pinned_at,
-                archived_at: row.archived_at,
-                last_message_preview: row.last_message_preview,
-            },
-        )
+        .map(|row| crate::features::conversation::dto::ConversationDto {
+            id: row.id,
+            title: row.title,
+            model_name: row.model_name,
+            system_prompt: row.system_prompt,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            message_count: row.message_count,
+            total_tokens: row.total_tokens,
+            space_id: Some(row.space_id),
+            is_saved: Some(row.is_saved != 0),
+            is_bookmarked: Some(row.is_bookmarked != 0),
+            is_pinned: Some(row.is_pinned != 0),
+            is_archived: Some(row.is_archived != 0),
+            saved_at: row.saved_at,
+            bookmarked_at: row.bookmarked_at,
+            pinned_at: row.pinned_at,
+            archived_at: row.archived_at,
+            last_message_preview: row.last_message_preview,
+        })
         .collect::<Vec<_>>();
 
     Ok(ListConversationsResponseDto {
@@ -2950,32 +3196,299 @@ pub async fn list_conversations_explorer_impl(
 
     let conversations = rows
         .into_iter()
-        .map(
-            |row| crate::features::conversation::dto::ConversationDto {
-                id: row.id,
-                title: row.title,
-                model_name: row.model_name,
-                system_prompt: row.system_prompt,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                message_count: row.message_count,
-                total_tokens: row.total_tokens,
-                space_id: Some(row.space_id),
-                is_saved: Some(row.is_saved != 0),
-                is_bookmarked: Some(row.is_bookmarked != 0),
-                is_pinned: Some(row.is_pinned != 0),
-                is_archived: Some(row.is_archived != 0),
-                saved_at: row.saved_at,
-                bookmarked_at: row.bookmarked_at,
-                pinned_at: row.pinned_at,
-                archived_at: row.archived_at,
-                last_message_preview: row.last_message_preview,
-            },
-        )
+        .map(|row| crate::features::conversation::dto::ConversationDto {
+            id: row.id,
+            title: row.title,
+            model_name: row.model_name,
+            system_prompt: row.system_prompt,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            message_count: row.message_count,
+            total_tokens: row.total_tokens,
+            space_id: Some(row.space_id),
+            is_saved: Some(row.is_saved != 0),
+            is_bookmarked: Some(row.is_bookmarked != 0),
+            is_pinned: Some(row.is_pinned != 0),
+            is_archived: Some(row.is_archived != 0),
+            saved_at: row.saved_at,
+            bookmarked_at: row.bookmarked_at,
+            pinned_at: row.pinned_at,
+            archived_at: row.archived_at,
+            last_message_preview: row.last_message_preview,
+        })
         .collect::<Vec<_>>();
 
     Ok(ListConversationsResponseDto {
         total: conversations.len(),
         conversations,
     })
+}
+
+// ---------------------------------------------------------------
+// Branching: truncate / fork / regenerate (BRIEF rank 4, contract §4.2)
+//
+// All three build a `ConversationRepository` at the call site
+// (`ConversationRepository::new(container.db_pool().clone())`) rather than
+// adding a Container field or a trait method: the repository is a pool clone,
+// and `ConversationServiceTrait` has four implementors that would all need
+// updating for methods only these three commands use.
+// ---------------------------------------------------------------
+
+fn to_message_dto(
+    message: &crate::domain::conversation::ConversationMessage,
+) -> crate::features::conversation::dto::MessageDto {
+    crate::features::conversation::dto::MessageDto {
+        id: message.id.to_string(),
+        conversation_id: message.conversation_id.to_string(),
+        role: message.role.to_string(),
+        content: message.content.clone(),
+        tokens: message.tokens,
+        created_at: message.created_at.to_rfc3339(),
+        metadata: message.metadata.clone(),
+        status: message.status.clone(),
+    }
+}
+
+pub async fn truncate_conversation_after_impl(
+    request: TruncateConversationAfterRequestDto,
+    container: &Container,
+) -> Result<TruncateConversationAfterResponseDto, ApiError> {
+    let repo = ConversationRepository::new(container.db_pool().clone());
+
+    let deleted = repo
+        .truncate_after(
+            &request.conversation_id,
+            &request.message_id,
+            request.inclusive,
+        )
+        .await
+        .map_err(ApiError::from)?;
+
+    // Return the survivors rather than a diff: the caller replaces its cache
+    // instead of reasoning about what went.
+    let messages = repo
+        .get_messages(&request.conversation_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(TruncateConversationAfterResponseDto {
+        conversation_id: request.conversation_id,
+        deleted_count: deleted as u32,
+        messages: messages.iter().map(to_message_dto).collect(),
+    })
+}
+
+pub async fn fork_conversation_impl(
+    request: ForkConversationRequestDto,
+    container: &Container,
+) -> Result<ForkConversationResponseDto, ApiError> {
+    let repo = ConversationRepository::new(container.db_pool().clone());
+
+    let source = repo
+        .find_by_id(&request.conversation_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::from(AppError::NotFound(format!(
+                "Conversation {} not found",
+                request.conversation_id
+            )))
+        })?;
+
+    let mut new_title = format!("{} · branch", source.title);
+    if new_title.chars().count() > 200 {
+        new_title = new_title.chars().take(200).collect();
+    }
+    let new_id = uuid::Uuid::new_v4().to_string();
+
+    let (new_id, copied) = repo
+        .fork(
+            &request.conversation_id,
+            request.up_to_message_id.as_deref(),
+            &new_id,
+            &new_title,
+        )
+        .await
+        .map_err(ApiError::from)?;
+
+    let created = repo
+        .find_by_id(&new_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::from(AppError::InvalidState(
+                "The branch was created but could not be read back.".to_string(),
+            ))
+        })?;
+    let state = fetch_conversation_state(container.db_pool(), &new_id).await?;
+
+    Ok(ForkConversationResponseDto {
+        conversation: to_conversation_dto(&created, state),
+        copied_message_count: copied,
+    })
+}
+
+/// Re-run the last user message.
+///
+/// The user turn is taken off the thread first and handed back to the normal
+/// chat flow, which re-persists it — so the question is never duplicated and
+/// never silently lost: if generation fails, it is written back as a `failed`
+/// message so the thread still shows what was asked.
+pub async fn regenerate_response_impl(
+    container: &Container,
+    conversation_id: String,
+    tool_preferences: Option<ToolPreferences>,
+    request_id: Option<String>,
+    window: tauri::Window,
+) -> Result<ChatResponse, ApiError> {
+    let repo = ConversationRepository::new(container.db_pool().clone());
+
+    let (content, _tokens) = repo
+        .take_last_user_turn(&conversation_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::from(AppError::InvalidInput(
+                "This conversation has nothing to regenerate.".to_string(),
+            ))
+        })?;
+
+    let fut = run_chat_with_conversation_impl(
+        container,
+        Some(conversation_id.clone()),
+        content.clone(),
+        tool_preferences,
+        None,
+        request_id,
+        window,
+    );
+
+    match Box::pin(fut).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            // Put the question back on the thread before surfacing the failure.
+            if let Err(persist_error) = container
+                .conversation_service()
+                .add_message_with_status(
+                    &conversation_id,
+                    crate::domain::conversation::MessageRole::User,
+                    content,
+                    0,
+                    "failed".to_string(),
+                )
+                .await
+            {
+                tracing::error!(
+                    error = %persist_error,
+                    conversation_id = conversation_id.as_str(),
+                    "Failed to restore the user message after a failed regenerate"
+                );
+            }
+            Err(ApiError::from(error))
+        }
+    }
+}
+
+#[cfg(test)]
+mod week_scope_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+    use super::*;
+    use chrono::TimeZone;
+
+    fn entry(kind: SynthesisEntryKind, source_id: &str, title: &str) -> JournalSynthesisEntry {
+        JournalSynthesisEntry {
+            conversation_id: if kind == SynthesisEntryKind::Conversation {
+                source_id.to_string()
+            } else {
+                String::new()
+            },
+            title: title.to_string(),
+            updated_at: "2026-09-05T10:00:00.000Z".to_string(),
+            message_count: 0,
+            transcript: "TRANSCRIPT".to_string(),
+            kind,
+            source_id: source_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn week_scope_is_accepted_and_not_coerced_to_deck() {
+        assert_eq!(normalize_synthesis_scope(Some("week")), "week");
+        assert_eq!(normalize_synthesis_scope(Some("  WEEK  ")), "week");
+    }
+
+    #[test]
+    fn conversation_scope_is_accepted_and_not_coerced_to_deck() {
+        assert_eq!(
+            normalize_synthesis_scope(Some("conversation")),
+            "conversation"
+        );
+    }
+
+    #[test]
+    fn unknown_scope_still_coerces_to_deck() {
+        assert_eq!(normalize_synthesis_scope(Some("everything")), "deck");
+        assert_eq!(normalize_synthesis_scope(Some("   ")), "deck");
+        assert_eq!(normalize_synthesis_scope(None), "deck");
+        // The three historical scopes must keep passing through untouched.
+        assert_eq!(normalize_synthesis_scope(Some("current")), "current");
+        assert_eq!(normalize_synthesis_scope(Some("pinned")), "pinned");
+        assert_eq!(normalize_synthesis_scope(Some("deck")), "deck");
+    }
+
+    #[test]
+    fn select_week_entries_filters_by_fixed_cutoff() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).unwrap();
+        let six_days_ago = now - chrono::Duration::days(6);
+        let eight_days_ago = now - chrono::Duration::days(8);
+        let exactly_seven_days_ago = now - chrono::Duration::days(7);
+
+        assert!(is_within_week(six_days_ago, now));
+        assert!(is_within_week(exactly_seven_days_ago, now));
+        assert!(!is_within_week(eight_days_ago, now));
+    }
+
+    #[test]
+    fn week_entries_skip_week_pages() {
+        assert!(is_week_synthesis_page("Week of Sep 1"));
+        assert!(is_week_synthesis_page("  Week of Aug 25"));
+        assert!(!is_week_synthesis_page("Weekly review"));
+        assert!(!is_week_synthesis_page("Sep 6"));
+    }
+
+    #[test]
+    fn citations_map_kinds_correctly() {
+        let entries = vec![
+            entry(SynthesisEntryKind::Conversation, "conv_1", "Sleep study"),
+            entry(SynthesisEntryKind::Reference, "pref_1", "paper.pdf"),
+            entry(SynthesisEntryKind::Note, "note_1", "Sep 4"),
+        ];
+        let citations = build_synthesis_citations(&entries);
+
+        assert_eq!(citations.len(), 3);
+        assert_eq!(citations[0].kind, "conversation");
+        assert_eq!(citations[0].id, "conv_1");
+        assert_eq!(citations[0].title, "Sleep study");
+        assert_eq!(citations[1].kind, "reference");
+        assert_eq!(citations[1].id, "pref_1");
+        assert_eq!(citations[2].kind, "note");
+        assert_eq!(citations[2].id, "note_1");
+    }
+
+    #[test]
+    fn entries_sort_newest_first_and_tolerate_bad_timestamps() {
+        let mut entries = vec![
+            entry(SynthesisEntryKind::Note, "note_old", "Old"),
+            entry(SynthesisEntryKind::Reference, "pref_bad", "Bad"),
+            entry(SynthesisEntryKind::Conversation, "conv_new", "New"),
+        ];
+        entries[0].updated_at = "2026-09-01T10:00:00.000Z".to_string();
+        entries[1].updated_at = "not a timestamp".to_string();
+        entries[2].updated_at = "2026-09-05T10:00:00.000Z".to_string();
+
+        sort_entries_by_recency(&mut entries);
+        let ids: Vec<&str> = entries.iter().map(|e| e.source_id.as_str()).collect();
+        assert_eq!(ids, vec!["conv_new", "note_old", "pref_bad"]);
+    }
 }

@@ -10,15 +10,15 @@
 //! Async functions store their state on the heap (in Future objects), not the stack.
 //! Deep async call chains don't cause stack overflow - that's the whole point of async.
 
-use crate::features::model_management::use_cases::{
-    ClearActiveChatModelUseCase, ClearActiveEmbeddingModelUseCase,
-};
+use crate::domain::downloaded_model::{DownloadedModel, ModelLocation, ModelType};
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
     SetActiveChatModelUseCase, SetActiveEmbeddingModelUseCase, SetActiveUtilityModelUseCase,
 };
-use crate::domain::downloaded_model::{DownloadedModel, ModelLocation, ModelType};
+use crate::features::model_management::use_cases::{
+    ClearActiveChatModelUseCase, ClearActiveEmbeddingModelUseCase,
+};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::interfaces::di::Container;
@@ -189,6 +189,7 @@ fn scan_directory_recursive(
         return;
     }
 
+    // repository-barrier-allow: external-model discovery walks user-configured model resources.
     let Ok(entries) = std::fs::read_dir(current) else {
         return;
     };
@@ -206,15 +207,18 @@ fn scan_directory_recursive(
         }
 
         let path = entry.path();
+        // repository-barrier-allow: classify entries in the external-model resource tree.
         if file_type.is_dir() {
             scan_directory_recursive(root_dir, &path, depth + 1, discovered, seen_files);
             continue;
         }
 
+        // repository-barrier-allow: only regular model artifact files are importable.
         if !file_type.is_file() || !is_supported_external_model_file(&path) {
             continue;
         }
 
+        // repository-barrier-allow: record size from the discovered model artifact itself.
         let Ok(metadata) = std::fs::metadata(&path) else {
             continue;
         };
@@ -246,6 +250,7 @@ fn scan_external_models_sync(directories: &[String]) -> Vec<DiscoveredExternalMo
         }
 
         let root = PathBuf::from(dir);
+        // repository-barrier-allow: validate each user-configured external-model directory resource.
         if !root.is_dir() {
             continue;
         }
@@ -356,8 +361,10 @@ async fn sync_external_model_directories(
         // External rows are always LocalFile (see external_model
         // construction above). loadable_path() returns the file path;
         // we re-check existence on disk to detect manual deletion.
+        // repository-barrier-allow: external model rows intentionally reconcile against user-owned artifacts.
         let file_exists = model
             .loadable_path()
+            // repository-barrier-allow: validate the external model artifact itself.
             .map(|p| p.exists() && p.is_file())
             .unwrap_or(false);
         if still_discovered && file_exists {

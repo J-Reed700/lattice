@@ -25,8 +25,7 @@ pub struct MentionsDi {
 }
 
 pub fn build(db_pool: SqlitePool) -> MentionsDi {
-    let mention_repo =
-        Arc::new(MentionRepository::new(db_pool)) as Arc<dyn MentionRepositoryPort>;
+    let mention_repo = Arc::new(MentionRepository::new(db_pool)) as Arc<dyn MentionRepositoryPort>;
     let mapper = Arc::new(MentionMapper::new());
 
     MentionsDi {

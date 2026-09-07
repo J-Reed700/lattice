@@ -4,11 +4,13 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use crate::domain::qa::hyde::QueryType;
+use crate::features::settings::dto::RetrievalTuningSettingsDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::safe_truncate;
 
+// Retrieval policy inputs stay explicit so call sites cannot silently inherit defaults.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_kb_retrieval(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -47,10 +49,16 @@ pub(super) async fn run_kb_retrieval(
                     "the conversation scope could not be resolved".to_string(),
                 ),
                 timings,
+                searched_documents: 0,
+                scope_is_linked: false,
             };
         }
     };
     timings.kb_scope_load_ms = super::elapsed_ms(scope_load_start);
+    // The exact set the hard filter allows. Reported to the UI verbatim so
+    // "Searched N documents" is a fact, not a corpus-sized guess.
+    let searched_documents = scope.document_ids.len();
+    let scope_is_linked = scope.space_id != super::DEFAULT_SPACE_ID;
 
     if scope.document_ids.is_empty() {
         timings.kb_total_ms = super::elapsed_ms(kb_start);
@@ -71,16 +79,16 @@ pub(super) async fn run_kb_retrieval(
                 "the active space has no indexed documents yet".to_string(),
             ),
             timings,
+            searched_documents: 0,
+            scope_is_linked: scope.space_id != super::DEFAULT_SPACE_ID,
         };
     }
-    
-    let hyde_llm: Arc<dyn crate::application::ports::LLMPort> = match container
-        .get_or_load_utility_llm()
-        .await
-    {
-        Ok(Some(util)) => util,
-        _ => Arc::clone(llm),
-    };
+
+    let hyde_llm: Arc<dyn crate::application::ports::LLMPort> =
+        match container.get_or_load_utility_llm().await {
+            Ok(Some(util)) => util,
+            _ => Arc::clone(llm),
+        };
 
     let hyde_interpretation_start = Instant::now();
     let hyde_service = crate::infrastructure::services::hyde::HyDEService::new(hyde_llm);
@@ -218,5 +226,7 @@ pub(super) async fn run_kb_retrieval(
         low_confidence,
         kb_unavailable_reason: None,
         timings,
+        searched_documents,
+        scope_is_linked,
     }
 }

@@ -57,7 +57,7 @@ pub struct DocumentInfo {
 /// # Example
 ///
 /// ```
-/// use vault_desktop::extraction::LinkParser;
+/// use lattice::extraction::LinkParser;
 ///
 /// let parser = LinkParser::new();
 /// let content = "See [[todo]] and [[projects/ml|Machine Learning]]";
@@ -90,7 +90,7 @@ impl LinkParser {
     /// # Example
     ///
     /// ```
-    /// use vault_desktop::extraction::LinkParser;
+    /// use lattice::extraction::LinkParser;
     ///
     /// let parser = LinkParser::new();
     /// let content = r#"
@@ -174,7 +174,7 @@ impl LinkParser {
     /// # Example
     ///
     /// ```
-    /// use vault_desktop::extraction::{LinkParser, DocumentInfo};
+    /// use lattice::extraction::{LinkParser, DocumentInfo};
     ///
     /// let parser = LinkParser::new();
     /// let docs = vec![
@@ -294,7 +294,7 @@ impl LinkParser {
     /// # Example
     ///
     /// ```
-    /// use vault_desktop::extraction::LinkParser;
+    /// use lattice::extraction::LinkParser;
     ///
     /// let parser = LinkParser::new();
     ///

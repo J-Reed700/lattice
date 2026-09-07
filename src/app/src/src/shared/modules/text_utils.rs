@@ -173,7 +173,10 @@ pub fn build_excerpt(content: &str, highlight_terms: &[String], max_chars: usize
     // Adjust start to a sentence boundary within 80 chars, if available.
     let start_scan = start.saturating_sub(80);
     for i in (start_scan..start).rev() {
-        if matches!(chars[i], '.' | '?' | '!' | '\n') {
+        if chars
+            .get(i)
+            .is_some_and(|ch| matches!(ch, '.' | '?' | '!' | '\n'))
+        {
             start = (i + 1).min(total_chars.saturating_sub(1));
             break;
         }
@@ -181,8 +184,8 @@ pub fn build_excerpt(content: &str, highlight_terms: &[String], max_chars: usize
 
     // Adjust end forward to sentence boundary within 80 chars, if available.
     let end_scan = (end + 80).min(total_chars);
-    for i in end..end_scan {
-        if matches!(chars[i], '.' | '?' | '!' | '\n') {
+    for (i, ch) in chars.iter().enumerate().take(end_scan).skip(end) {
+        if matches!(ch, '.' | '?' | '!' | '\n') {
             end = (i + 1).min(total_chars);
             break;
         }
@@ -192,7 +195,10 @@ pub fn build_excerpt(content: &str, highlight_terms: &[String], max_chars: usize
         return safe_truncate(&normalized, max_chars);
     }
 
-    let excerpt: String = chars[start..end].iter().collect();
+    let Some(excerpt_chars) = chars.get(start..end) else {
+        return safe_truncate(&normalized, max_chars);
+    };
+    let excerpt: String = excerpt_chars.iter().collect();
     let trimmed = excerpt.trim();
 
     let prefix = if start > 0 { "…" } else { "" };

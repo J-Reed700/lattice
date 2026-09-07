@@ -9,6 +9,7 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::unwrap_in_result))]
 #![cfg_attr(test, allow(clippy::indexing_slicing))]
+#![cfg_attr(test, allow(clippy::panic))]
 
 //! # Lattice Desktop - Personal Knowledge Management System
 //!
@@ -309,7 +310,6 @@
 /// - [`utils`](shared::utils) - Shared utilities
 pub mod shared;
 
-
 /// Vertical feature slices. New code should live here rather than in the
 /// legacy horizontal layers (application, infrastructure, interfaces, plugins).
 pub mod features;
@@ -401,6 +401,8 @@ pub use domain::{
 pub mod application;
 
 #[cfg(feature = "indexing")]
+pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
+#[cfg(feature = "indexing")]
 pub use application::{
     mappers,
     ports::{
@@ -408,8 +410,6 @@ pub use application::{
         VectorSearchPort,
     },
 };
-#[cfg(feature = "indexing")]
-pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 
 // =============================================================================
 // INFRASTRUCTURE LAYER - Technical implementations (concrete adapters)
@@ -511,7 +511,7 @@ pub use interfaces::di::Container;
 ///        ↕ From<DomainError>
 /// Domain Layer             ← Pure business logic
 /// ```
-
+///
 /// Tauri Plugin Infrastructure (Phase 1: Diamond Standard)
 ///
 /// Domain-sharded plugins using tauri-specta v2 for type-safe IPC.

@@ -10,8 +10,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::ListBatchJobsUseCase;
-//! use vault_desktop::application::dtos::batch_dto::ListBatchJobsRequestDto;
+//! use lattice::application::use_cases::batch::ListBatchJobsUseCase;
+//! use lattice::application::dtos::batch_dto::ListBatchJobsRequestDto;
 //!
 //! # async fn example(use_case: ListBatchJobsUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = ListBatchJobsRequestDto {
@@ -30,10 +30,10 @@ use std::sync::Arc;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use once_cell::sync::Lazy;
 
+use crate::application::ports::BatchJobRepositoryPort;
 use crate::features::batch::dto::{
     BatchJobSummaryDto, ListBatchJobsRequestDto, ListBatchJobsResponseDto,
 };
-use crate::application::ports::BatchJobRepositoryPort;
 use crate::shared::error::{AppError, Result};
 
 /// Fallback epoch timestamp for invalid date parsing
@@ -108,8 +108,8 @@ impl ListBatchJobsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::ListBatchJobsUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::ListBatchJobsRequestDto;
+    /// # use lattice::application::use_cases::batch::ListBatchJobsUseCase;
+    /// # use lattice::application::dtos::batch_dto::ListBatchJobsRequestDto;
     /// # async fn example(use_case: ListBatchJobsUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = ListBatchJobsRequestDto {
     ///     limit: Some(10),

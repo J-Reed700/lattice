@@ -20,8 +20,8 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::file_system::SecureFileStorage;
-//! use vault_desktop::application::ports::FileStoragePort;
+//! use lattice::infrastructure::file_system::SecureFileStorage;
+//! use lattice::application::ports::FileStoragePort;
 //! use std::path::Path;
 //!
 //! #[tokio::main]

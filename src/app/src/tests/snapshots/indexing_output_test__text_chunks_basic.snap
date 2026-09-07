@@ -1,0 +1,31 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 44
+expression: chunks
+---
+[
+  {
+    "text": "This is the first chunk of text from the document.",
+    "start_idx": 0,
+    "end_idx": 51,
+    "token_count": 10,
+    "document_path": "",
+    "chunk_index": 0
+  },
+  {
+    "text": "This is the second chunk with some overlap.",
+    "start_idx": 45,
+    "end_idx": 89,
+    "token_count": 9,
+    "document_path": "",
+    "chunk_index": 1
+  },
+  {
+    "text": "Final chunk of the document.",
+    "start_idx": 85,
+    "end_idx": 113,
+    "token_count": 6,
+    "document_path": "",
+    "chunk_index": 2
+  }
+]

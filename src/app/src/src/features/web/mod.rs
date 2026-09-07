@@ -27,8 +27,8 @@
 //! the service traits.
 
 pub mod commands;
-pub mod domain;
 pub mod di;
+pub mod domain;
 pub mod dto;
 pub mod plugin;
 pub mod services;

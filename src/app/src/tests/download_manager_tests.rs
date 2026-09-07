@@ -12,13 +12,23 @@
 use lattice::features::download::download_repository::mock::MockDownloadRepository;
 #[cfg(feature = "test-utils")]
 use lattice::features::download::engine::mock::MockDownloadEngine;
+#[cfg(feature = "test-utils")]
+use lattice::{
+    domain::download::{Checksum, ChecksumAlgorithm, DownloadState},
+    features::download::manager::{DownloadManager, DownloadManagerService, DownloadRequest},
+};
+#[cfg(feature = "test-utils")]
+use std::{path::PathBuf, sync::Arc};
+#[cfg(feature = "test-utils")]
+use tokio::time::{sleep, Duration};
 
 #[tokio::test]
 #[cfg(feature = "test-utils")]
 async fn test_download_manager_start_download() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -30,6 +40,7 @@ async fn test_download_manager_start_download() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -51,9 +62,11 @@ async fn test_download_manager_start_download() {
 async fn test_download_manager_pause_and_resume() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
+    engine.set_stall(true);
 
     let id = manager
         .start_download(DownloadRequest {
@@ -63,6 +76,7 @@ async fn test_download_manager_pause_and_resume() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -94,9 +108,11 @@ async fn test_download_manager_pause_and_resume() {
 async fn test_download_manager_cancel() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
+    engine.set_stall(true);
 
     let id = manager
         .start_download(DownloadRequest {
@@ -106,6 +122,7 @@ async fn test_download_manager_cancel() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -125,7 +142,8 @@ async fn test_download_manager_cancel() {
 async fn test_download_manager_list_downloads() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file1.bin", Some(1000));
     engine.set_file_size("https://example.com/file2.bin", Some(2000));
@@ -138,6 +156,7 @@ async fn test_download_manager_list_downloads() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -150,6 +169,7 @@ async fn test_download_manager_list_downloads() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -169,7 +189,8 @@ async fn test_download_manager_list_downloads() {
 async fn test_download_manager_with_checksum() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -184,6 +205,7 @@ async fn test_download_manager_with_checksum() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -202,7 +224,8 @@ async fn test_download_manager_concurrent_downloads() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager =
-        DownloadManagerService::new(repository.clone(), engine.clone()).with_max_concurrent(2);
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"))
+            .with_max_concurrent(2);
 
     engine.set_file_size("https://example.com/file1.bin", Some(1000));
     engine.set_file_size("https://example.com/file2.bin", Some(2000));
@@ -216,6 +239,7 @@ async fn test_download_manager_concurrent_downloads() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -228,6 +252,7 @@ async fn test_download_manager_concurrent_downloads() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -240,6 +265,7 @@ async fn test_download_manager_concurrent_downloads() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -258,7 +284,8 @@ async fn test_download_manager_concurrent_downloads() {
 async fn test_download_manager_event_subscription() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
 
@@ -307,6 +334,7 @@ async fn test_download_manager_event_subscription() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -326,7 +354,8 @@ async fn test_download_manager_event_subscription() {
 async fn test_download_manager_error_handling() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     let result = manager.pause_download("non-existent-id").await;
 
@@ -338,9 +367,11 @@ async fn test_download_manager_error_handling() {
 async fn test_download_manager_state_persistence() {
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
-    let manager = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     engine.set_file_size("https://example.com/file.bin", Some(1000));
+    engine.set_stall(true);
 
     let id = manager
         .start_download(DownloadRequest {
@@ -350,6 +381,7 @@ async fn test_download_manager_state_persistence() {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
         .await
         .unwrap();
@@ -360,7 +392,8 @@ async fn test_download_manager_state_persistence() {
 
     let status_before = manager.get_download_status(&id).await.unwrap().unwrap();
 
-    let manager2 = DownloadManagerService::new(repository.clone(), engine.clone());
+    let manager2 =
+        DownloadManagerService::new(repository.clone(), engine.clone(), PathBuf::from("/tmp"));
 
     let status_after = manager2.get_download_status(&id).await.unwrap().unwrap();
 

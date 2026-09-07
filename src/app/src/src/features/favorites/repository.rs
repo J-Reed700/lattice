@@ -7,8 +7,8 @@
 //! This repository implements the FavoritesRepositoryPort trait,
 //! providing operations for managing document favorites.
 
-use crate::features::favorites::dto::FavoriteDto;
 use crate::application::ports::FavoritesRepositoryPort;
+use crate::features::favorites::dto::FavoriteDto;
 use crate::infrastructure::persistence::database::query_with_timeout;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;

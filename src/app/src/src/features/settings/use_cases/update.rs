@@ -1,4 +1,3 @@
-
 use crate::application::ports::{
     NoopSettingsSideEffects, SettingsRepositoryPort, SettingsSideEffectsPort,
 };
@@ -41,22 +40,20 @@ impl UpdateSettingsUseCase {
             .as_ref()
             .map(|s| s.llm.ollama_url.clone())
             .unwrap_or_default();
-        let previous_vault_enabled =
-            previous.as_ref().map(|s| s.vault.enabled).unwrap_or(false);
+        let previous_vault_enabled = previous.as_ref().map(|s| s.vault.enabled).unwrap_or(false);
 
         // Pre-flight vault writability on enable flip.
         if let Some(proposed) = compute_proposed_vault(&request, previous.as_ref()) {
             if !previous_vault_enabled && proposed.enabled {
-                let root = crate::features::vault::writeback::resolve_vault_root(
-                    &proposed.vault_path,
-                )
-                .ok_or_else(|| {
-                    AppError::InvalidInput(
-                        "Vault root could not be resolved (no home directory available). \
+                let root =
+                    crate::features::vault::writeback::resolve_vault_root(&proposed.vault_path)
+                        .ok_or_else(|| {
+                            AppError::InvalidInput(
+                                "Vault root could not be resolved (no home directory available). \
                          Pick an explicit folder in Vault settings."
-                            .to_string(),
-                    )
-                })?;
+                                    .to_string(),
+                            )
+                        })?;
                 probe_vault_writable(&root).await?;
             }
         }
@@ -74,7 +71,9 @@ impl UpdateSettingsUseCase {
             )));
         }
 
-        self.repository.save_all(&updated_settings).await?;
+        // `repository.update()` already persisted, under its write lock.
+        // Saving again here re-ran the whole write outside that lock, which
+        // widened the window for a concurrent update to be lost.
 
         if updated_settings.llm.ollama_url != previous_ollama_url {
             let event = AuditEvent::new(AuditAction::ConfigChanged, AuditResult::success())
@@ -90,9 +89,10 @@ impl UpdateSettingsUseCase {
 
         // Side effects after persist. Best-effort — failures don't roll
         // back already-committed settings.
-        let hints = crate::application::ports::settings_side_effects_port::SettingsTransitionHints {
-            vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
-        };
+        let hints =
+            crate::application::ports::settings_side_effects_port::SettingsTransitionHints {
+                vault_just_enabled: !previous_vault_enabled && updated_settings.vault.enabled,
+            };
         self.side_effects
             .on_settings_updated(request.category, hints)
             .await;
@@ -247,9 +247,9 @@ async fn probe_vault_writable(root: &std::path::Path) -> Result<()> {
 }
 
 fn validate_vault_path_payload(value: &serde_json::Value) -> Result<()> {
-    let path_str = value.as_str().ok_or_else(|| {
-        AppError::InvalidInput("vaultPath must be a string".to_string())
-    })?;
+    let path_str = value
+        .as_str()
+        .ok_or_else(|| AppError::InvalidInput("vaultPath must be a string".to_string()))?;
 
     if path_str.is_empty() {
         return Ok(());
@@ -264,23 +264,17 @@ fn validate_vault_path_payload(value: &serde_json::Value) -> Result<()> {
 
 fn validate_indexed_paths_payload(value: &serde_json::Value) -> Result<()> {
     let arr = value.as_array().ok_or_else(|| {
-        AppError::InvalidInput(
-            "indexedPaths must be an array of absolute path strings".to_string(),
-        )
+        AppError::InvalidInput("indexedPaths must be an array of absolute path strings".to_string())
     })?;
 
     let validator = InputValidator::new();
     for entry in arr {
         let path_str = entry.as_str().ok_or_else(|| {
-            AppError::InvalidInput(
-                "indexedPaths entries must be strings".to_string(),
-            )
+            AppError::InvalidInput("indexedPaths entries must be strings".to_string())
         })?;
         validator
             .validate_directory_path(path_str, false)
-            .map_err(|e| AppError::InvalidInput(format!(
-                "Invalid path in indexedPaths: {e}"
-            )))?;
+            .map_err(|e| AppError::InvalidInput(format!("Invalid path in indexedPaths: {e}")))?;
     }
 
     Ok(())
@@ -326,12 +320,11 @@ mod tests {
         let use_case = UpdateSettingsUseCase::new(repository);
 
         let mut updates = HashMap::new();
-        updates.insert(
-            "ollamaUrl".to_string(),
-            json!("http://localhost@evil.com"),
-        );
+        updates.insert("ollamaUrl".to_string(), json!("http://localhost@evil.com"));
 
-        let result = use_case.update_category(SettingsCategory::Llm, updates).await;
+        let result = use_case
+            .update_category(SettingsCategory::Llm, updates)
+            .await;
         assert!(
             result.is_err(),
             "SSRF authority-component attack must be rejected"
@@ -349,7 +342,9 @@ mod tests {
             json!("https://admin:password@internal.host"),
         );
 
-        let result = use_case.update_category(SettingsCategory::Llm, updates).await;
+        let result = use_case
+            .update_category(SettingsCategory::Llm, updates)
+            .await;
         assert!(result.is_err(), "Credentials in URL must be rejected");
     }
 
@@ -361,7 +356,9 @@ mod tests {
         let mut updates = HashMap::new();
         updates.insert("ollamaUrl".to_string(), json!("file:///etc/passwd"));
 
-        let result = use_case.update_category(SettingsCategory::Llm, updates).await;
+        let result = use_case
+            .update_category(SettingsCategory::Llm, updates)
+            .await;
         assert!(result.is_err(), "file:// scheme must be rejected");
     }
 
@@ -371,10 +368,7 @@ mod tests {
         let use_case = UpdateSettingsUseCase::new(repository);
 
         let mut updates = HashMap::new();
-        updates.insert(
-            "ollamaUrl".to_string(),
-            json!("http://localhost:11434"),
-        );
+        updates.insert("ollamaUrl".to_string(), json!("http://localhost:11434"));
 
         let result = use_case
             .update_category(SettingsCategory::Llm, updates)
@@ -390,10 +384,7 @@ mod tests {
         let use_case = UpdateSettingsUseCase::new(repository);
 
         let mut updates = HashMap::new();
-        updates.insert(
-            "indexedPaths".to_string(),
-            json!(["/Users/josh/../../etc"]),
-        );
+        updates.insert("indexedPaths".to_string(), json!(["/Users/josh/../../etc"]));
 
         let result = use_case
             .update_category(SettingsCategory::Indexing, updates)
@@ -410,10 +401,7 @@ mod tests {
         let use_case = UpdateSettingsUseCase::new(repository);
 
         let mut updates = HashMap::new();
-        updates.insert(
-            "indexedPaths".to_string(),
-            json!(["Documents/folder"]),
-        );
+        updates.insert("indexedPaths".to_string(), json!(["Documents/folder"]));
 
         let result = use_case
             .update_category(SettingsCategory::Indexing, updates)
@@ -483,10 +471,7 @@ mod tests {
 
         let repository = Arc::new(MockSettingsRepository::new());
         let side_effects = Arc::new(RecordingSettingsSideEffects::new());
-        let use_case = UpdateSettingsUseCase::with_side_effects(
-            repository,
-            side_effects.clone(),
-        );
+        let use_case = UpdateSettingsUseCase::with_side_effects(repository, side_effects.clone());
 
         let mut updates = HashMap::new();
         updates.insert("temperature".to_string(), json!(0.5));
@@ -495,7 +480,10 @@ mod tests {
             updates,
         };
 
-        use_case.execute(request).await.expect("update should succeed");
+        use_case
+            .execute(request)
+            .await
+            .expect("update should succeed");
 
         let calls = side_effects.calls();
         assert_eq!(
@@ -511,17 +499,11 @@ mod tests {
 
         let repository = Arc::new(MockSettingsRepository::new());
         let side_effects = Arc::new(RecordingSettingsSideEffects::new());
-        let use_case = UpdateSettingsUseCase::with_side_effects(
-            repository,
-            side_effects.clone(),
-        );
+        let use_case = UpdateSettingsUseCase::with_side_effects(repository, side_effects.clone());
 
         // Path-traversal payload — rejected before repository write.
         let mut updates = HashMap::new();
-        updates.insert(
-            "indexedPaths".to_string(),
-            json!(["/Users/josh/../../etc"]),
-        );
+        updates.insert("indexedPaths".to_string(), json!(["/Users/josh/../../etc"]));
         let request = UpdateSettingsRequestDto {
             category: Some(SettingsCategory::Indexing),
             updates,
@@ -543,22 +525,19 @@ mod tests {
 
         let repository = Arc::new(MockSettingsRepository::new());
         let side_effects = Arc::new(RecordingSettingsSideEffects::new());
-        let use_case = UpdateSettingsUseCase::with_side_effects(
-            repository,
-            side_effects.clone(),
-        );
+        let use_case = UpdateSettingsUseCase::with_side_effects(repository, side_effects.clone());
 
         let mut updates = HashMap::new();
-        updates.insert(
-            "search".to_string(),
-            json!({ "maxResults": 5 }),
-        );
+        updates.insert("search".to_string(), json!({ "maxResults": 5 }));
         let request = UpdateSettingsRequestDto {
             category: None, // global
             updates,
         };
 
-        use_case.execute(request).await.expect("update should succeed");
+        use_case
+            .execute(request)
+            .await
+            .expect("update should succeed");
 
         let calls = side_effects.calls();
         assert_eq!(
@@ -584,5 +563,48 @@ mod tests {
             result.is_err(),
             "global update must not bypass path validation on nested indexedPaths"
         );
+    }
+
+    /// The first-run gate reads this flag instead of `localStorage`, so the
+    /// category has to round-trip through the repository like any other.
+    #[tokio::test]
+    async fn onboarding_first_run_dismissed_round_trips() {
+        let repository = Arc::new(MockSettingsRepository::new());
+        let use_case = UpdateSettingsUseCase::new(repository.clone());
+
+        let before = repository.get_all().await.expect("defaults readable");
+        assert!(
+            !before.onboarding.first_run_dismissed,
+            "a fresh install has not dismissed first run"
+        );
+
+        let mut updates = HashMap::new();
+        updates.insert("firstRunDismissed".to_string(), json!(true));
+
+        let updated = use_case
+            .update_category(SettingsCategory::Onboarding, updates)
+            .await
+            .expect("onboarding is a real category");
+
+        assert!(updated.onboarding.first_run_dismissed);
+        assert!(
+            repository
+                .get_all()
+                .await
+                .expect("readable")
+                .onboarding
+                .first_run_dismissed,
+            "the flag must be persisted, not just echoed back"
+        );
+    }
+
+    #[test]
+    fn onboarding_parses_as_a_settings_category() {
+        use std::str::FromStr;
+        assert_eq!(
+            SettingsCategory::from_str("onboarding").expect("known category"),
+            SettingsCategory::Onboarding
+        );
+        assert!(SettingsCategory::all().contains(&SettingsCategory::Onboarding));
     }
 }

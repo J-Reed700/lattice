@@ -1,0 +1,19 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 223
+expression: embedding_data
+---
+{
+  "chunk_id": "[chunk_id]",
+  "dimensions": 5,
+  "document_id": "[doc_id]",
+  "embedding": [
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5
+  ],
+  "model": "all-MiniLM-L6-v2",
+  "version": "1.0"
+}

@@ -3,9 +3,7 @@
 //! Web ingestion plugin for web content commands.
 
 use crate::{
-    features::web::commands as web_ingest,
-    interfaces::di::Container,
-    shared::api_result::ApiError,
+    features::web::commands as web_ingest, interfaces::di::Container, shared::api_result::ApiError,
 };
 use tauri::{
     plugin::{Builder, TauriPlugin},

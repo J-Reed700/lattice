@@ -1,5 +1,5 @@
 use crate::shared::error::Result;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -107,8 +107,18 @@ impl RecencyScorer {
                 crate::error::AppError::Database(format!("Failed to get updated_at: {}", e))
             })?;
 
-            if let Ok(datetime) = parse_sqlite_datetime(&updated_at) {
-                timestamps.insert(id, datetime);
+            match crate::shared::time::parse_db_timestamp(&updated_at) {
+                Ok(datetime) => {
+                    timestamps.insert(id, datetime);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        document_id = %id,
+                        timestamp = %updated_at,
+                        error = %error,
+                        "Skipping document with an invalid recency timestamp"
+                    );
+                }
             }
         }
 
@@ -118,15 +128,6 @@ impl RecencyScorer {
     pub fn calculate_age_days(&self, timestamp: DateTime<Utc>, now: DateTime<Utc>) -> i64 {
         (now - timestamp).num_days()
     }
-}
-
-fn parse_sqlite_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
-    let naive = NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S"))
-        .or_else(|_| NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M:%S%.f"))
-        .map_err(|e| crate::error::AppError::Parsing(format!("Failed to parse datetime: {}", e)))?;
-
-    Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
 }
 
 #[cfg(test)]
@@ -203,12 +204,15 @@ mod tests {
     #[test]
     fn test_parse_sqlite_datetime() {
         let datetime_str = "2024-01-15 10:30:45";
-        let result = parse_sqlite_datetime(datetime_str);
+        let result = crate::shared::time::parse_db_timestamp(datetime_str);
         assert!(result.is_ok());
 
         let datetime_str_iso = "2024-01-15T10:30:45";
-        let result_iso = parse_sqlite_datetime(datetime_str_iso);
+        let result_iso = crate::shared::time::parse_db_timestamp(datetime_str_iso);
         assert!(result_iso.is_ok());
+
+        let result_offset = crate::shared::time::parse_db_timestamp("2024-01-15T05:30:45-05:00");
+        assert!(result_offset.is_ok());
     }
 
     #[test]

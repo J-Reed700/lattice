@@ -3,10 +3,11 @@
 //! Thin plugin wrapper for question-answering commands with Retrieval-Augmented Generation (RAG).
 //! Delegates all business logic to `interfaces/commands/domains/qa_commands.rs`.
 
-use crate::features::qa::dto::{QARequestDto, QAResponseDto};
 use crate::features::qa::commands::{
     ask_question, ask_question_stream, check_llm_health, get_qa_model,
 };
+use crate::features::qa::dto::{QARequestDto, QAResponseDto};
+use crate::features::qa::starters_dto::ChatStartersDto;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{plugin::Builder, AppHandle, Manager, Runtime, State};
@@ -18,6 +19,7 @@ pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             ask_question_stream_wrapper,
             get_qa_model_wrapper,
             check_llm_health_wrapper,
+            generate_chat_starters_wrapper,
         ])
         .build()
 }
@@ -73,4 +75,14 @@ async fn check_llm_health_wrapper(
         message: e.to_string(),
         details: None,
     })
+}
+
+/// Corpus-derived opening questions for the Chat empty state
+/// (BRIEF rank 11, contract §4.7).
+#[tauri::command]
+#[specta::specta]
+async fn generate_chat_starters_wrapper(
+    container: State<'_, Container>,
+) -> Result<ChatStartersDto, ApiError> {
+    crate::features::qa::starters::generate_chat_starters_impl(container.inner()).await
 }

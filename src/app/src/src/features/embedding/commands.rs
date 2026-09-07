@@ -516,26 +516,20 @@ mod tests {
     use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
 
     #[tokio::test]
-    async fn test_generate_embedding() {
+    async fn test_generate_embedding_requires_a_configured_model() {
         let state = EmbeddingState::default();
         let result = generate_embedding_impl("Hello world".to_string(), &state).await;
 
-        assert!(result.is_ok());
-        let embedding = result.unwrap();
-        assert_eq!(embedding.len(), DEFAULT_EMBEDDING_DIM);
+        assert!(matches!(result, Err(AppError::ModelLoadFailed(_))));
     }
 
     #[tokio::test]
-    async fn test_generate_embeddings_batch() {
+    async fn test_generate_embeddings_batch_requires_a_configured_model() {
         let state = EmbeddingState::default();
         let texts = vec!["Hello".to_string(), "World".to_string()];
         let result = generate_embeddings_batch_impl(texts, &state).await;
 
-        assert!(result.is_ok());
-        let embeddings = result.unwrap();
-        assert_eq!(embeddings.len(), 2);
-        assert_eq!(embeddings[0].len(), DEFAULT_EMBEDDING_DIM);
-        assert_eq!(embeddings[1].len(), DEFAULT_EMBEDDING_DIM);
+        assert!(matches!(result, Err(AppError::ModelLoadFailed(_))));
     }
 
     #[tokio::test]

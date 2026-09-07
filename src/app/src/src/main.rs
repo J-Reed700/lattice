@@ -3,9 +3,8 @@
 // Import from the library crate
 use lattice::infrastructure::setup;
 
-/// Pure Plugin Architecture - All IPC commands are Tauri plugins
-/// Operation Scorched Earth Complete: Gateway eliminated, 16 plugins provide 59 commands
-/// All commands follow Diamond Standard pattern with direct *_impl() calls
+// Pure Plugin Architecture - All IPC commands are Tauri plugins.
+// Commands follow the Diamond Standard pattern with direct *_impl() calls.
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
@@ -61,9 +60,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 } => {
                     use tauri::Manager;
                     if app_handle.webview_windows().is_empty() {
-                        tracing::info!(
-                            "Last window destroyed on macOS; triggering app shutdown"
-                        );
+                        tracing::info!("Last window destroyed on macOS; triggering app shutdown");
                         setup::graceful_shutdown(app_handle);
                         app_handle.exit(0);
                     }

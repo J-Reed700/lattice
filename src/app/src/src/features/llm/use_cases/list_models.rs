@@ -19,8 +19,8 @@
 //! }
 //! ```
 
-use crate::features::llm::dto::{DownloadedModelDto, DownloadedModelsDto};
 use crate::application::ports::model_storage::ModelStoragePort;
+use crate::features::llm::dto::{DownloadedModelDto, DownloadedModelsDto};
 use crate::shared::error::AppError;
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ impl ListDownloadedModelsUseCase {
         let mut models = self.storage.list_models().await?;
 
         // Sort by download date (newest first)
-        models.sort_by(|a, b| b.downloaded_at.cmp(&a.downloaded_at));
+        models.sort_by_key(|model| std::cmp::Reverse(model.downloaded_at));
 
         // Convert to DTOs
         let model_dtos = models

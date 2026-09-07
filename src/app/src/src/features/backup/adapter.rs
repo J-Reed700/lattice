@@ -219,7 +219,7 @@ impl BackupAdapter {
     }
 
     /// Get version from backup metadata
-    async fn get_backup_version(&self, path: &PathBuf) -> Option<String> {
+    async fn get_backup_version(&self, path: &Path) -> Option<String> {
         let connection_string = format!("sqlite://{}?mode=ro", path.display());
 
         let pool = match SqlitePool::connect(&connection_string).await {
@@ -381,7 +381,17 @@ impl BackupPort for BackupAdapter {
                         .join(filename)
                 };
 
-                // Ensure path is within backup root (defense in depth)
+                // Confinement to the backup root is deliberate and load-bearing:
+                // `plugin_create_backup` is a webview-callable Tauri command, so
+                // without this a hostile frontend could write a file anywhere the
+                // user can write. Do not relax this to "honour the user's chosen
+                // path" without first splitting trusted (scheduler, reading
+                // validated settings) from untrusted (IPC) callers — see SET-4.
+                //
+                // The corresponding half of SET-4 is fixed in settings
+                // validation, which now rejects an out-of-root `backupPath` at
+                // save time so the user sees an error immediately, instead of
+                // every scheduled backup failing silently forever.
                 if !canonical_path.starts_with(&canonical_backup_root) {
                     error!(
                         "Backup path outside allowed directory: {}",

@@ -1,0 +1,23 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 68
+expression: chunks
+---
+[
+  {
+    "text": "Machine learning is a subset of artificial intelligence.",
+    "start_idx": 0,
+    "end_idx": 57,
+    "token_count": 12,
+    "document_path": "",
+    "chunk_index": 0
+  },
+  {
+    "text": "artificial intelligence. It focuses on algorithms",
+    "start_idx": 33,
+    "end_idx": 83,
+    "token_count": 10,
+    "document_path": "",
+    "chunk_index": 1
+  }
+]

@@ -188,7 +188,10 @@ pub(super) fn filter_results_by_document_support_with_tuning(
     let median_multi_ratio = if multi_hit_ratios.is_empty() {
         0.0
     } else {
-        multi_hit_ratios[multi_hit_ratios.len() / 2]
+        multi_hit_ratios
+            .get(multi_hit_ratios.len() / 2)
+            .copied()
+            .unwrap_or_default()
     };
     let min_multi_hit_support_ratio =
         (median_multi_ratio * tuning.doc_support_multi_hit_ratio_factor).clamp(

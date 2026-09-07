@@ -10,8 +10,8 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::services::function_registry::FunctionRegistry;
-//! use vault_desktop::domain::function_call::ToolDefinition;
+//! use lattice::infrastructure::services::function_registry::FunctionRegistry;
+//! use lattice::domain::function_call::ToolDefinition;
 //! use serde_json::json;
 //!
 //! let registry = FunctionRegistry::new();

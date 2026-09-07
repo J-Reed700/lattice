@@ -2,8 +2,8 @@
 //!
 //! Reads the content of a file as raw bytes with security limits.
 
-use crate::features::file::dto::ReadFileBytesRequestDto;
 use crate::application::ports::FileStoragePort;
+use crate::features::file::dto::ReadFileBytesRequestDto;
 use crate::infrastructure::security::FileAccessConfig;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
@@ -188,7 +188,7 @@ mod tests {
                     let is_directory = p.ends_with('/');
                     Ok(crate::application::ports::FileMetadata {
                         size: *size,
-                        modified_at: modified_at,
+                        modified_at,
                         is_file: true,
                         is_directory,
                     })
@@ -204,15 +204,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_bytes_success() {
-        let storage = MockFileStorage::new().with_file("/tmp/file.bin", b"hello");
-        let access_config = Arc::new(FileAccessConfig::new(vec![std::path::PathBuf::from(
-            "/tmp",
-        )]));
+        let temp_root = std::env::temp_dir().canonicalize().unwrap();
+        let file_path = temp_root.join("file.bin");
+        let storage =
+            MockFileStorage::new().with_file(file_path.to_string_lossy().as_ref(), b"hello");
+        let access_config = Arc::new(FileAccessConfig::new(vec![temp_root]));
         let use_case = ReadFileBytesUseCase::new(Arc::new(storage), access_config);
 
         let result = use_case
             .execute(ReadFileBytesRequestDto {
-                path: "/tmp/file.bin".to_string(),
+                path: file_path.to_string_lossy().into_owned(),
             })
             .await;
 

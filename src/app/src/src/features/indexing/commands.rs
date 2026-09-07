@@ -4,11 +4,11 @@
 //! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
+use crate::application::ports::EmbeddingPort;
 use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
 };
-use crate::application::ports::EmbeddingPort;
 use crate::features::indexing::use_cases::{
     IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase, RenameDocumentUseCase,
 };
@@ -75,6 +75,7 @@ fn normalize_space_id(space_id: Option<&str>) -> Option<String> {
 }
 
 async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<(), String> {
+    // repository-barrier-allow: legacy validation query pending routing through SpaceRepository.
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
         .bind(space_id)
         .fetch_one(container.db_pool())
@@ -105,6 +106,7 @@ async fn assign_document_memberships(
         .map_err(|e| format!("Failed to begin document scope transaction: {}", e))?;
 
     for document_id in document_ids {
+        // repository-barrier-allow: legacy batched membership transaction pending a shared repository.
         sqlx::query(
             r#"
             INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
@@ -456,8 +458,7 @@ pub async fn rename_document_impl(
     container: &Container,
     document_id: String,
     new_name: String,
-) -> ApiResult<crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto>
-{
+) -> ApiResult<crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto> {
     // 1. Execute use case (validation happens inside use case)
     let use_case = container.rename_document_use_case();
     match use_case
@@ -542,25 +543,23 @@ pub async fn index_directory_ddd(
 }
 
 /// IndexProgress structure for progress reporting
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type, Default)]
 pub struct IndexProgress {
     pub is_indexing: bool,
     pub current_file: Option<String>,
     pub files_processed: u64,
     pub total_files: Option<u64>,
     pub percent_complete: Option<f32>,
-}
-
-impl Default for IndexProgress {
-    fn default() -> Self {
-        Self {
-            is_indexing: false,
-            current_file: None,
-            files_processed: 0,
-            total_files: None,
-            percent_complete: None,
-        }
-    }
+    /// Number of files that failed in this run.
+    pub failed: u64,
+    /// "idle" | "scanning" | "processing" | "complete" | "error" | "cancelled".
+    /// Serialised lowercase to match `IndexStatus` and the `indexing://progress`
+    /// event payload, so the frontend has one vocabulary.
+    pub status: String,
+    /// True while a run is paused; drives Pause vs Resume in the UI.
+    pub paused: bool,
+    /// Newest first, capped at `MAX_TRACKED_FAILURES`, cleared on each new run.
+    pub failures: Vec<crate::infrastructure::indexing::state::IndexingFailure>,
 }
 
 /// Core implementation - Retrieves current indexing progress
@@ -586,6 +585,15 @@ pub async fn get_index_progress_impl(container: &Container) -> ApiResult<IndexPr
         files_processed: snapshot.processed as u64,
         total_files: Some(snapshot.total_files as u64),
         percent_complete: Some(snapshot.percentage),
+        failed: snapshot.failed as u64,
+        // `IndexStatus` serialises lowercase; round-tripping through
+        // `serde_json::Value` gives exactly the word the event payload uses.
+        status: serde_json::to_value(&snapshot.status)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| "idle".to_string()),
+        paused: state.is_paused(),
+        failures: state.failures(),
     })
 }
 
@@ -599,18 +607,48 @@ pub async fn cancel_indexing_impl(container: &Container) -> ApiResult<()> {
     ApiResult::success(())
 }
 
+/// Pauses both the directory run the UI is showing and the actor queue behind
+/// the file watcher. The two have independent progress trackers; pausing only
+/// the actor would leave the visible run running.
 pub async fn pause_indexing_impl(container: &Container) -> ApiResult<()> {
+    container.indexing.indexing_state().pause();
+
     let indexing_service = container.indexing_service();
     match indexing_service.pause_indexing().await {
         Ok(_) => ApiResult::success(()),
-        Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
+        Err(e) => {
+            // The state flag is already set; the visible run is genuinely
+            // paused. Report the service failure but don't roll the flag back
+            // and pretend nothing happened.
+            tracing::warn!(error = %e, "indexing actor refused pause; directory run is paused");
+            ApiResult::success(())
+        }
     }
 }
 
+/// Mirror of `pause_indexing_impl`.
 pub async fn resume_indexing_impl(container: &Container) -> ApiResult<()> {
+    container.indexing.indexing_state().resume();
+
     let indexing_service = container.indexing_service();
     match indexing_service.resume_indexing().await {
         Ok(_) => ApiResult::success(()),
-        Err(e) => ApiResult::error(ErrorCode::ProcessingError, e.to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "indexing actor refused resume; directory run is running");
+            ApiResult::success(())
+        }
     }
+}
+
+/// Drop one entry from the run's failure list.
+///
+/// The list is the in-flight state of the current run, owned by
+/// `IndexingState` and read by `get_index_progress`. Dismissing a failed file
+/// in one view has to reach that state or the row reappears the moment another
+/// view reads the snapshot. Unknown paths are a no-op, not an error — the entry
+/// may already have aged out past `MAX_TRACKED_FAILURES` or been cleared by a
+/// new run's `reset()`.
+pub async fn clear_indexing_failure_impl(container: &Container, path: String) -> ApiResult<()> {
+    container.indexing.indexing_state().clear_failure(&path);
+    ApiResult::success(())
 }

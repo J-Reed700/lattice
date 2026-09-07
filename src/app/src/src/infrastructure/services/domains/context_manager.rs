@@ -15,8 +15,8 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::services::context_manager::ContextManager;
-//! use vault_desktop::domain::ConversationAggregate;
+//! use lattice::services::context_manager::ContextManager;
+//! use lattice::domain::ConversationAggregate;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let manager = ContextManager::new(4000); // 4000 token budget
@@ -101,7 +101,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```rust
-    /// use vault_desktop::services::context_manager::ContextManager;
+    /// use lattice::services::context_manager::ContextManager;
     ///
     /// // Create manager with 4000 token budget (typical for Claude 3)
     /// let manager = ContextManager::new(4000);
@@ -119,7 +119,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```rust
-    /// use vault_desktop::services::context_manager::ContextManager;
+    /// use lattice::services::context_manager::ContextManager;
     ///
     /// let manager = ContextManager::new(4000);
     /// assert_eq!(manager.max_context_tokens(), 4000);
@@ -156,7 +156,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::services::context_manager::ContextManager;
+    /// # use lattice::services::context_manager::ContextManager;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let manager = ContextManager::new(4000);
     /// let context = manager.build_context_for_llm(
@@ -241,7 +241,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```rust
-    /// use vault_desktop::services::context_manager::ContextManager;
+    /// use lattice::services::context_manager::ContextManager;
     ///
     /// let default = ContextManager::format_system_context(None);
     /// assert!(default.contains("helpful AI assistant"));
@@ -294,7 +294,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::services::context_manager::ContextManager;
+    /// use lattice::services::context_manager::ContextManager;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let context = ContextManager::format_document_context(
@@ -368,7 +368,7 @@ impl ContextManager {
     /// # Example
     ///
     /// ```rust
-    /// use vault_desktop::services::context_manager::ContextManager;
+    /// use lattice::services::context_manager::ContextManager;
     ///
     /// let messages = ContextManager::format_conversation_history(&conversation.messages());
     /// for msg in messages {

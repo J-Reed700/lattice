@@ -3,9 +3,9 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::infrastructure::search::service::SearchResult;
-#[cfg(test)]
 use super::trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+#[cfg(test)]
+use crate::infrastructure::search::service::SearchResult;
 #[cfg(test)]
 use crate::shared::error::{AppError, Result};
 #[cfg(test)]
@@ -383,19 +383,19 @@ impl HybridSearchTrait for MockHybridSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::conversation::ConversationServiceTrait;
     use crate::features::conversation::mocks::MockConversationService;
-    use crate::features::embedding::EmbeddingServiceTrait;
+    use crate::features::conversation::ConversationServiceTrait;
     use crate::features::embedding::mocks::MockEmbeddingService;
-    use crate::features::tags::TagServiceTrait;
+    use crate::features::embedding::EmbeddingServiceTrait;
     use crate::features::tags::mocks::MockTagService;
-    use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
+    use crate::features::tags::TagServiceTrait;
     use crate::features::web::mocks::MockWebIngestionService;
-    use crate::infrastructure::services::traits::{
-        FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
-    };
+    use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
     use crate::infrastructure::services::mocks::{
         MockFileStorageService, MockModelManager, MockSearchEnrichmentService,
+    };
+    use crate::infrastructure::services::traits::{
+        FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
     };
 
     #[tokio::test]

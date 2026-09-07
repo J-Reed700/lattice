@@ -26,7 +26,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::domain::{ConversationAggregate, MessageRole};
+//! use lattice::domain::{ConversationAggregate, MessageRole};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut conversation = ConversationAggregate::new(
@@ -148,7 +148,7 @@ impl ConversationAggregate {
     ///
     /// This is primarily for repository use:
     /// ```rust,no_run
-    /// # use vault_desktop::domain::{Conversation, ConversationMessage, DocumentReference, ConversationAggregate};
+    /// # use lattice::domain::{Conversation, ConversationMessage, DocumentReference, ConversationAggregate};
     /// # fn example(conversation: Conversation, messages: Vec<ConversationMessage>, refs: Vec<DocumentReference>) {
     /// let aggregate = ConversationAggregate::from_persistence(conversation, messages, refs);
     /// # }

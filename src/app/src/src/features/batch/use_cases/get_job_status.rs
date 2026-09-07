@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::GetBatchJobStatusUseCase;
-//! use vault_desktop::application::dtos::batch_dto::GetBatchJobStatusRequestDto;
+//! use lattice::application::use_cases::batch::GetBatchJobStatusUseCase;
+//! use lattice::application::dtos::batch_dto::GetBatchJobStatusRequestDto;
 //!
 //! # async fn example(use_case: GetBatchJobStatusUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = GetBatchJobStatusRequestDto {
@@ -30,10 +30,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
+use crate::application::ports::BatchJobRepositoryPort;
 use crate::features::batch::dto::{
     BatchJobItemDto, BatchJobStatusDto, GetBatchJobStatusRequestDto,
 };
-use crate::application::ports::BatchJobRepositoryPort;
 use crate::shared::error::{AppError, Result};
 
 fn parse_batch_timestamp(timestamp: &str) -> Result<DateTime<Utc>> {
@@ -94,8 +94,8 @@ impl GetBatchJobStatusUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::GetBatchJobStatusUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::GetBatchJobStatusRequestDto;
+    /// # use lattice::application::use_cases::batch::GetBatchJobStatusUseCase;
+    /// # use lattice::application::dtos::batch_dto::GetBatchJobStatusRequestDto;
     /// # async fn example(use_case: GetBatchJobStatusUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = GetBatchJobStatusRequestDto {
     ///     job_id: "batch-job-123".to_string(),

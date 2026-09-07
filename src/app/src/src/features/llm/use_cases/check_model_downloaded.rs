@@ -22,10 +22,8 @@
 //! }
 //! ```
 
-use crate::features::llm::dto::{
-    CheckModelDownloadedRequestDto, CheckModelDownloadedResponseDto,
-};
 use crate::application::ports::model_storage::ModelStoragePort;
+use crate::features::llm::dto::{CheckModelDownloadedRequestDto, CheckModelDownloadedResponseDto};
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
+use crate::features::conversation::ConversationServiceTrait;
+use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{GetDocumentOutput, SemanticSearchOutput};
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
-use crate::features::function_calling::domain::FunctionResult;
-use crate::features::conversation::ConversationServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 

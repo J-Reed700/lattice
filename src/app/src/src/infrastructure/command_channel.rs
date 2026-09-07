@@ -147,9 +147,7 @@ pub fn channel<T>(capacity: usize) -> (CommandSender<T>, Arc<CommandReceiver<T>>
         tx,
         command_type: std::any::type_name::<T>(),
     };
-    let receiver = Arc::new(CommandReceiver {
-        rx: Mutex::new(rx),
-    });
+    let receiver = Arc::new(CommandReceiver { rx: Mutex::new(rx) });
     (sender, receiver)
 }
 

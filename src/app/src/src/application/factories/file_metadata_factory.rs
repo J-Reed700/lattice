@@ -35,7 +35,7 @@ impl FileMetadataFactory {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::factories::file_metadata_factory::FileMetadataFactory;
+    /// use lattice::application::factories::file_metadata_factory::FileMetadataFactory;
     /// use std::path::Path;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {

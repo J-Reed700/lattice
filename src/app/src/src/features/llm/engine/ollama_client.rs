@@ -106,7 +106,7 @@ impl From<AppError> for LLMError {
 /// # Example
 ///
 /// ```no_run
-/// use vault_desktop::llm::{OllamaClient, OllamaGenerateRequest};
+/// use lattice::llm::{OllamaClient, OllamaGenerateRequest};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -500,7 +500,7 @@ impl OllamaClient {
     /// # Example
     ///
     /// ```no_run
-    /// use vault_desktop::llm::{OllamaClient, OllamaGenerateRequest};
+    /// use lattice::llm::{OllamaClient, OllamaGenerateRequest};
     /// use futures::StreamExt;
     ///
     /// async fn stream_example() -> Result<(), Box<dyn std::error::Error>> {

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::ports::{GenerationOverride, LLMPort};
+use crate::application::ports::LLMPort;
 use crate::shared::error::Result;
 
 /// The maximum content preview fed per representative doc. Keeps prompts
@@ -60,22 +60,15 @@ pub async fn label_cluster(
     let prompt = build_prompt(representatives);
     let system = build_system_prompt();
 
-    // Retrieval-time narrow output. Hard cap tokens + keep temperature low
-    // so the label is terse and deterministic-ish.
-    let overrides = GenerationOverride {
-        max_tokens: Some(200),
-        temperature: Some(0.2),
-        top_p: Some(0.9),
-        stop: None,
-    };
-
-    // Ollama-style models sometimes want the "system" bit prepended to
-    // context; LLMPort::generate_with_overrides takes a plain prompt and
-    // context array, so we push the system prompt in as context.
+    // `LLMPort` has no per-call generation overrides — the system prompt does
+    // the work instead ("JSON only, no preamble"), the parser is tolerant, and
+    // `MAX_LABEL_CHARS` truncates whatever runs long.
+    //
+    // Ollama-style models want the "system" bit prepended to context, and
+    // `generate` takes a plain prompt plus a context array, so the system
+    // prompt goes in as context.
     let context = vec![system];
-    let response = llm
-        .generate_with_overrides(&prompt, &context, None, overrides)
-        .await;
+    let response = llm.generate(&prompt, &context, None).await;
 
     let raw = match response {
         Ok(r) => r,
@@ -110,9 +103,9 @@ pub fn fallback_label(member_count: usize, representative_title: Option<String>)
     let label = match representative_title {
         Some(title) if !title.trim().is_empty() => {
             let truncated = truncate_for_label(&title, 40);
-            format!("Cluster of {} ({})", member_count, truncated)
+            format!("Theme of {} ({})", member_count, truncated)
         }
-        _ => format!("Cluster of {}", member_count),
+        _ => format!("Theme of {}", member_count),
     };
     ClusterLabel {
         label,
@@ -126,6 +119,7 @@ fn build_system_prompt() -> String {
         "Given representative documents, produce a tight 3-5 word noun-phrase label and one sentence describing the theme.",
         "Favor domain nouns over generic filler. Avoid words like 'Miscellaneous', 'Various', 'Notes'.",
         "Respond with a single JSON object: {\"label\": \"...\", \"description\": \"...\"}. No prose before or after.",
+        "Answer with JSON only. No preamble.",
     ]
     .join(" ")
 }

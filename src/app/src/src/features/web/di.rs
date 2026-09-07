@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crate::application::ports::EmbeddingPort;
-use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::embedding::service::DynamicEmbeddingService;
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::services::ingestion::WebIngestionService;
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
@@ -40,15 +40,18 @@ pub fn build(
         Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
     let article_extractor_service =
         Arc::new(ArticleExtractorService::new()?) as Arc<dyn ArticleExtractorServiceTrait>;
-    let web_archive = Arc::new(WebArchiveService::new().map_err(|e| {
-        AppError::Other(format!("Failed to create web archive service: {}", e))
-    })?) as Arc<dyn WebArchiveServiceTrait>;
+    let web_archive = Arc::new(
+        WebArchiveService::new()
+            .map_err(|e| AppError::Other(format!("Failed to create web archive service: {}", e)))?,
+    ) as Arc<dyn WebArchiveServiceTrait>;
 
-    let tokenizer = crate::infrastructure::setup::setup_tokenizer(model_dir)
-        .unwrap_or_else(build_fallback_tokenizer);
+    let tokenizer = match crate::infrastructure::setup::setup_tokenizer(model_dir) {
+        Some(tokenizer) => tokenizer,
+        None => build_fallback_tokenizer()?,
+    };
 
-    let embedding_service = Arc::new(DynamicEmbeddingService::new(embedding_cache))
-        as Arc<dyn EmbeddingServiceTrait>;
+    let embedding_service =
+        Arc::new(DynamicEmbeddingService::new(embedding_cache)) as Arc<dyn EmbeddingServiceTrait>;
     let index_storage = Arc::new(IndexStorage::new(db_pool)) as Arc<dyn IndexStorageTrait>;
 
     let web_ingestion_service = Arc::new(
@@ -74,20 +77,20 @@ pub fn build(
 /// Minimal BPE tokenizer used when no real tokenizer is available (tests /
 /// first-run before model download). Avoids network fetches and provides
 /// deterministic tokenization.
-fn build_fallback_tokenizer() -> Arc<Tokenizer> {
+fn build_fallback_tokenizer() -> Result<Arc<Tokenizer>> {
     use std::collections::HashMap;
     use tokenizers::models::bpe::BPE;
     use tokenizers::pre_tokenizers::whitespace::Whitespace;
 
     let mut vocab = HashMap::new();
     for c in b'a'..=b'z' {
-        vocab.insert(String::from_utf8(vec![c]).unwrap(), c as u32);
+        vocab.insert((c as char).to_string(), c as u32);
     }
     for c in b'A'..=b'Z' {
-        vocab.insert(String::from_utf8(vec![c]).unwrap(), (c + 26) as u32);
+        vocab.insert((c as char).to_string(), (c + 26) as u32);
     }
     for c in b'0'..=b'9' {
-        vocab.insert(String::from_utf8(vec![c]).unwrap(), (c + 52) as u32);
+        vocab.insert((c as char).to_string(), (c + 52) as u32);
     }
     vocab.insert(" ".to_string(), 62);
     vocab.insert(".".to_string(), 63);
@@ -100,9 +103,9 @@ fn build_fallback_tokenizer() -> Arc<Tokenizer> {
         .vocab_and_merges(vocab, merges)
         .unk_token("[UNK]".to_string())
         .build()
-        .expect("Failed to build fallback tokenizer");
+        .map_err(|error| AppError::Other(format!("Failed to build fallback tokenizer: {error}")))?;
 
     let mut tokenizer = Tokenizer::new(bpe);
     tokenizer.with_pre_tokenizer(Whitespace {});
-    Arc::new(tokenizer)
+    Ok(Arc::new(tokenizer))
 }

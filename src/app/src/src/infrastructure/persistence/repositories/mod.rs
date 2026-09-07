@@ -9,7 +9,6 @@ pub mod chunk_repository;
 #[path = "../../../features/conversation/repository.rs"]
 pub mod conversation_repository;
 pub mod document_repository;
-pub mod summary_repository;
 
 // Transaction-aware repository implementations (Tx modules)
 pub mod batch_job;
@@ -35,13 +34,12 @@ pub use batch_job_repository::BatchJobRepository;
 pub use chunk_repository::ChunkRepository; // Repository only, not the old Chunk type
 pub use conversation_repository::ConversationRepository;
 // Document removed - use crate::domain::entities::Document (DDD)
-pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 pub use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 pub use crate::features::embedding::repository::{Embedding, EmbeddingRepository};
 pub use crate::features::mentions::repository::MentionRepository;
 pub use crate::features::settings::repository::SettingsRepository;
-pub use summary_repository::SummaryRepository;
 pub use crate::features::tags::repository::TagRepository;
+pub use document_repository::DocumentRepository; // Repository only, not the old Document type
 
 // Type aliases for DI container compatibility
 pub type DocumentRepositoryImpl = DocumentRepository;

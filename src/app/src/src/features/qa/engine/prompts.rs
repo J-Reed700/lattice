@@ -32,7 +32,7 @@ Guidelines:
 ///
 /// # Examples
 /// ```
-/// use vault_desktop::qa::build_user_prompt;
+/// use lattice::qa::build_user_prompt;
 ///
 /// let context = "Python is a programming language...";
 /// let question = "What is Python?";

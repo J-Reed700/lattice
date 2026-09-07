@@ -22,7 +22,7 @@ const CHARS_PER_TOKEN: f32 = 4.0;
 ///
 /// # Examples
 /// ```
-/// use vault_desktop::qa::count_tokens;
+/// use lattice::qa::count_tokens;
 ///
 /// let text = "Hello, world!";
 /// let count = count_tokens(text);
@@ -57,7 +57,7 @@ pub fn count_tokens(text: &str) -> usize {
 ///
 /// # Examples
 /// ```
-/// use vault_desktop::qa::truncate_to_tokens;
+/// use lattice::qa::truncate_to_tokens;
 ///
 /// let text = "This is a long text " .repeat(100);
 /// let truncated = truncate_to_tokens(&text, 50, Some("...")).unwrap();

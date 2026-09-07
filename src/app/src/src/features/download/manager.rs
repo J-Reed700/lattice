@@ -2,9 +2,7 @@ use crate::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
 use crate::features::download::download_repository::DownloadRepository;
-use crate::features::download::engine::{
-    DownloadEngine, DownloadOptions, ProgressCallback,
-};
+use crate::features::download::engine::{DownloadEngine, DownloadOptions, ProgressCallback};
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
 use async_trait::async_trait;
 use std::collections::{HashMap, VecDeque};
@@ -22,6 +20,10 @@ pub struct DownloadRequest {
     pub auth_token: Option<String>,
     pub model_name: Option<String>,
     pub model_id: Option<String>,
+    /// Manifest-relative identity stored in `model_files.file_name`.
+    /// This may contain a safe subdirectory such as `onnx/model.onnx` and
+    /// must not be re-derived from the destination basename.
+    pub model_file_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -84,10 +86,47 @@ pub trait DownloadManager: Send + Sync {
     fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>>;
 }
 
+/// Why a running download task is being told to stop.
+///
+/// Pause and cancel previously shared one signal carrying no payload, so the
+/// task could only assume the terminal case: it ran `session.cancel()` on
+/// every stop. Because `Paused → Cancelled` is a permitted transition, pausing
+/// a download drove the row to `Cancelled` — and `resume_download` only accepts
+/// `Paused | Failed`, so resume then refused forever. The one button that still
+/// worked, retry, deletes the partial file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopReason {
+    /// Stop transferring but keep the partial file and leave the row in
+    /// `Paused` — `pause_download` has already written that state.
+    Pause,
+    /// Terminal stop: transition the session to `Cancelled`.
+    Cancel,
+}
+
+/// Resolve the byte offset for a persisted partial download.
+///
+/// The file is append-only, while DB progress is intentionally throttled, so
+/// the file will commonly be ahead of the last recorded byte count after a
+/// crash. The file length is therefore authoritative unless it is smaller
+/// than the recorded progress or exceeds the advertised total.
+fn recover_resume_offset(
+    recorded_bytes: u64,
+    file_size: u64,
+    total_bytes: Option<u64>,
+) -> Option<u64> {
+    if file_size == 0 || file_size < recorded_bytes {
+        return None;
+    }
+    if total_bytes.is_some_and(|total| file_size > total) {
+        return None;
+    }
+    Some(file_size)
+}
+
 struct ActiveDownload {
     session: DownloadSession,
     task_handle: Option<JoinHandle<()>>,
-    cancel_tx: Option<mpsc::Sender<()>>,
+    cancel_tx: Option<mpsc::Sender<StopReason>>,
 }
 
 /// Validate that a downloaded file exists and has the expected size
@@ -276,7 +315,7 @@ impl DownloadManagerService {
             );
         }
 
-        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+        let (cancel_tx, mut cancel_rx) = mpsc::channel::<StopReason>(1);
 
         let engine = self.engine.clone();
         let repository = self.repository.clone();
@@ -303,17 +342,22 @@ impl DownloadManagerService {
                 let session_id_clone = session_id_for_progress.clone();
                 let repository_clone = repository_for_progress.clone();
 
-                // Update session in database with new progress
+                // Column-scoped write: cannot clobber `state`, so a tick that
+                // lands after a terminal transition can no longer revive a
+                // completed or cancelled session as `downloading`. These tasks
+                // are still detached and unordered with respect to each other,
+                // which is fine now — the worst case is that byte counts
+                // briefly go backwards, not that the state machine breaks.
                 tokio::spawn(async move {
-                    if let Ok(Some(mut session)) = repository_clone.get(&session_id_clone).await {
-                        session.update_progress(bytes, speed);
-                        if let Err(e) = repository_clone.update(&session).await {
-                            error!(
-                                session_id = %session_id_clone,
-                                error = %e,
-                                "Failed to update download progress in database"
-                            );
-                        }
+                    if let Err(e) = repository_clone
+                        .update_progress(&session_id_clone, bytes, speed)
+                        .await
+                    {
+                        error!(
+                            session_id = %session_id_clone,
+                            error = %e,
+                            "Failed to update download progress in database"
+                        );
                     }
                 });
 
@@ -334,55 +378,54 @@ impl DownloadManagerService {
         let task_handle = tokio::spawn(async move {
             info!(session_id = %session_id_for_task, "Download started");
 
-            let resume_from = if let Ok(Some(current_session)) =
-                repository.get(&session_id_for_task).await
-            {
-                if current_session.progress().bytes_downloaded() > 0 {
+            let resume_from =
+                if let Ok(Some(current_session)) = repository.get(&session_id_for_task).await {
                     match tokio::fs::metadata(&destination).await {
                         Ok(metadata) => {
                             let file_size = metadata.len();
-                            let expected = current_session.progress().bytes_downloaded();
+                            let recorded = current_session.progress().bytes_downloaded();
+                            let total = current_session.progress().total_bytes();
+                            let offset = recover_resume_offset(recorded, file_size, total);
 
-                            if file_size == expected {
+                            if let Some(offset) = offset {
                                 info!(
                                     session_id = %session_id_for_task,
-                                    bytes = file_size,
-                                    "Resuming from existing partial file"
+                                    recorded_bytes = recorded,
+                                    file_bytes = file_size,
+                                    "Resuming from authoritative partial-file length"
                                 );
-                                Some(file_size)
-                            } else if file_size < expected {
-                                warn!(
-                                    session_id = %session_id_for_task,
-                                    actual_size = file_size,
-                                    expected_size = expected,
-                                    "Partial file smaller than expected, resuming from actual size"
-                                );
-                                Some(file_size)
+                                Some(offset)
                             } else {
                                 warn!(
                                     session_id = %session_id_for_task,
-                                    actual_size = file_size,
-                                    expected_size = expected,
-                                    "Partial file larger than expected, restarting download"
+                                    recorded_bytes = recorded,
+                                    file_bytes = file_size,
+                                    total_bytes = ?total,
+                                    "Partial file failed resume consistency checks; restarting"
                                 );
                                 None
                             }
                         }
                         Err(_) => {
-                            warn!(
-                                session_id = %session_id_for_task,
-                                "Partial file missing, starting fresh"
-                            );
+                            if current_session.progress().bytes_downloaded() > 0 {
+                                warn!(
+                                    session_id = %session_id_for_task,
+                                    "Partial file missing, starting fresh"
+                                );
+                            }
                             None
                         }
                     }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
+            // `Some(result)` when the transfer ran to completion or failed;
+            // `None` when we were told to stop. Note this branch no longer
+            // returns early — doing so skipped the cleanup below, so the
+            // session kept its slot in `active_downloads` forever. With a
+            // concurrency limit of 2, pausing two files wedged the queue for
+            // the rest of the process and leaked the auth token with it.
             let download_result = tokio::select! {
                 result = engine.download(DownloadOptions {
                     url: url.clone(),
@@ -390,27 +433,52 @@ impl DownloadManagerService {
                     resume_from,
                     progress_callback: Some(progress_callback),
                     auth_token,
-                }) => result,
-                _ = cancel_rx.recv() => {
-                    info!(session_id = %session_id_for_task, "Download cancelled");
+                }) => Some(result),
+                reason = cancel_rx.recv() => {
+                    let reason = reason.unwrap_or(StopReason::Cancel);
+                    info!(session_id = %session_id_for_task, ?reason, "Download stopped");
 
-                    if let Ok(Some(mut session)) = repository.get(&session_id_for_task).await {
-                        if let Err(e) = session.cancel() {
-                            error!(session_id = %session_id_for_task, error = %e, "Failed to mark session as cancelled");
+                    match reason {
+                        StopReason::Pause => {
+                            // Deliberately no state transition and no file
+                            // removal. `pause_download` already wrote `Paused`;
+                            // touching the session here is what used to turn a
+                            // pause into a cancel. The partial file stays so
+                            // resume can continue from its offset.
                         }
+                        StopReason::Cancel => {
+                            if let Ok(Some(mut session)) = repository.get(&session_id_for_task).await {
+                                if let Err(e) = session.cancel() {
+                                    error!(session_id = %session_id_for_task, error = %e, "Failed to mark session as cancelled");
+                                }
 
-                        if let Err(e) = repository.update(&session).await {
-                            error!(session_id = %session_id_for_task, error = %e, "Failed to update cancelled session in database");
-                        }
+                                if let Err(e) = repository.update(&session).await {
+                                    error!(session_id = %session_id_for_task, error = %e, "Failed to update cancelled session in database");
+                                }
 
-                        if let Err(e) = event_tx.send(DownloadEvent::Cancelled {
-                            id: session_id_for_task.clone(),
-                        }) {
-                            warn!(session_id = %session_id_for_task, error = %e, "Failed to send Cancelled event");
+                                if let Err(e) = event_tx.send(DownloadEvent::Cancelled {
+                                    id: session_id_for_task.clone(),
+                                }) {
+                                    warn!(session_id = %session_id_for_task, error = %e, "Failed to send Cancelled event");
+                                }
+                            }
                         }
                     }
-                    return;
+
+                    None
                 }
+            };
+
+            let Some(download_result) = download_result else {
+                // Stopped rather than finished: fall through to the shared
+                // cleanup so the concurrency slot and auth token are released.
+                let mut active = active_downloads.write().await;
+                active.remove(&session_id_for_task);
+                drop(active);
+
+                let mut tokens = auth_tokens.write().await;
+                tokens.remove(&session_id_for_task);
+                return;
             };
 
             match download_result {
@@ -630,6 +698,9 @@ impl DownloadManager for DownloadManagerService {
             session = session.with_model_metadata(model_name, model_id);
             info!(download_id = %id, "✓ Model metadata attached to session");
         }
+        if let Some(model_file_name) = request.model_file_name {
+            session = session.with_model_file_name(model_file_name);
+        }
 
         info!(download_id = %id, "→ Calling repository.create()...");
 
@@ -669,13 +740,29 @@ impl DownloadManager for DownloadManagerService {
         session.pause()?;
         self.repository.update(&session).await?;
 
-        let mut active = self.active_downloads.write().await;
-        if let Some(download) = active.get_mut(id) {
-            if let Some(cancel_tx) = download.cancel_tx.take() {
-                if let Err(e) = cancel_tx.send(()).await {
-                    warn!(download_id = %id, error = %e, "Failed to send cancel signal to download task");
-                }
+        // Remove the entry here rather than relying solely on the task's own
+        // cleanup. `process_queue` gates on `active.len() >= max_concurrent`,
+        // so leaving a paused session occupying a slot stalls the queue: with
+        // a limit of 2, pausing two files meant no queued or new download ever
+        // started again. Removing here also closes the window between the
+        // pause returning and the task getting scheduled.
+        let stop_tx = {
+            let mut active = self.active_downloads.write().await;
+            active
+                .remove(id)
+                .and_then(|mut download| download.cancel_tx.take())
+        };
+
+        if let Some(stop_tx) = stop_tx {
+            if let Err(e) = stop_tx.send(StopReason::Pause).await {
+                warn!(download_id = %id, error = %e, "Failed to send pause signal to download task");
             }
+        }
+
+        // The task may still be mid-flight; make sure its token is gone too.
+        {
+            let mut tokens = self.auth_tokens.write().await;
+            tokens.remove(id);
         }
 
         if let Err(e) = self
@@ -728,7 +815,7 @@ impl DownloadManager for DownloadManagerService {
         let mut active = self.active_downloads.write().await;
         if let Some(download) = active.remove(id) {
             if let Some(cancel_tx) = download.cancel_tx {
-                if let Err(e) = cancel_tx.send(()).await {
+                if let Err(e) = cancel_tx.send(StopReason::Cancel).await {
                     warn!(download_id = %id, error = %e, "Failed to send cancel signal to download task");
                 }
             }
@@ -880,6 +967,19 @@ mod tests {
     use std::pin::Pin;
     use tokio::time::Duration;
 
+    #[test]
+    fn crash_recovery_uses_file_length_ahead_of_throttled_progress() {
+        assert_eq!(recover_resume_offset(400, 512, Some(1_000)), Some(512));
+        assert_eq!(recover_resume_offset(0, 512, Some(1_000)), Some(512));
+    }
+
+    #[test]
+    fn crash_recovery_rejects_inconsistent_partial_files() {
+        assert_eq!(recover_resume_offset(600, 512, Some(1_000)), None);
+        assert_eq!(recover_resume_offset(400, 1_001, Some(1_000)), None);
+        assert_eq!(recover_resume_offset(0, 0, Some(1_000)), None);
+    }
+
     /// Oracle-approved database polling pattern
     ///
     /// This is the ONLY acceptable use of sleep() in async tests - for polling intervals.
@@ -929,6 +1029,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             })
             .await?;
 
@@ -978,6 +1079,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             })
             .await?;
 
@@ -1053,6 +1155,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             })
             .await?;
 
@@ -1123,6 +1226,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             })
             .await?;
 
@@ -1134,6 +1238,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             })
             .await?;
 
@@ -1185,14 +1290,12 @@ mod tests {
         mock_engine.set_file_size("https://example.com/file.bin", Some(1000));
         mock_engine.set_download_result(
             "https://example.com/file.bin",
-            Ok(
-                crate::features::download::engine::DownloadResult {
-                    bytes_downloaded: 1000,
-                    total_bytes: Some(1000),
-                    sha256_checksum: "a".repeat(64),
-                    elapsed: Duration::from_secs(1),
-                },
-            ),
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000,
+                total_bytes: Some(1000),
+                sha256_checksum: "a".repeat(64),
+                elapsed: Duration::from_secs(1),
+            }),
         );
 
         let manager =
@@ -1210,6 +1313,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let download_id = manager.start_download(request).await?;
@@ -1248,7 +1352,7 @@ mod tests {
             events.len()
         );
         assert!(
-            completed_found || events.len() >= 1,
+            completed_found || !events.is_empty(),
             "Should receive Completed event or download should be in terminal state (got {} events)",
             events.len()
         );
@@ -1308,14 +1412,12 @@ mod tests {
         mock_engine.set_file_size("https://example.com/large_file.bin", Some(1000));
         mock_engine.set_download_result(
             "https://example.com/large_file.bin",
-            Ok(
-                crate::features::download::engine::DownloadResult {
-                    bytes_downloaded: 1000, // Total bytes after resume (500 existing + 500 new)
-                    total_bytes: Some(1000),
-                    sha256_checksum: "a".repeat(64),
-                    elapsed: Duration::from_secs(1),
-                },
-            ),
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000, // Total bytes after resume (500 existing + 500 new)
+                total_bytes: Some(1000),
+                sha256_checksum: "a".repeat(64),
+                elapsed: Duration::from_secs(1),
+            }),
         );
 
         let manager = DownloadManagerService::new(
@@ -1337,6 +1439,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let download_id = manager.start_download(request).await?;
@@ -1420,6 +1523,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let download_id = manager.start_download(request).await?;
@@ -1501,6 +1605,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let download_id = manager.start_download(request).await?;
@@ -1589,6 +1694,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let download_id = manager.start_download(request).await?;
@@ -1656,6 +1762,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let result = manager.start_download(request).await;
@@ -1698,6 +1805,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         // Start download should succeed (creates session)
@@ -1771,6 +1879,7 @@ mod tests {
             auth_token: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         };
 
         let download_id = manager.start_download(request).await?;
@@ -1817,47 +1926,39 @@ mod tests {
 
         mock_engine.set_download_result(
             "https://example.com/file0.bin",
-            Ok(
-                crate::features::download::engine::DownloadResult {
-                    bytes_downloaded: 1000,
-                    total_bytes: Some(1000),
-                    sha256_checksum: "a".repeat(64),
-                    elapsed: Duration::from_secs(1),
-                },
-            ),
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000,
+                total_bytes: Some(1000),
+                sha256_checksum: "a".repeat(64),
+                elapsed: Duration::from_secs(1),
+            }),
         );
         mock_engine.set_download_result(
             "https://example.com/file1.bin",
-            Ok(
-                crate::features::download::engine::DownloadResult {
-                    bytes_downloaded: 1000,
-                    total_bytes: Some(1000),
-                    sha256_checksum: "b".repeat(64),
-                    elapsed: Duration::from_secs(1),
-                },
-            ),
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000,
+                total_bytes: Some(1000),
+                sha256_checksum: "b".repeat(64),
+                elapsed: Duration::from_secs(1),
+            }),
         );
         mock_engine.set_download_result(
             "https://example.com/file2.bin",
-            Ok(
-                crate::features::download::engine::DownloadResult {
-                    bytes_downloaded: 1000,
-                    total_bytes: Some(1000),
-                    sha256_checksum: "c".repeat(64),
-                    elapsed: Duration::from_secs(1),
-                },
-            ),
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000,
+                total_bytes: Some(1000),
+                sha256_checksum: "c".repeat(64),
+                elapsed: Duration::from_secs(1),
+            }),
         );
         mock_engine.set_download_result(
             "https://example.com/file3.bin",
-            Ok(
-                crate::features::download::engine::DownloadResult {
-                    bytes_downloaded: 1000,
-                    total_bytes: Some(1000),
-                    sha256_checksum: "d".repeat(64),
-                    elapsed: Duration::from_secs(1),
-                },
-            ),
+            Ok(crate::features::download::engine::DownloadResult {
+                bytes_downloaded: 1000,
+                total_bytes: Some(1000),
+                sha256_checksum: "d".repeat(64),
+                elapsed: Duration::from_secs(1),
+            }),
         );
 
         let manager =
@@ -1876,6 +1977,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             };
 
             let id = manager.start_download(request).await?;
@@ -1943,15 +2045,13 @@ mod tests {
             );
             mock_engine.set_download_result(
                 &format!("https://example.com/concurrent{}.bin", i),
-                Ok(
-                    crate::features::download::engine::DownloadResult {
-                        bytes_downloaded: 1000,
-                        total_bytes: Some(1000),
-                        sha256_checksum: format!("{}", char::from_u32('a' as u32 + i).unwrap())
-                            .repeat(64),
-                        elapsed: Duration::from_secs(1),
-                    },
-                ),
+                Ok(crate::features::download::engine::DownloadResult {
+                    bytes_downloaded: 1000,
+                    total_bytes: Some(1000),
+                    sha256_checksum: format!("{}", char::from_u32('a' as u32 + i).unwrap())
+                        .repeat(64),
+                    elapsed: Duration::from_secs(1),
+                }),
             );
         }
 
@@ -1969,6 +2069,7 @@ mod tests {
                 auth_token: None,
                 model_name: None,
                 model_id: None,
+                model_file_name: None,
             };
 
             let id = manager.start_download(request).await?;
@@ -2031,5 +2132,157 @@ mod tests {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod pause_resume_tests {
+    use super::tests::*;
+    use super::*;
+    use crate::features::download::download_repository::mock::MockDownloadRepository;
+    use crate::features::download::engine::mock::MockDownloadEngine;
+    use tokio::time::Duration;
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join("lattice-download-pause-tests")
+    }
+
+    async fn start_one(
+        manager: &DownloadManagerService,
+        engine: &MockDownloadEngine,
+        name: &str,
+    ) -> String {
+        let url = format!("https://example.com/{}", name);
+        engine.set_file_size(&url, Some(10_000_000));
+        // Keep the transfer in flight so pause/cancel act on a live task
+        // rather than racing an instant completion.
+        engine.set_stall(true);
+        manager
+            .start_download(DownloadRequest {
+                url,
+                destination: temp_root().join(name),
+                checksum: None,
+                auth_token: None,
+                model_name: None,
+                model_id: None,
+                model_file_name: None,
+            })
+            .await
+            .expect("start download")
+    }
+
+    /// Pausing must leave the session in `Paused`. It used to reach the task's
+    /// stop branch, which unconditionally ran `session.cancel()` — and since
+    /// `Paused → Cancelled` is a legal transition, the row ended up
+    /// `Cancelled`. `resume_download` only accepts `Paused | Failed`, so
+    /// resume then refused forever and the only working button, retry,
+    /// deletes the partial file.
+    #[tokio::test]
+    async fn pausing_leaves_the_session_paused_and_resumable() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let engine = Arc::new(MockDownloadEngine::new());
+        let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+
+        let id = start_one(&manager, &engine, "paused.bin").await;
+
+        manager.pause_download(&id).await.expect("pause");
+
+        // Give the task time to observe the stop signal and unwind.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let session = repository
+            .get(&id)
+            .await
+            .expect("get")
+            .expect("session exists");
+        assert_eq!(
+            session.state(),
+            &DownloadState::Paused,
+            "pause must not turn into cancel when the task tears down"
+        );
+
+        // And resume must be accepted rather than rejected.
+        manager
+            .resume_download(&id)
+            .await
+            .expect("resume must be accepted after a pause");
+    }
+
+    /// A paused download must give its concurrency slot back. The gate is
+    /// `active.len() >= max_concurrent_downloads` (2), so leaking slots meant
+    /// that pausing two files silently wedged every queued and future
+    /// download until the app restarted.
+    #[tokio::test]
+    async fn pausing_releases_the_concurrency_slot() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let engine = Arc::new(MockDownloadEngine::new());
+        let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+
+        let first = start_one(&manager, &engine, "slot-a.bin").await;
+        let second = start_one(&manager, &engine, "slot-b.bin").await;
+
+        manager.pause_download(&first).await.expect("pause first");
+        manager.pause_download(&second).await.expect("pause second");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let active = manager.active_downloads.read().await;
+        assert!(
+            active.is_empty(),
+            "paused downloads must not keep occupying slots, still held: {:?}",
+            active.keys().collect::<Vec<_>>()
+        );
+        drop(active);
+
+        // A third download must therefore be able to start.
+        let third = start_one(&manager, &engine, "slot-c.bin").await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let session = repository
+            .get(&third)
+            .await
+            .expect("get")
+            .expect("third session exists");
+        assert_ne!(
+            session.state(),
+            &DownloadState::Pending,
+            "a third download must start once slots are freed, got {:?}",
+            session.state()
+        );
+    }
+
+    /// A progress tick that lands after a terminal transition must not revive
+    /// the row. This is what left sessions stuck as forever-downloading, which
+    /// startup reconciliation then marked `failed` even though the model had
+    /// completed and been registered.
+    #[tokio::test]
+    async fn progress_write_cannot_revert_a_terminal_state() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let engine = Arc::new(MockDownloadEngine::new());
+        let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+
+        let id = start_one(&manager, &engine, "terminal.bin").await;
+
+        // Drive the session to a terminal state...
+        manager.cancel_download(&id).await.expect("cancel");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // ...then deliver a late progress tick, as a detached task would.
+        repository
+            .update_progress(&id, 9_999, 1234.0)
+            .await
+            .expect("late progress tick");
+
+        let session = repository
+            .get(&id)
+            .await
+            .expect("get")
+            .expect("session exists");
+        assert_eq!(
+            session.state(),
+            &DownloadState::Cancelled,
+            "a late progress tick must not resurrect a terminal session"
+        );
     }
 }

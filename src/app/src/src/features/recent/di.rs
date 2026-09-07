@@ -17,7 +17,7 @@ pub struct RecentDi {
 }
 
 pub fn build(db_pool: SqlitePool) -> RecentDi {
-    let recent_docs_repo = Arc::new(RecentDocumentsRepository::new(db_pool))
-        as Arc<dyn RecentDocumentsRepositoryPort>;
+    let recent_docs_repo =
+        Arc::new(RecentDocumentsRepository::new(db_pool)) as Arc<dyn RecentDocumentsRepositoryPort>;
     RecentDi { recent_docs_repo }
 }

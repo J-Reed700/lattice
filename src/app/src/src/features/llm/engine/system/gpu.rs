@@ -151,8 +151,10 @@ mod tests {
     #[test]
     fn test_gpu_vendor_backend() {
         assert_eq!(GPUVendor::Apple.backend_name(), "metal");
-        assert_eq!(GPUVendor::Nvidia.backend_name(), "cuda");
-        assert_eq!(GPUVendor::AMD.backend_name(), "rocm");
+        assert_eq!(GPUVendor::Nvidia.backend_name(), "gpu");
+        assert_eq!(GPUVendor::AMD.backend_name(), "gpu");
+        assert_eq!(GPUVendor::Intel.backend_name(), "gpu");
+        assert_eq!(GPUVendor::Unknown.backend_name(), "cpu");
     }
 
     #[tokio::test]

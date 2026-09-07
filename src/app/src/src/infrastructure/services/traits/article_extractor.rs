@@ -59,7 +59,7 @@ pub trait ArticleExtractorServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::ArticleExtractorServiceTrait;
+    /// use lattice::infrastructure::services::traits::ArticleExtractorServiceTrait;
     ///
     /// # async fn example<S: ArticleExtractorServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let html = r#"<html><body><article><h1>Title</h1><p>Content...</p></article></body></html>"#;
@@ -91,7 +91,7 @@ pub trait ArticleExtractorServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::ArticleExtractorServiceTrait;
+    /// use lattice::infrastructure::services::traits::ArticleExtractorServiceTrait;
     ///
     /// # async fn example<S: ArticleExtractorServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let article = service.extract_article_from_url("https://example.com/article").await?;
@@ -109,8 +109,8 @@ pub trait ArticleExtractorServiceTrait: Send + Sync {
 ///
 /// # Example
 /// ```rust
-/// use vault_desktop::infrastructure::services::traits::MockArticleExtractorService;
-/// use vault_desktop::application::dtos::function_calling_dto::CleanArticle;
+/// use lattice::infrastructure::services::traits::MockArticleExtractorService;
+/// use lattice::application::dtos::function_calling_dto::CleanArticle;
 ///
 /// let mock = MockArticleExtractorService::new();
 ///
@@ -156,7 +156,7 @@ impl MockArticleExtractorService {
     ///
     /// # Example
     /// ```rust
-    /// use vault_desktop::infrastructure::services::traits::MockArticleExtractorService;
+    /// use lattice::infrastructure::services::traits::MockArticleExtractorService;
     ///
     /// let disabled = MockArticleExtractorService::new_disabled(
     ///     "Article extraction unavailable: SSL certificate error".to_string()

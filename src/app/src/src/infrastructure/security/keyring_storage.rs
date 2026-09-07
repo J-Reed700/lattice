@@ -24,7 +24,7 @@ const SERVICE_NAME: &str = "com.lattice.lattice";
 ///
 /// # Example
 /// ```
-/// use vault_desktop::security::SecureStorage;
+/// use lattice::security::SecureStorage;
 ///
 /// let storage = SecureStorage::new();
 ///

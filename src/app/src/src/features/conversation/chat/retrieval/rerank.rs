@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::features::search::dto::SearchResponseDto;
@@ -10,9 +10,16 @@ use crate::infrastructure::search::reranker::{RerankResult, RerankerService};
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::safe_truncate;
 
-static RERANKER_INSTANCE: Lazy<tokio::sync::Mutex<Option<Arc<RerankerService>>>> =
-    Lazy::new(|| tokio::sync::Mutex::new(None));
-static RERANKER_INIT_FAILED: AtomicBool = AtomicBool::new(false);
+const RERANKER_INIT_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Default)]
+struct RerankerState {
+    instance: Option<Arc<RerankerService>>,
+    last_init_failure: Option<Instant>,
+}
+
+static RERANKER_STATE: Lazy<tokio::sync::Mutex<RerankerState>> =
+    Lazy::new(|| tokio::sync::Mutex::new(RerankerState::default()));
 
 pub(super) async fn apply_rerank_stage(
     container: &Container,
@@ -100,17 +107,18 @@ fn build_rerank_query(
 }
 
 async fn get_or_init_reranker(container: &Container) -> Option<Arc<RerankerService>> {
-    {
-        let guard = RERANKER_INSTANCE.lock().await;
-        if let Some(service) = guard.as_ref() {
-            return Some(Arc::clone(service));
-        }
+    // Hold one async initialization lock for the complete load so concurrent
+    // searches await the same model instead of allocating it twice.
+    let mut state = RERANKER_STATE.lock().await;
+    if let Some(service) = state.instance.as_ref() {
+        return Some(Arc::clone(service));
     }
-
-    if RERANKER_INIT_FAILED.load(Ordering::Relaxed) {
+    if state
+        .last_init_failure
+        .is_some_and(|failed_at| failed_at.elapsed() < RERANKER_INIT_RETRY_DELAY)
+    {
         return None;
     }
-
 
     let model_path = container
         .models_path()
@@ -123,12 +131,12 @@ async fn get_or_init_reranker(container: &Container) -> Option<Arc<RerankerServi
     match RerankerService::new(&model_path).await {
         Ok(service) => {
             let service = Arc::new(service);
-            let mut guard = RERANKER_INSTANCE.lock().await;
-            *guard = Some(Arc::clone(&service));
+            state.instance = Some(Arc::clone(&service));
+            state.last_init_failure = None;
             Some(service)
         }
         Err(error) => {
-            RERANKER_INIT_FAILED.store(true, Ordering::Relaxed);
+            state.last_init_failure = Some(Instant::now());
             warn!(
                 error = %error,
                 model_path = %model_path.display(),
@@ -158,8 +166,8 @@ fn apply_cross_encoder_rerank(
 
     let mut rerank_scores = vec![0.0_f32; rerank_count];
     for entry in reranked {
-        if entry.index < rerank_count {
-            rerank_scores[entry.index] = entry.score.clamp(0.0, 1.0);
+        if let Some(score) = rerank_scores.get_mut(entry.index) {
+            *score = entry.score.clamp(0.0, 1.0);
         }
     }
 
@@ -170,7 +178,7 @@ fn apply_cross_encoder_rerank(
         .enumerate()
     {
         let original = (result.score / max_original).clamp(0.0, 1.0);
-        let rerank_score = rerank_scores[idx];
+        let rerank_score = rerank_scores.get(idx).copied().unwrap_or_default();
         result.score = (0.35 * original + 0.65 * rerank_score).clamp(0.0, 1.0);
     }
 

@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::indexing::delete_document::DeleteDocumentUseCase;
+//! use lattice::application::use_cases::indexing::delete_document::DeleteDocumentUseCase;
 //!
 //! # async fn example(use_case: DeleteDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute("doc-123".to_string()).await?;
@@ -126,7 +126,7 @@ impl DeleteDocumentUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::indexing::delete_document::DeleteDocumentUseCase;
+    /// # use lattice::application::use_cases::indexing::delete_document::DeleteDocumentUseCase;
     /// # async fn example(use_case: DeleteDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// // Delete a document
     /// match use_case.execute("doc-123".to_string()).await {
@@ -187,9 +187,11 @@ impl DeleteDocumentUseCase {
 
         // 4. Remove vector embeddings AFTER DB commit
         // If this fails, surface error to user (DB state is already committed)
-        // Key format matches EmbeddingRepository::save/save_batch: "emb_{chunk_id}"
+        // Key comes from the one canonical scheme (`encoding::vector_key`),
+        // shared with the writers and the startup rebuild.
         for chunk in &chunks {
-            let embedding_key = format!("emb_{}", chunk.id());
+            let embedding_key =
+                crate::features::embedding::encoding::vector_key(&chunk.id().to_string());
             if let Err(e) = self.vector_search.remove_embedding(&embedding_key) {
                 tracing::error!(
                     document_id = %document_id,
@@ -239,6 +241,11 @@ impl DeleteDocumentUseCase {
                 }
             }
         }
+
+        // The corpus changed, so cached search results are now wrong —
+        // without this, a deleted document keeps appearing in repeated
+        // searches for up to the cache TTL.
+        crate::features::cache::query_cache::invalidate_query_cache();
 
         // 6. Build success response
         Ok(DeleteDocumentResponseDto {

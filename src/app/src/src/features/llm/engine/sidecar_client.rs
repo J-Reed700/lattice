@@ -155,6 +155,152 @@ pub struct SidecarLLMClient {
     config: GenerationConfig,
 }
 
+/// Incremental parser for the server's SSE frames.
+///
+/// Extracted from `parse_sse_stream` so the byte handling is testable
+/// without constructing a `reqwest::Response`. Two things it must get
+/// right, both of which the previous inline version got wrong:
+///
+/// 1. **UTF-8 across chunk boundaries.** Bytes arrive in network-sized
+///    chunks with no regard for character boundaries. Decoding each chunk
+///    independently with `from_utf8_lossy` turned every split character
+///    into U+FFFD, so non-English replies came back peppered with
+///    replacement characters at random offsets.
+///
+/// 2. **The final frame.** When the server closes without sending
+///    `data: [DONE]`, a frame still sitting in the buffer without its
+///    trailing `\n\n` was silently dropped — losing the last tokens of
+///    the reply.
+#[derive(Default)]
+pub(crate) struct SseDecoder {
+    /// Text decoded so far, awaiting frame termination.
+    buffer: String,
+    /// Bytes that do not yet form complete characters (a split sequence).
+    pending: Vec<u8>,
+    /// Whether the server's `[DONE]` sentinel has been seen.
+    done: bool,
+}
+
+impl SseDecoder {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// True once `data: [DONE]` has been observed.
+    pub(crate) fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// Feed a network chunk; returns any content deltas it completed.
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        if self.done {
+            return Vec::new();
+        }
+
+        self.pending.extend_from_slice(bytes);
+        self.decode_pending();
+        self.drain_frames()
+    }
+
+    /// Flush at clean EOF, emitting any residual frame.
+    pub(crate) fn finish(&mut self) -> Vec<String> {
+        if self.done {
+            return Vec::new();
+        }
+
+        if !self.pending.is_empty() {
+            // Whatever is left cannot be completed; surface it lossily
+            // rather than discarding it.
+            let tail = std::mem::take(&mut self.pending);
+            self.buffer.push_str(&String::from_utf8_lossy(&tail));
+        }
+
+        if !self.buffer.trim().is_empty() && !self.buffer.ends_with("\n\n") {
+            self.buffer.push_str("\n\n");
+        }
+
+        self.drain_frames()
+    }
+
+    /// Move as much of `pending` into `buffer` as forms whole characters.
+    fn decode_pending(&mut self) {
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(text) => {
+                    self.buffer.push_str(text);
+                    self.pending.clear();
+                    return;
+                }
+                Err(err) => {
+                    let valid = err.valid_up_to();
+                    if valid > 0 {
+                        if let Some(valid_bytes) = self.pending.get(..valid) {
+                            if let Ok(text) = std::str::from_utf8(valid_bytes) {
+                                self.buffer.push_str(text);
+                            }
+                        }
+                        self.pending.drain(..valid);
+                    }
+                    match err.error_len() {
+                        // Genuinely invalid bytes: drop them and mark the
+                        // damage rather than stalling the stream forever.
+                        Some(len) => {
+                            let len = len.min(self.pending.len()).max(1);
+                            self.pending.drain(..len.min(self.pending.len()));
+                            self.buffer.push('\u{FFFD}');
+                        }
+                        // Truncated tail: wait for the next chunk.
+                        None => return,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Consume every complete `\n\n`-terminated frame in the buffer.
+    fn drain_frames(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+
+        while let Some(idx) = self.buffer.find("\n\n") {
+            let frame = self.buffer[..idx].to_string();
+            self.buffer.drain(..idx + 2);
+
+            for line in frame.lines() {
+                let Some(payload) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let payload = payload.trim();
+
+                if payload == "[DONE]" {
+                    self.done = true;
+                    return out;
+                }
+
+                // Skip empty / malformed payloads — better to drop one bad
+                // frame than abort the whole stream.
+                match serde_json::from_str::<ChatCompletionChunk>(payload) {
+                    Ok(chunk) => {
+                        if let Some(choice) = chunk.choices.into_iter().next() {
+                            let content = choice.delta.content;
+                            if !content.is_empty() {
+                                out.push(content);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "sidecar_client",
+                            "Skipping malformed SSE chunk ({err}): {payload}"
+                        );
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
 impl SidecarLLMClient {
     /// Create a client wrapping the given sidecar handle.
     pub fn new(
@@ -179,14 +325,16 @@ impl SidecarLLMClient {
         })
     }
 
+    /// Context window this client's sidecar was launched with.
+    pub fn context_size(&self) -> u32 {
+        self.sidecar.context_size()
+    }
+
     fn endpoint_for(&self, path: &str) -> String {
         format!("{}{}", self.sidecar.endpoint(), path)
     }
 
-    fn build_messages(
-        system: Option<&str>,
-        prompt: &str,
-    ) -> Vec<(&'static str, String)> {
+    fn build_messages(system: Option<&str>, prompt: &str) -> Vec<(&'static str, String)> {
         let mut msgs: Vec<(&'static str, String)> = Vec::with_capacity(2);
         if let Some(sys) = system {
             msgs.push(("system", sys.to_string()));
@@ -217,7 +365,6 @@ impl SidecarLLMClient {
             max_tokens: self.config.max_tokens,
         }
     }
-
 
     async fn post_chat_completion(
         &self,
@@ -263,11 +410,8 @@ impl SidecarLLMClient {
             .into_iter()
             .next()
             .map(|c| c.message.content)
-            .ok_or_else(|| {
-                LLMError::GenerationFailed("Sidecar returned zero choices".to_string())
-            })
+            .ok_or_else(|| LLMError::GenerationFailed("Sidecar returned zero choices".to_string()))
     }
-
 
     fn normalize_chat_messages(messages: Vec<ChatMessage>) -> Vec<(&'static str, String)> {
         messages
@@ -290,7 +434,7 @@ impl SidecarLLMClient {
     ) -> Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send>> {
         Box::pin(stream! {
             let mut bytes = response.bytes_stream();
-            let mut buffer = String::new();
+            let mut decoder = SseDecoder::new();
 
             loop {
                 let next = match timeout(CHUNK_TIMEOUT, bytes.next()).await {
@@ -301,52 +445,26 @@ impl SidecarLLMClient {
                     }
                 };
 
-                let chunk = match next {
-                    Some(Ok(b)) => b,
+                match next {
+                    Some(Ok(b)) => {
+                        for content in decoder.push(&b) {
+                            yield Ok(content);
+                        }
+                        if decoder.is_done() {
+                            return;
+                        }
+                    }
                     Some(Err(err)) => {
                         yield Err(LLMError::Network(format!("SSE byte stream error: {err}")));
                         return;
                     }
-                    None => break, // server closed the stream
-                };
-
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-
-                while let Some(idx) = buffer.find("\n\n") {
-                    let frame = buffer[..idx].to_string();
-                    buffer.drain(..idx + 2);
-
-                    for line in frame.lines() {
-                        let Some(payload) = line.strip_prefix("data:") else {
-                            continue;
-                        };
-                        let payload = payload.trim();
-
-                        // The server's "we're done" sentinel.
-                        if payload == "[DONE]" {
-                            return;
+                    None => {
+                        // Server closed: flush any frame left without its
+                        // trailing "\n\n" instead of discarding it.
+                        for content in decoder.finish() {
+                            yield Ok(content);
                         }
-
-                        // Parse the chunk JSON. Skip empty / malformed
-                        // payloads — we'd rather drop one bad frame
-                        // than abort the whole stream.
-                        match serde_json::from_str::<ChatCompletionChunk>(payload) {
-                            Ok(chunk) => {
-                                if let Some(choice) = chunk.choices.into_iter().next() {
-                                    let content = choice.delta.content;
-                                    if !content.is_empty() {
-                                        yield Ok(content);
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                tracing::warn!(
-                                    target: "sidecar_client",
-                                    "Skipping malformed SSE chunk ({err}): {payload}"
-                                );
-                            }
-                        }
+                        return;
                     }
                 }
             }
@@ -372,8 +490,7 @@ impl LLMClient for SidecarLLMClient {
         prompt: &str,
         system: Option<&str>,
         _images: Option<Vec<String>>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError>
-    {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let messages = Self::build_messages(system, prompt);
         let response = self.post_chat_completion(&messages, true).await?;
         Ok(Self::parse_sse_stream(response))
@@ -408,8 +525,7 @@ impl LLMClient for SidecarLLMClient {
     async fn generate_chat_stream(
         &self,
         messages: Vec<ChatMessage>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError>
-    {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
         let response = self.post_chat_completion(&pairs, true).await?;
         Ok(Self::parse_sse_stream(response))
@@ -427,6 +543,9 @@ impl LLMClient for SidecarLLMClient {
 #[cfg(test)]
 mod tests {
     //! These tests target the request-shaping and SSE-parsing logic.
+    //!
+    //! The SSE byte handling is exercised through `SseDecoder`, which exists
+    //! precisely so this logic can be tested without a live HTTP response.
     //! Lifecycle integration tests (real sidecar process) live in
     //! `tests/sidecar_integration.rs` — they require a llama-server
     //! binary on disk and a tiny GGUF model, both of which CI has
@@ -437,16 +556,154 @@ mod tests {
     //! note added during Sprint 1 PR 1.3); these tests pass on macOS
     //! and Linux where linking works.
 
+    // ========================================================================
+    // SSE decoding (CHAT-6)
+    // ========================================================================
+
+    fn content_frame(text: &str) -> String {
+        format!(
+            "data: {}\n\n",
+            serde_json::json!({ "choices": [ { "delta": { "content": text } } ] })
+        )
+    }
+
+    /// A multi-byte character split across two network chunks must survive.
+    /// Decoding each chunk with `from_utf8_lossy` independently turned the
+    /// split character into U+FFFD.
+    #[test]
+    fn sse_decoder_reassembles_characters_split_across_chunks() {
+        let frame = content_frame("你好世界");
+        let bytes = frame.as_bytes();
+
+        // Split at every possible offset; none may corrupt the output.
+        for split in 1..bytes.len() {
+            let mut decoder = SseDecoder::new();
+            let mut out = String::new();
+            for chunk in decoder.push(&bytes[..split]) {
+                out.push_str(&chunk);
+            }
+            for chunk in decoder.push(&bytes[split..]) {
+                out.push_str(&chunk);
+            }
+            for chunk in decoder.finish() {
+                out.push_str(&chunk);
+            }
+
+            assert_eq!(
+                out, "你好世界",
+                "split at byte {} corrupted the stream",
+                split
+            );
+            assert!(
+                !out.contains('\u{FFFD}'),
+                "split at byte {} produced a replacement character",
+                split
+            );
+        }
+    }
+
+    /// Emoji are 4-byte sequences — the widest split window.
+    #[test]
+    fn sse_decoder_handles_emoji_split_across_chunks() {
+        let frame = content_frame("ship it 🚀🔥");
+        let bytes = frame.as_bytes();
+
+        for split in 1..bytes.len() {
+            let mut decoder = SseDecoder::new();
+            let mut out = String::new();
+            for chunk in decoder.push(&bytes[..split]) {
+                out.push_str(&chunk);
+            }
+            for chunk in decoder.push(&bytes[split..]) {
+                out.push_str(&chunk);
+            }
+            for chunk in decoder.finish() {
+                out.push_str(&chunk);
+            }
+            assert_eq!(
+                out, "ship it 🚀🔥",
+                "split at byte {} corrupted output",
+                split
+            );
+        }
+    }
+
+    /// A frame left in the buffer when the server closes without `[DONE]`
+    /// used to be discarded, losing the last tokens of the reply.
+    #[test]
+    fn sse_decoder_flushes_the_final_frame_without_done_sentinel() {
+        let mut decoder = SseDecoder::new();
+        let mut out = String::new();
+
+        for chunk in decoder.push(content_frame("hello ").as_bytes()) {
+            out.push_str(&chunk);
+        }
+
+        // Final frame arrives with no trailing blank line and no [DONE].
+        let tail = format!(
+            "data: {}",
+            serde_json::json!({ "choices": [ { "delta": { "content": "world" } } ] })
+        );
+        for chunk in decoder.push(tail.as_bytes()) {
+            out.push_str(&chunk);
+        }
+
+        assert_eq!(out, "hello ", "unterminated frame must not emit early");
+
+        for chunk in decoder.finish() {
+            out.push_str(&chunk);
+        }
+        assert_eq!(out, "hello world", "final frame must be flushed on EOF");
+    }
+
+    #[test]
+    fn sse_decoder_stops_at_done_sentinel() {
+        let mut decoder = SseDecoder::new();
+        let mut out = String::new();
+
+        let stream = format!(
+            "{}data: [DONE]\n\n{}",
+            content_frame("kept"),
+            content_frame("ignored")
+        );
+        for chunk in decoder.push(stream.as_bytes()) {
+            out.push_str(&chunk);
+        }
+
+        assert_eq!(out, "kept");
+        assert!(decoder.is_done());
+        assert!(decoder.finish().is_empty(), "nothing may follow [DONE]");
+    }
+
+    #[test]
+    fn sse_decoder_skips_malformed_frames_without_aborting() {
+        let mut decoder = SseDecoder::new();
+        let mut out = String::new();
+
+        let stream = format!(
+            "{}data: {{not json}}\n\n{}",
+            content_frame("before "),
+            content_frame("after")
+        );
+        for chunk in decoder.push(stream.as_bytes()) {
+            out.push_str(&chunk);
+        }
+
+        assert_eq!(
+            out, "before after",
+            "one bad frame must not kill the stream"
+        );
+    }
+
     use super::*;
 
     #[test]
     fn build_request_serializes_to_openai_shape() {
         let cfg = GenerationConfig::default();
-        let messages = vec![
+        let messages = [
             ("system", "You are helpful.".to_string()),
             ("user", "Hi.".to_string()),
         ];
-
 
         let body = ChatCompletionRequest {
             model: "local",

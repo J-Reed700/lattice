@@ -492,7 +492,7 @@ async fn index_test_file(pool: &SqlitePool, file_path: &PathBuf) -> Result<Strin
 }
 
 /// Reindex a file (update embeddings)
-async fn reindex_test_file(pool: &SqlitePool, file_path: &PathBuf) -> Result<()> {
+async fn reindex_test_file(pool: &SqlitePool, file_path: &std::path::Path) -> Result<()> {
     // Find existing document
     let doc_id: String = sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
         .bind(file_path.to_str().unwrap())

@@ -31,7 +31,7 @@ use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig, HiddenAct};
 use candle_transformers::models::distilbert::{Config as DistilBertConfig, DistilBertModel};
-use candle_transformers::models::gemma3::{Model as GemmaModel, Config as Gemma3Config};
+use candle_transformers::models::gemma3::{Config as Gemma3Config, Model as GemmaModel};
 use candle_transformers::models::jina_bert::{
     BertModel as JinaBertModel, Config as JinaBertConfig,
 };
@@ -387,9 +387,11 @@ impl CandleEmbeddingService {
         let device = self.device.clone();
         let pooling = self.pooling;
 
-        let input_ids_t = Tensor::from_vec(input_ids, (batch_size, max_len), &device)
-            .map_err(|e| AppError::EmbeddingFailed {
-                reason: format!("input_ids tensor: {}", e),
+        let input_ids_t =
+            Tensor::from_vec(input_ids, (batch_size, max_len), &device).map_err(|e| {
+                AppError::EmbeddingFailed {
+                    reason: format!("input_ids tensor: {}", e),
+                }
             })?;
         let attention_mask_t = Tensor::from_vec(attention_mask, (batch_size, max_len), &device)
             .map_err(|e| AppError::EmbeddingFailed {
@@ -425,11 +427,13 @@ impl CandleEmbeddingService {
                 .map_err(|e| AppError::EmbeddingFailed {
                     reason: format!("XLMRobertaModel forward: {}", e),
                 })?,
-            ModelVariant::JinaBert(model) => model
-                .forward(&input_ids_t)
-                .map_err(|e| AppError::EmbeddingFailed {
-                    reason: format!("JinaBertModel forward: {}", e),
-                })?,
+            ModelVariant::JinaBert(model) => {
+                model
+                    .forward(&input_ids_t)
+                    .map_err(|e| AppError::EmbeddingFailed {
+                        reason: format!("JinaBertModel forward: {}", e),
+                    })?
+            }
             ModelVariant::NomicBert(model) => model
                 .forward(
                     &input_ids_t,
@@ -446,7 +450,9 @@ impl CandleEmbeddingService {
                 })?,
             ModelVariant::Gemma3(_model) => {
                 return Err(AppError::EmbeddingFailed {
-                    reason: "Gemma3 not wired yet — needs last-token pooling + decoder-style runner".into(),
+                    reason:
+                        "Gemma3 not wired yet — needs last-token pooling + decoder-style runner"
+                            .into(),
                 })
             }
         };
@@ -529,7 +535,7 @@ fn best_device() -> Device {
             Err(e) => tracing::warn!(error = %e, "Metal unavailable"),
         }
     }
-    
+
     let device = Device::cuda_if_available(0).unwrap_or_else(|e| {
         eprintln!("CUDA not available, falling back to CPU: {:?}", e);
         Device::Cpu
@@ -537,7 +543,6 @@ fn best_device() -> Device {
 
     device
 }
-
 
 /// Read pooling strategy. Tries in order:
 /// 1. `1_Pooling/config.json` (sentence-transformers explicit config)
@@ -595,9 +600,7 @@ fn mean_pool(
     attention_mask: &Tensor,
 ) -> std::result::Result<Tensor, candle_core::Error> {
     // hidden_states: (B, S, H), attention_mask: (B, S) i64
-    let mask = attention_mask
-        .to_dtype(DType::F32)?
-        .unsqueeze(2)?; // (B, S, 1)
+    let mask = attention_mask.to_dtype(DType::F32)?.unsqueeze(2)?; // (B, S, 1)
     let masked = hidden_states.broadcast_mul(&mask)?;
     let summed = masked.sum(1)?; // (B, H)
     let counts = mask.sum(1)?.clamp(1f32, f32::INFINITY)?; // (B, 1) avoid div-by-zero
@@ -624,11 +627,20 @@ fn tensor_to_vec_of_vec(t: &Tensor) -> std::result::Result<Vec<Vec<f32>>, candle
         }
     };
     let flat = t.to_dtype(DType::F32)?.flatten_all()?.to_vec1::<f32>()?;
-    let mut out = Vec::with_capacity(batch);
-    for i in 0..batch {
-        out.push(flat[i * hidden..(i + 1) * hidden].to_vec());
+    let expected_len = batch.checked_mul(hidden).ok_or_else(|| {
+        candle_core::Error::Msg("embedding tensor dimensions overflowed usize".to_string())
+    })?;
+    if hidden == 0 || flat.len() != expected_len {
+        return Err(candle_core::Error::Msg(format!(
+            "embedding tensor data length {} does not match shape ({batch}, {hidden})",
+            flat.len()
+        )));
     }
-    Ok(out)
+    Ok(flat
+        .chunks_exact(hidden)
+        .take(batch)
+        .map(<[f32]>::to_vec)
+        .collect())
 }
 
 // Tensor indexing helper trait (candle uses an extension-trait pattern for `i`).

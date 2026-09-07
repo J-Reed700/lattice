@@ -41,9 +41,9 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::domain::entities::Document;
-//! use vault_desktop::domain::value_objects::ChunkingStrategy;
-//! use vault_desktop::shared::domain_types::ValidatedFilePath;
+//! use lattice::domain::entities::Document;
+//! use lattice::domain::value_objects::ChunkingStrategy;
+//! use lattice::shared::domain_types::ValidatedFilePath;
 //! use std::path::PathBuf;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,8 +68,6 @@ pub mod value_objects;
 // Vertical-slice migration (conversation): domain modules live in features/conversation/domain/.
 #[path = "../features/conversation/domain/conversation.rs"]
 pub mod conversation;
-#[path = "../features/conversation/domain/summary.rs"]
-pub mod conversation_summary;
 #[path = "modules/curated_models.rs"]
 pub mod curated_models;
 // Vertical-slice migration (download): domain modules live in features/download/domain/.
@@ -136,9 +134,6 @@ pub use conversation::{
     Conversation, ConversationAggregate, ConversationMessage, DocumentReference, LLMMessage,
     MessageRole,
 };
-
-// Re-export conversation summary
-pub use conversation_summary::ConversationSummary;
 
 // Re-export function calling types
 

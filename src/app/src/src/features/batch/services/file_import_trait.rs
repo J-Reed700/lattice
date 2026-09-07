@@ -65,7 +65,7 @@ pub struct ProcessedFileInfo {
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::infrastructure::services::traits::BatchFileImportServiceTrait;
+/// use lattice::infrastructure::services::traits::BatchFileImportServiceTrait;
 ///
 /// async fn import_files(
 ///     service: &dyn BatchFileImportServiceTrait,
@@ -109,8 +109,8 @@ pub trait BatchFileImportServiceTrait: Send + Sync {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::infrastructure::services::traits::BatchFileImportServiceTrait;
-    /// # use vault_desktop::domain::value_objects::ValidatedFilePath;
+    /// # use lattice::infrastructure::services::traits::BatchFileImportServiceTrait;
+    /// # use lattice::domain::value_objects::ValidatedFilePath;
     /// # async fn example(service: &dyn BatchFileImportServiceTrait) -> Result<(), Box<dyn std::error::Error>> {
     /// let paths = vec![
     ///     ValidatedFilePath::new("/path/to/file1.pdf")?,
@@ -153,8 +153,8 @@ pub trait BatchFileImportServiceTrait: Send + Sync {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::infrastructure::services::traits::BatchFileImportServiceTrait;
-    /// # use vault_desktop::domain::value_objects::ValidatedFilePath;
+    /// # use lattice::infrastructure::services::traits::BatchFileImportServiceTrait;
+    /// # use lattice::domain::value_objects::ValidatedFilePath;
     /// # fn example(service: &dyn BatchFileImportServiceTrait) -> Result<(), Box<dyn std::error::Error>> {
     /// let path = ValidatedFilePath::new("/path/to/file.pdf")?;
     /// let metadata = service.validate_file(&path)?;
@@ -181,8 +181,8 @@ pub trait BatchFileImportServiceTrait: Send + Sync {
 /// # Example
 ///
 /// ```rust
-/// use vault_desktop::infrastructure::services::traits::MockBatchFileImportService;
-/// use vault_desktop::infrastructure::services::traits::ProcessedFileInfo;
+/// use lattice::infrastructure::services::traits::MockBatchFileImportService;
+/// use lattice::infrastructure::services::traits::ProcessedFileInfo;
 ///
 /// let mock = MockBatchFileImportService::new();
 ///
@@ -230,7 +230,7 @@ impl MockBatchFileImportService {
     /// # Example
     ///
     /// ```rust
-    /// # use vault_desktop::infrastructure::services::traits::{MockBatchFileImportService, ProcessedFileInfo};
+    /// # use lattice::infrastructure::services::traits::{MockBatchFileImportService, ProcessedFileInfo};
     /// let mock = MockBatchFileImportService::new();
     /// mock.set_success("/test/file.pdf", ProcessedFileInfo {
     ///     file_name: "file.pdf".to_string(),
@@ -256,7 +256,7 @@ impl MockBatchFileImportService {
     /// # Example
     ///
     /// ```rust
-    /// # use vault_desktop::infrastructure::services::traits::MockBatchFileImportService;
+    /// # use lattice::infrastructure::services::traits::MockBatchFileImportService;
     /// let mock = MockBatchFileImportService::new();
     /// mock.set_failure("/test/bad.pdf", "File too large");
     /// ```

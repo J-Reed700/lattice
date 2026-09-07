@@ -1,0 +1,14 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 247
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": null,
+  "action": "cache_cleared",
+  "resource_id": null,
+  "result": "success",
+  "metadata": {}
+}

@@ -17,10 +17,10 @@
 //! is protected by a single `RwLock<KeyState>` to prevent desynchronization
 //! and TOCTOU races.
 
-use crate::features::search::dto::SearchResultPortDto;
 use crate::application::ports::VectorSearchPort;
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::SearchServiceTrait;
+use crate::infrastructure::search::service::SearchResult;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 use async_trait::async_trait;
@@ -29,6 +29,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
+
+/// Capacity reserved the first time a vector is inserted into an empty index.
+///
+/// Deliberately modest: `ensure_capacity` doubles from here, so a large corpus
+/// reaches its working size in a handful of reservations, while a small vault
+/// (or a unit test) doesn't pay for 10k slots it will never use.
+const INITIAL_INDEX_CAPACITY: usize = 1_024;
 
 /// Metadata stored alongside each vector for search result enrichment.
 /// Kept in a side map (not in USearch) so search results include content.
@@ -164,11 +171,9 @@ impl USearchVectorIndex {
                 "USearch index loaded from disk"
             );
         } else {
-            // Reserve initial capacity
-            instance.index.reserve(10_000).map_err(|e| {
-                AppError::InternalError(format!("Failed to reserve USearch capacity: {}", e))
-            })?;
-
+            // Capacity is not reserved up front — `ensure_capacity` grows the
+            // index on demand from the first insert. Reserving a fixed block
+            // here is what produced the old "crashes past N vectors" cliff.
             tracing::info!(
                 path = %index_path.display(),
                 "Created new USearch index"
@@ -197,12 +202,12 @@ impl USearchVectorIndex {
         }
         self.next_key.store(1, Ordering::SeqCst);
 
-        // Reserve capacity
+        // Reserve the whole batch up front so the per-vector path never has to
+        // grow. Scoped so the lock is released before `add_internal` re-takes it.
         let count = embeddings.len();
         if count > 0 {
-            self.index.reserve(count).map_err(|e| {
-                AppError::InternalError(format!("Failed to reserve USearch capacity: {}", e))
-            })?;
+            let _guard = self.state.write();
+            self.ensure_capacity(count)?;
         }
 
         let mut added = 0usize;
@@ -236,6 +241,43 @@ impl USearchVectorIndex {
         Ok(added)
     }
 
+    /// Guarantees the index has room for `additional` more vectors.
+    ///
+    /// USearch does not bounds-check `add`: inserting into an index that is at
+    /// capacity writes past the end of its node array and segfaults the process
+    /// rather than returning an error. Every insertion path must widen the
+    /// reservation first. Growth is geometric so bulk insertion doesn't
+    /// reallocate per vector.
+    ///
+    /// Callers must hold the `state` write lock — reserving while another thread
+    /// is inside `add` or `search` is not safe.
+    fn ensure_capacity(&self, additional: usize) -> Result<()> {
+        let required = self.index.size().saturating_add(additional);
+        let current = self.index.capacity();
+        if required <= current {
+            return Ok(());
+        }
+
+        let mut target = if current == 0 {
+            INITIAL_INDEX_CAPACITY
+        } else {
+            current
+        };
+        while target < required {
+            target = target.saturating_mul(2);
+        }
+
+        self.index.reserve(target).map_err(|e| {
+            AppError::InternalError(format!(
+                "Failed to reserve USearch capacity ({} → {}): {}",
+                current, target, e
+            ))
+        })?;
+
+        tracing::debug!(from = current, to = target, "Grew USearch index capacity");
+        Ok(())
+    }
+
     /// Internal add method that handles key allocation and metadata storage.
     ///
     /// Holds a single write lock for the entire check-allocate-insert sequence,
@@ -266,6 +308,10 @@ impl USearchVectorIndex {
                 id
             )));
         }
+
+        // Grow before inserting — USearch segfaults instead of erroring when
+        // `add` is called on a full index.
+        self.ensure_capacity(1)?;
 
         // Allocate a new u64 key
         let key = self.next_key.fetch_add(1, Ordering::SeqCst);
@@ -562,7 +608,19 @@ impl VectorSearchPort for USearchVectorIndex {
             let state = self.state.read();
             match state.id_to_key.get(id) {
                 Some(&k) => k,
-                None => return Ok(()), // Not found is a no-op
+                None => {
+                    // Idempotent by design — re-deleting is fine. But a miss
+                    // is also exactly what a key-scheme mismatch looks like,
+                    // and staying silent about it is how deleted documents
+                    // stayed searchable indefinitely. Say something.
+                    tracing::warn!(
+                        embedding_id = %id,
+                        indexed_count = state.id_to_key.len(),
+                        "remove_embedding: no vector with this key; already removed, \
+                         or the key scheme disagrees with what was indexed"
+                    );
+                    return Ok(());
+                }
             }
         };
 
@@ -731,6 +789,38 @@ mod tests {
         USearchVectorIndex::new(dim, None).unwrap_or_else(|e| {
             panic!("Failed to create test index: {}", e);
         })
+    }
+
+    /// Inserting more vectors than the initially reserved capacity used to walk
+    /// off the end of USearch's node array and take the whole process down with
+    /// SIGSEGV. `ensure_capacity` must grow the reservation transparently.
+    #[test]
+    fn growing_past_initial_capacity_does_not_crash() {
+        let dim = 4;
+        let index = make_test_index(dim);
+
+        let count = INITIAL_INDEX_CAPACITY + 64;
+        for i in 0..count {
+            let angle = i as f32;
+            index
+                .add_embedding(
+                    format!("doc{}", i),
+                    vec![angle.cos(), angle.sin(), 0.0, 0.0],
+                )
+                .unwrap_or_else(|e| panic!("add {} failed: {}", i, e));
+        }
+
+        assert_eq!(index.index.size(), count);
+        assert!(
+            index.index.capacity() >= count,
+            "capacity {} should have grown to hold {} vectors",
+            index.index.capacity(),
+            count
+        );
+
+        let results = VectorSearchPort::search(&index, &[1.0, 0.0, 0.0, 0.0], 5, 0.0)
+            .unwrap_or_else(|e| panic!("search failed: {}", e));
+        assert_eq!(results.len(), 5, "search must still work after growth");
     }
 
     #[test]

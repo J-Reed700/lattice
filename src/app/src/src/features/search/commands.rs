@@ -19,19 +19,19 @@
 //! - Handle caching (performance)
 //! - Log audit events (CWE-778 mitigation)
 
+use crate::application::ports::RepositoryPort;
+use crate::domain::entities::Document;
+use crate::features::cache::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
 use crate::features::search::dto::{
     CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };
-use crate::application::ports::RepositoryPort;
-use crate::domain::entities::Document;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::features::cache::query_cache::{CachedSearchResult, QueryCacheKey, QUERY_CACHE};
 use crate::infrastructure::search::SearchMode;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::container::Container;
 use crate::shared::error::AppError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::State;
@@ -754,6 +754,7 @@ pub async fn semantic_search(
 /// 6. Enrich results with metadata
 /// 7. Log audit event
 /// 8. Return ranked results
+///
 /// Implementation: Hybrid search combining vector similarity and BM25 keyword matching.
 pub async fn hybrid_search_impl(
     container: &Container,
@@ -843,7 +844,7 @@ pub async fn hybrid_search_impl(
     ApiResult::success(search_results)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 pub struct HybridSearchArgs {
     pub query: String,
     pub limit: usize,
@@ -1299,6 +1300,88 @@ pub async fn search_documents_impl(
     track_document_access(&response.results, container.document_repository()).await?;
 
     Ok(response)
+}
+
+/// One neighbour of a document, collapsed from its chunk hits.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SimilarDocumentDto {
+    pub document_id: String,
+    pub title: String,
+    pub file_path: Option<String>,
+    pub score: f32,
+}
+
+/// Documents whose content is closest to the given document.
+///
+/// `find_similar` is chunk-shaped and the frontend has no way to get a
+/// document's chunk ids, so the whole round trip lives here: pick a
+/// representative chunk, search, collapse the hits to one row per document.
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip(container), fields(document_id = %document_id))]
+pub async fn find_similar_documents(
+    container: State<'_, Container>,
+    document_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<SimilarDocumentDto>, AppError> {
+    let limit = limit.unwrap_or(6).max(1);
+
+    let chunks = container
+        .chunk_repository()
+        .find_by_document(&document_id)
+        .await?;
+
+    // The longest chunk, ties broken by lowest index. A PDF's first chunk is
+    // often a title page, so longest beats first.
+    let representative = chunks.iter().max_by(|a, b| {
+        a.content_length()
+            .cmp(&b.content_length())
+            .then_with(|| b.index().cmp(&a.index()))
+    });
+    let Some(representative) = representative else {
+        return Ok(vec![]);
+    };
+    let rep_chunk_id = representative.id().to_string();
+
+    // Over-fetch: many hits collapse onto the same document.
+    let hits = find_similar_impl(container.inner(), rep_chunk_id, Some(limit * 6)).await?;
+
+    let mut best: std::collections::HashMap<String, (f32, String, Option<String>)> =
+        std::collections::HashMap::new();
+    for hit in hits {
+        let Some(hit_document_id) = hit.document_id.clone() else {
+            continue;
+        };
+        if hit_document_id == document_id {
+            continue;
+        }
+        let entry = best
+            .entry(hit_document_id)
+            .or_insert_with(|| (hit.score, hit.title.clone(), hit.path.clone()));
+        if hit.score > entry.0 {
+            *entry = (hit.score, hit.title.clone(), hit.path.clone());
+        }
+    }
+
+    let mut results: Vec<SimilarDocumentDto> = best
+        .into_iter()
+        .map(|(document_id, (score, title, file_path))| SimilarDocumentDto {
+            document_id,
+            title,
+            file_path,
+            score,
+        })
+        .collect();
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.document_id.cmp(&b.document_id))
+    });
+    results.truncate(limit);
+
+    Ok(results)
 }
 
 /// Find similar implementation for gateway pattern

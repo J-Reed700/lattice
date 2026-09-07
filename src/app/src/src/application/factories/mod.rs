@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::factories::{ChecksumFactory, FileMetadataFactory};
+//! use lattice::application::factories::{ChecksumFactory, FileMetadataFactory};
 //! use std::path::Path;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {

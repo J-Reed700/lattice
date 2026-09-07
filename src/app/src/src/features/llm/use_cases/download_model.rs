@@ -21,7 +21,6 @@
 //! println!("Downloaded to: {}", response.path);
 //! ```
 
-use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::application::ports::credentials_port::CredentialsPort;
 use crate::application::ports::file_system_port::FileSystemPort;
 use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
@@ -36,6 +35,7 @@ use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
+use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::shared::error::AppError;
 use chrono::Utc;
 use std::path::{Path, PathBuf};
@@ -93,8 +93,16 @@ impl DownloadModelUseCase {
 
         if !curated.files.is_empty() {
             for file in &curated.files {
-                let mut expectation =
-                    FileExpectation::new(file.filename.clone()).with_size(file.size_bytes);
+                let mut expectation = FileExpectation::new(file.filename.clone());
+
+                // `size_bytes == 0` means "size unknown" in the curated catalog
+                // (see `build_safetensors_embedding_file_list` and the
+                // transcription entries). Asserting an exact size of 0 would
+                // fail verification for every such file and force a needless
+                // re-download on every startup.
+                if file.size_bytes > 0 {
+                    expectation = expectation.with_size(file.size_bytes);
+                }
 
                 if let Some(checksum) = &file.checksum {
                     expectation = expectation.with_checksum(checksum.clone());
@@ -241,16 +249,11 @@ impl DownloadModelUseCase {
         ];
 
         if include_onnx_data {
-            files.push(ModelFileMetadata::new(
-                onnx_data_filename,
-                onnx_data_url,
-                0,
-            ));
+            files.push(ModelFileMetadata::new(onnx_data_filename, onnx_data_url, 0));
         }
 
         files
     }
-
 
     /// HEAD-check a URL on Hugging Face to confirm a file exists before adding
     /// it to the download list. HF returns 200 on HEAD (after redirects) for
@@ -307,7 +310,8 @@ impl DownloadModelUseCase {
                     minimum_ram_gb: 4.0,
                     recommended_ram_gb: 8.0,
                     context_length: 4096,
-                    performance_tier: crate::features::model_management::domain::PerformanceTier::Balanced,
+                    performance_tier:
+                        crate::features::model_management::domain::PerformanceTier::Balanced,
                     supported_quantizations: vec![],
                     capabilities: vec!["chat".into()],
                     download_url: Some(format!("https://huggingface.co/{}", repo_id)),
@@ -337,7 +341,8 @@ impl DownloadModelUseCase {
             // + config). Dispatch on filename extension — safetensors is the
             // Candle path; .onnx is the legacy ORT path (will be removed once
             // all consumers have migrated).
-            if resolved.category == crate::features::model_management::domain::ModelCategory::Embedding
+            if resolved.category
+                == crate::features::model_management::domain::ModelCategory::Embedding
             {
                 // For gated repos, fetch the user's HF token so HEAD probes
                 // (e.g., 1_Pooling/config.json) don't 401 silently and skip
@@ -353,9 +358,11 @@ impl DownloadModelUseCase {
                 };
 
                 if filename.ends_with(".safetensors") {
-                    resolved.files =
-                        Self::build_safetensors_embedding_file_list(&repo_id, auth_token.as_deref())
-                            .await;
+                    resolved.files = Self::build_safetensors_embedding_file_list(
+                        &repo_id,
+                        auth_token.as_deref(),
+                    )
+                    .await;
                     resolved.default_filename = None;
                 } else if filename.ends_with(".onnx") {
                     resolved.files =
@@ -538,7 +545,7 @@ impl DownloadModelUseCase {
             download_url
         };
 
-        let destination = paths.file_path(&default_filename);
+        let destination = paths.manifest_file_path(&default_filename)?;
 
         debug!(
             url = %model_file_url,
@@ -561,11 +568,20 @@ impl DownloadModelUseCase {
                 total_size_bytes: curated.total_size_bytes as i64,
                 architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
                 model_type: match curated.category {
-                    crate::features::model_management::domain::ModelCategory::LLM => "chat".to_string(),
+                    crate::features::model_management::domain::ModelCategory::LLM => {
+                        "chat".to_string()
+                    }
                     crate::features::model_management::domain::ModelCategory::Embedding => {
                         "embedding".to_string()
                     }
-                    crate::features::model_management::domain::ModelCategory::OCR => "ocr".to_string(),
+                    crate::features::model_management::domain::ModelCategory::OCR => {
+                        "ocr".to_string()
+                    }
+                    crate::features::model_management::domain::ModelCategory::Transcription => {
+                        // See ModelType::to_db_string: the models-table CHECK
+                        // constraint has no `transcription` value yet.
+                        "custom".to_string()
+                    }
                 },
                 status: ModelStatus::Pending,
                 files: vec![],
@@ -696,6 +712,7 @@ impl DownloadModelUseCase {
             auth_token,
             model_name: Some(model_name.clone()),
             model_id: Some(model_id.to_string()),
+            model_file_name: Some(default_filename.clone()),
         };
 
         let download_id = match self.download_manager.start_download(download_request).await {
@@ -811,11 +828,20 @@ impl DownloadModelUseCase {
                 total_size_bytes: curated.total_size_bytes as i64,
                 architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
                 model_type: match curated.category {
-                    crate::features::model_management::domain::ModelCategory::LLM => "chat".to_string(),
+                    crate::features::model_management::domain::ModelCategory::LLM => {
+                        "chat".to_string()
+                    }
                     crate::features::model_management::domain::ModelCategory::Embedding => {
                         "embedding".to_string()
                     }
-                    crate::features::model_management::domain::ModelCategory::OCR => "ocr".to_string(),
+                    crate::features::model_management::domain::ModelCategory::OCR => {
+                        "ocr".to_string()
+                    }
+                    crate::features::model_management::domain::ModelCategory::Transcription => {
+                        // See ModelType::to_db_string: the models-table CHECK
+                        // constraint has no `transcription` value yet.
+                        "custom".to_string()
+                    }
                 },
                 status: ModelStatus::Pending,
                 files: vec![],
@@ -866,7 +892,7 @@ impl DownloadModelUseCase {
             let model_file_repo = uow.model_file_repository()?;
 
             for file in &curated.files {
-                let destination = paths.file_path(&file.filename);
+                let destination = paths.manifest_file_path(&file.filename)?;
 
                 let model_file = ModelFile {
                     id: Uuid::new_v4().to_string(),
@@ -950,7 +976,7 @@ impl DownloadModelUseCase {
 
         // Start download for each file
         for (index, file) in curated.files.iter().enumerate() {
-            let destination = paths.file_path(&file.filename);
+            let destination = paths.manifest_file_path(&file.filename)?;
 
             // MODULE 4: Enhanced download status tracking
             info!(
@@ -1005,6 +1031,7 @@ impl DownloadModelUseCase {
                         curated.files.len()
                     )),
                     model_id: Some(model_id.to_string()),
+                    model_file_name: Some(file.filename.clone()),
                 };
 
                 match self.download_manager.start_download(download_request).await {

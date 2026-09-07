@@ -37,6 +37,7 @@ fn main() {
                     "refresh_model_catalog",
                     "clear_model_catalog_cache",
                     "get_model_catalog_stats",
+                    "get_model_download_path",
                 ]),
             )
             .plugin(
@@ -47,6 +48,7 @@ fn main() {
                     "semantic_search",
                     "hybrid_search",
                     "find_similar",
+                    "find_similar_documents",
                     "search_with_recency",
                     "batch_search",
                 ]),
@@ -96,6 +98,9 @@ fn main() {
                     "list_conversations_explorer",
                     "list_journal_conversations",
                     "synthesize_journal_entries",
+                    "truncate_conversation_after",
+                    "fork_conversation",
+                    "regenerate_response",
                 ]),
             )
             .plugin(
@@ -118,6 +123,7 @@ fn main() {
                     "cancel_indexing",
                     "pause_indexing",
                     "resume_indexing",
+                    "clear_indexing_failure",
                     "reindex_file",
                     "delete_document",
                     "rename_document",
@@ -131,6 +137,8 @@ fn main() {
                     "get_indexing_activities",
                     "get_recent_documents",
                     "get_document",
+                    "get_corpus_shape",
+                    "list_conversations_citing_document",
                 ]),
             )
             .plugin(
@@ -145,6 +153,7 @@ fn main() {
                     "get_system_theme",
                     "validate_folder_path",
                     "test_ollama_connection",
+                    "test_custom_tool",
                     "add_watch_folder",
                     "remove_watch_folder",
                 ]),
@@ -260,6 +269,7 @@ fn main() {
                     "ask_question_stream_wrapper",
                     "get_qa_model_wrapper",
                     "check_llm_health_wrapper",
+                    "generate_chat_starters_wrapper",
                 ]),
             )
             .plugin(
@@ -329,8 +339,34 @@ fn main() {
                 ]),
             )
             .plugin(
+                "references",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "create_passage_reference",
+                    "list_passage_references",
+                    "update_passage_reference",
+                    "delete_passage_reference",
+                ]),
+            )
+            .plugin(
+                "compare",
+                tauri_build::InlinedPlugin::new().commands(&["compare_documents"]),
+            )
+            .plugin(
                 "vault",
                 tauri_build::InlinedPlugin::new().commands(&["rescan_vault"]),
+            )
+            .plugin(
+                "transcription",
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["transcribe_file", "get_transcription_status"]),
+            )
+            .plugin(
+                "corpus-shape",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "cluster_vault_debug",
+                    "cluster_vault_run",
+                    "list_clusters",
+                ]),
             ),
     ) {
         eprintln!("failed to run tauri-build: {}", error);

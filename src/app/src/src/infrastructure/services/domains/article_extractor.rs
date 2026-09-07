@@ -20,8 +20,8 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::services::article_extractor::ArticleExtractorService;
-//! use vault_desktop::infrastructure::services::traits::ArticleExtractorServiceTrait;
+//! use lattice::infrastructure::services::article_extractor::ArticleExtractorService;
+//! use lattice::infrastructure::services::traits::ArticleExtractorServiceTrait;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let service = ArticleExtractorService::new()?;

@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::StartBatchUrlImportUseCase;
-//! use vault_desktop::application::dtos::batch_dto::StartBatchUrlImportRequestDto;
+//! use lattice::application::use_cases::batch::StartBatchUrlImportUseCase;
+//! use lattice::application::dtos::batch_dto::StartBatchUrlImportRequestDto;
 //!
 //! # async fn example(use_case: StartBatchUrlImportUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = StartBatchUrlImportRequestDto {
@@ -34,11 +34,9 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::features::batch::dto::{
-    StartBatchUrlImportRequestDto, StartBatchUrlImportResponseDto,
-};
-use crate::features::web::dto::IngestWebUrlRequestDto;
 use crate::application::ports::BatchJobRepositoryPort;
+use crate::features::batch::dto::{StartBatchUrlImportRequestDto, StartBatchUrlImportResponseDto};
+use crate::features::web::dto::IngestWebUrlRequestDto;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
 use crate::shared::error::{AppError, Result};
 
@@ -100,8 +98,8 @@ impl StartBatchUrlImportUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::StartBatchUrlImportUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::StartBatchUrlImportRequestDto;
+    /// # use lattice::application::use_cases::batch::StartBatchUrlImportUseCase;
+    /// # use lattice::application::dtos::batch_dto::StartBatchUrlImportRequestDto;
     /// # async fn example(use_case: StartBatchUrlImportUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = StartBatchUrlImportRequestDto {
     ///     urls: vec!["https://example.com".to_string()],

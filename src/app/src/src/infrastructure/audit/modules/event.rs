@@ -5,7 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
 
 /// Error type for AuditEventBuilder.
@@ -342,7 +342,7 @@ pub struct AuditEvent {
 
     /// Additional metadata as key-value pairs
     #[serde(default)]
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
 }
 
 impl AuditEvent {
@@ -360,7 +360,7 @@ impl AuditEvent {
             action,
             resource_id: None,
             result,
-            metadata: HashMap::new(),
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -396,7 +396,7 @@ pub struct AuditEventBuilder {
     action: Option<AuditAction>,
     resource_id: Option<String>,
     result: Option<AuditResult>,
-    metadata: HashMap<String, String>,
+    metadata: BTreeMap<String, String>,
 }
 
 impl AuditEventBuilder {

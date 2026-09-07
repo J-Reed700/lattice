@@ -1,0 +1,20 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 271
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": "admin",
+  "action": "data_exported",
+  "resource_id": "[export_path]",
+  "result": "success",
+  "metadata": {
+    "key1": "value1",
+    "key2": "value2",
+    "key3": "value3",
+    "key4": "value4",
+    "key5": "value5"
+  }
+}

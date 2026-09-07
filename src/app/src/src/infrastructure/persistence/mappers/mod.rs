@@ -24,8 +24,8 @@
 //! ## Example Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::persistence::mappers::DocumentMapper;
-//! use vault_desktop::domain::entities::Document;
+//! use lattice::infrastructure::persistence::mappers::DocumentMapper;
+//! use lattice::domain::entities::Document;
 //!
 //! // DB model → Domain entity
 //! let db_model = /* from SQLx query */;
@@ -44,18 +44,18 @@ pub mod document_mapper;
 // TODO: Add mention_mapper when mention entity structure is finalized
 
 // Re-export mappers (public API)
-pub use chunk_mapper::ChunkMapper;
-pub use conversation_mapper::{
-    ConversationRowMapper, ConversationMessageMapper, DocumentReferenceMapper,
-};
-pub use document_mapper::DocumentMapper;
 pub use crate::features::embedding::persistence_mapper::EmbeddingMapper;
 pub use crate::features::tags::persistence_mapper::TagMapper;
+pub use chunk_mapper::ChunkMapper;
+pub use conversation_mapper::{
+    ConversationMessageMapper, ConversationRowMapper, DocumentReferenceMapper,
+};
+pub use document_mapper::DocumentMapper;
 
 // DB models are private to infrastructure crate (prevent leakage)
+pub(crate) use crate::features::tags::persistence_mapper::TagModel;
 pub(crate) use chunk_mapper::ChunkModel;
 pub(crate) use conversation_mapper::{
     ConversationMessageModel, ConversationModel, DocumentReferenceModel,
 };
 pub(crate) use document_mapper::DocumentModel;
-pub(crate) use crate::features::tags::persistence_mapper::TagModel;

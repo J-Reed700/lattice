@@ -49,7 +49,7 @@ pub trait WebCaptureServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::WebCaptureServiceTrait;
+    /// use lattice::infrastructure::services::traits::WebCaptureServiceTrait;
     ///
     /// # async fn example<S: WebCaptureServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let preview = service.fetch_url_preview("https://example.com/article").await?;

@@ -11,8 +11,8 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::services::web_service::WebService;
-//! use vault_desktop::application::dtos::function_calling_dto::WebSearchInput;
+//! use lattice::infrastructure::services::web_service::WebService;
+//! use lattice::application::dtos::function_calling_dto::WebSearchInput;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let service = WebService::new()?;

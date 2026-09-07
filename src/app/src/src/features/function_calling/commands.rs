@@ -36,8 +36,8 @@
 //! - **Tool Use**: Agentic workflows with function calling
 //! - **Research Assistant**: LLM-driven research with tool access
 
-use crate::features::function_calling::dto::*;
 use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
+use crate::features::function_calling::dto::*;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use tauri::State;
@@ -452,82 +452,10 @@ pub async fn get_function_stats(
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
-    use crate::application::ports::{DocumentRepositoryPort, RepositoryPort};
-    use crate::domain::entities::Document;
-    use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository as DddMockDocRepo;
-    use crate::infrastructure::services::traits::*;
-    use crate::observability::Metrics;
-    use crate::security::SecurityContext;
-    use sqlx::SqlitePool;
-    use std::sync::Arc;
+    use crate::tests::common::setup_test_container;
 
     async fn create_test_container() -> Result<Container> {
-        let pool = SqlitePool::connect(":memory:").await.map_err(|e| {
-            crate::shared::error::AppError::database(format!("Test pool creation failed: {}", e))
-        })?;
-        let security_context = Arc::new(SecurityContext::new());
-        let metrics = Arc::new(Metrics::new());
-
-        let embedding_service = Arc::new(MockEmbeddingService::new(
-            crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM,
-        )) as Arc<dyn EmbeddingServiceTrait>;
-        let search_service = Arc::new(MockSearchService::new()) as Arc<dyn SearchServiceTrait>;
-        let bm25_search = Arc::new(MockBM25Search::new()) as Arc<dyn BM25SearchTrait>;
-        let hybrid_search = Arc::new(MockHybridSearch::new()) as Arc<dyn HybridSearchTrait>;
-        let tag_service = Arc::new(MockTagService::new()) as Arc<dyn TagServiceTrait>;
-        let file_storage =
-            Arc::new(MockFileStorageService::new()) as Arc<dyn FileStorageServiceTrait>;
-        let model_manager = Arc::new(MockModelManager::new()) as Arc<dyn ModelManagerTrait>;
-        let web_ingestion =
-            Arc::new(MockWebIngestionService::new()) as Arc<dyn WebIngestionServiceTrait>;
-        let search_enrichment =
-            Arc::new(MockSearchEnrichmentService::new()) as Arc<dyn SearchEnrichmentServiceTrait>;
-        let conversation =
-            Arc::new(MockConversationService::new()) as Arc<dyn ConversationServiceTrait>;
-        let context_manager =
-            Arc::new(MockContextManager::new(4000)) as Arc<dyn ContextManagerTrait>;
-        let mock = Arc::new(DddMockDocRepo::new());
-        let doc_repo = mock as Arc<dyn RepositoryPort<Document> + DocumentRepositoryPort>;
-        let chunk_repo = Arc::new(MockChunkRepository::new()) as Arc<dyn ChunkRepositoryTrait>;
-        let tag_repo = Arc::new(MockTagRepository::new()) as Arc<dyn TagRepositoryTrait>;
-        let mention_repo = Arc::new(MockMentionRepository::new())
-            as Arc<dyn crate::application::ports::mention_repository_port::MentionRepositoryPort>;
-        let index_storage = Arc::new(MockIndexStorage::new()) as Arc<dyn IndexStorageTrait>;
-
-        // Function calling services
-        let function_registry =
-            Arc::new(MockFunctionRegistry::new()) as Arc<dyn FunctionRegistryTrait>;
-        let function_executor =
-            Arc::new(MockFunctionExecutor::new()) as Arc<dyn FunctionExecutorTrait>;
-        let web_service = Arc::new(MockWebService::new()) as Arc<dyn WebServiceTrait>;
-
-        Ok(Container::new(
-            pool,
-            security_context,
-            metrics,
-            embedding_service,
-            search_service,
-            bm25_search,
-            hybrid_search,
-            tag_service,
-            file_storage,
-            model_manager,
-            web_ingestion,
-            search_enrichment,
-            conversation,
-            context_manager,
-            None,
-            doc_repo,
-            chunk_repo,
-            tag_repo,
-            mention_repo,
-            index_storage,
-            None,
-            None,
-            function_registry,
-            function_executor,
-            web_service,
-        ))
+        setup_test_container().await
     }
 
     #[tokio::test]
@@ -536,7 +464,10 @@ mod tests {
 
         let result = list_available_functions_impl(&container).await?;
 
-        assert_eq!(result.len(), 0); // Mock registry starts empty
+        assert!(result.iter().any(|tool| tool["name"] == "semantic_search"));
+        assert!(result
+            .iter()
+            .any(|tool| tool["name"] == "fetch_url_content"));
         Ok(())
     }
 
@@ -544,11 +475,7 @@ mod tests {
     async fn test_execute_function() -> Result<()> {
         let container = create_test_container().await?;
 
-        let call = FunctionCall::new(
-            "call_123",
-            "test_function",
-            serde_json::json!({"param": "value"}),
-        );
+        let call = FunctionCall::new("call_123", "list_documents", serde_json::json!({}));
 
         let function_result = execute_function_impl(&container, call).await?;
 

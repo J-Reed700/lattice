@@ -1,0 +1,40 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 337
+expression: events
+---
+[
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "file_indexed",
+    "resource_id": "/docs/paper.pdf",
+    "result": "success",
+    "metadata": {
+      "chunks": "20"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "file_updated",
+    "resource_id": "/docs/paper.pdf",
+    "result": "success",
+    "metadata": {
+      "chunks_updated": "3"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "file_deleted",
+    "resource_id": "/docs/old_file.txt",
+    "result": "success",
+    "metadata": {
+      "reason": "user_requested"
+    }
+  }
+]

@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use crate::application::ports::RepositoryPort;
 use crate::domain::entities::Document;
+use crate::features::extraction::use_cases::extract_and_resolve_links::{
+    ParseWikilinksPort, ResolveWikilinkPort,
+};
 use crate::features::extraction::use_cases::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
     ResolveWikilinkUseCase,
-};
-use crate::features::extraction::use_cases::extract_and_resolve_links::{
-    ParseWikilinksPort, ResolveWikilinkPort,
 };
 
 #[derive(Clone)]

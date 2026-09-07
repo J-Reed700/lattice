@@ -17,9 +17,9 @@
 //! println!("Found {} mentions", result.mentions.len());
 //! ```
 
+use crate::application::ports::MentionRepositoryPort;
 use crate::features::mentions::dto::{ExtractMentionsResultDto, MentionWithContextDto};
 use crate::features::mentions::mapper::MentionMapper;
-use crate::application::ports::MentionRepositoryPort;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

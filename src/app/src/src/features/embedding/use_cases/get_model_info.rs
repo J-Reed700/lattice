@@ -9,7 +9,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
+//! use lattice::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
 //!
 //! # async fn example(use_case: GetEmbeddingModelInfoUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let info = use_case.execute().await?;
@@ -22,9 +22,9 @@
 
 use std::sync::Arc;
 
-use crate::features::embedding::dto::EmbeddingModelInfoDto;
 use crate::application::ports::EmbeddingPort;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
+use crate::features::embedding::dto::EmbeddingModelInfoDto;
 use crate::shared::error::Result;
 
 /// Default model name if not specified
@@ -70,7 +70,7 @@ impl GetEmbeddingModelInfoUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
+    /// # use lattice::application::use_cases::embedding::get_model_info::GetEmbeddingModelInfoUseCase;
     /// # async fn example(use_case: GetEmbeddingModelInfoUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let info = use_case.execute().await?;
     ///
@@ -80,7 +80,7 @@ impl GetEmbeddingModelInfoUseCase {
     /// println!("  Max Tokens: {}", info.max_tokens);
     ///
     /// // Use info to validate embeddings
-    /// use vault_desktop::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
+    /// use lattice::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
     /// if info.dimension != DEFAULT_EMBEDDING_DIM {
     ///     println!("Warning: Unexpected dimension!");
     /// }

@@ -34,12 +34,12 @@
 //! }
 //! ```
 
-use crate::features::model_management::domain::ModelMetadata;
 use crate::domain::{
     CompatibilityScorer, ModelCatalogService, ModelCategory, ModelRecommendation, ModelSource,
     SearchFilters, SystemCapabilities,
 };
 use crate::features::model_management::cache_adapter::ModelCatalogStats;
+use crate::features::model_management::domain::ModelMetadata;
 use crate::interfaces::di::Container;
 use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto};
 use crate::shared::error::{AppError, Result};
@@ -108,7 +108,6 @@ impl SystemCapabilitiesResponse {
 pub async fn detect_system_capabilities(
     container: State<'_, Container>,
 ) -> Result<SystemCapabilitiesResponse> {
-    
     let system_info_port = container.system_info();
 
     let system_info = system_info_port.get_system_info().await?;
@@ -264,12 +263,8 @@ pub async fn get_all_recommended_models(
     tracing::info!("get_all_recommended_models: Getting Hugging Face models");
     let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
 
-    let embedding_models = fetch_downloadable_hf_models(
-        container.inner(),
-        "sentence-transformers",
-        200,
-    )
-    .await?;
+    let embedding_models =
+        fetch_downloadable_hf_models(container.inner(), "sentence-transformers", 200).await?;
     let existing_ids: std::collections::HashSet<String> =
         models.iter().map(|m| m.model.id.clone()).collect();
     for entry in embedding_models {
@@ -434,8 +429,9 @@ fn parse_model_category(category: &str) -> Result<ModelCategory> {
         "LLM" => Ok(ModelCategory::LLM),
         "EMBEDDING" => Ok(ModelCategory::Embedding),
         "OCR" => Ok(ModelCategory::OCR),
+        "TRANSCRIPTION" => Ok(ModelCategory::Transcription),
         _ => Err(AppError::InvalidInput(format!(
-            "Invalid model category: {}. Must be LLM, Embedding, or OCR",
+            "Invalid model category: {}. Must be LLM, Embedding, OCR, or Transcription",
             category
         ))),
     }

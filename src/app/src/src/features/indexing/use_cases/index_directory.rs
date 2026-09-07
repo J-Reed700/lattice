@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::indexing::index_directory::IndexDirectoryUseCase;
-//! use vault_desktop::application::dtos::indexing_dto::{IndexDirectoryRequestDto, ChunkingStrategyDto};
+//! use lattice::application::use_cases::indexing::index_directory::IndexDirectoryUseCase;
+//! use lattice::application::dtos::indexing_dto::{IndexDirectoryRequestDto, ChunkingStrategyDto};
 //!
 //! # async fn example(use_case: IndexDirectoryUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IndexDirectoryRequestDto {
@@ -115,11 +115,21 @@ impl IndexDirectoryUseCase {
         let mut document_ids = Vec::new();
         let mut errors = Vec::new();
 
+        let mut cancelled = false;
+
         for file_path in files {
             // Check for cancellation
             if self.indexing_state.is_cancelled() {
-                self.indexing_state
-                    .error("Operation cancelled by user".to_string());
+                cancelled = true;
+                break;
+            }
+
+            // Honour Pause. Without this the Pause button moves the actor queue
+            // and leaves the run the user is watching untouched — a control that
+            // changes nothing.
+            self.indexing_state.wait_while_paused().await;
+            if self.indexing_state.is_cancelled() {
+                cancelled = true;
                 break;
             }
 
@@ -144,15 +154,31 @@ impl IndexDirectoryUseCase {
                 Err(e) => {
                     files_failed += 1;
                     errors.push(format!("{}: {}", file_path.display(), e));
+                    // Keep the path and the reason, not just the count — the
+                    // failure list in the UI is built from these.
+                    self.indexing_state.record_failure(&file_path, e.to_string());
                     self.indexing_state.file_failed();
-                    // We don't abort on file error, just log it
-                    // But we could log it to state if we wanted
+                    // We don't abort on file error, just record it and continue.
                 }
             }
         }
 
-        // 3. Mark complete
-        self.indexing_state.complete();
+        // 3. Mark the terminal state.
+        //
+        // `complete()` forces `status: Complete, percentage: 100`, so calling
+        // it unconditionally reported a cancelled, partial index to the user
+        // as "Complete — 100%". `IndexStatus::Cancelled` already exists; a
+        // cancelled run must land there instead.
+        if cancelled {
+            tracing::info!(
+                files_indexed,
+                files_failed,
+                "directory indexing cancelled by user; reporting partial progress"
+            );
+            self.indexing_state.cancel();
+        } else {
+            self.indexing_state.complete();
+        }
 
         // 4. Build response
         Ok(IndexDirectoryResponseDto {
@@ -183,6 +209,7 @@ impl IndexDirectoryUseCase {
     ) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
 
+        // repository-barrier-allow: indexing walks the user-provided directory resource.
         if !path.is_dir() {
             return Err(crate::error::AppError::NotFound(format!(
                 "Directory not found: {}",
@@ -211,6 +238,7 @@ impl IndexDirectoryUseCase {
             let entry = entry?;
             let path = entry.path();
 
+            // repository-barrier-allow: classify entries in the user-provided ingestion tree.
             if path.is_file() {
                 // Check if file extension matches filter
                 if let Some(extensions) = include_extensions {
@@ -223,6 +251,7 @@ impl IndexDirectoryUseCase {
                     // No filter, include all files
                     files.push(path);
                 }
+            // repository-barrier-allow: recurse only into directories in that ingestion tree.
             } else if path.is_dir() && recursive {
                 self.scan_directory(&path, recursive, include_extensions, files)?;
             }

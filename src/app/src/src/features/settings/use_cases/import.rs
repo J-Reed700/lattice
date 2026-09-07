@@ -1,7 +1,7 @@
 //! Import Settings Use Case
 
-use crate::features::settings::dto::{ImportSettingsRequestDto, ImportSettingsResponseDto};
 use crate::application::ports::SettingsRepositoryPort;
+use crate::features::settings::dto::{ImportSettingsRequestDto, ImportSettingsResponseDto};
 use crate::shared::error::Result;
 use std::path::Path;
 use std::sync::Arc;
@@ -118,6 +118,7 @@ impl ImportSettingsUseCase {
 
         let path_buf = Path::new(path);
 
+        // repository-barrier-allow: import consumes the user-selected file itself.
         if !path_buf.exists() {
             return Err(crate::error::AppError::InvalidInput(format!(
                 "Import file does not exist: {}",
@@ -125,6 +126,7 @@ impl ImportSettingsUseCase {
             )));
         }
 
+        // repository-barrier-allow: import requires that selected resource to be a regular file.
         if !path_buf.is_file() {
             return Err(crate::error::AppError::InvalidInput(format!(
                 "Import path is not a file: {}",

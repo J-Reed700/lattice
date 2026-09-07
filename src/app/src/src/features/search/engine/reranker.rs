@@ -136,11 +136,11 @@ impl RerankerService {
         let safetensors_owned = safetensors_path.clone();
         let config_owned = config_path.clone();
         let inner = tokio::task::spawn_blocking(move || -> Result<Inner> {
-            let config_json = std::fs::read_to_string(&config_owned).context(
-                "Failed to read reranker config.json",
-            )?;
-            let config: Config = serde_json::from_str(&config_json)
-                .map_err(|e| AppError::Other(format!("Failed to parse reranker config.json: {e}")))?;
+            let config_json = std::fs::read_to_string(&config_owned)
+                .context("Failed to read reranker config.json")?;
+            let config: Config = serde_json::from_str(&config_json).map_err(|e| {
+                AppError::Other(format!("Failed to parse reranker config.json: {e}"))
+            })?;
 
             let device = Device::Cpu;
 
@@ -163,11 +163,7 @@ impl RerankerService {
             // embedding loader at features/embedding/candle_service.rs.
             #[allow(unsafe_code)]
             let vb = unsafe {
-                VarBuilder::from_mmaped_safetensors(
-                    &[&safetensors_owned],
-                    DType::F32,
-                    &device,
-                )
+                VarBuilder::from_mmaped_safetensors(&[&safetensors_owned], DType::F32, &device)
             }
             .map_err(|e| AppError::Other(format!("Failed to mmap reranker weights: {e}")))?;
 
@@ -183,11 +179,12 @@ impl RerankerService {
             // HF `BertForSequenceClassification` exports the head at
             // `classifier.{weight, bias}` (no `bert.` prefix because it
             // sits next to, not under, the encoder).
-            let classifier = linear(config.hidden_size, 1, vb.pp("classifier"))
-                .map_err(|e| AppError::Other(format!(
+            let classifier = linear(config.hidden_size, 1, vb.pp("classifier")).map_err(|e| {
+                AppError::Other(format!(
                     "Failed to load classifier head (expected `classifier.weight`/\
                      `classifier.bias` in safetensors): {e}"
-                )))?;
+                ))
+            })?;
 
             Ok(Inner {
                 model,
@@ -342,7 +339,9 @@ fn score_batch(
 
     for batch_start in (0..pairs.len()).step_by(batch_size) {
         let batch_end = (batch_start + batch_size).min(pairs.len());
-        let batch = &pairs[batch_start..batch_end];
+        let batch = pairs.get(batch_start..batch_end).ok_or_else(|| {
+            AppError::Other("Reranker batch bounds were inconsistent".to_string())
+        })?;
         let batch_scores = score_one_batch(inner, tokenizer, batch, max_length)?;
         all_scores.extend(batch_scores);
     }
@@ -356,11 +355,12 @@ fn score_one_batch(
     pairs: &[(String, String)],
     max_length: usize,
 ) -> Result<Vec<f32>> {
-    let encodings = tokenizer
-        .encode_batch(pairs.to_vec(), true)
-        .map_err(|e| AppError::TokenizationError {
-            reason: format!("Tokenization failed: {e}"),
-        })?;
+    let encodings =
+        tokenizer
+            .encode_batch(pairs.to_vec(), true)
+            .map_err(|e| AppError::TokenizationError {
+                reason: format!("Tokenization failed: {e}"),
+            })?;
 
     let batch_size = encodings.len();
     if batch_size == 0 {
@@ -384,9 +384,9 @@ fn score_one_batch(
         let mut row_mask: Vec<u32> = mask.iter().take(max_length).copied().collect();
         let mut row_types: Vec<u32> = types.iter().take(max_length).copied().collect();
         let pad = max_length.saturating_sub(row_ids.len());
-        row_ids.extend(std::iter::repeat(0u32).take(pad));
-        row_mask.extend(std::iter::repeat(0u32).take(pad));
-        row_types.extend(std::iter::repeat(0u32).take(pad));
+        row_ids.extend(std::iter::repeat_n(0u32, pad));
+        row_mask.extend(std::iter::repeat_n(0u32, pad));
+        row_types.extend(std::iter::repeat_n(0u32, pad));
 
         input_ids_flat.extend(row_ids);
         attention_mask_flat.extend(row_mask);
@@ -403,22 +403,14 @@ fn score_one_batch(
         .map_err(|e| AppError::Other(format!("Failed to build input_ids tensor: {e}")))?
         .to_dtype(DType::U32)
         .map_err(|e| AppError::Other(format!("input_ids dtype cast failed: {e}")))?;
-    let attention_mask = Tensor::from_vec(
-        attention_mask_flat,
-        (batch_size, max_length),
-        &device,
-    )
-    .map_err(|e| AppError::Other(format!("Failed to build attention_mask tensor: {e}")))?
-    .to_dtype(DType::U32)
-    .map_err(|e| AppError::Other(format!("attention_mask dtype cast failed: {e}")))?;
-    let token_type_ids = Tensor::from_vec(
-        token_type_ids_flat,
-        (batch_size, max_length),
-        &device,
-    )
-    .map_err(|e| AppError::Other(format!("Failed to build token_type_ids tensor: {e}")))?
-    .to_dtype(DType::U32)
-    .map_err(|e| AppError::Other(format!("token_type_ids dtype cast failed: {e}")))?;
+    let attention_mask = Tensor::from_vec(attention_mask_flat, (batch_size, max_length), &device)
+        .map_err(|e| AppError::Other(format!("Failed to build attention_mask tensor: {e}")))?
+        .to_dtype(DType::U32)
+        .map_err(|e| AppError::Other(format!("attention_mask dtype cast failed: {e}")))?;
+    let token_type_ids = Tensor::from_vec(token_type_ids_flat, (batch_size, max_length), &device)
+        .map_err(|e| AppError::Other(format!("Failed to build token_type_ids tensor: {e}")))?
+        .to_dtype(DType::U32)
+        .map_err(|e| AppError::Other(format!("token_type_ids dtype cast failed: {e}")))?;
 
     // Forward pass: [batch, seq, hidden]. We need the [CLS] hidden
     // state — index 0 along seq.
@@ -443,7 +435,7 @@ fn score_one_batch(
     // Validate shape — protects against the class of bug the old ORT
     // code shipped (reading [batch, 1] as if it were [batch, 2]).
     let logits_shape = logits.dims();
-    if logits_shape.len() != 2 || logits_shape[1] != 1 {
+    if logits_shape.len() != 2 || logits_shape.get(1) != Some(&1) {
         return Err(AppError::Other(format!(
             "Reranker output has unexpected shape {:?}; expected [batch, 1] for a \
              single-label cross-encoder",
@@ -481,9 +473,18 @@ mod tests {
     fn test_rerank_result_ordering() {
         // Sanity: sort descending by score.
         let mut results = [
-            RerankResult { index: 0, score: 0.5 },
-            RerankResult { index: 1, score: 0.9 },
-            RerankResult { index: 2, score: 0.3 },
+            RerankResult {
+                index: 0,
+                score: 0.5,
+            },
+            RerankResult {
+                index: 1,
+                score: 0.9,
+            },
+            RerankResult {
+                index: 2,
+                score: 0.3,
+            },
         ];
         results.sort_by(|a, b| {
             b.score

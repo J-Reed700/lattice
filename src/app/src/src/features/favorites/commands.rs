@@ -306,6 +306,7 @@ pub async fn add_favorite_impl(container: &Container, document_id: String) -> Re
 /// Internal implementation for adding favorites
 async fn add_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<()> {
     // Check if document exists
+    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
     let doc_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = ?")
         .bind(document_id)
         .fetch_one(pool)
@@ -317,6 +318,7 @@ async fn add_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<(
     }
 
     // Check if already favorited
+    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
     let already_favorited =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM favorites WHERE document_id = ?")
             .bind(document_id)
@@ -331,6 +333,7 @@ async fn add_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<(
 
     // Insert favorite
     let favorite_id = Uuid::new_v4().to_string();
+    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
     sqlx::query(
         r#"
         INSERT INTO favorites (id, document_id, added_at)
@@ -498,6 +501,7 @@ pub async fn remove_favorite_impl(
 
 /// Internal implementation for removing favorites
 async fn remove_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<()> {
+    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
     let rows_affected = sqlx::query("DELETE FROM favorites WHERE document_id = ?")
         .bind(document_id)
         .execute(pool)
@@ -641,6 +645,7 @@ pub async fn get_favorites_impl(container: &Container) -> Result<Vec<FavoriteDoc
 
 /// Internal implementation for getting favorites
 async fn get_favorites_internal(pool: &SqlitePool) -> Result<Vec<FavoriteDocument>> {
+    // repository-barrier-allow: legacy read model pending consolidation into FavoritesRepository.
     let favorites = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
         r#"
         SELECT
@@ -791,6 +796,7 @@ pub async fn is_favorite_impl(
 
 /// Internal implementation for checking favorite status
 async fn is_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<bool> {
+    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
     let count =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM favorites WHERE document_id = ?")
             .bind(document_id)

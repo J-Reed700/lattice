@@ -11,36 +11,13 @@ pub struct FileSpec {
 
 /// Model download requested event
 ///
-/// PERFORMANCE: `files` is boxed to keep enum size small and prevent stack overflow
-/// when this event is placed in ModelDownloadEvent enum variants
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelDownloadRequestedEvent {
     pub model_id: String,
     pub model_name: String,
-    #[serde(with = "boxed_vec")]
-    pub files: Box<Vec<FileSpec>>,
+    pub files: Vec<FileSpec>,
     pub timestamp: DateTime<Utc>,
-}
-
-/// Serde helper for Box<Vec<T>>
-mod boxed_vec {
-    use super::FileSpec;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &Box<Vec<FileSpec>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.as_ref().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Box<Vec<FileSpec>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Vec::<FileSpec>::deserialize(deserializer).map(Box::new)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

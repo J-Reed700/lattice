@@ -4,17 +4,18 @@ use std::sync::{Arc, RwLock};
 
 use sqlx::SqlitePool;
 
-use crate::application::ports::{CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort,
-    ModelStoragePort, SystemInfoPort};
+use crate::application::ports::{
+    CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
+};
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::domain::repositories::UnitOfWorkFactory;
-use crate::features::download::manager::{DownloadManager, DownloadManagerService};
-use crate::features::download::engine::HttpDownloadEngine;
 use crate::features::download::download_repository::SqliteDownloadRepository;
+use crate::features::download::engine::HttpDownloadEngine;
+use crate::features::download::manager::{DownloadManager, DownloadManagerService};
 use crate::features::llm::use_cases::{
-    CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase, GetAvailableModelsUseCase,
-    GetBestModelUseCase, GetModelPathUseCase, GetRecommendedModelsUseCase,
-    GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
+    CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
+    GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
+    GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
 };
 use crate::features::model_management::cache_adapter::ModelCacheAdapter;
 use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
@@ -22,8 +23,8 @@ use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
 use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::infrastructure::persistence::database::DatabaseConnection;
-use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
+use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 use crate::shared::error::Result;
 use std::path::PathBuf;
@@ -77,8 +78,7 @@ pub async fn build(
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
     let checksum_service = Arc::new(TokioChecksumAdapter) as Arc<dyn ChecksumService>;
     let file_system_access = Arc::new(TokioFileSystemAdapter) as Arc<dyn FileSystemAccess>;
-    let uow_factory =
-        Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
+    let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
 
     let model_storage = downloaded_model_repo.clone() as Arc<dyn ModelStoragePort>;
 

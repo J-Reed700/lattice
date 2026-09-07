@@ -1,0 +1,13 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 209
+expression: chunk
+---
+{
+  "text": "Unicode: 日本語 中文 한글 العربية Ελληνικά",
+  "start_idx": 0,
+  "end_idx": 50,
+  "token_count": 10,
+  "document_path": "",
+  "chunk_index": 0
+}

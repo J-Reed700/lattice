@@ -214,16 +214,13 @@ mod tests {
         let attempts_clone = Arc::clone(&attempts);
         let cancel = CancellationToken::new();
 
-        let handle = supervise_cancellable(
-            "test_cancel_during_backoff",
-            cancel.clone(),
-            move || {
+        let handle =
+            supervise_cancellable("test_cancel_during_backoff", cancel.clone(), move || {
                 attempts_clone.fetch_add(1, Ordering::SeqCst);
                 async {
                     panic!("force backoff");
                 }
-            },
-        );
+            });
 
         // Let the first attempt panic and the supervisor enter the
         // 1s backoff sleep.

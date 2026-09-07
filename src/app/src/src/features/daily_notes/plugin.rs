@@ -8,7 +8,8 @@ use crate::features::daily_notes::commands::{
     list_workspace_notes_impl, quick_capture_impl, update_daily_note_content_impl,
     update_workspace_note_impl, CreateWorkspaceNoteRequestDto, DailyNoteCompatDto,
     DailyNoteCursorRequestDto, DailyNotesRangeRequestDto, DeleteWorkspaceNoteRequestDto,
-    ListWorkspaceNotesResponseDto, UpdateDailyNoteContentRequestDto, WorkspaceNoteDto,
+    ListWorkspaceNotesResponseDto, QuickCaptureResultDto, UpdateDailyNoteContentRequestDto,
+    WorkspaceNoteDto,
 };
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
@@ -76,7 +77,7 @@ pub async fn get_today_note(
 pub async fn quick_capture(
     content: String,
     container: State<'_, Container>,
-) -> Result<(), ApiError> {
+) -> Result<QuickCaptureResultDto, ApiError> {
     quick_capture_impl(container.inner(), content)
         .await
         .map_err(ApiError::from)

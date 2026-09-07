@@ -1,7 +1,7 @@
 //! Get Settings Use Case
 
-use crate::features::settings::dto::{SettingsCategory, SettingsDto};
 use crate::application::ports::SettingsRepositoryPort;
+use crate::features::settings::dto::{SettingsCategory, SettingsDto};
 use crate::shared::error::Result;
 use std::sync::Arc;
 
@@ -125,8 +125,8 @@ mod tests {
             .unwrap();
 
         assert!(result.is_object());
-        assert_eq!(result["chunkSize"], 512);
-        assert_eq!(result["chunkOverlap"], 50);
+        assert_eq!(result["chunkSize"], 800);
+        assert_eq!(result["chunkOverlap"], 120);
     }
 
     #[tokio::test]

@@ -12,10 +12,10 @@
 //!
 //! These tests verify that rate limiting actually prevents abuse
 //! and enforces the configured limits across different operations.
-use std::time::Duration;
-use tokio::time::sleep;
 use lattice::error::AppError;
 use lattice::security::rate_limiter::{RateLimiter, RateLimiters};
+use std::time::Duration;
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_rate_limiter_allows_within_limit() {

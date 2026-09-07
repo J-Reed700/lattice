@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 /// Response from web ingestion command
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WebIngestResponse {
     /// Unique document ID
@@ -70,6 +70,7 @@ fn normalize_optional_id(value: Option<String>) -> Option<String> {
 }
 
 async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<(), AppError> {
+    // repository-barrier-allow: legacy validation query pending routing through SpaceRepository.
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
         .bind(space_id)
         .fetch_one(container.db_pool())
@@ -95,6 +96,7 @@ async fn ensure_conversation_exists(
     container: &Container,
     conversation_id: &str,
 ) -> Result<(), AppError> {
+    // repository-barrier-allow: legacy validation query pending routing through ConversationRepository.
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
         .bind(conversation_id)
         .fetch_one(container.db_pool())
@@ -122,6 +124,7 @@ async fn assign_document_to_space(
     space_id: &str,
 ) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
+    // repository-barrier-allow: legacy membership write pending a shared space-membership repository.
     sqlx::query(
         r#"
         INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)

@@ -6,6 +6,7 @@ use crate::features::file::dto::{
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
+use crate::shared::sql_like::directory_prefix_pattern;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
@@ -393,19 +394,36 @@ pub async fn remove_indexed_folder_impl(
 
     let path_str = validated_path.to_string_lossy().to_string();
 
+    // Matches only paths strictly inside this directory, with `LIKE`
+    // metacharacters escaped. Binding alone is not enough — see
+    // `shared::sql_like` for why a bare `? || '%'` deletes siblings.
+    let subtree = directory_prefix_pattern(&path_str);
+
     // Count documents before deletion for audit metadata
+    // repository-barrier-allow: legacy command-owned folder transaction; migrate to a file repository.
     let doc_count: Result<(i64,), _> = sqlx::query_as(
         r#"
         SELECT COUNT(*) as count
         FROM documents
-        WHERE file_path LIKE ? || '%'
+        WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\'
         "#,
     )
     .bind(&path_str)
+    .bind(&subtree)
     .fetch_one(container.db_pool())
     .await;
 
     let result = async {
+        // Both deletes must land together: a folder removed from the watch
+        // list while its documents survive (or vice versa) leaves the index
+        // describing a folder we no longer track.
+        let mut tx = container
+            .db_pool()
+            .begin()
+            .await
+            .map_err(|e| AppError::Other(format!("Failed to begin transaction: {}", e)))?;
+
+        // repository-barrier-allow: these statements form one legacy cross-table removal transaction.
         sqlx::query(
             r#"
             DELETE FROM watch_folders
@@ -413,25 +431,40 @@ pub async fn remove_indexed_folder_impl(
             "#,
         )
         .bind(&path_str)
-        .execute(container.db_pool())
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Other(format!("Failed to remove indexed folder: {}", e)))?;
 
-        // Use parameterized query for LIKE clause to prevent SQL injection
+        // repository-barrier-allow: paired with the watch-folder delete in the transaction above.
         sqlx::query(
             r#"
             DELETE FROM documents
-            WHERE file_path LIKE ? || '%'
+            WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\'
             "#,
         )
         .bind(&path_str)
-        .execute(container.db_pool())
+        .bind(&subtree)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Other(format!("Failed to remove documents from folder: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Other(format!("Failed to commit folder removal: {}", e)))?;
 
         Ok::<(), AppError>(())
     }
     .await;
+
+    // An un-watched folder must stop being readable over file-read IPC.
+    if result.is_ok() {
+        if let Err(e) = container.refresh_allowed_roots().await {
+            tracing::warn!(
+                error = %e,
+                "failed to refresh file-access allowed roots after folder removal"
+            );
+        }
+    }
 
     // Audit the outcome
     match &result {
@@ -547,6 +580,7 @@ pub async fn remove_indexed_folder(
 pub async fn get_indexed_folders(
     container: State<'_, Container>,
 ) -> Result<Vec<IndexedFolder>, AppError> {
+    // repository-barrier-allow: legacy read model pending extraction into a file repository.
     let folders = sqlx::query_as::<_, IndexedFolderRow>(
         r#"
         SELECT
@@ -565,15 +599,19 @@ pub async fn get_indexed_folders(
 
     let mut result = Vec::new();
     for folder in folders {
-        // Use parameterized query for LIKE clause to prevent SQL injection
+        // Escaped subtree match — must agree exactly with the pattern used by
+        // `remove_indexed_folder_impl`, or the count shown to the user will
+        // not match what removal actually deletes.
+        // repository-barrier-allow: legacy read-model enrichment pending repository extraction.
         let doc_count: (i64,) = sqlx::query_as(
             r#"
             SELECT COUNT(*) as count
             FROM documents
-            WHERE file_path LIKE ? || '%'
+            WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\'
             "#,
         )
         .bind(&folder.path)
+        .bind(directory_prefix_pattern(&folder.path))
         .fetch_one(container.db_pool())
         .await
         .map_err(|e| AppError::Other(format!("Failed to count documents: {}", e)))?;
@@ -657,6 +695,7 @@ pub async fn get_indexing_activities(
     // Validate limit to prevent excessive resource usage
     let safe_limit = limit.min(10000);
 
+    // repository-barrier-allow: legacy indexing-activity read model pending repository extraction.
     let activities = sqlx::query_as::<_, IndexingActivityRow>(
         r#"
         SELECT

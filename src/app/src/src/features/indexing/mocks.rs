@@ -162,17 +162,21 @@ impl IndexingServiceTrait for MockIndexingService {
 // Hybrid Search Service Trait
 // ============================================================================
 
-/// Trait for hybrid search combining vector and keyword search
-///
-/// Provides hybrid search using reciprocal rank fusion (RRF) to combine
-/// semantic (vector) and keyword (BM25) search results.
-///
-/// # Implementations
-/// - `HybridSearchService`: Production implementation with RRF fusion
-/// - `MockHybridSearch`: Deterministic mock for testing
+// Trait for hybrid search combining vector and keyword search.
+//
+// Provides hybrid search using reciprocal rank fusion (RRF) to combine
+// semantic (vector) and keyword (BM25) search results. Implementations are
+// `HybridSearchService` in production and `MockHybridSearch` in tests.
 // ============================================================================
 // Mock IndexStorage
 // ============================================================================
+
+#[cfg(test)]
+type StoredChunk = (
+    String,
+    crate::infrastructure::indexing::chunker::TextChunk,
+    Vec<f32>,
+);
 
 #[cfg(test)]
 /// Mock index storage for testing.
@@ -187,15 +191,7 @@ pub struct MockIndexStorage {
             >,
         >,
     >,
-    chunks: Arc<
-        RwLock<
-            Vec<(
-                String,
-                crate::infrastructure::indexing::chunker::TextChunk,
-                Vec<f32>,
-            )>,
-        >,
-    >,
+    chunks: Arc<RwLock<Vec<StoredChunk>>>,
     indexed_count: Arc<RwLock<i64>>,
 }
 
@@ -237,7 +233,7 @@ impl MockIndexStorage {
         embeddings: Vec<Vec<f32>>,
     ) {
         let mut chunks_guard = self.chunks.write().unwrap();
-        for (chunk, embedding) in chunks.into_iter().zip(embeddings.into_iter()) {
+        for (chunk, embedding) in chunks.into_iter().zip(embeddings) {
             chunks_guard.push((doc_id.clone(), chunk, embedding));
         }
     }

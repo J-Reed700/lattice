@@ -1,7 +1,9 @@
 use crate::audit::AuditAction;
 use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
-use crate::infrastructure::security::RateLimiter;
+use crate::domain::model_paths::ModelPaths;
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
+use crate::infrastructure::security::RateLimiter;
+use crate::shared::path_confinement::confine_to_root;
 use crate::shared::ValidatedFilePath;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -9,7 +11,7 @@ use std::sync::Arc;
 use tauri::State;
 use tracing::{error, info};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct StartDownloadRequest {
     pub url: String,
     pub destination: String,
@@ -19,13 +21,13 @@ pub struct StartDownloadRequest {
     pub model_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ChecksumRequest {
     pub algorithm: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DownloadStatusResponse {
     pub id: String,
     pub url: String,
@@ -84,28 +86,77 @@ impl DownloadCommandState {
     }
 }
 
+/// Hosts this command is permitted to fetch model weights from.
+///
+/// Without an allowlist, `start_model_download` is an unrestricted outbound
+/// fetch primitive reachable from the webview: it will retrieve any URL and
+/// write the response to disk, which makes it useful both for SSRF against
+/// loopback/link-local services and for pulling attacker-controlled bytes.
+/// Model downloads only ever target Hugging Face, so the allowlist is small.
+const ALLOWED_DOWNLOAD_HOSTS: &[&str] = &["huggingface.co", "hf.co"];
+
+/// True when `host` is an allowlisted host or a subdomain of one.
+///
+/// Matching the suffix on a dot boundary matters: a bare `ends_with` would
+/// also accept `evil-huggingface.co`.
+fn is_allowed_download_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    ALLOWED_DOWNLOAD_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{}", allowed)))
+}
+
 fn validate_url(url: &str) -> Result<(), String> {
     if url.trim().is_empty() {
         return Err("URL cannot be empty".to_string());
-    }
-
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err("URL must start with http:// or https://".to_string());
     }
 
     if url.len() > 2048 {
         return Err("URL exceeds maximum length of 2048 characters".to_string());
     }
 
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Plaintext HTTP is not acceptable for content we execute as model
+    // weights, and it also permits transparent interception.
+    if parsed.scheme() != "https" {
+        return Err("URL must use https".to_string());
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL must include a host".to_string())?;
+
+    if !is_allowed_download_host(host) {
+        return Err(format!(
+            "Downloads are only permitted from {}; got '{}'",
+            ALLOWED_DOWNLOAD_HOSTS.join(", "),
+            host
+        ));
+    }
+
     Ok(())
 }
 
-fn validate_destination(path: &str) -> Result<ValidatedFilePath, String> {
+/// Resolve the caller-supplied destination and require it to sit under the
+/// models root.
+///
+/// `ValidatedFilePath` alone is not sufficient — it rejects `..` but accepts
+/// any absolute path, so a compromised renderer could previously write the
+/// fetched bytes to e.g. `~/Library/LaunchAgents/com.evil.plist` and obtain
+/// code execution at next login.
+fn validate_destination(path: &str) -> Result<PathBuf, String> {
     if path.trim().is_empty() {
         return Err("Destination path cannot be empty".to_string());
     }
 
-    ValidatedFilePath::new(PathBuf::from(path))
+    let validated = ValidatedFilePath::new(PathBuf::from(path))
+        .map_err(|e| format!("Invalid destination path: {}", e))?;
+
+    let models_root =
+        ModelPaths::models_root().map_err(|e| format!("Cannot resolve models directory: {}", e))?;
+
+    confine_to_root(&models_root, validated.as_path())
         .map_err(|e| format!("Invalid destination path: {}", e))
 }
 
@@ -148,11 +199,12 @@ async fn start_model_download_impl(
 
     let download_request = DownloadRequest {
         url: request.url.clone(),
-        destination: validated_path.into_inner(),
+        destination: validated_path,
         checksum,
         auth_token: request.auth_token,
         model_name: request.model_name,
         model_id: request.model_id,
+        model_file_name: None,
     };
 
     match state.manager.start_download(download_request).await {
@@ -597,17 +649,60 @@ mod tests {
 
     #[test]
     fn test_validate_url() {
-        assert!(validate_url("https://example.com/file.bin").is_ok());
-        assert!(validate_url("http://example.com/file.bin").is_ok());
+        // Allowlisted hosts and their subdomains.
+        assert!(validate_url("https://huggingface.co/repo/resolve/main/m.gguf").is_ok());
+        assert!(validate_url("https://cdn-lfs.huggingface.co/x/y.bin").is_ok());
+        assert!(validate_url("https://hf.co/repo/file.bin").is_ok());
+
         assert!(validate_url("").is_err());
-        assert!(validate_url("ftp://example.com/file.bin").is_err());
+        assert!(validate_url("ftp://huggingface.co/file.bin").is_err());
         assert!(validate_url(&"a".repeat(3000)).is_err());
+
+        // Arbitrary hosts are an SSRF / attacker-content channel.
+        assert!(validate_url("https://example.com/file.bin").is_err());
+        assert!(validate_url("http://127.0.0.1:8080/admin").is_err());
+        assert!(validate_url("https://169.254.169.254/latest/meta-data/").is_err());
+
+        // Plaintext is refused even for an allowlisted host.
+        assert!(validate_url("http://huggingface.co/file.bin").is_err());
+
+        // Suffix matching must respect the dot boundary.
+        assert!(validate_url("https://evil-huggingface.co/file.bin").is_err());
+        assert!(validate_url("https://huggingface.co.evil.test/file.bin").is_err());
     }
 
     #[test]
     fn test_validate_destination() {
-        assert!(validate_destination(&temp_file()).is_ok());
         assert!(validate_destination("").is_err());
+
+        // Inside the models root: allowed.
+        let models_root = ModelPaths::models_root().expect("models root");
+        let inside = models_root.join("test-model").join("weights.gguf");
+        assert!(
+            validate_destination(&inside.to_string_lossy()).is_ok(),
+            "a path under the models root must be accepted"
+        );
+    }
+
+    /// The SEC-1 exploit: an absolute path with no `..` in it, which the old
+    /// `..`-only filter accepted, writing attacker-controlled bytes to a
+    /// login-time execution point.
+    #[test]
+    fn destination_outside_models_root_is_rejected() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+
+        for path in [
+            format!("{}/Library/LaunchAgents/com.evil.plist", home),
+            format!("{}/.zshenv", home),
+            format!("{}/.ssh/authorized_keys", home),
+            "/tmp/anywhere.bin".to_string(),
+        ] {
+            assert!(
+                validate_destination(&path).is_err(),
+                "destination outside the models root must be rejected: {}",
+                path
+            );
+        }
     }
 
     #[test]

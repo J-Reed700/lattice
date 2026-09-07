@@ -1,3 +1,4 @@
+use crate::domain::qa::hyde::QueryType;
 use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
 use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::{
@@ -6,7 +7,6 @@ use crate::features::search::dto::{
 use crate::features::settings::dto::{
     RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
 };
-use crate::domain::qa::hyde::QueryType;
 use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
 use crate::infrastructure::services::router::RouterAction;
 use crate::interfaces::di::Container;
@@ -84,11 +84,18 @@ use self::result_filters::{
     should_apply_document_shortlist_with_tuning as should_apply_document_shortlist_with_tuning_impl,
 };
 use self::source_citations::{
+    assign_citation_ids as assign_citation_ids_impl,
     build_source_citations as build_source_citations_impl,
     build_web_source_citations as build_web_source_citations_impl,
+    citation_ids_by_document as citation_ids_by_document_impl,
     deduplicate_sources as deduplicate_sources_impl, infer_category as infer_category_impl,
 };
 use self::tool_format::format_tool_result as format_tool_result_impl;
+
+/// The vault-wide space. A conversation in any other space is scoped to the
+/// documents linked to it, which is what the retrieval trace reports as
+/// `scope: "linked"`.
+const DEFAULT_SPACE_ID: &str = "space_general";
 
 const CLARIFY_NO_RECENT_DOCUMENT_PROMPT: &str =
     "I don't see a recent linked document yet. Do you want me to search your documents, or answer this generally?";
@@ -111,6 +118,13 @@ pub(super) struct RetrievalPipelineOutcome {
     pub(super) sources: Vec<SourceDto>,
     pub(super) available_for_rag: usize,
     pub(super) sub_timings: RetrievalSubTimingMetrics,
+    /// Size of the document set the hard space-scope filter actually allowed.
+    /// Not the size of the corpus — a scoped conversation must not claim to
+    /// have read the whole vault (BRIEF rank 17, contract §4.6).
+    pub(super) searched_documents: usize,
+    /// True when the conversation lives outside the general space, i.e. its
+    /// retrieval was scoped to the documents linked to it.
+    pub(super) scope_is_linked: bool,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -265,6 +279,10 @@ struct KbRetrievalOutcome {
     low_confidence: bool,
     kb_unavailable_reason: Option<String>,
     timings: RetrievalSubTimingMetrics,
+    /// How many documents the space scope allowed us to search.
+    searched_documents: usize,
+    /// Whether that scope was a linked-document space rather than the vault.
+    scope_is_linked: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -281,6 +299,8 @@ struct SpaceDocumentScope {
     document_ids: HashSet<String>,
 }
 
+// This facade mirrors the implementation's complete per-turn retrieval configuration.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -320,6 +340,8 @@ fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+// This facade mirrors the knowledge-base retrieval policy inputs.
+#[allow(clippy::too_many_arguments)]
 async fn run_kb_retrieval(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -683,6 +705,18 @@ fn source_excerpt_text(source: &SourceDto) -> Option<String> {
 /// Deduplicate sources by `document_id`, while preserving multiple chunk excerpts per document.
 pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
     deduplicate_sources_impl(sources)
+}
+
+/// Number the final source list so the prompt can cite the same numbers.
+pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
+    assign_citation_ids_impl(sources)
+}
+
+/// Map document id -> the citation number the model was given.
+pub(super) fn citation_ids_by_document(
+    sources: &[SourceDto],
+) -> std::collections::HashMap<String, u32> {
+    citation_ids_by_document_impl(sources)
 }
 
 /// Build source citations from search results with parallel document lookups.

@@ -44,9 +44,8 @@ pub fn read_dimension(index_path: &Path) -> Option<usize> {
 pub fn write_dimension(index_path: &Path, dimension: usize) -> Result<()> {
     let meta_path = metadata_path_for(index_path);
     let meta = IndexDimensionMetadata { dimension };
-    let bytes = serde_json::to_vec_pretty(&meta).map_err(|e| {
-        AppError::Serialization(format!("serialize dimension metadata: {}", e))
-    })?;
+    let bytes = serde_json::to_vec_pretty(&meta)
+        .map_err(|e| AppError::Serialization(format!("serialize dimension metadata: {}", e)))?;
     std::fs::write(&meta_path, bytes).map_err(|e| {
         AppError::FileStorage(format!(
             "write dimension metadata to {}: {}",
@@ -172,7 +171,12 @@ mod tests {
         write_dimension(&path, 384).unwrap();
 
         let result = ensure_dimension_match(&path, 1024).unwrap();
-        assert_eq!(result, DimensionCheck::Wiped { previous_dimension: 384 });
+        assert_eq!(
+            result,
+            DimensionCheck::Wiped {
+                previous_dimension: 384
+            }
+        );
         assert!(!path.exists(), "stub index file should have been deleted");
         assert_eq!(read_dimension(&path), Some(1024));
     }

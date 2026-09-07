@@ -32,37 +32,17 @@
 //! 5. Audit logging (for important operations)
 //! 6. Return result
 
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-// search_documents removed - using search_documents_impl directly for internal calls
-use crate::features::search::dto::{SearchOptions, SearchResultDto as SearchResult};
-use crate::features::conversation::space_dto::{
-    CreateConversationSpaceRequestDto, ConversationSpaceDto
-};
 use crate::domain::{Conversation, ConversationMessage};
+use crate::features::conversation::space_dto::{
+    ConversationSpaceDto, CreateConversationSpaceRequestDto,
+};
+use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::{AppError, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tauri::{State, Window};
-use tracing::warn;
 use chrono::Utc;
-
-
-// ============================================================================
-// Response Types
-// ============================================================================
-
-/// Response from conversational Q&A
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationalAnswer {
-    pub answer: String,
-    pub sources: Vec<SearchResult>,
-    pub conversation_id: String,
-    pub message_count: i64,
-    pub total_tokens: i64,
-}
-
+use serde_json::Value;
+use tauri::State;
+use tracing::warn;
 
 // ============================================================================
 // Conversation CRUD Commands
@@ -163,7 +143,7 @@ pub struct ConversationalAnswer {
 /// 3. Execute ConversationService.create_conversation()
 /// 4. Log audit event (conversation created)
 /// 5. Return conversation metadata
-
+///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn create_conversation_impl(
     container: &Container,
@@ -315,7 +295,7 @@ pub async fn create_conversation(
 /// 2. Validate and cap limit (≤ 100)
 /// 3. Execute ConversationService.list_conversations()
 /// 4. Return conversation metadata list
-
+///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn list_conversations_impl(
     container: &Container,
@@ -439,7 +419,7 @@ pub async fn list_conversations(
 /// 2. Execute ConversationService.get_conversation()
 /// 3. Map aggregate to Conversation (extract metadata, discard messages)
 /// 4. Return `Option<Conversation>`
-
+///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn get_conversation_impl(
     container: &Container,
@@ -550,7 +530,8 @@ pub async fn get_conversation(
 /// 2. Assistant response
 /// 3. Follow-up user question
 /// 4. Assistant response
-/// ... and so on
+///
+/// The sequence continues in the same alternating order.
 ///
 /// This ordering makes it easy to reconstruct the conversation flow for display.
 ///
@@ -589,7 +570,7 @@ pub async fn get_conversation(
 /// 3. If conversation not found, return NotFound error
 /// 4. Extract messages from aggregate
 /// 5. Return messages in chronological order
-
+///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn get_conversation_messages_impl(
     container: &Container,
@@ -728,7 +709,7 @@ pub async fn get_conversation_messages(
 /// 3. Execute ConversationService.rename_conversation()
 /// 4. Log audit event (conversation renamed, new title)
 /// 5. Return success
-
+///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn rename_conversation_impl(
     container: &Container,
@@ -890,7 +871,7 @@ pub async fn rename_conversation(
 /// - Removes conversation from database
 /// - Removes all associated messages
 /// - Does NOT affect search index (conversations are not indexed)
-
+///
 /// Implementation function (Pure Rust - No Tauri)
 pub async fn delete_conversation_impl(
     container: &Container,
@@ -929,490 +910,6 @@ pub async fn delete_conversation(
     conversation_id: String,
 ) -> Result<()> {
     delete_conversation_impl(container.inner(), conversation_id).await
-}
-
-// ============================================================================
-// Conversational Q&A Commands
-// ============================================================================
-
-/// Asks a question within a conversation context (non-streaming)
-///
-/// Performs Retrieval-Augmented Generation (RAG) Q&A within a conversation thread,
-/// maintaining context from previous messages. Each question is answered using both
-/// the current query and conversation history, enabling natural follow-up questions.
-/// Returns complete answer with sources and conversation metadata in a single response.
-///
-/// # Arguments
-///
-/// * `container` - Service container with Q&A service and security context
-/// * `conversation_id` - ID of the conversation for context
-/// * `question` - User's question (will be validated and sanitized)
-/// * `max_search_results` - Maximum relevant chunks to retrieve (default: 5, max: 20)
-///
-/// # Returns
-///
-/// * `Ok(ConversationalAnswer)` - Complete answer with sources and conversation state
-/// * `Err(AppError)` - If rate limited, validation fails, search fails, or LLM errors
-///
-/// # Errors
-///
-/// * `AppError::RateLimitExceeded` - Too many Q&A requests (strict limit: 10/min)
-/// * `AppError::InvalidInput` - Question validation failed (empty or XSS detected)
-/// * `AppError::NotFound` - Conversation ID not found
-/// * `AppError::Other` - Search failed, LLM unavailable, or generation error
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// interface ConversationalAnswer {
-///   answer: string;
-///   sources: SearchResult[];
-///   conversationId: string;
-///   messageCount: number;
-///   totalTokens: number;
-/// }
-///
-/// // Create conversation first
-/// const conversation = await invoke<Conversation>('create_conversation', {
-///   title: 'Research Discussion',
-///   modelName: 'gpt-4',
-/// });
-///
-/// // Ask first question
-/// const answer1 = await invoke<ConversationalAnswer>('ask_with_conversation', {
-///   conversationId: conversation.id,
-///   question: 'What are the key findings in quantum computing research?',
-///   maxSearchResults: 5
-/// });
-///
-/// console.log(`Answer: ${answer1.answer}`);
-/// console.log(`Sources: ${answer1.sources.length} documents`);
-/// console.log(`Messages: ${answer1.messageCount}, Tokens: ${answer1.totalTokens}`);
-///
-/// // Ask follow-up question (references previous context)
-/// const answer2 = await invoke<ConversationalAnswer>('ask_with_conversation', {
-///   conversationId: conversation.id,
-///   question: 'Can you elaborate on the practical applications you mentioned?'
-/// });
-///
-/// console.log(`Follow-up answer: ${answer2.answer}`);
-/// console.log(`Total messages now: ${answer2.messageCount}`);
-/// ```
-///
-/// # Conversational RAG Pipeline
-///
-/// 1. **Context Retrieval**: Load conversation history (previous Q&A pairs)
-/// 2. **Search Phase**: Semantic search for relevant document chunks
-/// 3. **Augmentation Phase**:
-///    - Build prompt with conversation history
-///    - Add new question
-///    - Include relevant document chunks as context
-///    - Apply system prompt (if configured)
-/// 4. **Generation Phase**:
-///    - Send augmented prompt to LLM
-///    - Generate grounded answer
-///    - Save user question and assistant response to conversation
-///    - Update message count and token usage
-/// 5. **Return**: Answer, sources, and updated conversation metadata
-///
-/// # Conversation Context
-///
-/// Each question benefits from conversation history:
-/// - **Anaphora Resolution**: "it", "they", "the paper" references
-/// - **Follow-up Questions**: "Can you explain more?" builds on previous answer
-/// - **Topic Continuity**: LLM maintains topic focus across messages
-/// - **Clarifications**: "What did you mean by X?" references earlier response
-///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Strict 10 requests/min (LLM calls are expensive)
-/// - **Input Validation**: Question sanitized to prevent XSS and injection attacks
-/// - **Audit Logging (CWE-778)**: Logs Q&A operations for compliance
-///
-/// # Performance
-///
-/// - **Response Time**: 2-10 seconds (depends on LLM and search complexity)
-/// - **Token Usage**: Grows with conversation length (history in each prompt)
-/// - **Search Time**: ~100-500ms for semantic search
-/// - **LLM Time**: ~1-8 seconds for generation
-///
-/// # Token Management
-///
-/// Conversations track total tokens used:
-/// - **Input Tokens**: Question + conversation history + context chunks
-/// - **Output Tokens**: LLM-generated answer
-/// - **Accumulation**: Tokens accumulate across all messages in conversation
-/// - **Context Window**: Long conversations may exceed LLM context limits
-///
-/// # Best Practices
-///
-/// **Good Follow-up Questions**:
-/// - "Can you elaborate on the second point?"
-/// - "What about the limitations you mentioned?"
-/// - "How does this compare to the previous approach?"
-///
-/// **Poor Follow-up Questions** (lose context):
-/// - Completely unrelated topic switches
-/// - Questions about different documents without context
-/// - Overly vague references ("Tell me more about that")
-///
-/// # Streaming vs Non-Streaming
-///
-/// Use this command when:
-/// - You want the complete answer at once
-/// - Building chat-like UIs with message bubbles
-/// - Simpler error handling (single response)
-///
-/// Use `stream_with_conversation` when:
-/// - You want real-time token-by-token streaming
-/// - Building typing-indicator UIs
-/// - Improving perceived responsiveness
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// 1. Applies strict rate limiting (LLM protection)
-/// 2. Validates and sanitizes question
-/// 3. Performs semantic search
-/// 4. Delegates to `ConversationalQAService.ask_question()`
-/// 5. Logs audit event
-///
-/// # Command Flow
-///
-/// 1. Rate limiting check (strict: 10/min)
-/// 2. Input validation (sanitize question, prevent XSS)
-/// 3. Semantic search (retrieve relevant chunks)
-/// 4. Execute ConversationalQAService.ask_question() (RAG + conversation context)
-/// 5. Log audit event (Q&A with conversation)
-/// 6. Return answer with sources and conversation metadata
-#[tracing::instrument(skip(container), fields(conversation_id = %conversation_id, question = %question))]
-pub async fn ask_with_conversation(
-    container: State<'_, Container>,
-    conversation_id: String,
-    question: String,
-    max_search_results: Option<usize>,
-) -> Result<ConversationalAnswer> {
-    // 1. Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_question
-        .check_rate_limit("ask_with_conversation")
-        .await
-        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
-
-    // 2. Input validation
-    let sanitized_question = container
-        .security_context()
-        .input_validator()
-        .validate_search_query(&question)
-        .map_err(|e| AppError::Other(format!("Invalid question: {}", e)))?;
-
-    // 3. Perform search
-    let top_k = max_search_results.unwrap_or(5);
-    let search_options = SearchOptions {
-        query: sanitized_question.clone(),
-        limit: Some(top_k),
-        filter: None,
-        search_mode: Some("semantic".to_string()),
-    };
-
-    // Use the implementation function directly since this is internal
-    let search_response = crate::features::search::commands::search_documents_impl(
-        &container,
-        search_options,
-    )
-    .await?;
-
-    // 4. Delegate to conversational Q&A service
-    let service = container.conversational_qa_service();
-
-    let service_answer = service
-        .ask_question(
-            &conversation_id,
-            &sanitized_question,
-            search_response.results,
-        )
-        .await?;
-
-    // 5. Audit logging
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-        .with_resource_id(&conversation_id)
-        .with_metadata("operation", "ask_with_conversation");
-
-    if let Err(e) = audit_logger.log(event).await {
-        warn!("Failed to write audit log: {}", e);
-    }
-
-    // Convert service type to command type
-    Ok(ConversationalAnswer {
-        answer: service_answer.answer,
-        sources: service_answer.sources,
-        conversation_id: service_answer.conversation_id,
-        message_count: service_answer.message_count,
-        total_tokens: service_answer.total_tokens,
-    })
-}
-
-/// Asks a question within a conversation context with streaming response
-///
-/// Performs Retrieval-Augmented Generation (RAG) Q&A within a conversation thread with
-/// real-time token-by-token streaming. Provides the same conversational context benefits
-/// as `ask_with_conversation` but streams LLM output as it's generated for improved
-/// perceived responsiveness and typing-indicator UIs.
-///
-/// # Arguments
-///
-/// * `container` - Service container with Q&A service and security context
-/// * `conversation_id` - ID of the conversation for context
-/// * `question` - User's question (will be validated and sanitized)
-/// * `max_search_results` - Maximum relevant chunks to retrieve (default: 5, max: 20)
-/// * `window` - Tauri window for emitting stream events
-///
-/// # Returns
-///
-/// * `Ok(())` - Command initiated successfully (answer streamed via events)
-/// * `Err(AppError)` - If rate limited, validation fails, search fails, or stream errors
-///
-/// # Errors
-///
-/// * `AppError::RateLimitExceeded` - Too many streaming requests (strict limit: 10/min)
-/// * `AppError::InvalidInput` - Question validation failed (empty or XSS detected)
-/// * `AppError::NotFound` - Conversation ID not found
-/// * `AppError::Other` - Search failed, LLM unavailable, or streaming error
-///
-/// # Streaming Events
-///
-/// The LLM response is streamed via Tauri window events:
-///
-/// **Event**: `llm-stream-chunk`
-/// - **Payload**: `{ chunk: string }` - Single token or word
-/// - **Frequency**: Emitted as LLM generates tokens (dozens per second)
-///
-/// **Event**: `llm-stream-done`
-/// - **Payload**: `{ conversationId: string, messageCount: number, totalTokens: number }`
-/// - **Frequency**: Once when streaming completes
-///
-/// **Event**: `llm-stream-error`
-/// - **Payload**: `{ error: string }`
-/// - **Frequency**: If streaming fails mid-generation
-///
-/// # Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-/// import { listen } from '@tauri-apps/api/event';
-///
-/// // Set up event listeners
-/// let fullAnswer = '';
-///
-/// const unlistenChunk = await listen<{ chunk: string }>('llm-stream-chunk', (event) => {
-///   fullAnswer += event.payload.chunk;
-///   // Update UI with new chunk (typing effect)
-///   updateAnswerDisplay(fullAnswer);
-/// });
-///
-/// const unlistenDone = await listen<{ conversationId: string, messageCount: number, totalTokens: number }>(
-///   'llm-stream-done',
-///   (event) => {
-///     console.log('Streaming complete!');
-///     console.log(`Messages: ${event.payload.messageCount}, Tokens: ${event.payload.totalTokens}`);
-///     // Show final answer, hide typing indicator
-///     finalizeChatMessage(fullAnswer);
-///   }
-/// );
-///
-/// const unlistenError = await listen<{ error: string }>('llm-stream-error', (event) => {
-///   console.error('Streaming failed:', event.payload.error);
-///   showErrorMessage(event.payload.error);
-/// });
-///
-/// // Start streaming Q&A
-/// await invoke('stream_with_conversation', {
-///   conversationId: 'conv_abc123',
-///   question: 'What are the main findings in the paper?',
-///   maxSearchResults: 5
-/// });
-///
-/// // Clean up listeners when component unmounts
-/// unlistenChunk();
-/// unlistenDone();
-/// unlistenError();
-/// ```
-///
-/// # Conversational RAG Pipeline (Streaming)
-///
-/// 1. **Context Retrieval**: Load conversation history (previous Q&A pairs)
-/// 2. **Search Phase**: Semantic search for relevant document chunks
-/// 3. **Augmentation Phase**:
-///    - Build prompt with conversation history
-///    - Add new question
-///    - Include relevant document chunks as context
-///    - Apply system prompt (if configured)
-/// 4. **Streaming Generation Phase**:
-///    - Send augmented prompt to LLM
-///    - Stream tokens as LLM generates them
-///    - Emit `llm-stream-chunk` events for each token
-///    - Save complete answer to conversation when done
-///    - Update message count and token usage
-/// 5. **Completion**: Emit `llm-stream-done` event with metadata
-///
-/// # Security
-///
-/// - **Rate Limiting (CWE-770)**: Strict 10 requests/min (same as non-streaming)
-/// - **Input Validation**: Question sanitized to prevent XSS and injection attacks
-/// - **Audit Logging (CWE-778)**: Logs streaming Q&A operations for compliance
-///
-/// # Performance
-///
-/// - **Time to First Token**: ~1-3 seconds (search + LLM initialization)
-/// - **Token Rate**: ~10-50 tokens/second (depends on LLM and load)
-/// - **Total Time**: Similar to non-streaming, but feels faster due to incremental display
-/// - **Network**: Multiple small events vs one large response
-///
-/// # Streaming vs Non-Streaming
-///
-/// **Use Streaming (`stream_with_conversation`) when**:
-/// - Building chat UIs with typing indicators
-/// - Long answers (>100 tokens) benefit from incremental display
-/// - Improving perceived responsiveness
-/// - Showing "thinking" progress to users
-///
-/// **Use Non-Streaming (`ask_with_conversation`) when**:
-/// - Simpler implementation requirements
-/// - Batch processing or API integration
-/// - Answers need post-processing before display
-/// - Error handling is simpler with single response
-///
-/// # Error Handling
-///
-/// Streaming can fail mid-generation:
-/// - **Network Issues**: Connection drops during streaming
-/// - **LLM Errors**: Model unavailable or context window exceeded
-/// - **Rate Limiting**: Token-level rate limits hit mid-stream
-///
-/// Always listen for `llm-stream-error` events and handle gracefully:
-/// - Show error message to user
-/// - Optionally retry with non-streaming fallback
-/// - Clean up partial answer UI state
-///
-/// # Token Management
-///
-/// Same as non-streaming:
-/// - **Input Tokens**: Question + conversation history + context chunks
-/// - **Output Tokens**: LLM-generated answer (counted after complete)
-/// - **Accumulation**: Tokens accumulate across all messages in conversation
-/// - **Context Window**: Long conversations may exceed LLM context limits
-///
-/// # Best Practices
-///
-/// **UI Considerations**:
-/// - Show typing indicator while streaming
-/// - Accumulate chunks in state for display
-/// - Disable input during streaming
-/// - Provide cancel button for long responses
-///
-/// **Event Listener Cleanup**:
-/// - Always unlisten when component unmounts
-/// - Clear accumulated state on error
-/// - Handle rapid successive questions gracefully
-///
-/// **Performance Optimization**:
-/// - Throttle UI updates if chunks arrive very fast
-/// - Use `requestAnimationFrame` for smooth rendering
-/// - Consider batching small chunks for display
-///
-/// # DDD Architecture
-///
-/// This command is a **thin controller** that:
-/// 1. Applies strict rate limiting (streaming protection)
-/// 2. Validates and sanitizes question
-/// 3. Performs semantic search
-/// 4. Delegates to `ConversationalQAService.ask_question_stream()`
-/// 5. Logs audit event
-///
-/// # Command Flow
-///
-/// 1. Rate limiting check (strict: 10/min, streaming-specific limiter)
-/// 2. Input validation (sanitize question, prevent XSS)
-/// 3. Semantic search (retrieve relevant chunks)
-/// 4. Execute ConversationalQAService.ask_question_stream() (RAG + streaming)
-/// 5. Service emits chunks via window events as LLM generates
-/// 6. Log audit event (streaming Q&A with conversation)
-/// 7. Return Ok(()) immediately (streaming continues in background)
-///
-/// # Side Effects
-///
-/// - Emits multiple `llm-stream-chunk` events to frontend
-/// - Emits final `llm-stream-done` event with metadata
-/// - Emits `llm-stream-error` if streaming fails
-/// - Saves complete answer to conversation (message history updated)
-pub async fn stream_with_conversation(
-    container: State<'_, Container>,
-    conversation_id: String,
-    question: String,
-    max_search_results: Option<usize>,
-    window: Window,
-) -> Result<()> {
-    // 1. Rate limiting
-    container
-        .security_context()
-        .rate_limiters()
-        .llm_stream
-        .check_rate_limit("stream_with_conversation")
-        .await
-        .map_err(|e| AppError::Other(format!("Rate limit exceeded: {}", e)))?;
-
-    // 2. Input validation
-    let sanitized_question = container
-        .security_context()
-        .input_validator()
-        .validate_search_query(&question)
-        .map_err(|e| AppError::Other(format!("Invalid question: {}", e)))?;
-
-    // 3. Perform search
-    let top_k = max_search_results.unwrap_or(5);
-    let search_options = SearchOptions {
-        query: sanitized_question.clone(),
-        limit: Some(top_k),
-        filter: None,
-        search_mode: Some("semantic".to_string()),
-    };
-
-    // Use the implementation function directly since this is internal
-    let search_response = crate::features::search::commands::search_documents_impl(
-        &container,
-        search_options,
-    )
-    .await?;
-
-    // 4. Delegate to conversational Q&A service
-    let service = container.conversational_qa_service();
-
-    service
-        .ask_question_stream(
-            &conversation_id,
-            &sanitized_question,
-            search_response.results,
-            window,
-        )
-        .await?;
-
-    // 5. Audit logging
-    let audit_logger = get_audit_logger();
-    let event = AuditEvent::new(AuditAction::QuestionAnswered, AuditResult::success())
-        .with_resource_id(&conversation_id)
-        .with_metadata("operation", "stream_with_conversation");
-
-    if let Err(e) = audit_logger.log(event).await {
-        warn!("Failed to write audit log: {}", e);
-    }
-
-    Ok(())
-
 }
 
 pub async fn create_conversation_space_impl(
@@ -1473,4 +970,3 @@ fn preferences_declares_journal(raw: Option<&str>) -> bool {
         .unwrap_or("standard");
     kind.eq_ignore_ascii_case("journal")
 }
-

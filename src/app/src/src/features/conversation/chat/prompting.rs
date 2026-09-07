@@ -155,7 +155,26 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
     }
 }
 
-pub(super) fn build_kb_context(budgeted_results: &[&SearchResultDto]) -> Option<String> {
+/// Render the retrieved knowledge-base chunks for the prompt.
+///
+/// `citation_ids` maps a document id to the number that document occupies in
+/// the source list the UI will render. Chunks are labelled with **that**
+/// number rather than their position in this list.
+///
+/// The two used to be numbered independently: this function numbered the
+/// budgeted per-chunk list `[1..k]`, while the UI resolved `[n]` by position
+/// in a per-document, deduplicated, score-sorted list. So as soon as one
+/// document contributed two chunks — or budget-trimming dropped any — the
+/// footnotes pointed at the wrong documents. Citations are the trust
+/// primitive of a document-chat app; they have to resolve to the document the
+/// model was actually shown.
+///
+/// Several chunks from one document now share that document's number, which
+/// is correct: the footnote identifies the source, not the chunk.
+pub(super) fn build_kb_context(
+    budgeted_results: &[&SearchResultDto],
+    citation_ids: &std::collections::HashMap<String, u32>,
+) -> Option<String> {
     if budgeted_results.is_empty() {
         return None;
     }
@@ -171,12 +190,19 @@ pub(super) fn build_kb_context(budgeted_results: &[&SearchResultDto]) -> Option<
                     .as_deref()
                     .map(|id| format!("\nDocument ID: {}", id))
                     .unwrap_or_default();
+
+                // Fall back to positional numbering only when a chunk's
+                // document isn't in the source list at all, which would mean
+                // the UI has nothing to resolve against either.
+                let citation = result
+                    .document_id
+                    .as_deref()
+                    .and_then(|id| citation_ids.get(id).copied())
+                    .unwrap_or((i + 1) as u32);
+
                 format!(
                     "[{}] Document: {}{}\nContent: {}",
-                    i + 1,
-                    doc_name,
-                    doc_id_line,
-                    result.content
+                    citation, doc_name, doc_id_line, result.content
                 )
             })
             .collect::<Vec<_>>()
@@ -210,5 +236,129 @@ pub(super) fn render_tool_followup_prompt(
         rendered.replace("{previous_response}", "")
     } else {
         rendered.replace("{previous_response}", previous_response)
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod citation_numbering_tests {
+    use super::*;
+    use crate::features::qa::dto::SourceDto;
+    use std::collections::HashMap;
+
+    fn chunk(id: &str, document_id: &str, title: &str, content: &str) -> SearchResultDto {
+        SearchResultDto {
+            id: id.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            score: 0.9,
+            path: Some(title.to_string()),
+            document_id: Some(document_id.to_string()),
+            position: None,
+            vector_score: None,
+            bm25_score: None,
+            vector_rank: None,
+            bm25_rank: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn source(document_id: &str, file_name: &str, citation_id: u32) -> SourceDto {
+        SourceDto {
+            document_id: document_id.to_string(),
+            chunk_id: format!("{}-chunk", document_id),
+            content: String::new(),
+            score: 0.9,
+            path: Some(file_name.to_string()),
+            position: None,
+            file_name: file_name.to_string(),
+            file_path: file_name.to_string(),
+            mime_type: "text/plain".to_string(),
+            category: "Text".to_string(),
+            file_size_bytes: 0,
+            modified_at: String::new(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: None,
+            chunk_excerpts: None,
+            citation_id: Some(citation_id),
+        }
+    }
+
+    /// The exact scenario from the audit: one document contributes three
+    /// chunks and a second contributes one. The prompt used to number the
+    /// four *chunks* [1][2][3][4] while the UI resolved [n] against a
+    /// two-entry, per-document list — so [3] and [4] pointed at nothing
+    /// sensible and [2] opened the wrong file.
+    #[test]
+    fn chunks_from_one_document_share_that_document_s_citation_number() {
+        let results = [
+            chunk("c1", "doc-a", "alpha.md", "first chunk of A"),
+            chunk("c2", "doc-a", "alpha.md", "second chunk of A"),
+            chunk("c3", "doc-a", "alpha.md", "third chunk of A"),
+            chunk("c4", "doc-b", "beta.md", "only chunk of B"),
+        ];
+        let refs: Vec<&SearchResultDto> = results.iter().collect();
+
+        // The source list the UI will render, numbered once.
+        let sources = vec![
+            source("doc-a", "alpha.md", 1),
+            source("doc-b", "beta.md", 2),
+        ];
+        let ids =
+            crate::features::conversation::chat::retrieval::citation_ids_by_document(&sources);
+
+        let context = build_kb_context(&refs, &ids).expect("context");
+
+        // Every chunk of doc-a is labelled [1]; doc-b's is [2].
+        assert_eq!(context.matches("[1] Document: alpha.md").count(), 3);
+        assert_eq!(context.matches("[2] Document: beta.md").count(), 1);
+
+        // And crucially, no number is emitted that the UI cannot resolve.
+        assert!(
+            !context.contains("[3]") && !context.contains("[4]"),
+            "prompt must not cite numbers absent from the source list:\n{}",
+            context
+        );
+    }
+
+    /// Budget trimming drops chunks from the prompt. The surviving chunks
+    /// must keep their document's number rather than being renumbered from 1.
+    #[test]
+    fn budget_trimming_does_not_renumber_surviving_chunks() {
+        // doc-a was dropped by the token budget; only doc-b's chunk survives.
+        let results = [chunk("c4", "doc-b", "beta.md", "only chunk of B")];
+        let refs: Vec<&SearchResultDto> = results.iter().collect();
+
+        let sources = vec![
+            source("doc-a", "alpha.md", 1),
+            source("doc-b", "beta.md", 2),
+        ];
+        let ids =
+            crate::features::conversation::chat::retrieval::citation_ids_by_document(&sources);
+
+        let context = build_kb_context(&refs, &ids).expect("context");
+
+        assert!(
+            context.contains("[2] Document: beta.md"),
+            "surviving chunk must keep its document's number, got:\n{}",
+            context
+        );
+        assert!(
+            !context.contains("[1]"),
+            "a trimmed prompt must not renumber from 1:\n{}",
+            context
+        );
+    }
+
+    #[test]
+    fn falls_back_to_position_when_a_document_is_absent_from_the_source_list() {
+        let results = [chunk("c1", "doc-unknown", "orphan.md", "content")];
+        let refs: Vec<&SearchResultDto> = results.iter().collect();
+        let ids: HashMap<String, u32> = HashMap::new();
+
+        let context = build_kb_context(&refs, &ids).expect("context");
+        assert!(context.contains("[1] Document: orphan.md"));
     }
 }

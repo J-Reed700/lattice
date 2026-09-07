@@ -53,6 +53,7 @@ impl BackupScheduler {
 
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            let mut consecutive_failures: u32 = 0;
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
@@ -76,10 +77,26 @@ impl BackupScheduler {
 
                         match create_backup_use_case.execute(backup_path).await {
                             Ok(result) => {
+                                if consecutive_failures > 0 {
+                                    info!(
+                                        recovered_after = consecutive_failures,
+                                        "Auto-backup recovered after repeated failures"
+                                    );
+                                }
+                                consecutive_failures = 0;
                                 info!(backup_path = %result.backup_path, "Auto-backup completed");
                             }
                             Err(e) => {
-                                error!("Auto-backup failed: {}", e);
+                                consecutive_failures += 1;
+                                // A backup job that fails every tick is the
+                                // worst kind of failure: the user believes
+                                // they are protected and are not. Make the
+                                // repetition impossible to miss in the log.
+                                error!(
+                                    consecutive_failures,
+                                    error = %e,
+                                    "Auto-backup failed; NO BACKUPS ARE BEING CREATED"
+                                );
                             }
                         }
                     }

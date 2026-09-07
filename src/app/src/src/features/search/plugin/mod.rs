@@ -19,6 +19,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             search_commands::semantic_search,
             search_commands::hybrid_search,
             search_commands::find_similar,
+            search_commands::find_similar_documents,
             search_commands::search_with_recency,
             search_commands::batch_search,
         ])

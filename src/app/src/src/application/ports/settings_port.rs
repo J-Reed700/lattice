@@ -10,6 +10,24 @@ use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+/// Recursively merges a partial JSON settings update into an existing value.
+/// Object fields are preserved unless explicitly replaced by the update.
+pub(crate) fn merge_json_update(target: &mut serde_json::Value, update: serde_json::Value) {
+    match (target, update) {
+        (serde_json::Value::Object(target), serde_json::Value::Object(update)) => {
+            for (key, value) in update {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_json_update(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    }
+                }
+            }
+        }
+        (target, update) => *target = update,
+    }
+}
+
 /// Port interface for settings repository.
 ///
 /// Implementations handle persistence of application settings,
@@ -154,10 +172,7 @@ pub trait SettingsRepositoryPort: Send + Sync {
     /// # Returns
     ///
     /// Validation result with errors and warnings
-    fn validate(
-        &self,
-        settings: &SettingsDto,
-    ) -> crate::features::settings::dto::ValidationResult;
+    fn validate(&self, settings: &SettingsDto) -> crate::features::settings::dto::ValidationResult;
 
     /// Check if a file path is valid and accessible.
     ///
@@ -228,6 +243,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
             SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
             SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
+            SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
         };
         Ok(value)
     }
@@ -257,6 +273,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     SettingsCategory::Backup => serde_json::to_value(&settings.backup)?,
                     SettingsCategory::Privacy => serde_json::to_value(&settings.privacy)?,
                     SettingsCategory::Vault => serde_json::to_value(&settings.vault)?,
+                    SettingsCategory::Onboarding => serde_json::to_value(&settings.onboarding)?,
                 };
 
                 let mut category_map = category_value
@@ -268,7 +285,12 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     })?
                     .clone();
                 for (key, value) in updates {
-                    category_map.insert(key, value);
+                    match category_map.get_mut(&key) {
+                        Some(existing) => merge_json_update(existing, value),
+                        None => {
+                            category_map.insert(key, value);
+                        }
+                    }
                 }
 
                 // Update the category
@@ -305,6 +327,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                         settings.vault =
                             serde_json::from_value(serde_json::Value::Object(category_map))?;
                     }
+                    SettingsCategory::Onboarding => {
+                        settings.onboarding =
+                            serde_json::from_value(serde_json::Value::Object(category_map))?;
+                    }
                 }
             }
             None => {
@@ -317,7 +343,12 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                 })?;
 
                 for (key, value) in updates {
-                    settings_map.insert(key, value);
+                    match settings_map.get_mut(&key) {
+                        Some(existing) => merge_json_update(existing, value),
+                        None => {
+                            settings_map.insert(key, value);
+                        }
+                    }
                 }
 
                 *settings =
@@ -343,6 +374,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     SettingsCategory::Backup => settings.backup = Default::default(),
                     SettingsCategory::Privacy => settings.privacy = Default::default(),
                     SettingsCategory::Vault => settings.vault = Default::default(),
+                    SettingsCategory::Onboarding => settings.onboarding = Default::default(),
                 }
             }
             None => {
@@ -364,10 +396,7 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         Ok(self.settings.read().await.clone())
     }
 
-    fn validate(
-        &self,
-        settings: &SettingsDto,
-    ) -> crate::features::settings::dto::ValidationResult {
+    fn validate(&self, settings: &SettingsDto) -> crate::features::settings::dto::ValidationResult {
         use crate::features::settings::dto::ValidationResult;
 
         let mut result = ValidationResult::success();
@@ -666,11 +695,12 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             );
         }
 
-        // Validate backup settings
-        if settings.backup.auto_backup_enabled && settings.backup.backup_path.is_empty() {
+        // Match the production repository: the legacy field remains in the
+        // DTO, but scheduled backups always use the protected app directory.
+        if !settings.backup.backup_path.is_empty() {
             result.add_error(
                 "backup",
-                "backup_path is required when auto-backup is enabled".to_string(),
+                "custom backup locations are not supported; leave backup_path empty".to_string(),
             );
         }
 

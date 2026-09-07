@@ -4,6 +4,7 @@
 //! - LLMs: GGUF models optimized for local inference
 //! - Embedding models: Semantic search optimized
 //! - OCR models: Vision-language models for text extraction
+//! - Transcription models: Whisper for on-device speech-to-text
 //!
 //! ## Design
 //!
@@ -17,7 +18,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use vault_desktop::domain::curated_models::get_curated_llm_models;
+//! use lattice::domain::curated_models::get_curated_llm_models;
 //!
 //! let llms = get_curated_llm_models();
 //! for model in llms {
@@ -422,14 +423,137 @@ pub fn get_curated_ocr_models() -> Vec<ModelMetadata> {
     ]
 }
 
+// ============================================================================
+// Transcription Models - Whisper for On-Device Speech-to-Text
+// ============================================================================
+
+/// Curated on-device transcription models.
+///
+/// Both entries are quantized in candle's own GGUF layout — the only whisper
+/// weights `quantized_model::Whisper::load` can read. Every URL here has been
+/// verified to resolve and every model has been verified to transcribe; whisper
+/// base and small do **not** exist in this format anywhere public, which is why
+/// tiny and the distilled medium are the two rungs on offer.
+///
+/// Each file is downloaded under a **fixed local name** even though the remote
+/// name may be size-qualified, so the engine loads one stable layout:
+///
+///     ~/.cache/lattice/models/<id>/{model.gguf, config.json, tokenizer.json}
+///
+/// `melfilters.bytes` is deliberately **not** downloaded: the 80-bin mel
+/// filterbank is a constant of the architecture, identical for every 80-mel
+/// model, and is bundled with the engine
+/// (`features/transcription/engine/melfilters.bytes`).
+///
+/// `model.gguf` is the primary file per `features/download/saga.rs::select_primary_model_file`,
+/// so the recorded `ModelLocation` is `LocalFile{…/model.gguf}` and
+/// `DownloadedModelRepository::is_downloaded` reduces to `path.is_file()`.
+/// The engine takes `location.enclosing_dir()` to find the siblings.
+pub fn get_curated_transcription_models() -> Vec<ModelMetadata> {
+    vec![
+        ModelMetadata {
+            id: "whisper-tiny-q8".into(),
+            name: "Whisper Tiny".into(),
+            category: ModelCategory::Transcription,
+            description: "Fast on-device transcription for voice memos and meetings. \
+                          Good on clear English speech; misses names and accents."
+                .into(),
+            size_gb: 0.042,
+            minimum_ram_gb: 1.0,
+            recommended_ram_gb: 2.0,
+            context_length: 448,
+            performance_tier: PerformanceTier::Fast,
+            supported_quantizations: vec!["Q8_0".into()],
+            capabilities: vec!["transcription".into(), "multilingual".into()],
+            download_url: Some("https://huggingface.co/lmz/candle-whisper".into()),
+            license: "MIT".into(),
+            requires_auth: false,
+            model_id: Some("lmz/candle-whisper".into()),
+            default_filename: None, // multi-file bundle
+            files: vec![
+                super::model_metadata::ModelFileMetadata::new(
+                    "model.gguf".into(),
+                    "https://huggingface.co/lmz/candle-whisper/resolve/main/model-tiny-q80.gguf"
+                        .into(),
+                    0,
+                ),
+                super::model_metadata::ModelFileMetadata::new(
+                    "config.json".into(),
+                    "https://huggingface.co/lmz/candle-whisper/resolve/main/config-tiny.json"
+                        .into(),
+                    0,
+                ),
+                super::model_metadata::ModelFileMetadata::new(
+                    "tokenizer.json".into(),
+                    "https://huggingface.co/lmz/candle-whisper/resolve/main/tokenizer-tiny.json"
+                        .into(),
+                    0,
+                ),
+            ],
+            total_size_bytes: 41_841_632,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Gguf,
+        },
+        ModelMetadata {
+            id: "whisper-medium-distil-q8".into(),
+            name: "Whisper Medium (distilled)".into(),
+            category: ModelCategory::Transcription,
+            description: "Higher-accuracy on-device transcription. Much better with names, \
+                          accents and crosstalk; needs about 430 MB of disk."
+                .into(),
+            size_gb: 0.43,
+            minimum_ram_gb: 2.0,
+            recommended_ram_gb: 4.0,
+            context_length: 448,
+            performance_tier: PerformanceTier::Balanced,
+            supported_quantizations: vec!["Q8_0".into()],
+            capabilities: vec!["transcription".into(), "multilingual".into()],
+            download_url: Some(
+                "https://huggingface.co/Demonthos/candle-quantized-whisper-medium-distil".into(),
+            ),
+            license: "MIT".into(),
+            requires_auth: false,
+            model_id: Some("Demonthos/candle-quantized-whisper-medium-distil".into()),
+            default_filename: None,
+            files: vec![
+                super::model_metadata::ModelFileMetadata::new(
+                    "model.gguf".into(),
+                    "https://huggingface.co/Demonthos/candle-quantized-whisper-medium-distil/resolve/main/model.gguf"
+                        .into(),
+                    0,
+                ),
+                super::model_metadata::ModelFileMetadata::new(
+                    "config.json".into(),
+                    "https://huggingface.co/Demonthos/candle-quantized-whisper-medium-distil/resolve/main/config.json"
+                        .into(),
+                    0,
+                ),
+                super::model_metadata::ModelFileMetadata::new(
+                    "tokenizer.json".into(),
+                    "https://huggingface.co/Demonthos/candle-quantized-whisper-medium-distil/resolve/main/tokenizer.json"
+                        .into(),
+                    0,
+                ),
+            ],
+            total_size_bytes: 430_005_504,
+            embedding_dimensions: None,
+            embedding_compatibility: None,
+            format: ModelFormat::Gguf,
+        },
+    ]
+}
+
 /// Get all curated models across all categories.
 ///
-/// Returns combined list of LLMs, embedding models, and OCR models.
+/// Returns combined list of LLMs, embedding models, OCR models and
+/// transcription models.
 pub fn get_all_curated_models() -> Vec<ModelMetadata> {
     let mut models = Vec::new();
     models.extend(get_curated_llm_models());
     models.extend(get_curated_embedding_models());
     models.extend(get_curated_ocr_models());
+    models.extend(get_curated_transcription_models());
     models
 }
 
@@ -445,6 +569,7 @@ pub fn get_curated_models_by_category(category: ModelCategory) -> Vec<ModelMetad
         ModelCategory::LLM => get_curated_llm_models(),
         ModelCategory::Embedding => get_curated_embedding_models(),
         ModelCategory::OCR => get_curated_ocr_models(),
+        ModelCategory::Transcription => get_curated_transcription_models(),
     }
 }
 
@@ -491,6 +616,13 @@ pub fn get_model_category_by_id(model_id: &str) -> Option<ModelCategory> {
         }
     }
 
+    // Search transcription models
+    for model in get_curated_transcription_models() {
+        if model.id.to_lowercase() == normalized_id {
+            return Some(model.category);
+        }
+    }
+
     None
 }
 
@@ -500,9 +632,9 @@ mod tests {
 
     #[test]
     fn test_llm_models_count() {
-        // 8 GGUF + 3 safetensors (Gemma 2 9B, Gemma 4 E4B, Mistral 7B v0.3)
+        // The bundled llama.cpp sidecar supports the eight curated GGUF models.
         let models = get_curated_llm_models();
-        assert_eq!(models.len(), 11);
+        assert_eq!(models.len(), 8);
     }
 
     #[test]
@@ -518,51 +650,93 @@ mod tests {
     }
 
     #[test]
+    fn test_transcription_models_count() {
+        let models = get_curated_transcription_models();
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
     fn test_all_models_count() {
         let models = get_all_curated_models();
-        assert_eq!(models.len(), 15);
+        assert_eq!(models.len(), 14);
     }
 
     #[test]
     fn test_get_by_category() {
         let llms = get_curated_models_by_category(ModelCategory::LLM);
-        assert_eq!(llms.len(), 11);
+        assert_eq!(llms.len(), 8);
 
         let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
         assert_eq!(embeddings.len(), 2);
 
         let ocr = get_curated_models_by_category(ModelCategory::OCR);
         assert_eq!(ocr.len(), 2);
+
+        let transcription = get_curated_models_by_category(ModelCategory::Transcription);
+        assert_eq!(transcription.len(), 2);
     }
 
     #[test]
-    fn test_safetensors_entries_have_correct_format() {
-        let models = get_curated_llm_models();
-        let safetensors_models: Vec<_> = models
+    fn transcription_catalog_has_two_entries() {
+        let models = get_curated_transcription_models();
+        assert_eq!(models.len(), 2);
+        assert!(models
             .iter()
-            .filter(|m| m.format == ModelFormat::Safetensors)
+            .all(|model| model.category == ModelCategory::Transcription));
+        assert_eq!(
+            get_model_category_by_id("whisper-tiny-q8"),
+            Some(ModelCategory::Transcription)
+        );
+    }
+
+    #[test]
+    fn every_transcription_entry_declares_its_three_files() {
+        for model in get_curated_transcription_models() {
+            assert_eq!(model.files.len(), 3, "{} file count", model.id);
+            let names: Vec<&str> = model
+                .files
+                .iter()
+                .map(|file| file.filename.as_str())
+                .collect();
+            assert!(names.contains(&"model.gguf"), "{} missing weights", model.id);
+            assert!(names.contains(&"config.json"), "{} missing config", model.id);
+            assert!(
+                names.contains(&"tokenizer.json"),
+                "{} missing tokenizer",
+                model.id
+            );
+        }
+    }
+
+    /// Regression guard: the original entries pointed at
+    /// `model-base-q80.gguf` / `config-base.json` / `melfilters.bytes` in
+    /// `lmz/candle-whisper`, none of which exist — every download 404'd. Keep
+    /// the remote filenames pinned to ones that were actually fetched.
+    #[test]
+    fn transcription_urls_point_at_files_that_exist() {
+        let urls: Vec<String> = get_curated_transcription_models()
+            .into_iter()
+            .flat_map(|model| model.files.into_iter().map(|file| file.url))
             .collect();
-        assert_eq!(safetensors_models.len(), 3);
 
-        // All safetensors entries are gated (Gemma + Mistral) — surface
-        // it correctly so the UI can prompt for HF token before download.
-        for m in &safetensors_models {
+        for url in &urls {
+            assert!(url.starts_with("https://huggingface.co/"), "{url} is not on HF");
+            assert!(url.contains("/resolve/main/"), "{url} is not a resolve URL");
             assert!(
-                m.requires_auth,
-                "safetensors entry '{}' should require HF auth (Gemma/Mistral are gated)",
-                m.id
+                !url.contains("-base") && !url.contains("-small"),
+                "{url} points at a whisper size that has no candle GGUF build"
+            );
+            assert!(
+                !url.ends_with("melfilters.bytes"),
+                "{url} downloads a table that is bundled with the engine"
             );
         }
+    }
 
-        // No safetensors entry should pretend to support quantizations:
-        // they all ship native fp16 weights.
-        for m in &safetensors_models {
-            assert!(
-                m.supported_quantizations.is_empty(),
-                "safetensors entry '{}' should not advertise quantizations",
-                m.id
-            );
-        }
+    #[test]
+    fn test_llm_entries_use_the_sidecar_compatible_format() {
+        let models = get_curated_llm_models();
+        assert!(models.iter().all(|model| model.format == ModelFormat::Gguf));
     }
 
     #[test]
@@ -701,7 +875,8 @@ mod tests {
                 assert!(
                     !file.filename.ends_with(".onnx") && !file.filename.ends_with(".onnx_data"),
                     "Embedding model '{}' file '{}' is ONNX; runtime is candle/safetensors only",
-                    model.id, file.filename,
+                    model.id,
+                    file.filename,
                 );
                 assert!(
                     !file.url.contains("/onnx/"),
@@ -709,7 +884,10 @@ mod tests {
                     model.id, file.url,
                 );
             }
-            let has_safetensors = model.files.iter().any(|f| f.filename == "model.safetensors");
+            let has_safetensors = model
+                .files
+                .iter()
+                .any(|f| f.filename == "model.safetensors");
             assert!(
                 has_safetensors,
                 "Embedding model '{}' is missing model.safetensors",

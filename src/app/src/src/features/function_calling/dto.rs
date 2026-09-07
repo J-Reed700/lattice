@@ -647,7 +647,7 @@ pub struct CustomQueryToolOutput {
 ///
 /// Contains metadata about a web page for preview before ingestion.
 /// Includes OpenGraph, Schema.org, and general metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UrlPreview {
     /// Page URL (after redirects)
@@ -699,7 +699,7 @@ pub struct UrlPreview {
 ///
 /// Contains the main article content with boilerplate removed.
 /// Similar to Firefox Reader Mode or Pocket's article view.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanArticle {
     /// Article title

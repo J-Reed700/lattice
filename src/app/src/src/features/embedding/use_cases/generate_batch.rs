@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::embedding::generate_batch_embeddings::GenerateBatchEmbeddingsUseCase;
-//! use vault_desktop::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
+//! use lattice::application::use_cases::embedding::generate_batch_embeddings::GenerateBatchEmbeddingsUseCase;
+//! use lattice::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
 //!
 //! # async fn example(use_case: GenerateBatchEmbeddingsUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = GenerateBatchEmbeddingsRequestDto {
@@ -31,10 +31,10 @@
 
 use std::sync::Arc;
 
+use crate::application::ports::EmbeddingPort;
 use crate::features::embedding::dto::{
     GenerateBatchEmbeddingsRequestDto, GenerateBatchEmbeddingsResponseDto,
 };
-use crate::application::ports::EmbeddingPort;
 use crate::shared::error::{AppError, Result};
 
 /// Maximum batch size (100 items)
@@ -92,8 +92,8 @@ impl GenerateBatchEmbeddingsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::embedding::generate_batch_embeddings::GenerateBatchEmbeddingsUseCase;
-    /// # use vault_desktop::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
+    /// # use lattice::application::use_cases::embedding::generate_batch_embeddings::GenerateBatchEmbeddingsUseCase;
+    /// # use lattice::application::dtos::embedding_dto::GenerateBatchEmbeddingsRequestDto;
     /// # async fn example(use_case: GenerateBatchEmbeddingsUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let texts = vec![
     ///     "Document about machine learning".to_string(),

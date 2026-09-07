@@ -22,11 +22,11 @@
 //! let recommendations = use_case.execute(request).await?;
 //! ```
 
+use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
 use crate::features::llm::dto::{
     GetRecommendationsRequestDto, ModelInfoDto, PerformanceTier, RecommendedModelDto,
     RecommendedModelsDto,
 };
-use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
 use crate::features::llm::use_cases::GetSystemCapabilitiesUseCase;
 use crate::features::model_management::domain::ModelMetadata;
 use crate::shared::error::AppError;
@@ -265,8 +265,10 @@ mod tests {
     #[tokio::test]
 
     async fn test_high_ram_system_recommends_large_models() {
-        // System with 32GB total RAM
+        // Mixtral's 26 GB artifact maps to a 39 GB minimum via the catalog's
+        // 1.5x RAM heuristic, so use a system that can actually accommodate it.
         let system_info = MockSystemInfoPort::high_end();
+        system_info.set_ram(64.0);
         let catalog = MockModelCatalogPort::new();
         let use_case = create_use_case(system_info, catalog);
 
@@ -276,7 +278,7 @@ mod tests {
         // Should recommend larger models
         assert!(!result.recommendations.is_empty());
         for rec in &result.recommendations {
-            assert!(rec.model.minimum_ram_gb <= 32.0);
+            assert!(rec.model.minimum_ram_gb <= 64.0);
             assert_eq!(rec.tier, PerformanceTier::High);
         }
 

@@ -51,8 +51,8 @@ impl MockWebCaptureService {
     ///
     /// # Example
     /// ```rust
-    /// use vault_desktop::infrastructure::services::mocks::MockWebCaptureService;
-    /// use vault_desktop::application::dtos::function_calling_dto::UrlPreview;
+    /// use lattice::infrastructure::services::mocks::MockWebCaptureService;
+    /// use lattice::application::dtos::function_calling_dto::UrlPreview;
     ///
     /// let service = MockWebCaptureService::new();
     /// service.set_preview_for_url(

@@ -23,13 +23,14 @@ use crate::shared::error::{AppError, Result};
 /// with the previous fastembed-backed generator; today we don't pre-bind to
 /// any specific architecture — the model is whatever the caller's
 /// `model_dir` contains.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ModelConfig {
     /// Load whatever model is at this directory (config.json, tokenizer.json,
     /// model.safetensors).
     Local(PathBuf),
     /// Default placeholder used when no explicit config is provided.
     /// Returns an error on first generate() call until configured.
+    #[default]
     Unset,
 }
 
@@ -40,12 +41,6 @@ impl ModelConfig {
 
     pub fn model_name(&self) -> &'static str {
         DEFAULT_EMBEDDING_MODEL_NAME
-    }
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self::Unset
     }
 }
 
@@ -116,10 +111,8 @@ impl EmbeddingGenerator {
         // EmbeddingPort::embed_single is async; bridge by blocking the current
         // thread on a tokio runtime handle. Callers are already inside
         // spawn_blocking (Tauri command pattern) so this is fine.
-        let rt = tokio::runtime::Handle::try_current().map_err(|_| {
-            AppError::EmbeddingFailed {
-                reason: "EmbeddingGenerator::generate called outside a tokio runtime".into(),
-            }
+        let rt = tokio::runtime::Handle::try_current().map_err(|_| AppError::EmbeddingFailed {
+            reason: "EmbeddingGenerator::generate called outside a tokio runtime".into(),
         })?;
         let text = text.to_string();
         rt.block_on(async move {
@@ -132,10 +125,8 @@ impl EmbeddingGenerator {
 
     pub fn generate_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let svc = self.load_if_needed()?;
-        let rt = tokio::runtime::Handle::try_current().map_err(|_| {
-            AppError::EmbeddingFailed {
-                reason: "EmbeddingGenerator::generate_batch called outside a tokio runtime".into(),
-            }
+        let rt = tokio::runtime::Handle::try_current().map_err(|_| AppError::EmbeddingFailed {
+            reason: "EmbeddingGenerator::generate_batch called outside a tokio runtime".into(),
         })?;
         let texts = texts.to_vec();
         rt.block_on(async move {

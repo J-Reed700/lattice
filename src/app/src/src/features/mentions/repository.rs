@@ -263,34 +263,45 @@ impl MentionRepositoryPort for MentionRepository {
     }
 
     async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<MentionData>, AppError> {
-        let search_pattern = format!("%{}%", query);
+        let search_pattern = crate::shared::sql_like::contains_pattern(query);
 
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             r#"
             SELECT id, name, type, metadata, created_at
             FROM mentions
-            WHERE name LIKE ?
+            WHERE name LIKE ? ESCAPE '\'
             ORDER BY name
             LIMIT ?
             "#,
-            search_pattern,
-            limit
         )
+        .bind(search_pattern)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to search mentions: {}", e)))?;
 
         rows.into_iter()
             .map(|r| {
-                let id = r.id.ok_or_else(|| {
-                    AppError::Database("Failed to load mention: row has NULL id".to_string())
-                })?;
+                let id = r
+                    .try_get::<Option<String>, _>("id")
+                    .map_err(|e| AppError::Database(format!("Failed to load mention id: {}", e)))?
+                    .ok_or_else(|| {
+                        AppError::Database("Failed to load mention: row has NULL id".to_string())
+                    })?;
                 Ok(MentionData {
                     id,
-                    name: r.name,
-                    mention_type: r.r#type,
-                    metadata: r.metadata,
-                    created_at: r.created_at,
+                    name: r.try_get("name").map_err(|e| {
+                        AppError::Database(format!("Failed to load mention name: {}", e))
+                    })?,
+                    mention_type: r.try_get("type").map_err(|e| {
+                        AppError::Database(format!("Failed to load mention type: {}", e))
+                    })?,
+                    metadata: r.try_get("metadata").map_err(|e| {
+                        AppError::Database(format!("Failed to load mention metadata: {}", e))
+                    })?,
+                    created_at: r.try_get("created_at").map_err(|e| {
+                        AppError::Database(format!("Failed to load mention created_at: {}", e))
+                    })?,
                 })
             })
             .collect()

@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::value_objects::chunking_strategy::ChunkingStrategy;
-/// use vault_desktop::domain_types::DocumentId;
+/// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
+/// use lattice::domain_types::DocumentId;
 ///
 /// let strategy = ChunkingStrategy::FixedSize { size: 512 };
 /// let doc_id = DocumentId::new();
@@ -92,7 +92,7 @@ impl ChunkingStrategy {
 
         observed_sizes.sort_unstable();
         let p75_index = ((observed_sizes.len() * 3) / 4).min(observed_sizes.len() - 1);
-        let p75 = observed_sizes[p75_index];
+        let p75 = observed_sizes.get(p75_index).copied().unwrap_or_default();
         let inferred = ((p75 as f32) * 1.2).round() as usize;
 
         ChunkingStrategy::Semantic {
@@ -109,8 +109,8 @@ impl ChunkingStrategy {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::chunking_strategy::ChunkingStrategy;
-    /// use vault_desktop::domain_types::DocumentId;
+    /// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
+    /// use lattice::domain_types::DocumentId;
     ///
     /// let strategy = ChunkingStrategy::FixedSize { size: 100 };
     /// let chunks = strategy.chunk("Document text here", &DocumentId::new())?;

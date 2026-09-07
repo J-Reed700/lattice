@@ -298,7 +298,7 @@ mod tests {
         let expansion = expander.expand("the algorithm");
 
         assert!(expansion.expanded_terms.contains(&"the".to_string()));
-        assert!(expansion.term_expansions.get("the").is_none());
+        assert!(!expansion.term_expansions.contains_key("the"));
         assert!(expansion.term_expansions.contains_key("algorithm"));
     }
 

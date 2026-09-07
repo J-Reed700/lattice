@@ -16,8 +16,8 @@
 //! println!("Document referenced by {} other documents", backlinks.backlinks.len());
 //! ```
 
-use crate::features::mentions::dto::BacklinksResultDto;
 use crate::application::ports::MentionRepositoryPort;
+use crate::features::mentions::dto::BacklinksResultDto;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

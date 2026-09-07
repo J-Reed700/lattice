@@ -1,3 +1,5 @@
+use crate::features::embedding::service::EmbeddingService;
+use crate::features::embedding::EmbeddingServiceTrait;
 use crate::infrastructure::indexing::chunker::{ChunkerConfig, SemanticChunker};
 use crate::infrastructure::indexing::error::{IndexingError, Result};
 use crate::infrastructure::indexing::error_ext::IndexingResultExt;
@@ -10,10 +12,8 @@ use crate::infrastructure::indexing::progress::{IndexProgress, ProgressTracker};
 use crate::infrastructure::indexing::queue::IndexTask;
 use crate::infrastructure::indexing::storage::IndexStorage;
 use crate::infrastructure::indexing::transaction::FileIndexTransaction;
-use crate::features::embedding::service::EmbeddingService;
 use crate::infrastructure::services::file_storage::FileStorageService;
 use crate::infrastructure::services::file_type_detector::FileTypeDetector;
-use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::utils::patterns::observer::Observable;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -27,6 +27,12 @@ use tokio::sync::{mpsc, Mutex, Notify};
 pub struct PauseGate {
     paused: AtomicBool,
     notify: Notify,
+}
+
+impl Default for PauseGate {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PauseGate {
@@ -52,6 +58,18 @@ impl PauseGate {
             self.notify.notified().await;
         }
     }
+}
+
+/// The error for "the indexing actor is no longer running".
+///
+/// `Sender::send` on a bounded channel only fails when the receiver is gone —
+/// a full queue makes it *wait*, it does not error. Reporting these as
+/// `QueueFull` therefore described a condition that cannot occur, and sent
+/// anyone debugging a dead actor looking for backpressure instead.
+fn actor_stopped() -> IndexingError {
+    IndexingError::InternalError(
+        "indexing actor is not running (task ended or was shut down)".to_string(),
+    )
 }
 
 pub struct IndexingActor {
@@ -116,10 +134,49 @@ impl IndexingActor {
         Arc::clone(&self.event_observable)
     }
 
+    /// Abandon the current batch and return the actor to a usable state.
+    ///
+    /// Cancelling used to `break` out of the receive loop, which ended the
+    /// actor task and closed its channel — so a single cancel disabled
+    /// indexing for the rest of the process, and every later `index_file`
+    /// failed. Cancel means "stop the work in flight", not "shut down".
+    ///
+    /// Queued tasks belong to the cancelled batch, so they are discarded.
+    /// Returns `true` if a `Shutdown` was found while draining, so the caller
+    /// can honour it rather than swallowing it.
+    async fn cancel_current_batch(&mut self) -> bool {
+        *self.cancelled.lock().await = true;
+        self.progress_tracker.lock().await.cancel();
+
+        let mut discarded = 0usize;
+        let mut shutdown_requested = false;
+        while let Ok(task) = self.rx.try_recv() {
+            match task {
+                IndexTask::Shutdown => shutdown_requested = true,
+                _ => discarded += 1,
+            }
+        }
+
+        // Reset before returning to the loop. Nothing is in flight at this
+        // point — `run` processes one task at a time — so no in-progress
+        // folder walk can observe the flag flipping back.
+        *self.cancelled.lock().await = false;
+
+        if discarded > 0 {
+            tracing::info!(discarded, "indexing cancelled; discarded queued tasks");
+        }
+        shutdown_requested
+    }
+
     pub async fn run(mut self) {
         while let Some(task) = self.rx.recv().await {
+            // A cancel that arrived while this task sat in the queue: drop it
+            // along with the rest of the batch, then carry on serving.
             if *self.cancelled.lock().await {
-                break;
+                if self.cancel_current_batch().await {
+                    break;
+                }
+                continue;
             }
 
             match task {
@@ -153,9 +210,9 @@ impl IndexingActor {
                     }
                 }
                 IndexTask::CancelAll => {
-                    *self.cancelled.lock().await = true;
-                    self.progress_tracker.lock().await.cancel();
-                    break;
+                    if self.cancel_current_batch().await {
+                        break;
+                    }
                 }
                 IndexTask::Shutdown => {
                     break;
@@ -214,7 +271,8 @@ impl IndexingActor {
             file_record.id.clone(),
             Arc::clone(&self.file_storage),
             self.storage.pool.clone(),
-        );
+        )
+        .with_file_path(path.to_string_lossy().into_owned());
 
         if !file_type_info.is_indexable {
             self.storage
@@ -533,7 +591,7 @@ impl IndexingService {
         self.task_tx
             .send(IndexTask::IndexFile { path })
             .await
-            .map_err(|_| IndexingError::QueueFull)?;
+            .map_err(|_| actor_stopped())?;
         Ok(())
     }
 
@@ -541,7 +599,7 @@ impl IndexingService {
         self.task_tx
             .send(IndexTask::IndexFolder { path, recursive })
             .await
-            .map_err(|_| IndexingError::QueueFull)?;
+            .map_err(|_| actor_stopped())?;
         Ok(())
     }
 
@@ -549,7 +607,7 @@ impl IndexingService {
         self.task_tx
             .send(IndexTask::ReindexFile { path })
             .await
-            .map_err(|_| IndexingError::QueueFull)?;
+            .map_err(|_| actor_stopped())?;
         Ok(())
     }
 
@@ -557,7 +615,7 @@ impl IndexingService {
         self.task_tx
             .send(IndexTask::RemoveFile { path })
             .await
-            .map_err(|_| IndexingError::QueueFull)?;
+            .map_err(|_| actor_stopped())?;
         Ok(())
     }
 
@@ -565,7 +623,7 @@ impl IndexingService {
         self.task_tx
             .send(IndexTask::CancelAll)
             .await
-            .map_err(|_| IndexingError::QueueFull)?;
+            .map_err(|_| actor_stopped())?;
         Ok(())
     }
 

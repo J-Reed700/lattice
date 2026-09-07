@@ -89,8 +89,7 @@ impl<T: Clone> EventBus<T> {
         // info_span! parents under whatever span is current in the
         // publisher's task — typically a #[tracing::instrument]
         // command handler. Recording event_type as a span field so
-        // searches like `event_type=ConversationEvent` work in any
-        // log aggregator.
+        // searches by concrete event type work in any log aggregator.
         let span = tracing::info_span!(
             "event_enqueued",
             event_type = %self.event_type,
@@ -99,9 +98,9 @@ impl<T: Clone> EventBus<T> {
             payload: event,
             span,
         };
-        self.sender.send(envelope).map_err(|broadcast::error::SendError(env)| {
-            broadcast::error::SendError(env.payload)
-        })
+        self.sender
+            .send(envelope)
+            .map_err(|broadcast::error::SendError(env)| broadcast::error::SendError(env.payload))
     }
 
     /// Subscribe to events from this bus.
@@ -151,8 +150,14 @@ mod tests {
         let mut rx = bus.subscribe();
         bus.publish(TestEvent(1)).expect("send");
         let envelope = rx.recv().await.expect("recv");
-        assert!(envelope.span.metadata().is_some(), "span should have metadata");
-        assert_eq!(envelope.span.metadata().map(|m| m.name()), Some("event_enqueued"));
+        assert!(
+            envelope.span.metadata().is_some(),
+            "span should have metadata"
+        );
+        assert_eq!(
+            envelope.span.metadata().map(|m| m.name()),
+            Some("event_enqueued")
+        );
     }
 
     #[tokio::test]

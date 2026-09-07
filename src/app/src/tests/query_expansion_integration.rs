@@ -8,9 +8,9 @@
 #![allow(unused_imports)]
 #![allow(deprecated)]
 
+use lattice::search::{BM25Search, QueryExpander, QueryExpansionConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::collections::HashSet;
-use lattice::search::{BM25Search, QueryExpander, QueryExpansionConfig};
 async fn setup_test_corpus() -> BM25Search {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -32,8 +32,21 @@ async fn setup_test_corpus() -> BM25Search {
     .expect("Failed to create documents table");
 
     sqlx::query(
-        "CREATE VIRTUAL TABLE documents_fts USING fts5(
-            document_id UNINDEXED,
+        "CREATE TABLE text_chunks (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(id)
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("Failed to create text chunks table");
+
+    sqlx::query(
+        "CREATE VIRTUAL TABLE chunks_fts USING fts5(
+            chunk_id UNINDEXED,
             content,
             tokenize='porter unicode61 remove_diacritics 2'
         )",
@@ -78,8 +91,19 @@ async fn setup_test_corpus() -> BM25Search {
         .await
         .expect("Failed to insert document");
 
-        sqlx::query("INSERT INTO documents_fts (document_id, content) VALUES (?, ?)")
-            .bind(id)
+        let chunk_id = format!("chunk-{}", id);
+        sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, 0)",
+        )
+        .bind(&chunk_id)
+        .bind(id)
+        .bind(content)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert text chunk");
+
+        sqlx::query("INSERT INTO chunks_fts (chunk_id, content) VALUES (?, ?)")
+            .bind(&chunk_id)
             .bind(content)
             .execute(&pool)
             .await

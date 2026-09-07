@@ -32,6 +32,7 @@ pub mod file_storage;
 // Vertical-slice migration (qa): HyDE retrieval lives in features/qa/hyde/.
 #[path = "../../features/qa/hyde/mod.rs"]
 pub mod hyde;
+#[cfg(test)]
 pub mod mocks;
 
 // Service trait definitions for dependency injection
@@ -55,7 +56,6 @@ pub use conversation_service::ConversationService;
 pub use crate::features::tags::service_impl::TagServiceImpl;
 
 // Re-export function calling services
-pub use article_extractor::ArticleExtractorService;
 pub use crate::features::batch::services::file_import::BatchFileImportService;
 pub use crate::features::batch::services::url_import::BatchUrlImportService;
 pub use crate::features::function_calling::executor::FunctionExecutor;
@@ -64,8 +64,11 @@ pub use crate::features::function_calling::registry::{
 };
 pub use crate::features::web::services::archive::WebArchiveService;
 pub use crate::features::web::services::capture::WebCaptureService;
-pub use crate::features::web::services::ingestion::{WebIngestionConfig, WebIngestionService, WebIngestionServiceBuilder};
+pub use crate::features::web::services::ingestion::{
+    WebIngestionConfig, WebIngestionService, WebIngestionServiceBuilder,
+};
 pub use crate::features::web::services::web::WebService;
+pub use article_extractor::ArticleExtractorService;
 
 // Re-export search services
 pub use crate::infrastructure::search::hybrid::HybridSearchService;

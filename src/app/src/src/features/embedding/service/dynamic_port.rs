@@ -41,10 +41,7 @@ impl EmbeddingPort for DynamicEmbedding {
         }
     }
 
-    async fn embed_batch(
-        &self,
-        texts: &[String],
-    ) -> crate::shared::result::Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: &[String]) -> crate::shared::result::Result<Vec<Vec<f32>>> {
         match self.cached()? {
             Some(inner) => inner.embed_batch(texts).await,
             None => MockEmbeddingPort::new_degraded().embed_batch(texts).await,

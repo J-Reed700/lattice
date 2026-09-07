@@ -1,0 +1,47 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 240
+expression: snapshot_data
+---
+[
+  {
+    "action": "FileIndexed",
+    "description": "File indexed"
+  },
+  {
+    "action": "FileUpdated",
+    "description": "File updated"
+  },
+  {
+    "action": "FileDeleted",
+    "description": "File deleted"
+  },
+  {
+    "action": "SearchPerformed",
+    "description": "Search performed"
+  },
+  {
+    "action": "QuestionAnswered",
+    "description": "Question answered"
+  },
+  {
+    "action": "CredentialAccessed",
+    "description": "Credential accessed"
+  },
+  {
+    "action": "CredentialStored",
+    "description": "Credential stored"
+  },
+  {
+    "action": "ConfigChanged",
+    "description": "Configuration changed"
+  },
+  {
+    "action": "BackupCreated",
+    "description": "Backup created"
+  },
+  {
+    "action": "SystemStartup",
+    "description": "System startup"
+  }
+]

@@ -6,14 +6,13 @@ use crate::application::ports::BatchJobRepositoryPort;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::features::batch::services::url_import::BatchUrlImportService;
 use crate::features::batch::use_cases::{
-    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase,
-    ListBatchJobsUseCase, RetryFailedItemsUseCase, StartBatchFileImportUseCase,
-    StartBatchUrlImportUseCase,
+    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
+    RetryFailedItemsUseCase, StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
 };
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::indexing::use_cases::IndexFileUseCase;
-use crate::features::web::WebIngestionServiceTrait;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
+use crate::features::web::WebIngestionServiceTrait;
 use crate::infrastructure::setup::degraded_mocks;
 
 #[derive(Clone)]

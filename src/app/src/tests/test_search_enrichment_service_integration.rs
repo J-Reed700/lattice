@@ -23,12 +23,12 @@
 //! - Edge cases (empty results, missing chunks)
 //! - Performance benchmarks
 use chrono::Utc;
-use sqlx::SqlitePool;
-use std::time::Instant;
-use uuid::Uuid;
 use lattice::infrastructure::services::search_enrichment_service::{
     DocumentMetadata, SearchEnrichmentService,
 };
+use sqlx::SqlitePool;
+use std::time::Instant;
+use uuid::Uuid;
 
 /// Helper to create test database pool
 async fn create_test_db() -> SqlitePool {
@@ -137,7 +137,9 @@ async fn test_enrich_single_result() {
     insert_test_chunk(&pool, &chunk_id, &doc_id, "Test content", 0).await;
 
     // Enrich
-    let result = service.enrich_results(&[chunk_id.clone()]).await;
+    let result = service
+        .enrich_results(std::slice::from_ref(&chunk_id))
+        .await;
 
     assert!(result.is_ok());
     let metadata = result.unwrap();
@@ -243,7 +245,10 @@ async fn test_enrich_snippet_generation() {
     let chunk_id = Uuid::new_v4().to_string();
     insert_test_chunk(&pool, &chunk_id, &doc_id, &long_content, 0).await;
 
-    let result = service.enrich_results(&[chunk_id.clone()]).await.unwrap();
+    let result = service
+        .enrich_results(std::slice::from_ref(&chunk_id))
+        .await
+        .unwrap();
     let metadata = result.get(&chunk_id).unwrap();
 
     // Snippet should be truncated to 200 chars + "..."
@@ -267,7 +272,10 @@ async fn test_enrich_snippet_short_content() {
     let chunk_id = Uuid::new_v4().to_string();
     insert_test_chunk(&pool, &chunk_id, &doc_id, short_content, 0).await;
 
-    let result = service.enrich_results(&[chunk_id.clone()]).await.unwrap();
+    let result = service
+        .enrich_results(std::slice::from_ref(&chunk_id))
+        .await
+        .unwrap();
     let metadata = result.get(&chunk_id).unwrap();
 
     // Snippet should be the full content (no truncation)
@@ -289,7 +297,10 @@ async fn test_enrich_metadata_extraction() {
     let chunk_id = Uuid::new_v4().to_string();
     insert_test_chunk(&pool, &chunk_id, &doc_id, "Test content", 0).await;
 
-    let result = service.enrich_results(&[chunk_id.clone()]).await.unwrap();
+    let result = service
+        .enrich_results(std::slice::from_ref(&chunk_id))
+        .await
+        .unwrap();
     let metadata = result.get(&chunk_id).unwrap();
 
     // Verify all metadata fields
@@ -474,7 +485,10 @@ async fn test_enrich_unicode_content() {
     let chunk_id = Uuid::new_v4().to_string();
     insert_test_chunk(&pool, &chunk_id, &doc_id, unicode_content, 0).await;
 
-    let result = service.enrich_results(&[chunk_id.clone()]).await.unwrap();
+    let result = service
+        .enrich_results(std::slice::from_ref(&chunk_id))
+        .await
+        .unwrap();
     let metadata = result.get(&chunk_id).unwrap();
 
     assert_eq!(metadata.snippet, unicode_content);

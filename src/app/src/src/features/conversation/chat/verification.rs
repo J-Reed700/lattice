@@ -141,20 +141,23 @@ fn strip_citation_markers(sentence: &str) -> String {
     let mut idx = 0usize;
 
     while idx < chars.len() {
-        if chars[idx] == '[' {
+        let Some(&current) = chars.get(idx) else {
+            break;
+        };
+        if current == '[' {
             let mut j = idx + 1;
             let mut saw_digit = false;
-            while j < chars.len() && chars[j].is_ascii_digit() {
+            while chars.get(j).is_some_and(|ch| ch.is_ascii_digit()) {
                 saw_digit = true;
                 j += 1;
             }
-            if saw_digit && j < chars.len() && chars[j] == ']' {
+            if saw_digit && chars.get(j) == Some(&']') {
                 idx = j + 1;
                 continue;
             }
         }
 
-        out.push(chars[idx]);
+        out.push(current);
         idx += 1;
     }
 
@@ -172,19 +175,19 @@ fn extract_sentence_citation_indices(sentence: &str, source_count: usize) -> Vec
     let mut out = Vec::new();
 
     while idx < chars.len() {
-        if chars[idx] != '[' {
+        if chars.get(idx) != Some(&'[') {
             idx += 1;
             continue;
         }
 
         let mut j = idx + 1;
         let mut digits = String::new();
-        while j < chars.len() && chars[j].is_ascii_digit() {
-            digits.push(chars[j]);
+        while let Some(ch) = chars.get(j).filter(|ch| ch.is_ascii_digit()) {
+            digits.push(*ch);
             j += 1;
         }
 
-        if digits.is_empty() || j >= chars.len() || chars[j] != ']' {
+        if digits.is_empty() || chars.get(j) != Some(&']') {
             idx += 1;
             continue;
         }
@@ -327,6 +330,7 @@ mod tests {
             section: None,
             chunk_index: None,
             chunk_excerpts: None,
+            citation_id: None,
         }
     }
 

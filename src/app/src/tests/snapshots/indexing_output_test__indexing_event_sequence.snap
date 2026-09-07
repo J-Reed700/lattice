@@ -1,0 +1,58 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 163
+expression: events
+---
+[
+  {
+    "type": "Started",
+    "total_files": 3
+  },
+  {
+    "type": "FileStarted",
+    "path": "file1.txt",
+    "current": 1,
+    "total": 3
+  },
+  {
+    "type": "FileCompleted",
+    "path": "file1.txt",
+    "chunks": 5,
+    "duration_ms": 500,
+    "current": 1,
+    "total": 3
+  },
+  {
+    "type": "FileStarted",
+    "path": "file2.pdf",
+    "current": 2,
+    "total": 3
+  },
+  {
+    "type": "FileCompleted",
+    "path": "file2.pdf",
+    "chunks": 8,
+    "duration_ms": 1200,
+    "current": 2,
+    "total": 3
+  },
+  {
+    "type": "FileStarted",
+    "path": "file3.md",
+    "current": 3,
+    "total": 3
+  },
+  {
+    "type": "FileError",
+    "path": "file3.md",
+    "error": "File not found",
+    "current": 3,
+    "total": 3
+  },
+  {
+    "type": "Completed",
+    "total_files": 2,
+    "total_chunks": 13,
+    "duration_ms": 1700
+  }
+]

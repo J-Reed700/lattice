@@ -202,11 +202,11 @@ pub async fn start_batch_url_import(
     // Start batch (returns job_id immediately, processing happens in background)
     let use_case_request = StartBatchUrlImportRequestDto {
         urls: request.urls.clone(),
-        options: request.options.map(|opts| {
-            crate::features::batch::dto::BatchImportOptionsDto {
+        options: request
+            .options
+            .map(|opts| crate::features::batch::dto::BatchImportOptionsDto {
                 extract_article: opts.extract_article,
-            }
-        }),
+            }),
     };
     let result = use_case
         .execute(use_case_request)

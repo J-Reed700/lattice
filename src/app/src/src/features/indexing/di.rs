@@ -5,17 +5,17 @@ use std::sync::{Arc, RwLock};
 use sqlx::SqlitePool;
 
 use crate::application::ports::{
-    BatchJobRepositoryPort, ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort,
-    DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
-    FileStoragePort, FileSystemPort, VectorSearchPort,
+    BatchJobRepositoryPort, ChunkRepositoryPort, ContentAddressedStoragePort,
+    ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, EmbeddingPort,
+    EmbeddingRepositoryPort, FileStoragePort, FileSystemPort, TranscriptionPort, VectorSearchPort,
 };
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::features::embedding::service::DynamicEmbedding;
-use crate::features::indexing::IndexingServiceTrait;
 use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
 };
+use crate::features::indexing::IndexingServiceTrait;
 use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
@@ -43,6 +43,10 @@ pub struct IndexingDi {
     pub file_storage: Arc<dyn FileStoragePort>,
     pub file_system: Arc<dyn FileSystemPort>,
     pub uow_factory: Arc<dyn UnitOfWorkFactory>,
+
+    /// On-device speech-to-text, shared with the content-extraction adapter so
+    /// audio ingest and the explicit `transcribe_file` command use one engine.
+    pub transcription: Arc<dyn TranscriptionPort>,
 }
 
 pub fn build(
@@ -61,13 +65,17 @@ pub fn build(
     let embedding_repo =
         Arc::new(EmbeddingRepository::new(db_pool.clone())) as Arc<dyn EmbeddingRepositoryPort>;
     let uow_factory =
-        Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
+        Arc::new(SqliteUnitOfWorkFactory::new(db_pool.clone())) as Arc<dyn UnitOfWorkFactory>;
 
     let content_storage =
         Arc::new(ContentAddressedStorage::new()?) as Arc<dyn ContentAddressedStoragePort>;
     let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
-    let content_extractor =
-        Arc::new(ContentExtractionAdapter::new()) as Arc<dyn ContentExtractionPort>;
+    // Build the transcription port once and share the same Arc with the
+    // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
+    let transcription = crate::features::transcription::di::build(db_pool).port;
+    let content_extractor = Arc::new(ContentExtractionAdapter::with_transcription(
+        transcription.clone(),
+    )) as Arc<dyn ContentExtractionPort>;
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
 
     let indexing_embedding =
@@ -98,6 +106,7 @@ pub fn build(
         indexing_embedding,
         document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
         uow_factory.clone(),
+        vector_search.clone(),
     ));
     let delete_document_use_case = Arc::new(DeleteDocumentUseCase::new(
         document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
@@ -107,7 +116,7 @@ pub fn build(
         file_storage.clone(),
     ));
     let rename_document_use_case = Arc::new(RenameDocumentUseCase::new(
-        document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
+        document_repo.clone() as Arc<dyn DocumentRepositoryPort>
     ));
 
     Ok(IndexingDi {
@@ -124,5 +133,6 @@ pub fn build(
         file_storage,
         file_system,
         uow_factory,
+        transcription,
     })
 }

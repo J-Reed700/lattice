@@ -28,14 +28,13 @@
 //! });
 //! ```
 
+use crate::application::services::context_window_builder::ContextWindowBuilder;
+use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{
     CustomToolSettingsDto, LLMPromptSettingsDto, RouterSettingsDto,
 };
-use crate::application::services::context_window_builder::ContextWindowBuilder;
-use crate::domain::qa::hyde::QueryType;
-use crate::infrastructure::events::ConversationEvent;
 use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -44,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
+use tauri::Emitter;
 use tracing::{info, warn};
 
 // Submodules live in the sibling `chat/` directory at this file's
@@ -71,33 +71,35 @@ use self::persistence::{
 use self::prompting::{build_kb_context, enforce_numeric_citation_format, PromptMessageBuilder};
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    deduplicate_sources, load_recent_document_metadata, run_retrieval_pipeline,
-    RouterDecisionOutcome,
+    assign_citation_ids, citation_ids_by_document, deduplicate_sources,
+    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
 use self::verification::{verify_response_grounding_summary, GroundingReport};
 
-pub fn cancel_generation_for_conversation(conversation_id: &str) -> bool {
-    cancellation::request_cancel(conversation_id)
+pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
+    cancellation::request_cancel(conversation_id, request_id)
 }
 
 struct TurnCancellationGuard {
-    conversation_id: String,
+    request_id: String,
 }
 
 impl TurnCancellationGuard {
-    fn start(conversation_id: &str) -> Self {
-        begin_turn(conversation_id);
-        Self {
-            conversation_id: conversation_id.to_string(),
+    fn start(request_id: String, conversation_id: &str) -> Result<Self> {
+        if !begin_turn(&request_id, conversation_id) {
+            return Err(AppError::InvalidState(
+                "A generation with this request ID is already in flight.".to_string(),
+            ));
         }
+        Ok(Self { request_id })
     }
 }
 
 impl Drop for TurnCancellationGuard {
     fn drop(&mut self) {
-        finish_turn(&self.conversation_id);
+        finish_turn(&self.request_id);
     }
 }
 
@@ -129,6 +131,28 @@ pub struct ChatResponse {
     pub sources: Vec<SourceDto>,
     /// Detailed per-layer timing metrics in milliseconds
     pub timing_metrics: Option<ConversationFlowTimingMetrics>,
+}
+
+/// Retrieval trace for one turn (BRIEF rank 17, contract §4.6).
+///
+/// `searched_documents` is the size of the document set the hard space-scope
+/// filter actually allowed, not the size of the corpus — a scoped conversation
+/// must not claim to have read the whole vault.
+///
+/// `Serialize` only, deliberately: this rides inside the `llm-stream` event and
+/// the assistant message's metadata JSON, neither of which is in the specta
+/// collector.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalTraceDto {
+    pub searched_documents: usize,
+    pub passages: usize,
+    pub files: usize,
+    /// "vault" | "linked"
+    pub scope: String,
+    /// Why the knowledge base could not be searched, when it could not be.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -272,13 +296,14 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     message: String,
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
+    request_id: Option<String>,
     window: tauri::Window<R>,
 ) -> Result<ChatResponse> {
     if cancel_only.unwrap_or(false) {
         let conv_id = conversation_id.ok_or_else(|| {
             AppError::InvalidInput("Conversation ID is required to cancel generation".to_string())
         })?;
-        let cancelled = cancel_generation_for_conversation(&conv_id);
+        let cancelled = cancel_generation_for_conversation(&conv_id, request_id.as_deref());
         return Ok(ChatResponse {
             conversation_id: conv_id,
             message: if cancelled {
@@ -324,7 +349,10 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let conversation_init_start = Instant::now();
     let conv_id =
         get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
-    let _turn_guard = TurnCancellationGuard::start(&conv_id);
+    let turn_id = request_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let _turn_guard = TurnCancellationGuard::start(turn_id.clone(), &conv_id)?;
     flow_metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
 
     let conv_service = container.conversation_service();
@@ -356,14 +384,6 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             &prompt_settings.system_prompt,
         )
         .await?;
-    trigger_background_summary_refresh_if_needed(
-        container,
-        &conv_service,
-        &conv_id,
-        &llm,
-        max_tokens,
-    )
-    .await;
     flow_metrics.context_build_ms = elapsed_ms(context_build_start);
 
     let router_start = Instant::now();
@@ -406,7 +426,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     flow_metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);
     flow_metrics.retrieval_subtimings = Some(retrieval.sub_timings.clone());
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
-    if is_cancel_requested(&conv_id) {
+    if is_cancel_requested(&turn_id) {
         return Err(cancellation_error());
     }
 
@@ -430,7 +450,6 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         );
     }
 
-    let kb_context = build_kb_context(&budgeted_results);
     let followup_context_text =
         if let Some((context_text, followup_sources)) = retrieval.followup_context.take() {
             info!(
@@ -442,6 +461,65 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         } else {
             None
         };
+
+    // Number the sources *after* every step that can reorder or replace the
+    // list (including the follow-up swap above), then build the prompt from
+    // those same numbers. Assigning earlier would let the follow-up path
+    // renumber behind the prompt's back.
+    assign_citation_ids(&mut retrieval.sources);
+
+    // Retrieval trace (BRIEF rank 17, contract §4.6). Emitted before generation
+    // so the UI can show its reading before its writing, and persisted into the
+    // assistant message metadata so it survives a reload. Nothing is emitted
+    // when KB retrieval never ran — an absent trace is not a trace of zeros.
+    let retrieval_trace = if retrieval.searched_documents > 0
+        || !retrieval.sources.is_empty()
+        || retrieval.kb_unavailable_reason.is_some()
+    {
+        let passages: usize = retrieval
+            .sources
+            .iter()
+            .map(|s| s.chunk_excerpts.as_ref().map_or(1, |c| c.len().max(1)))
+            .sum();
+        let files = retrieval
+            .sources
+            .iter()
+            .map(|s| s.document_id.as_str())
+            .collect::<HashSet<_>>()
+            .len();
+        let trace = RetrievalTraceDto {
+            searched_documents: retrieval.searched_documents,
+            passages,
+            files,
+            scope: if retrieval.scope_is_linked {
+                "linked"
+            } else {
+                "vault"
+            }
+            .to_string(),
+            unavailable_reason: retrieval.kb_unavailable_reason.clone(),
+        };
+        if let Err(e) = window.emit(
+            "llm-stream",
+            serde_json::json!({
+                "conversationId": conv_id,
+                "requestId": turn_id,
+                "done": false,
+                "status": "retrieval",
+                "retrieval": trace,
+            }),
+        ) {
+            warn!(error = %e, "Failed to emit retrieval trace");
+        }
+        Some(trace)
+    } else {
+        None
+    };
+
+    let kb_context = build_kb_context(
+        &budgeted_results,
+        &citation_ids_by_document(&retrieval.sources),
+    );
     let has_linked_web_sources_context = linked_web_sources_context.is_some();
     let has_grounded_context = followup_context_text.is_some()
         || kb_context.is_some()
@@ -510,6 +588,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             container,
             &conv_service,
             &conv_id,
+            &turn_id,
             &llm,
             &window,
             &context,
@@ -597,6 +676,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 context.len(),
                 sources,
                 verification_metadata,
+                retrieval_trace.clone(),
                 message_tokens,
                 &llm,
             )
@@ -726,7 +806,7 @@ fn retrieval_subtimings_or_default(
     flow_metrics
         .retrieval_subtimings
         .clone()
-        .unwrap_or_else(RetrievalSubTimingMetrics::default)
+        .unwrap_or_default()
 }
 
 fn generation_subtimings_or_default(
@@ -735,7 +815,7 @@ fn generation_subtimings_or_default(
     flow_metrics
         .generation_subtimings
         .clone()
-        .unwrap_or_else(ToolLoopTimingMetrics::default)
+        .unwrap_or_default()
 }
 
 async fn validate_and_guard_chat_request(container: &Container, message: &str) -> Result<String> {
@@ -945,8 +1025,7 @@ async fn build_conversation_context(
         Arc::new(move |text: &str| llm.count_tokens(text))
     };
 
-    let context_builder = ContextWindowBuilder::new(concrete_service, max_tokens, token_counter)
-        .with_recent_message_count(8);
+    let context_builder = ContextWindowBuilder::new(concrete_service, max_tokens, token_counter);
 
     let conversation_aggregate = conv_service.get_conversation(conversation_id).await?;
     let conversation_system_prompt = conversation_aggregate
@@ -1011,79 +1090,6 @@ async fn build_conversation_context(
         conversation_document_context,
         linked_web_sources_context,
     ))
-}
-
-async fn trigger_background_summary_refresh_if_needed(
-    container: &Container,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-    max_tokens: usize,
-) {
-    const SUMMARY_TRIGGER_RATIO: f64 = 0.72;
-    const ESTIMATED_RESPONSE_RATIO: f64 = 0.25;
-    const MIN_COMPLETED_MESSAGES: usize = 10;
-
-    let aggregate = match conv_service.get_conversation(conversation_id).await {
-        Ok(Some(aggregate)) => aggregate,
-        Ok(None) => return,
-        Err(e) => {
-            warn!(
-                conversation_id = conversation_id,
-                error = %e,
-                "Failed loading conversation for summary scheduling"
-            );
-            return;
-        }
-    };
-
-    let completed_messages: Vec<_> = aggregate
-        .messages()
-        .iter()
-        .filter(|m| m.is_completed())
-        .cloned()
-        .collect();
-    if completed_messages.len() < MIN_COMPLETED_MESSAGES {
-        return;
-    }
-
-    let transcript_tokens: usize = completed_messages
-        .iter()
-        .map(|m| llm.count_tokens(&format!("{}: {}", m.role, m.content)))
-        .sum();
-    let projected_total_tokens =
-        transcript_tokens + (max_tokens as f64 * ESTIMATED_RESPONSE_RATIO) as usize;
-    let trigger_threshold_tokens = (max_tokens as f64 * SUMMARY_TRIGGER_RATIO) as usize;
-
-    if projected_total_tokens < trigger_threshold_tokens {
-        return;
-    }
-
-    let event = ConversationEvent::summary_refresh_requested(
-        conversation_id.to_string(),
-        completed_messages,
-        transcript_tokens,
-        Arc::clone(llm),
-    );
-    // Send awaits backpressure if the saga is buried (rare — channel
-    // capacity is 32, summary refreshes are at most one per chat turn).
-    // SendError only fires if the saga has been dropped, which would
-    // mean app shutdown is in progress; treat that as a non-error.
-    if let Err(e) = container.conversation_command_tx().send(event).await {
-        warn!(
-            conversation_id = conversation_id,
-            error = %e,
-            "Conversation summary saga unavailable; refresh skipped (likely shutdown)"
-        );
-        return;
-    }
-
-    info!(
-        conversation_id = conversation_id,
-        projected_total_tokens = projected_total_tokens,
-        threshold_tokens = trigger_threshold_tokens,
-        "Sent conversation summary refresh command"
-    );
 }
 
 async fn resolve_router_decision(
@@ -1158,6 +1164,21 @@ const OPTIONAL_BUILTIN_TOOL_NAMES: [&str; 4] = [
 ];
 const WIKI_OPTIONAL_TOOL_NAMES: [&str; 2] = ["wiki_search", "wiki_summary"];
 
+fn build_optional_tool_allowlist(
+    tool_preferences: Option<&ToolPreferences>,
+) -> Option<HashSet<String>> {
+    tool_preferences
+        .and_then(|preferences| preferences.enabled_tools.as_ref())
+        .map(|enabled_tools| {
+            enabled_tools
+                .iter()
+                .map(|name| name.trim())
+                .filter(|name| !name.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+}
+
 fn build_llm_tool_definitions(
     container: &Container,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
@@ -1175,16 +1196,7 @@ fn build_llm_tool_definitions(
             .map(|tool| (tool.name.clone(), tool))
             .collect();
 
-    let optional_allowlist = tool_preferences
-        .and_then(|preferences| preferences.enabled_tools.as_ref())
-        .map(|enabled_tools| {
-            enabled_tools
-                .iter()
-                .map(|name| name.trim())
-                .filter(|name| !name.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<HashSet<String>>()
-        });
+    let optional_allowlist = build_optional_tool_allowlist(tool_preferences);
 
     let registry = container.function_registry();
     let domain_tools = registry.list_tools();
@@ -1199,7 +1211,7 @@ fn build_llm_tool_definitions(
             if OPTIONAL_BUILTIN_TOOL_NAMES.contains(&tool_name) {
                 return optional_allowlist
                     .as_ref()
-                    .map_or(true, |allowlist| allowlist.contains(tool_name));
+                    .is_some_and(|allowlist| allowlist.contains(tool_name));
             }
 
             if !enabled_custom_tools.contains_key(tool_name) {
@@ -1209,7 +1221,7 @@ fn build_llm_tool_definitions(
 
             optional_allowlist
                 .as_ref()
-                .map_or(true, |allowlist| allowlist.contains(tool_name))
+                .is_none_or(|allowlist| allowlist.contains(tool_name))
         })
         .map(|t| crate::application::ports::ToolDefinition {
             name: t.name.clone(),
@@ -1228,7 +1240,7 @@ fn build_llm_tool_definitions(
             .filter(|tool| {
                 optional_allowlist
                     .as_ref()
-                    .map_or(true, |allowlist| allowlist.contains(&tool.name))
+                    .is_none_or(|allowlist| allowlist.contains(&tool.name))
             })
             .map(|tool| crate::application::ports::ToolDefinition {
                 name: tool.name.clone(),
@@ -1256,13 +1268,22 @@ fn build_llm_tool_definitions(
     definitions
 }
 
+/// Derive a conversation title from the user's first message.
+///
+/// Truncation is by **characters**, not bytes. `&message[..50]` panics when
+/// byte 50 lands inside a multi-byte character, so any first message longer
+/// than 50 bytes containing an accent, CJK character, or emoji took down the
+/// chat command handler.
 fn generate_title(message: &str) -> String {
-    const MAX_LEN: usize = 50;
+    const MAX_CHARS: usize = 50;
 
-    if message.len() <= MAX_LEN {
+    if message.chars().count() <= MAX_CHARS {
         message.to_string()
     } else {
-        format!("{}...", &message[..MAX_LEN])
+        format!(
+            "{}...",
+            crate::shared::text_utils::safe_truncate(message, MAX_CHARS)
+        )
     }
 }
 
@@ -1271,6 +1292,48 @@ mod tests {
     use super::*;
     use crate::features::search::dto::SearchResultDto;
     use std::collections::HashMap;
+
+    /// Byte-slicing a string at a fixed offset panics when that offset falls
+    /// inside a multi-byte character. Any first chat message over 50 bytes
+    /// containing non-ASCII text used to bring down the command handler.
+    #[test]
+    fn generate_title_does_not_panic_on_multibyte_input() {
+        let cases = [
+            // Accents: 'é' is 2 bytes, so byte 50 lands mid-character.
+            "Bonjour, je voudrais discuter des propriétés thermodynamiques de ce système.",
+            // CJK: every character is 3 bytes.
+            "这是一个很长的中文句子用来测试标题生成功能是否会因为多字节字符而崩溃。",
+            // Emoji: 4 bytes each, placed to straddle the boundary.
+            "Let's talk about the launch 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀 today",
+            // Mixed scripts.
+            "Café ☕ meeting notes こんにちは everyone, here is the agenda for today's sync",
+        ];
+
+        for message in cases {
+            let title = generate_title(message);
+            assert!(
+                !title.is_empty(),
+                "title should not be empty for {:?}",
+                message
+            );
+            // 50 characters plus the ellipsis.
+            assert!(
+                title.chars().count() <= 53,
+                "title {:?} exceeded the character budget",
+                title
+            );
+        }
+    }
+
+    #[test]
+    fn generate_title_truncates_by_characters_not_bytes() {
+        // 60 CJK characters = 180 bytes. A byte-based truncation would cut at
+        // ~16 characters (or panic); character-based gives exactly 50.
+        let message = "字".repeat(60);
+        let title = generate_title(&message);
+        assert_eq!(title.chars().count(), 53, "50 chars plus '...'");
+        assert!(title.ends_with("..."));
+    }
 
     #[test]
     fn test_generate_title_short() {
@@ -1334,6 +1397,24 @@ mod tests {
         assert!(flags.force_kb_search);
         assert!(flags.force_web_search);
         assert!(!flags.force_followup_mode);
+    }
+
+    #[test]
+    fn optional_builtin_tools_require_an_explicit_per_turn_allowlist() {
+        let no_preferences = build_optional_tool_allowlist(None);
+        assert!(no_preferences.is_none());
+        assert!(!no_preferences
+            .as_ref()
+            .is_some_and(|allowlist| allowlist.contains("fetch_url_content")));
+
+        let preferences = ToolPreferences {
+            enabled_tools: Some(vec!["fetch_url_content".to_string()]),
+            ..ToolPreferences::default()
+        };
+        let explicit = build_optional_tool_allowlist(Some(&preferences));
+        assert!(explicit
+            .as_ref()
+            .is_some_and(|allowlist| allowlist.contains("fetch_url_content")));
     }
 
     fn make_result(id: &str, doc_id: &str, score: f32) -> SearchResultDto {

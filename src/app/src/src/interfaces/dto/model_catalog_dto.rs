@@ -18,6 +18,8 @@ pub enum ModelCategoryDto {
     Embedding,
     /// OCR model
     OCR,
+    /// On-device speech-to-text model
+    Transcription,
 }
 
 impl From<crate::features::model_management::domain::ModelCategory> for ModelCategoryDto {
@@ -26,6 +28,9 @@ impl From<crate::features::model_management::domain::ModelCategory> for ModelCat
             crate::features::model_management::domain::ModelCategory::LLM => Self::LLM,
             crate::features::model_management::domain::ModelCategory::Embedding => Self::Embedding,
             crate::features::model_management::domain::ModelCategory::OCR => Self::OCR,
+            crate::features::model_management::domain::ModelCategory::Transcription => {
+                Self::Transcription
+            }
         }
     }
 }
@@ -67,10 +72,14 @@ pub enum CompatibilityLevelDto {
 impl From<crate::features::model_management::domain::CompatibilityLevel> for CompatibilityLevelDto {
     fn from(domain: crate::features::model_management::domain::CompatibilityLevel) -> Self {
         match domain {
-            crate::features::model_management::domain::CompatibilityLevel::Incompatible => Self::Incompatible,
+            crate::features::model_management::domain::CompatibilityLevel::Incompatible => {
+                Self::Incompatible
+            }
             crate::features::model_management::domain::CompatibilityLevel::Poor => Self::Poor,
             crate::features::model_management::domain::CompatibilityLevel::Good => Self::Good,
-            crate::features::model_management::domain::CompatibilityLevel::Excellent => Self::Excellent,
+            crate::features::model_management::domain::CompatibilityLevel::Excellent => {
+                Self::Excellent
+            }
         }
     }
 }
@@ -179,7 +188,10 @@ pub enum EmbeddingCompatibilityDto {
     /// Model is loadable today.
     Compatible { architecture: String },
     /// Recognized architecture but not yet implemented in the local runtime.
-    Incompatible { architecture: String, reason: String },
+    Incompatible {
+        architecture: String,
+        reason: String,
+    },
     /// We couldn't tell from tags. Treated as not-yet-supported.
     Unknown,
 }
@@ -191,7 +203,13 @@ impl From<crate::features::embedding::compatibility::EmbeddingCompatibility>
         use crate::features::embedding::compatibility::EmbeddingCompatibility as E;
         match domain {
             E::Compatible { architecture } => Self::Compatible { architecture },
-            E::Incompatible { architecture, reason } => Self::Incompatible { architecture, reason },
+            E::Incompatible {
+                architecture,
+                reason,
+            } => Self::Incompatible {
+                architecture,
+                reason,
+            },
             E::Unknown => Self::Unknown,
         }
     }
@@ -280,7 +298,9 @@ pub struct ModelRecommendationDto {
     pub popularity_likes: Option<u64>,
 }
 
-impl From<crate::features::model_management::domain::ModelRecommendation> for ModelRecommendationDto {
+impl From<crate::features::model_management::domain::ModelRecommendation>
+    for ModelRecommendationDto
+{
     fn from(domain: crate::features::model_management::domain::ModelRecommendation) -> Self {
         Self {
             model: domain.model.into(),

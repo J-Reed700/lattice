@@ -4,9 +4,7 @@
 //! These functions can be used with both connection pools and transactions.
 
 use crate::features::embedding::entity::Embedding as DomainEmbedding;
-use crate::features::embedding::persistence_mapper::{
-    EmbeddingDTO, EmbeddingMapper,
-};
+use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapper};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqliteConnection};
@@ -30,8 +28,7 @@ pub async fn save(
 
     let dto = EmbeddingMapper::to_dto(entity, vector);
 
-    let embedding_bytes =
-        bincode::serialize(&dto.embedding).map_err(|e| AppError::Serialization(e.to_string()))?;
+    let embedding_bytes = crate::features::embedding::encoding::encode_embedding(&dto.embedding);
 
     let id = format!("emb_{}", dto.chunk_id);
     let dimension = dto.dimension as i32;
@@ -85,8 +82,8 @@ pub async fn save_batch(
         .into_iter()
         .map(|(entity, vector)| {
             let dto = EmbeddingMapper::to_dto(&entity, vector);
-            let embedding_bytes = bincode::serialize(&dto.embedding)
-                .map_err(|e| AppError::Serialization(e.to_string()))?;
+            let embedding_bytes =
+                crate::features::embedding::encoding::encode_embedding(&dto.embedding);
             let id = format!("emb_{}", dto.chunk_id);
             let dimension = dto.dimension as i32;
             let created_at = dto.computed_at.to_rfc3339();
@@ -172,8 +169,8 @@ pub async fn find_by_chunk_id(
 
     match record {
         Some(rec) => {
-            let vector: Vec<f32> = bincode::deserialize(&rec.embedding)
-                .map_err(|e| AppError::Deserialization(e.to_string()))?;
+            let vector: Vec<f32> =
+                crate::features::embedding::encoding::decode_embedding(&rec.embedding)?;
 
             let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
                 .map_err(|e| AppError::Parsing(e.to_string()))?
@@ -215,8 +212,8 @@ pub async fn find_by_document_id(
 
     let mut results = Vec::new();
     for rec in records {
-        let vector: Vec<f32> = bincode::deserialize(&rec.embedding)
-            .map_err(|e| AppError::Deserialization(e.to_string()))?;
+        let vector: Vec<f32> =
+            crate::features::embedding::encoding::decode_embedding(&rec.embedding)?;
 
         let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
             .map_err(|e| AppError::Parsing(e.to_string()))?

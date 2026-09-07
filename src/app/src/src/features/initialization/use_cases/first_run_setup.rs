@@ -1,4 +1,3 @@
-
 use crate::application::ports::system_info::SystemInfoPort;
 use crate::domain::curated_models::{get_curated_llm_models, recommend_chat_model_for_ram};
 use crate::domain::embedding_constants::{
@@ -92,7 +91,11 @@ impl CheckFirstRunStatusUseCase {
             estimated_size_bytes: embedding.as_ref().map(|m| m.estimated_size_bytes),
             embedding_model: embedding,
             chat_model: chat,
-            total_estimated_size_bytes: if total_size > 0 { Some(total_size) } else { None },
+            total_estimated_size_bytes: if total_size > 0 {
+                Some(total_size)
+            } else {
+                None
+            },
         }
     }
 
@@ -102,7 +105,11 @@ impl CheckFirstRunStatusUseCase {
         let effective_ram_gb = match &self.system_info {
             Some(probe) => match probe.get_system_info().await {
                 Ok(info) => {
-                    let vram = info.gpu_info.as_ref().and_then(|g| g.vram_gb).unwrap_or(0.0);
+                    let vram = info
+                        .gpu_info
+                        .as_ref()
+                        .and_then(|g| g.vram_gb)
+                        .unwrap_or(0.0);
                     info.total_ram_gb + vram
                 }
                 Err(e) => {
@@ -311,12 +318,12 @@ mod tests {
         let low_end_probe = std::sync::Arc::new(MockSystemInfoPort::low_end());
         let low_end_use_case =
             CheckFirstRunStatusUseCase::with_system_info(repo.clone(), low_end_probe);
-        let low_end_response = low_end_use_case
-            .execute()
-            .await
-            .expect("low-end execute");
+        let low_end_response = low_end_use_case.execute().await.expect("low-end execute");
         assert_eq!(
-            low_end_response.chat_model.as_ref().map(|m| m.model_id.as_str()),
+            low_end_response
+                .chat_model
+                .as_ref()
+                .map(|m| m.model_id.as_str()),
             Some("phi-3-mini-4k-instruct-q4_k_m"),
             "4 GB box should get the small-tier chat model"
         );
@@ -325,12 +332,12 @@ mod tests {
         let default_probe = std::sync::Arc::new(MockSystemInfoPort::new());
         let default_use_case =
             CheckFirstRunStatusUseCase::with_system_info(repo.clone(), default_probe);
-        let default_response = default_use_case
-            .execute()
-            .await
-            .expect("default execute");
+        let default_response = default_use_case.execute().await.expect("default execute");
         assert_eq!(
-            default_response.chat_model.as_ref().map(|m| m.model_id.as_str()),
+            default_response
+                .chat_model
+                .as_ref()
+                .map(|m| m.model_id.as_str()),
             Some("qwen2.5-7b-instruct-q4_k_m"),
             "16 GB box should get the high-tier chat model"
         );

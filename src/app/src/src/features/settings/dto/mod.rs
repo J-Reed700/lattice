@@ -43,6 +43,10 @@ pub struct SettingsDto {
 
     #[serde(default)]
     pub vault: VaultSettingsDto,
+
+    /// Onboarding state (what the user has already been shown)
+    #[serde(default)]
+    pub onboarding: OnboardingSettingsDto,
 }
 
 /// Indexing settings.
@@ -442,6 +446,7 @@ pub struct BackupSettingsDto {
 /// localStorage. Phase 4b moved them out of the Zustand `privacy` slice.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct PrivacySettingsDto {
     /// Send anonymous usage statistics. Off by default.
     pub telemetry_enabled: bool,
@@ -452,6 +457,7 @@ pub struct PrivacySettingsDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct VaultSettingsDto {
     /// Empty string = `~/Lattice`.
     #[serde(default)]
@@ -465,14 +471,20 @@ pub struct VaultSettingsDto {
     pub watch_external_changes: bool,
 }
 
-impl Default for VaultSettingsDto {
-    fn default() -> Self {
-        Self {
-            vault_path: String::new(),
-            enabled: false,
-            watch_external_changes: false,
-        }
-    }
+/// Onboarding state — what the user has already been through.
+///
+/// SSOT for the first-run gate. This lived in the frontend's `localStorage`
+/// under `lattice:first-run-skipped`, which put state the app's startup path
+/// acts on outside the repository (CLAUDE.md Repository Barrier rule 3). The
+/// frontend migrates the legacy key into this field once and then deletes it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(Default)]
+pub struct OnboardingSettingsDto {
+    /// True once the user has installed the recommended models, chosen their
+    /// own, or said "not now". The first-run modal never re-opens while set.
+    #[serde(default)]
+    pub first_run_dismissed: bool,
 }
 
 // ============================================================================
@@ -499,6 +511,8 @@ pub enum SettingsCategory {
     Privacy,
     /// Vault portability (markdown mirror folder)
     Vault,
+    /// Onboarding state (first-run gate)
+    Onboarding,
 }
 
 impl SettingsCategory {
@@ -513,6 +527,7 @@ impl SettingsCategory {
             SettingsCategory::Backup,
             SettingsCategory::Privacy,
             SettingsCategory::Vault,
+            SettingsCategory::Onboarding,
         ]
     }
 
@@ -527,6 +542,7 @@ impl SettingsCategory {
             SettingsCategory::Backup => "backup",
             SettingsCategory::Privacy => "privacy",
             SettingsCategory::Vault => "vault",
+            SettingsCategory::Onboarding => "onboarding",
         }
     }
 }
@@ -544,6 +560,7 @@ impl FromStr for SettingsCategory {
             "backup" => Ok(SettingsCategory::Backup),
             "privacy" => Ok(SettingsCategory::Privacy),
             "vault" => Ok(SettingsCategory::Vault),
+            "onboarding" => Ok(SettingsCategory::Onboarding),
             _ => Err(format!("Unknown settings category: {}", s)),
         }
     }
@@ -921,17 +938,6 @@ impl Default for BackupSettingsDto {
             backup_retention_days: 30,
             backup_path: String::new(),
             compress_backups: true,
-        }
-    }
-}
-
-impl Default for PrivacySettingsDto {
-    fn default() -> Self {
-        // Both flags default OFF. Users must opt in. Don't change these defaults
-        // without thinking carefully — they're a trust signal in a local-first app.
-        Self {
-            telemetry_enabled: false,
-            crash_reporting: false,
         }
     }
 }

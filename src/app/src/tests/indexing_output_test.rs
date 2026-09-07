@@ -9,9 +9,9 @@
 #![allow(deprecated)]
 
 use insta::assert_json_snapshot;
-use serde_json::json;
 use lattice::infrastructure::indexing::chunker::TextChunk;
 use lattice::infrastructure::indexing::events::IndexingEvent;
+use serde_json::json;
 #[test]
 fn test_text_chunk_output() {
     let chunks = vec![

@@ -24,6 +24,8 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Instant;
 
+type NamedLlmCache = Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>;
+
 // Application Use Cases - Core
 use crate::features::health::use_cases::HealthCheckUseCase;
 use crate::features::indexing::use_cases::{
@@ -34,10 +36,8 @@ use crate::features::initialization::use_cases::{
     InitializeDatabaseUseCase, InitializeModelsUseCase,
 };
 use crate::features::qa::use_cases::AskQuestionUseCase;
-use crate::features::search::use_cases::{
-    HybridSearchUseCase, SemanticSearchUseCase,
-};
-use crate::features::stats::use_cases::GetSystemStatsUseCase;
+use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
+use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUseCase};
 use crate::features::tags::use_cases::{
     ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
     GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
@@ -55,8 +55,9 @@ use crate::features::settings::use_cases::{
 
 // Application Use Cases - File Operations
 use crate::features::file::use_cases::{
-    GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
-    ReadFileBytesUseCase, ReadFileContentUseCase, ShowInFolderUseCase, UpdateFileMetadataUseCase,
+    GetFileMetadataUseCase, GetFilePathByIdUseCase, ListCitingConversationsUseCase,
+    OpenFileByIdUseCase, OpenFileUseCase, ReadFileBytesUseCase, ReadFileContentUseCase,
+    ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };
 
 // (Favorites + Recent: no use cases — Tauri commands route through
@@ -95,12 +96,12 @@ use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVers
 use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - LLM
-use crate::features::settings::dto::LLMProvider;
 use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
     GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
 };
+use crate::features::settings::dto::LLMProvider;
 
 // Application Use Cases - Web
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
@@ -132,10 +133,10 @@ use crate::domain::entities::Document as DocumentEntity;
 use crate::features::tags::entity::Tag as TagEntity;
 
 // Infrastructure Implementations - ML & Search
+use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::infrastructure::file_system::file_storage::SecureFileStorage;
 use crate::infrastructure::llm::noop_client::NoOpLLMClient;
 use crate::infrastructure::llm::ollama_client::OllamaClient;
-use crate::features::embedding::candle_service::CandleEmbeddingService;
 use crate::infrastructure::search::text_search::SqliteTextSearch;
 // USearchVectorIndex is used directly via modules.rs — no direct import needed here
 use crate::infrastructure::storage::ContentAddressedStorage;
@@ -145,56 +146,52 @@ use crate::features::favorites::repository::FavoritesRepository;
 use crate::features::recent::repository::RecentDocumentsRepository;
 use crate::infrastructure::persistence::repositories::{
     unit_of_work::SqliteUnitOfWorkFactory, BatchJobRepository, ChunkRepositoryImpl,
-    DocumentRepositoryImpl, EmbeddingRepository, MentionRepository,
-    SettingsRepository, TagRepositoryImpl,
+    DocumentRepositoryImpl, EmbeddingRepository, MentionRepository, SettingsRepository,
+    TagRepositoryImpl,
 };
 
 // Infrastructure Implementations - Adapters
-use crate::infrastructure::adapters::{ContentExtractionAdapter, TokioChecksumAdapter};
-use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
-use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
-use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
-use crate::features::model_management::cache_adapter::ModelCacheAdapter;
-use crate::features::metrics::adapter::MetricsAdapter;
 use crate::features::backup::adapter::BackupAdapter;
 use crate::features::credentials::adapter::CredentialsAdapter;
-use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
+use crate::features::metrics::adapter::MetricsAdapter;
+use crate::features::model_management::cache_adapter::ModelCacheAdapter;
+use crate::features::model_management::huggingface_adapter::HuggingFaceAdapter;
 use crate::features::updates::adapter::UpdateCheckerAdapter;
+use crate::infrastructure::adapters::{ContentExtractionAdapter, TokioChecksumAdapter};
+use crate::infrastructure::file_system::file_system_adapter::FileSystemAdapter;
+use crate::infrastructure::llm::model_storage_adapter::FilesystemModelStorage;
+use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
 
 // Service Implementations
-use crate::infrastructure::command_channel::{
-    self, CommandReceiver, CommandSender,
-};
 use crate::infrastructure::event_bus::EventBus;
-use crate::infrastructure::events::ConversationEvent;
 use crate::infrastructure::indexing::IndexingService;
 use crate::infrastructure::observability::metrics::Metrics;
 use crate::infrastructure::qa::engine::QAEngine;
 use crate::infrastructure::search::bm25::BM25Search;
 use crate::infrastructure::search::hybrid::HybridSearchService;
 // VectorSearchService removed — USearchVectorIndex implements SearchServiceTrait directly
-use crate::infrastructure::services::context_manager::ContextManager;
-use crate::features::qa::conversational_service::ConversationalQAService;
-use crate::features::embedding::service::DynamicEmbeddingService;
-use crate::features::cache::llm_cache::LlmCache;
-use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
-use crate::features::tags::service_impl::TagServiceImpl;
-use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::features::batch::BatchFileImportServiceTrait;
 use crate::features::batch::BatchUrlImportServiceTrait;
-use crate::infrastructure::services::traits::ContextManagerTrait;
+use crate::features::cache::llm_cache::LlmCache;
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::qa::ConversationalQAServiceTrait;
+use crate::features::embedding::service::DynamicEmbeddingService;
+use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::indexing::IndexingServiceTrait;
+use crate::features::qa::conversational_service::ConversationalQAService;
+use crate::features::qa::ConversationalQAServiceTrait;
 use crate::features::qa::QAEngineTrait;
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::tags::service_impl::TagServiceImpl;
 use crate::features::tags::TagServiceTrait;
 use crate::features::web::WebArchiveServiceTrait;
 use crate::features::web::WebCaptureServiceTrait;
 use crate::features::web::WebIngestionServiceTrait;
+use crate::infrastructure::services::context_manager::ContextManager;
+use crate::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
+use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
+use crate::infrastructure::services::traits::ContextManagerTrait;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::infrastructure::services::ArticleExtractorService;
 use crate::infrastructure::services::BatchFileImportService;
 use crate::infrastructure::services::BatchUrlImportService;
@@ -248,10 +245,18 @@ pub struct Container {
     function_executor: Arc<dyn FunctionExecutorTrait>,
 
     /// Router LLM cache (optional smaller routing model)
-    router_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
+    router_llm_cache: NamedLlmCache,
 
     /// Utility LLM cache (HyDE expansion, intent routing, follow-up)
-    utility_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
+    utility_llm_cache: NamedLlmCache,
+
+    /// Per-role async load locks coalesce cache misses. Model construction may
+    /// allocate multiple gigabytes or spawn a sidecar, so duplicate loads are
+    /// not an acceptable implementation of double-checked locking.
+    llm_load_lock: Arc<tokio::sync::Mutex<()>>,
+    router_llm_load_lock: Arc<tokio::sync::Mutex<()>>,
+    utility_llm_load_lock: Arc<tokio::sync::Mutex<()>>,
+    embedding_load_lock: Arc<tokio::sync::Mutex<()>>,
 
     /// All vault writes flow through a single mpsc-fed worker; see
     /// `features::vault::writeback`.
@@ -259,17 +264,6 @@ pub struct Container {
 
     /// Shared by writer + watcher for loop suppression.
     vault_write_suppression: crate::features::vault::watcher::WriteSuppressionRegistry,
-
-    /// Producer half of the conversation command channel. Cloneable;
-    /// chat.rs sends `SummaryRefreshRequested` here. Backpressured
-    /// mpsc rather than broadcast because this is a 1-to-1 command
-    /// channel — losing a refresh because a slow saga lagged would
-    /// silently break the user's summary.
-    conversation_command_tx: CommandSender<ConversationEvent>,
-    /// Consumer half of the conversation command channel. Held by the
-    /// container so we can hand it to the saga at startup; saga uses
-    /// `recv().await` in its event loop.
-    conversation_command_rx: Arc<CommandReceiver<ConversationEvent>>,
 
     /// Cooldown timestamp for embedding load failures.
     /// When a `ModelLoadFailed` error occurs, we record the time so that
@@ -323,7 +317,7 @@ struct ContainerSettingsSideEffects {
     llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
 
     /// Router LLM cache. Same `Arc` as `Container::router_llm_cache`.
-    router_llm_cache: Arc<RwLock<Option<(String, Arc<dyn LLMPort>)>>>,
+    router_llm_cache: NamedLlmCache,
 
     /// Function executor for refreshing custom-tool runtime config.
     function_executor: Arc<dyn FunctionExecutorTrait>,
@@ -391,9 +385,7 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
             {
                 let mut cache = self.llm_cache.write().unwrap_or_else(|p| p.into_inner());
                 if cache.is_some() {
-                    tracing::info!(
-                        "Settings update touched LLM category — invalidating LLM cache"
-                    );
+                    tracing::info!("Settings update touched LLM category — invalidating LLM cache");
                     *cache = None;
                 }
             }
@@ -519,13 +511,10 @@ impl Container {
         let llm_cache = Arc::new(RwLock::new(None));
         let router_llm_cache = Arc::new(RwLock::new(None));
         let utility_llm_cache = Arc::new(RwLock::new(None));
-        // Capacity 32: well above the natural per-second rate of chat
-        // turns. Provides slack if the saga briefly lags during summary
-        // generation; backpressure kicks in only if the user blasts
-        // dozens of refreshes faster than the saga can drain.
-        let (conversation_command_tx, conversation_command_rx) =
-            command_channel::channel::<ConversationEvent>(32);
-
+        let llm_load_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let router_llm_load_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let utility_llm_load_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let embedding_load_lock = Arc::new(tokio::sync::Mutex::new(()));
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
         // === Layer 1: Core Infrastructure ===
@@ -639,7 +628,6 @@ impl Container {
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
 
-
         let vault_write_suppression =
             crate::features::vault::watcher::WriteSuppressionRegistry::new();
         let vault_writer = crate::features::vault::writeback::start_vault_writer(
@@ -669,10 +657,12 @@ impl Container {
             function_executor,
             router_llm_cache,
             utility_llm_cache,
+            llm_load_lock,
+            router_llm_load_lock,
+            utility_llm_load_lock,
+            embedding_load_lock,
             vault_writer,
             vault_write_suppression,
-            conversation_command_tx,
-            conversation_command_rx,
             embedding_error_cooldown: Arc::new(parking_lot::RwLock::new(None)),
             settings_side_effects,
             app_handle: None,
@@ -685,9 +675,7 @@ impl Container {
 
     /// Belt-and-suspenders safety net for the fs watcher.
     /// No-op when vault is disabled or the watch toggle is off.
-    pub async fn rescan_vault(
-        &self,
-    ) -> Result<crate::features::vault::watcher::RescanSummary> {
+    pub async fn rescan_vault(&self) -> Result<crate::features::vault::watcher::RescanSummary> {
         let settings = self
             .system
             .get_settings_use_case()
@@ -768,9 +756,15 @@ impl Container {
             }
         } // ← Read lock released before I/O
 
-        // SLOW PATH: Load LLM service (NO LOCK HELD)
-        // Multiple threads may execute this simultaneously - that's OK!
-        // The I/O-heavy operation happens without blocking other threads.
+        let _load_guard = self.llm_load_lock.lock().await;
+        {
+            let cache = Self::recover_read_lock(self.ai.llm_cache().read());
+            if let Some(service) = cache.as_ref() {
+                return Ok(Arc::clone(service));
+            }
+        }
+
+        // SLOW PATH: one caller loads while peers await the per-role lock.
         let llm_service = self.load_llm_with_fallback().await?;
 
         // CACHE UPDATE: Store result with write lock (minimal critical section, poison-recovered)
@@ -817,6 +811,16 @@ impl Container {
 
         let model_name = router_settings.model.trim().to_string();
 
+        {
+            let cache = Self::recover_read_lock(self.router_llm_cache.read());
+            if let Some((cached_model, cached_llm)) = cache.as_ref() {
+                if cached_model == &model_name {
+                    return Ok(Arc::clone(cached_llm));
+                }
+            }
+        }
+
+        let _load_guard = self.router_llm_load_lock.lock().await;
         {
             let cache = Self::recover_read_lock(self.router_llm_cache.read());
             if let Some((cached_model, cached_llm)) = cache.as_ref() {
@@ -933,7 +937,6 @@ impl Container {
 
     /// Get the utility LLM if one is configured.
     pub async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
-
         let active = match self
             .ai
             .downloaded_model_repo()
@@ -957,7 +960,6 @@ impl Container {
             .execute()
             .await
             .map_err(|e| AppError::InvalidConfig(format!("Failed to load settings: {}", e)))?;
-
 
         let generation_config = crate::llm::GenerationConfig {
             temperature: settings.llm.temperature,
@@ -983,6 +985,16 @@ impl Container {
         };
 
         // Fast path: return cached LLM if cache key matches.
+        {
+            let cache = Self::recover_read_lock(self.utility_llm_cache.read());
+            if let Some((cached_model, cached_llm)) = cache.as_ref() {
+                if cached_model == &cache_key {
+                    return Ok(Some(Arc::clone(cached_llm)));
+                }
+            }
+        }
+
+        let _load_guard = self.utility_llm_load_lock.lock().await;
         {
             let cache = Self::recover_read_lock(self.utility_llm_cache.read());
             if let Some((cached_model, cached_llm)) = cache.as_ref() {
@@ -1072,7 +1084,6 @@ impl Container {
             }
         }
     }
-
 
     pub fn invalidate_utility_llm_cache(&self) {
         let mut cache = Self::recover_write_lock(self.utility_llm_cache.write());
@@ -1481,17 +1492,6 @@ impl Container {
         &self.function_executor
     }
 
-    /// Sender half of the conversation command channel. Clone is
-    /// cheap (mpsc Sender is internally an Arc).
-    pub fn conversation_command_tx(&self) -> CommandSender<ConversationEvent> {
-        self.conversation_command_tx.clone()
-    }
-
-    /// Receiver half — handed to ConversationSummarySaga at startup.
-    pub fn conversation_command_rx(&self) -> Arc<CommandReceiver<ConversationEvent>> {
-        Arc::clone(&self.conversation_command_rx)
-    }
-
     /// Get file access configuration (for secure path validation)
     ///
     /// Returns Arc-wrapped FileAccessConfig for use by file operation use cases.
@@ -1534,6 +1534,25 @@ impl Container {
             }
         }
 
+        let _load_guard = self.embedding_load_lock.lock().await;
+        let cached_service = {
+            let cache = Self::recover_read_lock(self.search.embedding_cache().read());
+            cache.as_ref().cloned()
+        };
+        if let Some(service) = cached_service {
+            match service.is_ready().await {
+                Ok(true) => return Ok(service),
+                Ok(false) => self.invalidate_embedding_cache(),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "Failed to check cached embedding readiness after awaiting load lock"
+                    );
+                    self.invalidate_embedding_cache();
+                }
+            }
+        }
+
         // Check error cooldown: if we recently failed to load, return the cached
         // error immediately instead of retrying (prevents log spam).
         const EMBEDDING_ERROR_COOLDOWN_SECS: u64 = 60;
@@ -1546,9 +1565,7 @@ impl Container {
             }
         }
 
-        // SLOW PATH: Load embedding service (NO LOCK HELD)
-        // Multiple threads may execute this simultaneously - that's OK!
-        // The I/O-heavy operation happens without blocking other threads.
+        // SLOW PATH: one caller loads while peers await the per-role lock.
         let embedding_service = match self.load_embedding_with_fallback().await {
             Ok(service) => {
                 // Clear any cached error on success
@@ -1639,7 +1656,6 @@ impl Container {
             active_model.model_id()
         );
 
-
         let model_path = match active_model.loadable_path() {
             Some(p) => p.to_path_buf(),
             None => return Ok(None),
@@ -1677,7 +1693,6 @@ impl Container {
                 return Ok(None);
             }
         };
-
 
         let model_dir = active_model.location().enclosing_dir().ok_or_else(|| {
             AppError::ModelLoadFailed(format!(
@@ -1736,7 +1751,6 @@ impl Container {
             }
         }
     }
-
 
     async fn load_embedding_with_fallback(&self) -> Result<Arc<dyn EmbeddingPort>> {
         use crate::application::ports::MockEmbeddingPort;
@@ -1892,6 +1906,10 @@ impl Container {
         Arc::clone(self.system.get_system_stats_use_case())
     }
 
+    pub fn get_corpus_shape_use_case(&self) -> Arc<GetCorpusShapeUseCase> {
+        Arc::clone(self.system.get_corpus_shape_use_case())
+    }
+
     // Conversations (from AIModule)
     pub fn create_conversation_use_case(&self) -> Arc<CreateConversationUseCase> {
         Arc::clone(self.ai.create_conversation_use_case())
@@ -1976,6 +1994,10 @@ impl Container {
         Arc::clone(self.file_ops.update_file_metadata_use_case())
     }
 
+    pub fn list_citing_conversations_use_case(&self) -> Arc<ListCitingConversationsUseCase> {
+        Arc::clone(self.file_ops.list_citing_conversations_use_case())
+    }
+
     // (Favorites + Recent: no use cases — Tauri commands route through
     // raw sqlx in their respective commands.rs files.)
 
@@ -2052,6 +2074,18 @@ impl Container {
 
     pub fn restore_backup_use_case(&self) -> Arc<RestoreBackupUseCase> {
         Arc::clone(self.system.restore_backup_use_case())
+    }
+
+    /// The backup port. `plugin_list_backups` reads through this rather than
+    /// the free `list_backups_impl`, which scans the wrong directory.
+    pub fn backup_port(&self) -> Arc<dyn BackupPort> {
+        Arc::clone(self.system.backup_port())
+    }
+
+    /// On-device speech-to-text. Shared with the content-extraction adapter so
+    /// audio ingest and `transcribe_file` run through the same engine.
+    pub fn transcription_port(&self) -> Arc<dyn crate::application::ports::TranscriptionPort> {
+        Arc::clone(self.indexing.transcription_port())
     }
 
     pub fn start_auto_backup_use_case(&self) -> Arc<StartAutoBackupUseCase> {
@@ -2278,6 +2312,73 @@ impl Container {
         self.core.data_dir().join("models")
     }
 
+    /// Recompute which directories file-read IPC is allowed to reach.
+    ///
+    /// The policy is: the app's own data directory, plus the user's vault,
+    /// plus every folder they have asked us to index. Anything else in
+    /// `$HOME` — SSH keys, cloud credentials, browser profiles — stays
+    /// unreadable over IPC.
+    ///
+    /// Must be called at startup once settings are readable, and again after
+    /// any change to the vault path or the indexed-folder list; otherwise a
+    /// newly added folder is unreadable, or a removed one stays readable.
+    pub async fn refresh_allowed_roots(&self) -> crate::shared::error::Result<()> {
+        let settings = self.system.settings_repo().get_all().await?;
+
+        let mut roots = vec![self.core.data_dir().to_path_buf()];
+
+        if settings.vault.enabled && !settings.vault.vault_path.is_empty() {
+            roots.push(PathBuf::from(&settings.vault.vault_path));
+        }
+
+        for indexed in &settings.indexing.indexed_paths {
+            if !indexed.is_empty() {
+                roots.push(PathBuf::from(indexed));
+            }
+        }
+
+        // Folders being watched are also legitimately readable, and the watch
+        // list is authoritative in the database rather than in settings.
+        match sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
+            .fetch_all(self.db_pool())
+            .await
+        {
+            Ok(paths) => roots.extend(paths.into_iter().map(PathBuf::from)),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "could not read watch folders while recomputing allowed roots"
+            ),
+        }
+
+        let count = roots.len();
+        self.file_access_config().set_allowed_roots(roots)?;
+        tracing::info!(count, "recomputed file-access allowed roots");
+        Ok(())
+    }
+
+    /// Get the backups directory path.
+    ///
+    /// Must stay in agreement with `BackupAdapter`, which derives the same
+    /// location from the database path and refuses to *write* a backup
+    /// anywhere else. Restore confines its *source* to this directory for the
+    /// mirror-image reason: the database file it swaps in becomes the app's
+    /// entire state, so accepting an arbitrary path lets a caller inject
+    /// documents, settings and model rows wholesale.
+    pub fn backups_path(&self) -> PathBuf {
+        self.core.data_dir().join("backups")
+    }
+
+    /// Get the exports directory path.
+    ///
+    /// Destination for user-initiated exports. Confining writes here keeps
+    /// export commands from doubling as an arbitrary-write primitive for the
+    /// webview. If exporting to a user-chosen location is wanted, route it
+    /// through a native save dialog so the *user*, not the renderer, picks
+    /// the path.
+    pub fn exports_path(&self) -> PathBuf {
+        self.core.data_dir().join("exports")
+    }
+
     /// Get download manager service
     ///
     /// Returns the shared download manager instance from AIModule.
@@ -2331,17 +2432,5 @@ fn emit_warmup(app: &tauri::AppHandle, role: &str, phase: &str, error: Option<St
     });
     if let Err(e) = app.emit("model:warmup-status", payload) {
         tracing::warn!(role, phase, error = %e, "Failed to emit warmup status event");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_container_construction() {
-        // This test would require setting up test database
-        // and mock services. For now, it's a placeholder.
-        assert!(true);
     }
 }

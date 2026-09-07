@@ -38,7 +38,7 @@ impl MemoryAuditSink {
     /// # Examples
     ///
     /// ```
-    /// use vault_desktop::audit::sinks::memory::MemoryAuditSink;
+    /// use lattice::audit::sinks::memory::MemoryAuditSink;
     ///
     /// let sink = MemoryAuditSink::new(1000);
     /// ```
@@ -138,7 +138,7 @@ impl AuditSink for MemoryAuditSink {
 
         // Sort by timestamp descending (most recent first)
         let mut sorted_events = events.clone();
-        sorted_events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        sorted_events.sort_by_key(|event| std::cmp::Reverse(event.timestamp));
 
         // Apply pagination
         let result = sorted_events.into_iter().skip(offset).take(limit).collect();

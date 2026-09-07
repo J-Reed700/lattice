@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use tracing::warn;
 
-use crate::features::qa::dto::SourceDto;
 use crate::application::ports::LLMPort;
 use crate::domain::conversation::{ConversationMessage, DocumentReference, MessageRole};
 use crate::domain::entities::document::Document;
 use crate::features::conversation::ConversationServiceTrait;
+use crate::features::qa::dto::SourceDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::{build_excerpt, safe_truncate};
 
@@ -289,6 +289,7 @@ fn build_followup_sources(
         section,
         chunk_index,
         chunk_excerpts: None,
+        citation_id: None,
     }]
 }
 

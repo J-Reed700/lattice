@@ -27,9 +27,9 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::model_cache_adapter::ModelCacheAdapter;
-//! use vault_desktop::infrastructure::huggingface_adapter::HuggingFaceAdapter;
-//! use vault_desktop::application::ports::ModelCatalogPort;
+//! use lattice::infrastructure::model_cache_adapter::ModelCacheAdapter;
+//! use lattice::infrastructure::huggingface_adapter::HuggingFaceAdapter;
+//! use lattice::application::ports::ModelCatalogPort;
 //! use sqlx::SqlitePool;
 //! use std::sync::Arc;
 //!

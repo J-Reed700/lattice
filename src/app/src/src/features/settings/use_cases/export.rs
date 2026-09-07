@@ -1,7 +1,7 @@
 //! Export Settings Use Case
 
-use crate::features::settings::dto::{ExportSettingsRequestDto, ExportSettingsResponseDto};
 use crate::application::ports::SettingsRepositoryPort;
+use crate::features::settings::dto::{ExportSettingsRequestDto, ExportSettingsResponseDto};
 use crate::shared::error::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,6 +90,7 @@ impl ExportSettingsUseCase {
 
         // Check if parent directory exists
         if let Some(parent) = path_buf.parent() {
+            // repository-barrier-allow: export targets a user-selected filesystem resource.
             if !parent.exists() {
                 return Err(crate::error::AppError::InvalidInput(format!(
                     "Parent directory does not exist: {}",

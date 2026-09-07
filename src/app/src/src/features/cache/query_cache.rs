@@ -98,6 +98,32 @@ impl QueryCache {
         cache.put(key, result);
     }
 
+    /// Drop every cached result because the corpus changed.
+    ///
+    /// Search results are only valid for the corpus that produced them. With
+    /// a 10-minute TTL and no invalidation, deleting a document left it
+    /// showing up in repeated searches — and clicking through to a document
+    /// that no longer exists — while newly indexed documents stayed invisible
+    /// for the same window.
+    ///
+    /// Blunt on purpose: the cache holds at most 1000 entries and results are
+    /// cheap to recompute, so a whole-cache drop is simpler and strictly more
+    /// correct than trying to work out which queries a given document could
+    /// have matched.
+    pub fn invalidate_corpus(&self) {
+        let mut cache = self.cache.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("Query cache mutex poisoned, recovering");
+            poisoned.into_inner()
+        });
+        if !cache.is_empty() {
+            tracing::debug!(
+                entries = cache.len(),
+                "corpus changed; invalidating query cache"
+            );
+            cache.clear();
+        }
+    }
+
     pub fn clear(&self) {
         let mut cache = self.cache.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("Query cache mutex poisoned, recovering");
@@ -171,3 +197,11 @@ pub static QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| {
         1000, 600, // 10 minutes for 10-20% more hits
     ))
 });
+
+/// Call after any change to the indexed corpus — index, re-index, or delete.
+///
+/// Kept as a free function so mutation paths don't each need to reach into
+/// the cache module's types; there is exactly one thing to remember.
+pub fn invalidate_query_cache() {
+    QUERY_CACHE.invalidate_corpus();
+}

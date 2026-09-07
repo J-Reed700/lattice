@@ -1,7 +1,7 @@
+use crate::features::search::BM25SearchTrait;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use crate::features::search::BM25SearchTrait;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -225,14 +225,13 @@ impl BM25Search {
     }
 
     fn looks_like_explicit_fts_syntax(query: &str) -> bool {
-        let upper = query.to_ascii_uppercase();
         query.contains('"')
             || query.contains('*')
-            || upper.contains(" OR ")
-            || upper.contains(" AND ")
-            || upper.contains(" NOT ")
-            || upper.contains(" NEAR ")
-            || upper.contains(" NEAR(")
+            || query.contains(" OR ")
+            || query.contains(" AND ")
+            || query.contains(" NOT ")
+            || query.contains(" NEAR ")
+            || query.contains(" NEAR(")
     }
 
     fn normalize_term(term: &str) -> Option<String> {

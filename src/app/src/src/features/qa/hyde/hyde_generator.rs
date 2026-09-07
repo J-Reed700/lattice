@@ -189,7 +189,12 @@ fn compact_hyde_text(raw: &str) -> String {
     if words.len() <= MAX_WORDS {
         return raw.trim().to_string();
     }
-    words[..MAX_WORDS].join(" ")
+    words
+        .iter()
+        .take(MAX_WORDS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn tokenize_guard_terms(text: &str) -> Vec<String> {

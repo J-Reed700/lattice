@@ -24,8 +24,8 @@ pub struct QaDi {
 pub fn build(conversation_service: Arc<dyn ConversationServiceTrait>) -> QaDi {
     // LLM is degraded until a real model loads. Once a real client replaces
     // the cache entry, ConversationalQAService picks it up on the next call.
-    let llm_client = Arc::new(NoOpLLMClient::new("LLM not loaded yet".into()))
-        as Arc<dyn crate::llm::LLMClient>;
+    let llm_client =
+        Arc::new(NoOpLLMClient::new("LLM not loaded yet".into())) as Arc<dyn crate::llm::LLMClient>;
 
     let context_manager = Arc::new(ContextManager::new(8192)) as Arc<dyn ContextManagerTrait>;
     let qa_engine = Arc::new(QAEngine::new(llm_client)) as Arc<dyn QAEngineTrait>;

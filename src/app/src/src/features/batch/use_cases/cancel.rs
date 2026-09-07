@@ -10,8 +10,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::CancelBatchJobUseCase;
-//! use vault_desktop::application::dtos::batch_dto::CancelBatchJobRequestDto;
+//! use lattice::application::use_cases::batch::CancelBatchJobUseCase;
+//! use lattice::application::dtos::batch_dto::CancelBatchJobRequestDto;
 //!
 //! # async fn example(use_case: CancelBatchJobUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = CancelBatchJobRequestDto {
@@ -26,8 +26,8 @@
 
 use std::sync::Arc;
 
-use crate::features::batch::dto::{CancelBatchJobRequestDto, CancelBatchJobResponseDto};
 use crate::application::ports::BatchJobRepositoryPort;
+use crate::features::batch::dto::{CancelBatchJobRequestDto, CancelBatchJobResponseDto};
 use crate::shared::error::{AppError, Result};
 
 /// Cancel batch job use case.
@@ -71,8 +71,8 @@ impl CancelBatchJobUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::CancelBatchJobUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::CancelBatchJobRequestDto;
+    /// # use lattice::application::use_cases::batch::CancelBatchJobUseCase;
+    /// # use lattice::application::dtos::batch_dto::CancelBatchJobRequestDto;
     /// # async fn example(use_case: CancelBatchJobUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = CancelBatchJobRequestDto {
     ///     job_id: "batch-job-123".to_string(),

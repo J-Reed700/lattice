@@ -128,6 +128,12 @@ pub struct ProfileRotator {
     counter: AtomicUsize,
 }
 
+impl Default for ProfileRotator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProfileRotator {
     pub const fn new() -> Self {
         Self {
@@ -381,7 +387,7 @@ impl FlareSolverrClient {
 
         let response = self
             .client
-            .post(&format!("{}/v1", self.endpoint.trim_end_matches('/')))
+            .post(format!("{}/v1", self.endpoint.trim_end_matches('/')))
             .json(&body)
             .send()
             .await

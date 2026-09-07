@@ -12,9 +12,9 @@ use uuid::Uuid;
 use crate::application::ports::batch_job_repository_port::{
     BatchJobRepositoryPort, BatchJobStatus,
 };
-use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::features::batch::BatchUrlImportServiceTrait;
 use crate::features::web::WebIngestionServiceTrait;
+use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::shared::error::AppError;
 
 /// Service for batch URL import operations
@@ -36,7 +36,7 @@ use crate::shared::error::AppError;
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::infrastructure::services::batch_url_import::BatchUrlImportService;
+/// use lattice::infrastructure::services::batch_url_import::BatchUrlImportService;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let service = BatchUrlImportService::new(

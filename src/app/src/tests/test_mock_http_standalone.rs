@@ -1,6 +1,14 @@
 //! Standalone test for MockHttpClient verification
 //! Oracle-approved validation of Range header capture (Test 26 critical component)
 
+// A panic is the assertion signal for this integration-test crate. The package
+// denies these operations in production targets.
+#![allow(clippy::expect_used)]
+#![allow(clippy::indexing_slicing)]
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(clippy::unwrap_used)]
+
 mod common;
 
 use common::mock_http::{HttpRequest, MockHttpClient, MockHttpResponse};

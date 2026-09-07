@@ -79,8 +79,8 @@ impl ChunkMapper {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::persistence::mappers::ChunkMapper;
-    /// use vault_desktop::domain::entities::chunk::Chunk;
+    /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
+    /// use lattice::domain::entities::chunk::Chunk;
     ///
     /// let entity = Chunk::new(/* ... */);
     /// let db_model = ChunkMapper::to_model(&entity);
@@ -130,7 +130,7 @@ impl ChunkMapper {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::persistence::mappers::ChunkMapper;
+    /// use lattice::infrastructure::persistence::mappers::ChunkMapper;
     ///
     /// let db_model = /* from database */;
     /// let entity = ChunkMapper::to_entity(&db_model)?;

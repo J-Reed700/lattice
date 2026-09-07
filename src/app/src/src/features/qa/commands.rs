@@ -163,7 +163,7 @@ pub async fn ask_question_stream<R: Runtime>(
                         error: e.to_string(),
                     },
                 );
-                return Err(e.into());
+                return Err(e);
             }
         }
     }

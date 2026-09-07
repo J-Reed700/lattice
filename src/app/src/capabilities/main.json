@@ -36,19 +36,10 @@
     "dialog:allow-confirm",
     "shell:default",
     "shell:allow-open",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "binaries/llama-server",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    },
     "model:allow-get-all-recommended-models",
     "model:allow-get-compatible-models",
     "model:allow-search-model-catalog",
+    "model:allow-get-model-download-path",
     "model:allow-refresh-model-catalog",
     "model:allow-clear-model-catalog-cache",
     "model:allow-get-model-catalog-stats",
@@ -92,6 +83,7 @@
     "search:allow-semantic-search",
     "search:allow-hybrid-search",
     "search:allow-find-similar",
+    "search:allow-find-similar-documents",
     "search:allow-search-with-recency",
     "search:allow-batch-search",
     "conversation:allow-create-conversation",
@@ -128,6 +120,9 @@
     "conversation:allow-list-conversations-explorer",
     "conversation:allow-list-journal-conversations",
     "conversation:allow-synthesize-journal-entries",
+    "conversation:allow-truncate-conversation-after",
+    "conversation:allow-fork-conversation",
+    "conversation:allow-regenerate-response",
     "conversation:allow-list-conversation-linked-documents",
     "conversation:allow-remove-conversation-linked-document",
     "conversation:allow-add-conversation-web-source",
@@ -153,6 +148,7 @@
     "file:allow-cancel-indexing",
     "file:allow-pause-indexing",
     "file:allow-resume-indexing",
+    "file:allow-clear-indexing-failure",
     "file:allow-reindex-file",
     "file:allow-delete-document",
     "file:allow-rename-document",
@@ -166,9 +162,12 @@
     "file:allow-get-indexing-activities",
     "file:allow-get-recent-documents",
     "file:allow-get-document",
+    "file:allow-get-corpus-shape",
+    "file:allow-list-conversations-citing-document",
     "settings:allow-get-settings",
     "settings:allow-get-settings-category",
     "settings:allow-update-settings",
+    "settings:allow-test-custom-tool",
     "settings:allow-reset-settings",
     "settings:allow-export-settings",
     "settings:allow-import-settings",
@@ -245,6 +244,7 @@
     "qa:allow-ask-question-stream-wrapper",
     "qa:allow-get-qa-model-wrapper",
     "qa:allow-check-llm-health-wrapper",
+    "qa:allow-generate-chat-starters-wrapper",
     "batch:allow-batch-import-files",
     "batch:allow-batch-import-urls",
     "batch:allow-get-batch-status",
@@ -264,6 +264,16 @@
     "backup:allow-plugin-export-json",
     "backup:allow-plugin-export-csv",
     "backup:allow-plugin-export-html",
-    "vault:allow-rescan-vault"
+    "vault:allow-rescan-vault",
+    "transcription:allow-transcribe-file",
+    "transcription:allow-get-transcription-status",
+    "references:allow-create-passage-reference",
+    "references:allow-list-passage-references",
+    "references:allow-update-passage-reference",
+    "references:allow-delete-passage-reference",
+    "compare:allow-compare-documents",
+    "corpus-shape:allow-cluster-vault-debug",
+    "corpus-shape:allow-cluster-vault-run",
+    "corpus-shape:allow-list-clusters"
   ]
 }

@@ -737,7 +737,7 @@ async fn index_test_file(pool: &SqlitePool, file_path: &PathBuf) -> Result<Strin
 }
 
 /// Detect language from file path and content
-fn detect_language(file_path: &PathBuf, content: &str) -> String {
+fn detect_language(file_path: &std::path::Path, content: &str) -> String {
     // Check file extension first
     if let Some(ext) = file_path.extension().and_then(|e| e.to_str()) {
         match ext {
@@ -763,7 +763,7 @@ fn detect_language(file_path: &PathBuf, content: &str) -> String {
 }
 
 /// Assign category based on file path and content
-fn assign_category(file_path: &PathBuf, content: &str) -> String {
+fn assign_category(file_path: &std::path::Path, content: &str) -> String {
     let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let content_lower = content.to_lowercase();
 
@@ -843,7 +843,7 @@ fn calculate_quality_score(content: &str) -> f64 {
     score += 0.2;
 
     // Clamp between 0 and 1
-    score.max(0.0).min(1.0)
+    score.clamp(0.0, 1.0)
 }
 
 /// Track document access

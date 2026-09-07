@@ -1,10 +1,51 @@
+use crate::features::backup::export_repository::ExportRepository;
+use crate::features::backup::use_cases::{
+    ExportConversationsUseCase, ExportFormat, ExportSummary,
+};
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
+use crate::shared::path_confinement::confine_to_root;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::State;
+
+/// Export writes go under `Container::exports_path()` and nowhere else.
+///
+/// `plugin_export_*` is webview-callable; an unconfined destination would turn
+/// export into an arbitrary-write primitive for the renderer. `None` — which is
+/// what the UI sends — means "the exports root".
+fn resolve_export_root(
+    requested: Option<String>,
+    container: &Container,
+) -> Result<PathBuf, AppError> {
+    let exports_root = container.exports_path();
+
+    // repository-barrier-allow: creates the export destination so confinement can canonicalise it.
+    std::fs::create_dir_all(&exports_root)
+        .map_err(|e| AppError::Other(format!("Failed to create exports directory: {}", e)))?;
+
+    let Some(path) = requested.filter(|p| !p.trim().is_empty()) else {
+        return Ok(exports_root);
+    };
+
+    let validated = ValidatedFilePath::new(PathBuf::from(&path))
+        .map_err(|e| AppError::InvalidInput(format!("Invalid output directory: {}", e)))?;
+
+    confine_to_root(&exports_root, validated.as_path()).map_err(|e| {
+        AppError::InvalidInput(format!(
+            "Exports can only be written to {}: {}",
+            exports_root.display(),
+            e
+        ))
+    })
+}
+
+fn export_use_case(container: &Container) -> ExportConversationsUseCase {
+    ExportConversationsUseCase::new(Arc::new(ExportRepository::new(container.db_pool().clone())))
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,7 +162,7 @@ pub struct BackupInfo {
 /// 4. Create database backup file
 /// 5. Log audit event (success/failure with path)
 /// 6. Return backup file path
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn create_backup_impl(
     backup_path: Option<String>,
@@ -293,7 +334,7 @@ pub async fn create_backup(
 /// 4. Replace current database with backup
 /// 5. Log audit event (success/failure with path)
 /// 6. Return success
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn restore_backup_impl(
     backup_path: String,
@@ -305,10 +346,25 @@ pub async fn restore_backup_impl(
     let validated_path = ValidatedFilePath::new(PathBuf::from(&backup_path))
         .map_err(|e| AppError::InvalidInput(format!("Invalid backup path: {}", e)))?;
 
-    let backup_path_str = validated_path.as_path().to_string_lossy().to_string();
+    // `ValidatedFilePath` only filters `..`, so it accepts any absolute path.
+    // Restoring replaces the application database wholesale, which means an
+    // unconfined source is a state-injection primitive: point it at a
+    // planted SQLite file in ~/Downloads and every document, setting and
+    // model row comes from the attacker. Creating a backup is already
+    // confined to this directory; restoring must be symmetric.
+    let backups_root = container.backups_path();
+    let confined_path = confine_to_root(&backups_root, validated_path.as_path()).map_err(|e| {
+        AppError::InvalidInput(format!(
+            "Backups can only be restored from {}: {}",
+            backups_root.display(),
+            e
+        ))
+    })?;
+
+    let backup_path_str = confined_path.to_string_lossy().to_string();
 
     let use_case = container.system.restore_backup_use_case();
-    let result = use_case.execute(validated_path.into_inner()).await;
+    let result = use_case.execute(confined_path).await;
 
     // Audit the outcome
     match &result {
@@ -468,19 +524,22 @@ pub async fn restore_backup(
 /// 4. Filter for `.lattice-backup` files
 /// 5. Collect metadata (name, path, size, version)
 /// 6. Return list of BackupInfo structs
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn list_backups_impl(data_dir: PathBuf) -> Result<Vec<BackupInfo>, AppError> {
     // SAFE: data_dir is internal application data directory, not user-provided
     let mut backups = Vec::new();
 
+    // repository-barrier-allow: backup discovery enumerates backup files, which are the resource.
     // Check existence asynchronously
     match tokio::fs::metadata(&data_dir).await {
+        // repository-barrier-allow: backup discovery requires a directory resource.
         Ok(meta) if !meta.is_dir() => return Ok(backups),
         Err(_) => return Ok(backups),
         _ => {}
     }
 
+    // repository-barrier-allow: enumerate the backup resource directory for display.
     let mut entries = tokio::fs::read_dir(&data_dir)
         .await
         .map_err(|e| AppError::Other(format!("Failed to read directory: {}", e)))?;
@@ -621,12 +680,12 @@ pub async fn list_backups(data_dir: PathBuf) -> Result<Vec<BackupInfo>, AppError
 /// 4. Export documents to Markdown files
 /// 5. Log audit event (success/failure with count)
 /// 6. Return export count
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_markdown_impl(
-    output_dir: String,
+    output_dir: Option<String>,
     container: &Container,
-) -> Result<usize, AppError> {
+) -> Result<ExportSummary, AppError> {
     let audit_logger = get_audit_logger();
 
     // Rate limiting
@@ -638,42 +697,21 @@ pub async fn export_markdown_impl(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Validate path (prevents directory traversal CWE-22)
-    let validated_path = ValidatedFilePath::new(PathBuf::from(&output_dir))
-        .map_err(|e| AppError::InvalidInput(format!("Invalid output directory: {}", e)))?;
+    let output_root = resolve_export_root(output_dir, container)?;
+    let output_dir_str = output_root.to_string_lossy().to_string();
 
-    let output_dir_str = validated_path.as_path().to_string_lossy().to_string();
-
-    let result = async {
-        // Check and create directory asynchronously
-        match tokio::fs::metadata(validated_path.as_path()).await {
-            Ok(meta) if !meta.is_dir() => {
-                return Err(AppError::Other(format!(
-                    "Path exists but is not a directory: {}",
-                    validated_path.as_path().display()
-                )));
-            }
-            Err(_) => {
-                tokio::fs::create_dir_all(validated_path.as_path())
-                    .await
-                    .map_err(|e| {
-                        AppError::Other(format!("Failed to create output directory: {}", e))
-                    })?;
-            }
-            _ => {}
-        }
-        Ok(0)
-    }
-    .await;
+    let result = export_use_case(container)
+        .execute(output_root, ExportFormat::Markdown)
+        .await;
 
     // Audit the outcome
     match &result {
-        Ok(count) => {
+        Ok(summary) => {
             let event = AuditEvent::new(AuditAction::DataExported, AuditResult::success())
-                .with_resource_id(&output_dir_str)
+                .with_resource_id(&summary.output_dir)
                 .with_metadata("operation", "export_markdown")
                 .with_metadata("format", "markdown")
-                .with_metadata("files_exported", count.to_string());
+                .with_metadata("files_exported", summary.count().to_string());
 
             if let Err(e) = audit_logger.log(event).await {
                 tracing::warn!("Failed to write audit log: {}", e);
@@ -701,10 +739,12 @@ pub async fn export_markdown_impl(
 #[tauri::command]
 #[specta::specta]
 pub async fn export_markdown(
-    output_dir: String,
+    output_dir: Option<String>,
     container: State<'_, Container>,
 ) -> Result<usize, AppError> {
-    export_markdown_impl(output_dir, container.inner()).await
+    export_markdown_impl(output_dir, container.inner())
+        .await
+        .map(|summary| summary.count())
 }
 
 /// Exports all indexed documents to JSON format
@@ -840,13 +880,13 @@ pub async fn export_markdown(
 /// 5. Write JSON to file atomically
 /// 6. Log audit event (success/failure)
 /// 7. Return success
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_json_impl(
-    output_path: String,
+    output_path: Option<String>,
     pretty: bool,
     container: &Container,
-) -> Result<(), AppError> {
+) -> Result<ExportSummary, AppError> {
     let audit_logger = get_audit_logger();
 
     // Rate limiting
@@ -858,30 +898,22 @@ pub async fn export_json_impl(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Validate path (prevents directory traversal CWE-22)
-    let validated_path = ValidatedFilePath::new(PathBuf::from(&output_path))
-        .map_err(|e| AppError::InvalidInput(format!("Invalid output path: {}", e)))?;
+    let output_root = resolve_export_root(output_path, container)?;
+    let output_path_str = output_root.to_string_lossy().to_string();
 
-    let output_path_str = validated_path.as_path().to_string_lossy().to_string();
-
-    let result: Result<(), AppError> = async {
-        if let Some(parent) = validated_path.as_path().parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                AppError::Other(format!("Failed to create output directory: {}", e))
-            })?;
-        }
-        Ok(())
-    }
-    .await;
+    let result = export_use_case(container)
+        .execute(output_root, ExportFormat::Json { pretty })
+        .await;
 
     // Audit the outcome
     match &result {
-        Ok(_) => {
+        Ok(summary) => {
             let event = AuditEvent::new(AuditAction::DataExported, AuditResult::success())
-                .with_resource_id(&output_path_str)
+                .with_resource_id(&summary.output_dir)
                 .with_metadata("operation", "export_json")
                 .with_metadata("format", "json")
-                .with_metadata("pretty", pretty.to_string());
+                .with_metadata("pretty", pretty.to_string())
+                .with_metadata("files_exported", summary.count().to_string());
 
             if let Err(e) = audit_logger.log(event).await {
                 tracing::warn!("Failed to write audit log: {}", e);
@@ -909,11 +941,13 @@ pub async fn export_json_impl(
 #[tauri::command]
 #[specta::specta]
 pub async fn export_json(
-    output_path: String,
+    output_path: Option<String>,
     pretty: bool,
     container: State<'_, Container>,
 ) -> Result<(), AppError> {
-    export_json_impl(output_path, pretty, container.inner()).await
+    export_json_impl(output_path, pretty, container.inner())
+        .await
+        .map(|_| ())
 }
 
 /// Exports all indexed documents to CSV format
@@ -997,7 +1031,7 @@ pub async fn export_json(
 /// 5. Write CSV to file
 /// 6. Log audit event (success/failure with row count)
 /// 7. Return row count
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_csv_impl(
     output_path: String,
@@ -1192,7 +1226,7 @@ pub async fn export_csv(
 /// 5. Generate index.html and styles.css
 /// 6. Log audit event (success/failure with file count)
 /// 7. Return file count
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn export_html_impl(
     output_dir: String,
@@ -1216,8 +1250,10 @@ pub async fn export_html_impl(
     let output_dir_str = validated_path.as_path().to_string_lossy().to_string();
 
     let result = async {
+        // repository-barrier-allow: export creates and writes the user-selected output directory.
         // Check and create directory asynchronously
         match tokio::fs::metadata(validated_path.as_path()).await {
+            // repository-barrier-allow: export requires a directory resource.
             Ok(meta) if !meta.is_dir() => {
                 return Err(AppError::Other(format!(
                     "Path exists but is not a directory: {}",
@@ -1421,6 +1457,7 @@ pub async fn import_obsidian_vault(vault_path: String) -> Result<usize, AppError
 
     let vault_path_str = validated_path.as_path().to_string_lossy().to_string();
 
+    // repository-barrier-allow: import validates the user-selected vault resource.
     // Check existence asynchronously
     let result = match tokio::fs::metadata(validated_path.as_path()).await {
         Ok(_) => Ok(0),
@@ -1643,6 +1680,7 @@ pub async fn import_notion_export(export_path: String) -> Result<usize, AppError
 
     let export_path_str = validated_path.as_path().to_string_lossy().to_string();
 
+    // repository-barrier-allow: import validates the user-selected export resource.
     // Check existence asynchronously
     let result = match tokio::fs::metadata(validated_path.as_path()).await {
         Ok(_) => Ok(0),
@@ -1870,6 +1908,7 @@ pub async fn import_roam_json(json_path: String) -> Result<usize, AppError> {
 
     let json_path_str = validated_path.as_path().to_string_lossy().to_string();
 
+    // repository-barrier-allow: import validates the user-selected JSON resource.
     // Check existence asynchronously
     let result = match tokio::fs::metadata(validated_path.as_path()).await {
         Ok(_) => Ok(0),

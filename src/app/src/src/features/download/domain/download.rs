@@ -287,6 +287,8 @@ pub struct DownloadSession {
     completed_at: Option<DateTime<Utc>>,
     model_name: Option<String>,
     model_id: Option<String>,
+    #[serde(default)]
+    model_file_name: Option<String>,
 }
 
 impl DownloadSession {
@@ -334,12 +336,18 @@ impl DownloadSession {
             completed_at: None,
             model_name: None,
             model_id: None,
+            model_file_name: None,
         })
     }
 
     pub fn with_model_metadata(mut self, model_name: String, model_id: String) -> Self {
         self.model_name = Some(model_name);
         self.model_id = Some(model_id);
+        self
+    }
+
+    pub fn with_model_file_name(mut self, model_file_name: String) -> Self {
+        self.model_file_name = Some(model_file_name);
         self
     }
 
@@ -401,6 +409,10 @@ impl DownloadSession {
 
     pub fn model_id(&self) -> Option<&str> {
         self.model_id.as_deref()
+    }
+
+    pub fn model_file_name(&self) -> Option<&str> {
+        self.model_file_name.as_deref()
     }
 
     pub fn start(&mut self) -> Result<(), DownloadError> {
@@ -867,7 +879,7 @@ mod tests {
         assert!(eta_seconds.is_some(), "ETA should be calculable");
         let eta = eta_seconds.unwrap();
         assert!(
-            eta >= 2 && eta <= 4,
+            (2..=4).contains(&eta),
             "ETA should be approximately 3 seconds, got {}",
             eta
         );

@@ -1,9 +1,9 @@
 //! Contextualized chunk storage operations.
 
 use super::checksum::calculate_checksum;
+use crate::features::embedding::service::MODEL_NAME;
 use crate::infrastructure::indexing::chunker::ContextualizedChunk;
 use crate::infrastructure::indexing::error::{IndexingError, Result};
-use crate::features::embedding::service::MODEL_NAME;
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;
 use serde::Deserialize;
@@ -51,12 +51,26 @@ async fn get_web_article_title(path: &Path) -> Result<String> {
 }
 
 /// Helper to insert document metadata.
+/// Upsert the document row and return the id the row **actually has**.
+///
+/// The distinction matters. `ON CONFLICT(file_path) DO UPDATE` deliberately
+/// does not touch `id`, so re-indexing an existing file keeps that file's
+/// original id and ignores the freshly-generated `doc_id` passed in. Callers
+/// that kept using the generated id then wrote chunks referencing a document
+/// that does not exist: the `DELETE FROM text_chunks WHERE document_id = ?`
+/// matched nothing (stale chunks survived) and the chunk inserts hit
+/// `FOREIGN KEY constraint failed`, rolling back the whole transaction. Every
+/// re-index of a modified file failed, permanently, while search kept serving
+/// the pre-edit content.
+///
+/// `RETURNING id` closes that gap: children are always bound to the surviving
+/// row.
 async fn insert_document_metadata(
     tx: &mut Transaction<'_, Sqlite>,
     doc_id: &str,
     path: &Path,
     mime_type: &str,
-) -> Result<()> {
+) -> Result<String> {
     // Extract file_name - use title for web articles
     let file_name = if is_web_article(path) {
         // Web article: extract title from metadata.json
@@ -113,7 +127,9 @@ async fn insert_document_metadata(
             indexed_at.clone()
         });
 
-    sqlx::query!(
+    // Non-macro form on purpose: `SQLX_OFFLINE=true`, and changing the SQL
+    // inside a `query!` macro would require regenerating the offline cache.
+    let actual_id: String = sqlx::query_scalar(
         r#"
         INSERT INTO documents (
             id, file_path, file_name, mime_type,
@@ -126,20 +142,30 @@ async fn insert_document_metadata(
             checksum = excluded.checksum,
             status = 'indexed',
             updated_at = CURRENT_TIMESTAMP
+        RETURNING id
         "#,
-        doc_id,
-        file_path,
-        file_name,
-        mime_type,
-        size_bytes,
-        modified_at_str,
-        indexed_at,
-        checksum,
     )
-    .execute(&mut **tx)
+    .bind(doc_id)
+    .bind(&file_path)
+    .bind(&file_name)
+    .bind(mime_type)
+    .bind(size_bytes)
+    .bind(&modified_at_str)
+    .bind(&indexed_at)
+    .bind(&checksum)
+    .fetch_one(&mut **tx)
     .await?;
 
-    Ok(())
+    if actual_id != doc_id {
+        tracing::debug!(
+            generated = %doc_id,
+            actual = %actual_id,
+            path = %path.display(),
+            "re-indexing existing document; binding chunks to the existing row id"
+        );
+    }
+
+    Ok(actual_id)
 }
 
 /// Helper to insert chunks and embeddings.
@@ -181,12 +207,11 @@ async fn insert_chunks_and_embeddings(
             IndexingError::InvalidData(format!("Embedding index {} out of bounds", idx))
         })?;
 
-        let embedding_bytes = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect::<Vec<u8>>();
+        let embedding_bytes = crate::features::embedding::encoding::encode_embedding(embedding);
 
-        let embedding_id = Uuid::new_v4().to_string();
+        // Canonical key so delete/rebuild/insert all agree — see
+        // `embedding::encoding::vector_key`.
+        let embedding_id = crate::features::embedding::encoding::vector_key(&chunk_id);
         let dimension = embedding.len() as i32;
 
         sqlx::query!(
@@ -228,7 +253,7 @@ pub async fn store_document_with_context(
     let mut tx = pool.begin().await?;
     let doc_id = Uuid::new_v4().to_string();
 
-    insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
+    let doc_id = insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
     insert_chunks_and_embeddings(&mut tx, &doc_id, &chunks, &embeddings).await?;
 
     tx.commit().await?;
@@ -256,7 +281,7 @@ pub async fn store_document_with_context_and_file(
     let mut tx = pool.begin().await?;
     let doc_id = Uuid::new_v4().to_string();
 
-    insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
+    let doc_id = insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
     insert_chunks_and_embeddings(&mut tx, &doc_id, &chunks, &embeddings).await?;
 
     tx.commit().await?;
@@ -283,8 +308,168 @@ pub async fn store_document_with_context_and_file_tx(
 
     let doc_id = Uuid::new_v4().to_string();
 
-    insert_document_metadata(tx, &doc_id, path, mime_type).await?;
+    let doc_id = insert_document_metadata(tx, &doc_id, path, mime_type).await?;
     insert_chunks_and_embeddings(tx, &doc_id, &chunks, &embeddings).await?;
 
     Ok(doc_id)
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("open in-memory db");
+
+        // Foreign keys are enabled in production (see database/connection.rs).
+        // Without this pragma the bug under test is invisible: the bad chunk
+        // inserts would simply succeed and dangle.
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        pool
+    }
+
+    fn chunk(text: &str, index: usize) -> ContextualizedChunk {
+        ContextualizedChunk {
+            original_content: text.to_string(),
+            contextualized_content: format!("ctx: {}", text),
+            context_prefix: "ctx: ".to_string(),
+            chunk_index: index,
+            token_count: text.split_whitespace().count(),
+            start_idx: 0,
+            end_idx: text.len(),
+        }
+    }
+
+    async fn count(pool: &SqlitePool, sql: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(pool)
+            .await
+            .expect("count query")
+    }
+
+    /// Re-indexing a modified file used to fail with `FOREIGN KEY constraint
+    /// failed` on every attempt, because the upsert kept the row's original id
+    /// while chunks were bound to a freshly-generated UUID. The stale chunks
+    /// survived and search kept serving pre-edit content indefinitely.
+    #[tokio::test]
+    async fn reindexing_a_modified_file_replaces_its_chunks() {
+        let pool = setup_pool().await;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("note.md");
+
+        std::fs::write(&path, "first version").expect("write file");
+        let first_id = store_document_with_context(
+            &pool,
+            &path,
+            "text/markdown",
+            vec![chunk("first version", 0)],
+            vec![vec![0.1, 0.2, 0.3, 0.4]],
+        )
+        .await
+        .expect("initial index should succeed");
+
+        assert_eq!(count(&pool, "SELECT COUNT(*) FROM documents").await, 1);
+        assert_eq!(count(&pool, "SELECT COUNT(*) FROM text_chunks").await, 1);
+
+        // Modify and re-index the same path.
+        std::fs::write(&path, "second version, longer").expect("rewrite file");
+        let second_id = store_document_with_context(
+            &pool,
+            &path,
+            "text/markdown",
+            vec![chunk("second version, longer", 0), chunk("extra chunk", 1)],
+            vec![vec![0.5, 0.6, 0.7, 0.8], vec![0.9, 1.0, 1.1, 1.2]],
+        )
+        .await
+        .expect("re-index must succeed, not raise a foreign-key violation");
+
+        assert_eq!(
+            first_id, second_id,
+            "re-indexing the same path must stay on the same document row"
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM documents").await,
+            1,
+            "re-index must not create a second document row"
+        );
+
+        // Old chunks gone, new chunks present, all bound to the surviving row.
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM text_chunks").await,
+            2,
+            "stale chunks must be replaced, not accumulated"
+        );
+        let orphaned = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM text_chunks WHERE document_id NOT IN (SELECT id FROM documents)",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("orphan check");
+        assert_eq!(orphaned, 0, "every chunk must reference a real document");
+
+        let surviving: String =
+            sqlx::query_scalar("SELECT content FROM text_chunks ORDER BY chunk_index LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .expect("read chunk");
+        assert_eq!(
+            surviving, "second version, longer",
+            "search must see the edited content, not the original"
+        );
+    }
+
+    /// Embeddings must survive the same round trip and stay decodable through
+    /// the shared codec.
+    #[tokio::test]
+    async fn reindexing_rewrites_embeddings_in_the_canonical_encoding() {
+        let pool = setup_pool().await;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("note.md");
+
+        std::fs::write(&path, "v1").expect("write file");
+        store_document_with_context(
+            &pool,
+            &path,
+            "text/markdown",
+            vec![chunk("v1", 0)],
+            vec![vec![0.1, 0.2, 0.3, 0.4]],
+        )
+        .await
+        .expect("initial index");
+
+        std::fs::write(&path, "v2").expect("rewrite file");
+        store_document_with_context(
+            &pool,
+            &path,
+            "text/markdown",
+            vec![chunk("v2", 0)],
+            vec![vec![0.5, 0.6, 0.7, 0.8]],
+        )
+        .await
+        .expect("re-index");
+
+        let blob: Vec<u8> = sqlx::query_scalar("SELECT embedding FROM text_embeddings")
+            .fetch_one(&pool)
+            .await
+            .expect("read embedding");
+
+        let decoded = crate::features::embedding::encoding::decode_embedding(&blob)
+            .expect("embedding must decode");
+        assert_eq!(decoded, vec![0.5, 0.6, 0.7, 0.8]);
+    }
 }

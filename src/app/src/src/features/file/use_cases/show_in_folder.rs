@@ -2,8 +2,8 @@
 //!
 //! Reveals a file in the system's file explorer.
 
-use crate::features::file::dto::{FileOperationSuccessDto, ShowInFolderRequestDto};
 use crate::application::ports::{FileStoragePort, FileSystemPort};
+use crate::features::file::dto::{FileOperationSuccessDto, ShowInFolderRequestDto};
 use crate::infrastructure::security::FileAccessConfig;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;

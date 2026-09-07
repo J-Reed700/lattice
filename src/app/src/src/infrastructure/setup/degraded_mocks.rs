@@ -1,9 +1,9 @@
 use crate::application::ports::batch_job_repository_port::BatchJobStatus;
 use crate::domain::value_objects::file_metadata::FileMetadata;
-use crate::infrastructure::indexing::progress::IndexProgress;
+use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::indexing::IndexingServiceTrait;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
-use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
+use crate::infrastructure::indexing::progress::IndexProgress;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;

@@ -12,7 +12,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::indexing::reindex_document::ReindexDocumentUseCase;
+//! use lattice::application::use_cases::indexing::reindex_document::ReindexDocumentUseCase;
 //!
 //! # async fn example(use_case: ReindexDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute("doc-123".to_string()).await?;
@@ -23,14 +23,14 @@
 
 use std::sync::Arc;
 
-use crate::features::indexing::dto::IndexFileResponseDto;
 use crate::application::factories::FileMetadataFactory;
-use crate::application::ports::{EmbeddingPort, FileStoragePort, RepositoryPort};
+use crate::application::ports::{EmbeddingPort, FileStoragePort, RepositoryPort, VectorSearchPort};
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
-use crate::features::embedding::entity::Embedding;
 use crate::domain::entities::Document;
 use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
+use crate::features::embedding::entity::Embedding;
+use crate::features::indexing::dto::IndexFileResponseDto;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use crate::shared::error::{AppError, Result};
 
@@ -56,6 +56,15 @@ pub struct ReindexDocumentUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
+    /// The live vector index.
+    ///
+    /// Reindex used to update SQLite only. The in-memory USearch index kept
+    /// the vectors of chunks that no longer existed, and never learned about
+    /// the new ones — so after editing a file, semantic search returned
+    /// dangling results for deleted chunks and never surfaced the new content.
+    /// A restart did not repair it either, because the persisted index is only
+    /// rebuilt when it is *empty*.
+    vector_search: Arc<dyn VectorSearchPort>,
 }
 
 impl ReindexDocumentUseCase {
@@ -67,17 +76,20 @@ impl ReindexDocumentUseCase {
     /// * `embedding_service` - Service for generating embeddings
     /// * `document_repo` - Repository for document persistence
     /// * `embedding_repo` - Repository for persisting embeddings
+    /// * `vector_search` - Live vector index, kept in step with the database
     pub fn new(
         file_storage: Arc<dyn FileStoragePort>,
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn RepositoryPort<Document>>,
         uow_factory: Arc<dyn UnitOfWorkFactory>,
+        vector_search: Arc<dyn VectorSearchPort>,
     ) -> Self {
         Self {
             file_storage,
             embedding_service,
             document_repo,
             uow_factory,
+            vector_search,
         }
     }
 
@@ -106,6 +118,15 @@ impl ReindexDocumentUseCase {
             .find_by_id(&document_id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Document not found: {}", document_id)))?;
+
+        // Capture the pre-reindex chunk ids. `document.reindex` replaces the
+        // chunk set, so after that call there is no way to know which vectors
+        // to evict from the index.
+        let stale_chunk_ids: Vec<String> = document
+            .chunks()
+            .iter()
+            .map(|c| c.id().to_string())
+            .collect();
 
         // 2. Read current file content (clone to avoid borrow conflict)
         let file_path = document.document().file_path().to_path_buf();
@@ -213,6 +234,39 @@ impl ReindexDocumentUseCase {
                 return Err(err);
             }
         }
+
+        // 7a. Bring the live vector index in step with what we just wrote.
+        //
+        // Best-effort after the commit: the database is the source of truth,
+        // and a failure here must not roll back a successful reindex. It is
+        // logged loudly because the symptom — stale semantic search results —
+        // is otherwise indistinguishable from the index simply being wrong.
+        for chunk_id in &stale_chunk_ids {
+            let key = crate::features::embedding::encoding::vector_key(chunk_id);
+            if let Err(e) = self.vector_search.remove_embedding(&key) {
+                tracing::warn!(
+                    document_id = %document_id,
+                    chunk_id = %chunk_id,
+                    error = %e,
+                    "reindex: failed to evict stale vector; search may return a deleted chunk"
+                );
+            }
+        }
+
+        for (chunk, embedding_vec) in document.chunks().iter().zip(embeddings.iter()) {
+            let key = crate::features::embedding::encoding::vector_key(&chunk.id().to_string());
+            if let Err(e) = self.vector_search.add_embedding(key, embedding_vec.clone()) {
+                tracing::warn!(
+                    document_id = %document_id,
+                    chunk_id = %chunk.id(),
+                    error = %e,
+                    "reindex: failed to add new vector; new content will not be searchable"
+                );
+            }
+        }
+
+        // The corpus changed; cached search results are stale.
+        crate::features::cache::query_cache::invalidate_query_cache();
 
         // 8. Build response
         let file_path_str = document
@@ -379,15 +433,57 @@ impl ReindexDocumentUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
-    use crate::features::embedding::entity::Embedding;
     use crate::domain::entities::Document;
     use crate::domain::repositories::UnitOfWorkFactory;
+    use crate::features::embedding::entity::Embedding;
     use crate::shared::domain_types::ValidatedFilePath;
     use async_trait::async_trait;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use tempfile::TempDir;
+
+    /// Records what reindex asks the vector index to do, so tests can assert
+    /// the index is kept in step with the database rather than silently
+    /// diverging from it.
+    #[derive(Default)]
+    struct MockVectorSearch {
+        added: Mutex<Vec<String>>,
+        removed: Mutex<Vec<String>>,
+    }
+
+    impl VectorSearchPort for MockVectorSearch {
+        fn search(
+            &self,
+            _query_embedding: &[f32],
+            _top_k: usize,
+            _threshold: f32,
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+            Ok(Vec::new())
+        }
+
+        fn add_embedding(&self, id: String, _embedding: Vec<f32>) -> Result<()> {
+            self.added.lock().unwrap().push(id);
+            Ok(())
+        }
+
+        fn remove_embedding(&self, id: &str) -> Result<()> {
+            self.removed.lock().unwrap().push(id.to_string());
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn count(&self) -> usize {
+            self.added.lock().unwrap().len()
+        }
+
+        fn dimension(&self) -> usize {
+            384
+        }
+    }
 
     // Mock file storage
     struct MockFileStorage;
@@ -773,6 +869,7 @@ mod tests {
             Arc::new(MockEmbedder),
             repo.clone(),
             Arc::new(MockUnitOfWorkFactory),
+            Arc::new(MockVectorSearch::default()),
         );
 
         let response = use_case.execute(doc_id.clone()).await.unwrap();
@@ -782,6 +879,60 @@ mod tests {
         assert!(response.error.is_none());
         // Chunks may differ due to different content
         assert!(response.chunks_created > 0);
+    }
+
+    /// Reindex must keep the live vector index in step with the database.
+    /// Updating SQLite alone left the index holding vectors for chunks that
+    /// no longer existed, and never containing the new ones — so semantic
+    /// search returned dangling hits and missed the edited content, and a
+    /// restart did not repair it because the persisted index is only rebuilt
+    /// when empty.
+    #[tokio::test]
+    async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
+        let repo = Arc::new(MockDocumentRepo::new());
+        let (aggregate, _temp_dir) = create_test_aggregate();
+        let doc_id = aggregate.id().to_string();
+
+        let stale_keys: Vec<String> = aggregate
+            .chunks()
+            .iter()
+            .map(|c| crate::features::embedding::encoding::vector_key(&c.id().to_string()))
+            .collect();
+        assert!(!stale_keys.is_empty(), "fixture must start with chunks");
+
+        repo.set_document(aggregate);
+
+        let vector_search = Arc::new(MockVectorSearch::default());
+        let use_case = ReindexDocumentUseCase::new(
+            Arc::new(MockFileStorage),
+            Arc::new(MockEmbedder),
+            repo.clone(),
+            Arc::new(MockUnitOfWorkFactory),
+            vector_search.clone(),
+        );
+
+        let response = use_case.execute(doc_id).await.unwrap();
+
+        let removed = vector_search.removed.lock().unwrap().clone();
+        for key in &stale_keys {
+            assert!(
+                removed.contains(key),
+                "stale vector {} was not evicted from the index",
+                key
+            );
+        }
+
+        let added = vector_search.added.lock().unwrap().clone();
+        assert_eq!(
+            added.len(),
+            response.chunks_created,
+            "every new chunk must be added to the vector index"
+        );
+        assert!(
+            added.iter().all(|k| k.starts_with("emb_")),
+            "added keys must use the canonical scheme: {:?}",
+            added
+        );
     }
 
     #[tokio::test]
@@ -794,6 +945,7 @@ mod tests {
             Arc::new(MockEmbedder),
             repo,
             Arc::new(MockUnitOfWorkFactory),
+            Arc::new(MockVectorSearch::default()),
         );
 
         let result = use_case.execute("nonexistent-id".to_string()).await;
@@ -816,6 +968,7 @@ mod tests {
             Arc::new(MockEmbedder),
             repo,
             Arc::new(MockUnitOfWorkFactory),
+            Arc::new(MockVectorSearch::default()),
         );
 
         // Reindex with different chunk size

@@ -1,0 +1,17 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 325
+expression: errors
+---
+[
+  {
+    "error": "Unsupported format",
+    "file": "document1.pdf",
+    "timestamp": "[timestamp]"
+  },
+  {
+    "error": "File corrupted",
+    "file": "document2.docx",
+    "timestamp": "[timestamp]"
+  }
+]

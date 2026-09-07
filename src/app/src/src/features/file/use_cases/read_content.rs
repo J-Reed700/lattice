@@ -2,11 +2,12 @@
 //!
 //! Reads the content of a text file with security limits.
 
-use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
 use crate::application::ports::FileStoragePort;
+use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
 use crate::infrastructure::indexing::extraction::ContentExtractor;
-use crate::infrastructure::security::FileAccessConfig;
+use crate::infrastructure::security::{FileAccessConfig, ValidatedFile};
 use crate::shared::error::{AppError, Result};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -32,20 +33,16 @@ const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 /// - File size limit prevents resource exhaustion (CWE-770, CWE-400)
 /// - UTF-8 validation ensures safe text processing
 pub struct ReadFileContentUseCase {
-    file_storage: Arc<dyn FileStoragePort>,
     file_access_config: Arc<FileAccessConfig>,
 }
 
 impl ReadFileContentUseCase {
     /// Create a new use case instance.
     pub fn new(
-        file_storage: Arc<dyn FileStoragePort>,
+        _file_storage: Arc<dyn FileStoragePort>,
         file_access_config: Arc<FileAccessConfig>,
     ) -> Self {
-        Self {
-            file_storage,
-            file_access_config,
-        }
+        Self { file_access_config }
     }
 
     /// Execute the use case.
@@ -65,25 +62,17 @@ impl ReadFileContentUseCase {
     /// - `AppError::FileTooLarge` if file exceeds size limit
     /// - `AppError::Io` if file cannot be read or is not valid UTF-8
     pub async fn execute(&self, request: ReadFileContentRequestDto) -> Result<FileContentDto> {
-        // CRITICAL: Validate path FIRST to prevent directory traversal (CWE-22)
-        let validated_path = self
-            .file_access_config
-            .validate_path(&request.path)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
-
-        // Check file exists (using validated path)
-        if !self.file_storage.exists(&validated_path).await {
-            return Err(AppError::NotFound(format!(
-                "File not found: {}",
-                validated_path.display()
-            )));
-        }
-
-        // Get metadata to check size
-        let metadata = self.file_storage.metadata(&validated_path).await?;
+        // Validation and open happen as one operation. All metadata and bytes
+        // below come from this same handle, so a path cannot be swapped to an
+        // out-of-scope symlink between validation and reading.
+        let mut validated_file = self.file_access_config.open_file(&request.path)?;
+        let validated_path = validated_file.path().to_path_buf();
+        // repository-barrier-allow: metadata comes from the already-open user file resource.
+        let is_directory = validated_file.metadata().is_dir();
+        let size_bytes = validated_file.metadata().len();
 
         // Verify it's a file, not a directory
-        if metadata.is_directory {
+        if is_directory {
             return Err(AppError::InvalidInput(format!(
                 "Cannot read directory as file: {}",
                 validated_path.display()
@@ -91,23 +80,28 @@ impl ReadFileContentUseCase {
         }
 
         // Check file size limit (security: prevent DoS)
-        if metadata.size > MAX_FILE_SIZE_BYTES {
+        if size_bytes > MAX_FILE_SIZE_BYTES {
             return Err(AppError::FileTooLarge {
                 path: validated_path.display().to_string(),
-                size_bytes: metadata.size,
+                size_bytes,
                 max_size_bytes: MAX_FILE_SIZE_BYTES,
             });
         }
 
-        // Read file content (using validated path). Fall back to structured extraction
-        // for supported document formats when raw UTF-8 read fails.
-        let content = match self.file_storage.read_file(&validated_path).await {
+        // Fall back to structured extraction using a private copy made from
+        // the already-open handle. The extractor never re-opens the original
+        // user-controlled path.
+        let content = match validated_file.read_to_string() {
             Ok(content) => content,
             Err(read_error) => {
-                if let Some(extracted) = self.try_extract_preview_content(&validated_path).await {
+                if let Some(extracted) = self.try_extract_preview_content(&mut validated_file).await
+                {
                     extracted
                 } else {
-                    return Err(read_error);
+                    return Err(AppError::FileRead {
+                        path: validated_path.display().to_string(),
+                        reason: read_error.to_string(),
+                    });
                 }
             }
         };
@@ -115,19 +109,57 @@ impl ReadFileContentUseCase {
         Ok(FileContentDto {
             path: validated_path.to_string_lossy().to_string(),
             content,
-            size_bytes: metadata.size as i64,
+            size_bytes: size_bytes as i64,
             encoding: "UTF-8".to_string(),
         })
     }
 
-    async fn try_extract_preview_content(&self, path: &Path) -> Option<String> {
+    async fn try_extract_preview_content(&self, file: &mut ValidatedFile) -> Option<String> {
+        let path = file.path().to_path_buf();
         let extractor = ContentExtractor::with_max_size(MAX_FILE_SIZE_BYTES);
 
-        if !extractor.is_supported(path) {
+        if !extractor.is_supported(&path) {
             return None;
         }
 
-        match extractor.extract_from_file(path).await {
+        if file.handle_mut().seek(SeekFrom::Start(0)).is_err() {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(file.metadata().len() as usize);
+        if file.handle_mut().read_to_end(&mut bytes).is_err() {
+            return None;
+        }
+
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .filter(|value| value.chars().all(|ch| ch.is_ascii_alphanumeric()))
+            .map(|value| format!(".{value}"))
+            .unwrap_or_default();
+        let temp_path = std::env::temp_dir().join(format!(
+            "lattice-secure-preview-{}{}",
+            uuid::Uuid::new_v4(),
+            extension
+        ));
+        let write_result = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .and_then(|mut temp_file| {
+                temp_file.write_all(&bytes)?;
+                temp_file.sync_all()
+            });
+        if let Err(error) = write_result {
+            tracing::debug!(error = %error, "Failed to create secure preview copy");
+            return None;
+        }
+
+        let result = extractor.extract_from_file(&temp_path).await;
+        if let Err(error) = std::fs::remove_file(&temp_path) {
+            tracing::debug!(path = %temp_path.display(), error = %error, "Failed to remove secure preview copy");
+        }
+
+        match result {
             Ok(extracted) => Some(extracted.text),
             Err(err) => {
                 tracing::debug!(
@@ -322,8 +354,12 @@ mod tests {
 
         let canonical_path = test_file.canonicalize().unwrap_or(test_file.clone());
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
-        let file_storage =
-            Arc::new(MockFileStorage::new().with_large_file(&canonical_path.to_string_lossy()));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&test_file)
+            .and_then(|file| file.set_len(MAX_FILE_SIZE_BYTES + 1))
+            .expect("create sparse oversized test file");
+        let file_storage = Arc::new(MockFileStorage::new());
         let use_case = ReadFileContentUseCase::new(file_storage, file_access_config);
 
         let request = ReadFileContentRequestDto {

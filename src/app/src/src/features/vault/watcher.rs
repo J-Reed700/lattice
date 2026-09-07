@@ -11,7 +11,11 @@ use notify_debouncer_full::{new_debouncer, DebouncedEvent};
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use crate::features::daily_notes::repository::{
+    DailyNotesRepository, NoteTimestampRecord, VaultNoteUpsert,
+};
 use crate::features::settings::use_cases::GetSettingsUseCase;
+use crate::shared::time::parse_db_timestamp;
 
 const SUPPRESSION_TTL: Duration = Duration::from_secs(5);
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(800);
@@ -75,16 +79,14 @@ pub fn start_vault_watcher(
             tracing::info!("vault watcher: disabled in settings — not starting");
             return;
         }
-        let configured_root =
-            match super::writeback::resolve_vault_root(&settings.vault.vault_path) {
-                Some(p) => p,
-                None => {
-                    tracing::warn!(
-                        "vault watcher: vault root could not be resolved — not starting"
-                    );
-                    return;
-                }
-            };
+        let configured_root = match super::writeback::resolve_vault_root(&settings.vault.vault_path)
+        {
+            Some(p) => p,
+            None => {
+                tracing::warn!("vault watcher: vault root could not be resolved — not starting");
+                return;
+            }
+        };
 
         if let Err(e) = tokio::fs::create_dir_all(&configured_root).await {
             tracing::warn!(
@@ -239,11 +241,7 @@ fn handle_event(
 }
 
 /// Pub(crate) so focus-rescan reuses the same parse/UPSERT/emit path.
-pub(crate) async fn import_one(
-    path: &Path,
-    db_pool: &SqlitePool,
-    app_handle: &tauri::AppHandle,
-) {
+pub(crate) async fn import_one(path: &Path, db_pool: &SqlitePool, app_handle: &tauri::AppHandle) {
     let contents = match tokio::fs::read_to_string(path).await {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -251,6 +249,7 @@ pub(crate) async fn import_one(
             // written the replacement yet. Sleep briefly and re-check
             // to avoid hard-deleting metadata in the gap.
             tokio::time::sleep(Duration::from_millis(200)).await;
+            // repository-barrier-allow: watcher resolves an atomic-save event for the watched file resource.
             if tokio::fs::metadata(path).await.is_ok() {
                 tracing::debug!(
                     path = %path.display(),
@@ -305,28 +304,19 @@ pub(crate) async fn import_one(
     // ON CONFLICT: only the fields that round-trip through markdown.
     // Lattice-only JSON columns (linked_document_ids, highlights_json,
     // etc.) are preserved.
-    let result = sqlx::query(
-        r#"
-        INSERT INTO daily_notes_workspace (
-            id, title, content, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            content = excluded.content,
-            updated_at = excluded.updated_at
-        "#,
-    )
-    .bind(&parsed.id)
-    .bind(&parsed.title)
-    .bind(&parsed.body)
-    .bind(&parsed.created_at)
-    .bind(&parsed.updated_at)
-    .execute(db_pool)
-    .await;
+    let repository = DailyNotesRepository::new(db_pool.clone());
+    let result = repository
+        .upsert_from_vault(VaultNoteUpsert {
+            id: &parsed.id,
+            title: &parsed.title,
+            content: &parsed.body,
+            created_at: &parsed.created_at,
+            updated_at: &parsed.updated_at,
+        })
+        .await;
 
     match result {
-        Ok(_) => {
+        Ok(()) => {
             tracing::info!(
                 id = %parsed.id,
                 path = %path.display(),
@@ -343,11 +333,7 @@ pub(crate) async fn import_one(
 }
 
 /// Trusts the writer's `<id>.md` naming invariant — id is the file stem.
-async fn handle_external_delete(
-    path: &Path,
-    db_pool: &SqlitePool,
-    app_handle: &tauri::AppHandle,
-) {
+async fn handle_external_delete(path: &Path, db_pool: &SqlitePool, app_handle: &tauri::AppHandle) {
     let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
         tracing::debug!(
             path = %path.display(),
@@ -356,13 +342,11 @@ async fn handle_external_delete(
         return;
     };
 
-    let result = sqlx::query("DELETE FROM daily_notes_workspace WHERE id = ?")
-        .bind(id)
-        .execute(db_pool)
-        .await;
+    let repository = DailyNotesRepository::new(db_pool.clone());
+    let result = repository.delete(id).await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
+        Ok(true) => {
             tracing::info!(
                 id = %id,
                 path = %path.display(),
@@ -370,7 +354,7 @@ async fn handle_external_delete(
             );
             emit_note_imported(app_handle, id);
         }
-        Ok(_) => {
+        Ok(false) => {
             tracing::debug!(
                 id = %id,
                 path = %path.display(),
@@ -394,6 +378,7 @@ pub async fn rescan_vault(
     app_handle: tauri::AppHandle,
 ) -> Result<RescanSummary, String> {
     let notes_dir = vault_root.join("notes");
+    // repository-barrier-allow: rescan reconciles the configured vault resource with its repository.
     if !notes_dir.exists() {
         return Ok(RescanSummary {
             scanned: 0,
@@ -404,16 +389,17 @@ pub async fn rescan_vault(
 
     // Mutable: disk walk removes each id it sees; whatever remains
     // after the walk = file deleted from disk.
-    let rows = sqlx::query_as::<_, SqlMtimeRow>(
-        "SELECT id, updated_at, created_at FROM daily_notes_workspace",
-    )
-    .fetch_all(&db_pool)
-    .await
-    .map_err(|e| format!("focus-rescan: SQL read failed: {}", e))?;
+    let repository = DailyNotesRepository::new(db_pool.clone());
+    let rows = repository
+        .list_timestamps()
+        .await
+        .map_err(|e| format!("focus-rescan: SQL read failed: {}", e))?;
 
-    let mut sql_rows: HashMap<String, SqlMtimeRow> =
+    let total_rows = rows.len();
+    let mut sql_rows: HashMap<String, NoteTimestampRecord> =
         rows.into_iter().map(|r| (r.id.clone(), r)).collect();
 
+    // repository-barrier-allow: rescan enumerates the configured vault resource.
     let mut entries = match tokio::fs::read_dir(&notes_dir).await {
         Ok(e) => e,
         Err(e) => return Err(format!("focus-rescan: read_dir failed: {}", e)),
@@ -423,7 +409,27 @@ pub async fn rescan_vault(
     let mut imported = 0usize;
     let mut deleted = 0usize;
 
-    while let Ok(Some(entry)) = entries.next_entry().await {
+    // A directory walk that ends early leaves rows in `sql_rows` that were
+    // never matched against their files. Sweeping on a partial listing would
+    // delete live notes, so track whether we actually reached the end.
+    let mut walk_complete = false;
+
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => {
+                walk_complete = true;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "focus-rescan: directory walk failed part-way; ghost-sweep will be skipped"
+                );
+                break;
+            }
+        };
+
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("md") {
             continue;
@@ -457,6 +463,33 @@ pub async fn rescan_vault(
     // Ghost-note sweep — anything left in `sql_rows` had its file
     // deleted while Lattice wasn't watching. Skip newly-created rows
     // whose vault writeback hasn't flushed yet.
+    //
+    // Before deleting anything, demand positive evidence that the vault is
+    // actually intact. A present-but-empty `notes/` directory is NOT proof
+    // the user deleted their notes — it is the normal appearance of a
+    // Dropbox/iCloud folder whose contents haven't materialised, a partially
+    // mounted volume, or a sync client mid-move. Treating it as authoritative
+    // deletes the entire notes database on one window-focus rescan, with no
+    // undo. The database is the SSOT; the filesystem only gets to *suggest*
+    // deletions, and only when the evidence is coherent.
+    if let Some(reason) =
+        ghost_sweep_block_reason(walk_complete, scanned, sql_rows.len(), total_rows)
+    {
+        tracing::error!(
+            scanned,
+            candidates = sql_rows.len(),
+            total_rows,
+            reason,
+            "focus-rescan: refusing ghost-sweep; vault looks incomplete rather than edited"
+        );
+        emit_rescan_blocked(&app_handle, reason, sql_rows.len(), total_rows);
+        return Ok(RescanSummary {
+            scanned,
+            imported,
+            deleted: 0,
+        });
+    }
+
     let now = chrono::Utc::now();
     let creation_grace = chrono::Duration::seconds(30);
 
@@ -464,14 +497,7 @@ pub async fn rescan_vault(
         // Try RFC-3339 first, then fall back to SQLite's native format
         // (`'YYYY-MM-DD HH:MM:SS'`). If we can't parse it, skip deletion
         // to be safe — better to keep a ghost row than delete a live one.
-        let created_ok = chrono::DateTime::parse_from_rfc3339(&row.created_at)
-            .or_else(|_| {
-                chrono::NaiveDateTime::parse_from_str(
-                    &row.created_at,
-                    "%Y-%m-%d %H:%M:%S",
-                )
-                .map(|nd| nd.and_utc().into())
-            });
+        let created_ok = parse_db_timestamp(&row.created_at);
 
         match created_ok {
             Ok(dt) => {
@@ -495,12 +521,9 @@ pub async fn rescan_vault(
             }
         }
 
-        let result = sqlx::query("DELETE FROM daily_notes_workspace WHERE id = ?")
-            .bind(&id)
-            .execute(&db_pool)
-            .await;
+        let result = repository.delete(&id).await;
         match result {
-            Ok(r) if r.rows_affected() > 0 => {
+            Ok(true) => {
                 tracing::info!(
                     id = %id,
                     "focus-rescan: deleted ghost note (file gone from vault)"
@@ -508,7 +531,7 @@ pub async fn rescan_vault(
                 emit_note_imported(&app_handle, &id);
                 deleted += 1;
             }
-            Ok(_) => {}
+            Ok(false) => {}
             Err(e) => tracing::warn!(
                 id = %id,
                 error = %e,
@@ -532,10 +555,7 @@ pub async fn rescan_vault(
 
 /// Strict `>` on whole-second integer timestamps. Read failures
 /// conservatively return true (treat as divergent).
-async fn is_disk_newer_than_sql(
-    entry: &tokio::fs::DirEntry,
-    sql_updated_at: &str,
-) -> bool {
+async fn is_disk_newer_than_sql(entry: &tokio::fs::DirEntry, sql_updated_at: &str) -> bool {
     let Ok(meta) = entry.metadata().await else {
         return true;
     };
@@ -546,22 +566,13 @@ async fn is_disk_newer_than_sql(
         return true;
     };
 
-    let Ok(sql_dt) = chrono::DateTime::parse_from_rfc3339(sql_updated_at) else {
+    let Ok(sql_dt) = parse_db_timestamp(sql_updated_at) else {
         return true;
     };
     // Strict `>` so a Lattice write (where SQL and disk land in the
     // same wall-clock second) doesn't re-import on next focus.
     // Same-second external edits are caught by the suppression registry.
     duration.as_secs() as i64 > sql_dt.timestamp()
-}
-
-#[derive(sqlx::FromRow, Clone)]
-struct SqlMtimeRow {
-    id: String,
-    updated_at: String,
-    /// Guards the ghost-sweep against race-deleting brand-new rows
-    /// whose vault writeback hasn't flushed yet.
-    created_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -579,6 +590,68 @@ fn emit_note_imported(app_handle: &tauri::AppHandle, note_id: &str) {
     }
 }
 
+/// Fraction of the notes table the ghost-sweep may delete in one pass before
+/// we treat the vault as suspect rather than edited.
+///
+/// Deleting half your notes between two window focuses is not a plausible
+/// editing session; it is what a half-synced cloud folder looks like.
+const GHOST_SWEEP_MAX_DELETE_RATIO: f64 = 0.5;
+
+/// Below this many rows, ratio checks are meaningless — deleting 1 of 2 notes
+/// is both 50% and completely ordinary.
+const GHOST_SWEEP_RATIO_MIN_ROWS: usize = 4;
+
+/// Returns `Some(reason)` when the ghost-sweep must not run.
+///
+/// Split out from `rescan_vault` so the policy is unit-testable without a
+/// database, a Tauri handle, or a real vault on disk.
+fn ghost_sweep_block_reason(
+    walk_complete: bool,
+    scanned: usize,
+    candidates: usize,
+    total_rows: usize,
+) -> Option<&'static str> {
+    if candidates == 0 {
+        return None; // Nothing to delete; nothing to guard against.
+    }
+
+    if !walk_complete {
+        return Some("the vault directory listing did not complete");
+    }
+
+    if scanned == 0 {
+        return Some("the notes directory is present but contains no files");
+    }
+
+    if total_rows >= GHOST_SWEEP_RATIO_MIN_ROWS {
+        let ratio = candidates as f64 / total_rows as f64;
+        if ratio >= GHOST_SWEEP_MAX_DELETE_RATIO {
+            return Some("more than half the notes appear to be missing at once");
+        }
+    }
+
+    None
+}
+
+/// Tell the frontend a rescan declined to delete, so the user finds out from
+/// the UI rather than from noticing missing notes later.
+fn emit_rescan_blocked(
+    app_handle: &tauri::AppHandle,
+    reason: &str,
+    candidates: usize,
+    total_rows: usize,
+) {
+    use tauri::Emitter;
+    let payload = serde_json::json!({
+        "reason": reason,
+        "candidates": candidates,
+        "totalRows": total_rows,
+    });
+    if let Err(e) = app_handle.emit("vault:rescan-blocked", payload) {
+        tracing::warn!(error = %e, "failed to emit vault:rescan-blocked event");
+    }
+}
+
 fn emit_watcher_error(app_handle: &tauri::AppHandle, error: &str) {
     use tauri::Emitter;
     let payload = serde_json::json!({ "error": error });
@@ -590,6 +663,43 @@ fn emit_watcher_error(app_handle: &tauri::AppHandle, error: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ghost_sweep_allows_ordinary_deletion() {
+        // 10 notes on disk, 1 row unmatched — a normal delete.
+        assert_eq!(ghost_sweep_block_reason(true, 10, 1, 11), None);
+    }
+
+    #[test]
+    fn ghost_sweep_allows_everything_when_nothing_to_delete() {
+        // Empty vault with an empty table is not suspicious.
+        assert_eq!(ghost_sweep_block_reason(true, 0, 0, 0), None);
+    }
+
+    #[test]
+    fn ghost_sweep_blocks_on_empty_but_present_directory() {
+        // The cloud-placeholder case: directory exists, no files materialised,
+        // every row looks like a ghost.
+        assert!(ghost_sweep_block_reason(true, 0, 25, 25).is_some());
+    }
+
+    #[test]
+    fn ghost_sweep_blocks_on_incomplete_walk() {
+        // A read error part-way through must never authorise deletions.
+        assert!(ghost_sweep_block_reason(false, 12, 3, 15).is_some());
+    }
+
+    #[test]
+    fn ghost_sweep_blocks_on_mass_disappearance() {
+        // Half the corpus vanished between two focus events — not an edit.
+        assert!(ghost_sweep_block_reason(true, 10, 10, 20).is_some());
+    }
+
+    #[test]
+    fn ghost_sweep_ratio_does_not_apply_to_tiny_vaults() {
+        // 1 of 2 notes deleted is 50%, but entirely ordinary.
+        assert_eq!(ghost_sweep_block_reason(true, 1, 1, 2), None);
+    }
 
     #[tokio::test]
     async fn suppression_marks_and_clears_by_filename() {
@@ -634,9 +744,6 @@ mod tests {
 
     #[test]
     fn filename_key_extracts_basename() {
-        assert_eq!(
-            filename_key(Path::new("/a/b/c.md")).unwrap(),
-            "c.md"
-        );
+        assert_eq!(filename_key(Path::new("/a/b/c.md")).unwrap(), "c.md");
     }
 }

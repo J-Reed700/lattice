@@ -18,13 +18,10 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::application::ports::{
-    EmbeddingRepositoryPort, LLMPort, RepositoryPort,
-};
-use crate::domain::entities::Document;
+use crate::application::ports::{DocumentRepositoryPort, EmbeddingRepositoryPort, LLMPort};
 use crate::features::corpus_shape::clustering::{
-    cluster as hdbscan_cluster, mean_pool, ClusteringInput, ClusteringParams,
-    ClusteringOutput, RawCluster,
+    cluster as hdbscan_cluster, mean_pool, ClusteringInput, ClusteringParams, RawCluster,
+    MAX_CLUSTERING_DOCS,
 };
 use crate::features::corpus_shape::entity::{
     Cluster, ClusterMember, ClusterRun, LabelSource,
@@ -46,6 +43,19 @@ pub trait DocumentContentPreviewPort: Send + Sync {
     async fn preview(&self, document_id: &str) -> Result<Option<RepresentativeDoc>>;
 }
 
+/// One step of a rebuild, for the rail's progress line. Tauri-free so the use
+/// case stays testable; `cluster_vault_run` adapts it to an event.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterProgress {
+    /// "loading" | "clustering" | "labeling" | "saving"
+    pub phase: String,
+    pub current: i64,
+    pub total: i64,
+}
+
+pub type ProgressSink = Arc<dyn Fn(ClusterProgress) + Send + Sync>;
+
 /// Result surface for the use case. Primarily for the debug command.
 #[derive(Debug, Clone)]
 pub struct RunClusteringOutcome {
@@ -56,17 +66,18 @@ pub struct RunClusteringOutcome {
 
 /// Orchestrates the Phase 5.3 clustering pipeline end-to-end.
 pub struct RunClusteringUseCase {
-    document_repo: Arc<dyn RepositoryPort<Document>>,
+    document_repo: Arc<dyn DocumentRepositoryPort>,
     embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
     cluster_repo: Arc<dyn ClusterRepositoryPort>,
     content_preview: Arc<dyn DocumentContentPreviewPort>,
     llm: Option<Arc<dyn LLMPort>>,
     params: ClusteringParams,
+    progress: Option<ProgressSink>,
 }
 
 impl RunClusteringUseCase {
     pub fn new(
-        document_repo: Arc<dyn RepositoryPort<Document>>,
+        document_repo: Arc<dyn DocumentRepositoryPort>,
         embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
         cluster_repo: Arc<dyn ClusterRepositoryPort>,
         content_preview: Arc<dyn DocumentContentPreviewPort>,
@@ -79,6 +90,24 @@ impl RunClusteringUseCase {
             content_preview,
             llm,
             params: ClusteringParams::default(),
+            progress: None,
+        }
+    }
+
+    /// Attach a progress sink. Emission is decoration — a failure to deliver a
+    /// step never fails the run.
+    pub fn with_progress(mut self, sink: ProgressSink) -> Self {
+        self.progress = Some(sink);
+        self
+    }
+
+    fn emit(&self, phase: &str, current: usize, total: usize) {
+        if let Some(sink) = &self.progress {
+            sink(ClusterProgress {
+                phase: phase.to_string(),
+                current: current as i64,
+                total: total as i64,
+            });
         }
     }
 
@@ -94,17 +123,22 @@ impl RunClusteringUseCase {
     pub async fn execute(&self) -> Result<RunClusteringOutcome> {
         let started = Instant::now();
 
-        // 1. Load document-level embeddings.
+        // 1. Load document-level embeddings. Newest first, capped: the pure
+        //    stage is O(n²·d), so an unbounded vault would wedge the run.
         let documents = self
             .document_repo
-            .find_all()
+            .find_all_paginated(MAX_CLUSTERING_DOCS)
             .await
             .map_err(|e| {
-                AppError::Database(format!("corpus_shape: find_all documents: {}", e))
+                AppError::Database(format!("corpus_shape: list documents: {}", e))
             })?;
 
+        self.emit("loading", 0, documents.len());
         let mut inputs: Vec<ClusteringInput> = Vec::new();
-        for doc in &documents {
+        for (index, doc) in documents.iter().enumerate() {
+            if index > 0 && index % 200 == 0 {
+                self.emit("loading", index, documents.len());
+            }
             let doc_id = doc.id().as_str().to_string();
             let chunk_pairs = self
                 .embedding_repo
@@ -130,8 +164,14 @@ impl RunClusteringUseCase {
             "corpus_shape: loaded per-doc embeddings"
         );
 
-        // 2. Cluster.
-        let clustering_output = hdbscan_cluster(inputs, self.params)?;
+        // 2. Cluster. The pure stage is CPU-bound, so it goes off the async
+        //    runtime rather than stalling every other task on the executor.
+        self.emit("clustering", 0, doc_count);
+        let params = self.params;
+        let clustering_output =
+            tokio::task::spawn_blocking(move || hdbscan_cluster(inputs, params))
+                .await
+                .map_err(|e| AppError::InternalError(format!("clustering task: {}", e)))??;
 
         // 3. Load previous run for label inheritance.
         let prev_run = self.cluster_repo.get_latest_run().await?;
@@ -157,7 +197,9 @@ impl RunClusteringUseCase {
         let mut new_clusters: Vec<(Cluster, Vec<ClusterMember>)> = Vec::new();
         let mut llm_call_count: i64 = 0;
 
-        for raw in &clustering_output.clusters {
+        let cluster_total = clustering_output.clusters.len();
+        for (index, raw) in clustering_output.clusters.iter().enumerate() {
+            self.emit("labeling", index + 1, cluster_total);
             let fp = fingerprint(&raw.member_doc_ids, &raw.centroid);
             let label_outcome =
                 self.resolve_label(raw, &fp, &prev_clusters, &prev_fingerprint_map, &mut claimed_prev)
@@ -211,6 +253,7 @@ impl RunClusteringUseCase {
         };
 
         // 5. Persist.
+        self.emit("saving", 0, new_clusters.len());
         self.cluster_repo.save_run(&run, &new_clusters).await?;
 
         // 6. Return.

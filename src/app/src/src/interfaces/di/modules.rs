@@ -73,8 +73,9 @@ use crate::features::mentions::use_cases::{
 
 // Application Use Cases - File Operations
 use crate::features::file::use_cases::{
-    GetFileMetadataUseCase, GetFilePathByIdUseCase, OpenFileByIdUseCase, OpenFileUseCase,
-    ReadFileBytesUseCase, ReadFileContentUseCase, ShowInFolderUseCase, UpdateFileMetadataUseCase,
+    GetFileMetadataUseCase, GetFilePathByIdUseCase, ListCitingConversationsUseCase,
+    OpenFileByIdUseCase, OpenFileUseCase, ReadFileBytesUseCase, ReadFileContentUseCase,
+    ShowInFolderUseCase, UpdateFileMetadataUseCase,
 };
 
 // Application Use Cases - Extraction
@@ -114,8 +115,8 @@ use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVers
 use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - Stats
-use crate::features::stats::use_cases::GetSystemStatsUseCase;
 use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
+use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUseCase};
 use crate::infrastructure::observability::metrics::Metrics;
 
 // Application Use Cases - Credentials
@@ -126,18 +127,15 @@ use crate::features::credentials::use_cases::{
 // Application Ports
 use crate::application::ports::BackupSchedulerPort;
 use crate::application::ports::{
-    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort,
-    ContentAddressedStoragePort, ContentExtractionPort, CredentialsPort, DocumentRepository,
-    EmbeddingPort, EmbeddingRepositoryPort, FavoritesRepositoryPort, FileStoragePort,
-    FileSystemPort, MentionRepositoryPort, MetricsPort, ModelCatalogPort, ModelStoragePort,
+    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort, ContentAddressedStoragePort,
+    ContentExtractionPort, CredentialsPort, DocumentRepository, EmbeddingPort,
+    EmbeddingRepositoryPort, FavoritesRepositoryPort, FileStoragePort, FileSystemPort,
+    MentionRepositoryPort, MetricsPort, ModelCatalogPort, ModelStoragePort,
     RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort, SystemInfoPort,
     TextSearchPort, UpdateCheckerPort, VectorSearchPort,
 };
 
 // Service Traits
-use crate::infrastructure::services::traits::{
-    ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
-};
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::embedding::EmbeddingServiceTrait;
@@ -145,7 +143,12 @@ use crate::features::indexing::{IndexStorageTrait, IndexingServiceTrait};
 use crate::features::qa::ConversationalQAServiceTrait;
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
-use crate::features::web::{WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait};
+use crate::features::web::{
+    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
+};
+use crate::infrastructure::services::traits::{
+    ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
+};
 
 use crate::application::ports::LLMPort;
 use crate::infrastructure::services::model_manager::ModelManager;
@@ -182,8 +185,17 @@ impl CoreModule {
         data_dir: PathBuf,
     ) -> crate::shared::error::Result<Self> {
         let security_context = Arc::new(SecurityContext::new());
-        let allowed_roots = vec![dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))];
-        let file_access_config = Arc::new(FileAccessConfig::new(allowed_roots));
+
+        // Start with only the app's own data directory readable. This used to
+        // be the entire home directory, which meant `get_file_content` over
+        // IPC could read `~/.ssh/id_rsa`, `~/.aws/credentials`, and browser
+        // cookie stores — the confinement logic was sound, the policy was
+        // simply far too broad.
+        //
+        // The user's vault and indexed folders are added by
+        // `refresh_allowed_roots` once settings are readable, and again
+        // whenever those settings change.
+        let file_access_config = Arc::new(FileAccessConfig::new(vec![data_dir.clone()]));
 
         let credentials_path = data_dir.join("credentials.json");
         let credentials = crate::features::credentials::di::build(credentials_path);
@@ -347,7 +359,6 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
     json.get("hidden_size")?.as_u64().map(|n| n as usize)
 }
 
-
 // ==============================================================================
 // 3. IndexingModule - Document Ingestion and Processing
 // ==============================================================================
@@ -385,7 +396,11 @@ impl IndexingModule {
             indexing.uow_factory.clone(),
         );
 
-        Ok(Self { indexing, web, batch })
+        Ok(Self {
+            indexing,
+            web,
+            batch,
+        })
     }
 
     // Indexing use case getters
@@ -407,6 +422,13 @@ impl IndexingModule {
 
     pub fn rename_document_use_case(&self) -> &Arc<RenameDocumentUseCase> {
         &self.indexing.rename_document_use_case
+    }
+
+    /// On-device speech-to-text, shared with the content-extraction adapter.
+    pub fn transcription_port(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::TranscriptionPort> {
+        &self.indexing.transcription
     }
 
     // Web use case getters
@@ -775,10 +797,10 @@ impl FileOpsModule {
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
     ) -> crate::shared::error::Result<Self> {
-        use crate::infrastructure::file_system::FileSystemAdapter;
-        use crate::infrastructure::file_system::file_storage::SecureFileStorage;
-        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
         use crate::features::tags::service::TagService;
+        use crate::infrastructure::file_system::file_storage::SecureFileStorage;
+        use crate::infrastructure::file_system::FileSystemAdapter;
+        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 
         let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
         let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
@@ -791,7 +813,7 @@ impl FileOpsModule {
 
         let document_repo =
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-        let tag_service = Arc::new(TagService::new(db_pool)) as Arc<dyn TagServiceTrait>;
+        let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
 
         let file = crate::features::file::di::build(
             document_repo.clone(),
@@ -800,6 +822,7 @@ impl FileOpsModule {
             tag_service,
             file_access_config,
             vault_path,
+            db_pool,
         );
         let extraction = crate::features::extraction::di::build(
             document_repo as Arc<dyn RepositoryPort<crate::domain::entities::Document>>,
@@ -839,6 +862,10 @@ impl FileOpsModule {
 
     pub fn update_file_metadata_use_case(&self) -> &Arc<UpdateFileMetadataUseCase> {
         &self.file.update_file_metadata_use_case
+    }
+
+    pub fn list_citing_conversations_use_case(&self) -> &Arc<ListCitingConversationsUseCase> {
+        &self.file.list_citing_conversations_use_case
     }
 
     // Extraction use case getters
@@ -989,6 +1016,12 @@ impl SystemModule {
         &self.backup.backup_scheduler
     }
 
+    /// The backup port itself, for reads that have no use case
+    /// (`plugin_list_backups`).
+    pub fn backup_port(&self) -> &Arc<dyn BackupPort> {
+        &self.backup.backup
+    }
+
     // Updates use case getters
     pub fn check_for_updates_use_case(&self) -> &Arc<CheckForUpdatesUseCase> {
         &self.updates.check_for_updates_use_case
@@ -1006,6 +1039,10 @@ impl SystemModule {
     // Stats use case getters
     pub fn get_system_stats_use_case(&self) -> &Arc<GetSystemStatsUseCase> {
         &self.stats.get_system_stats_use_case
+    }
+
+    pub fn get_corpus_shape_use_case(&self) -> &Arc<GetCorpusShapeUseCase> {
+        &self.stats.get_corpus_shape_use_case
     }
 
     // Adapter getters needed by Container

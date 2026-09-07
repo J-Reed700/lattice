@@ -278,9 +278,17 @@ impl MetadataExtractor {
 
     /// Extract section/heading from content.
     ///
-    /// Checks the first 10 lines for markdown headings, colon headings,
-    /// or ALL CAPS headings.
+    /// Transcript chunks come first: they carry the inline `[m:ss–m:ss]` window
+    /// markers written by the audio extraction path, and the honest label for a
+    /// chunk spanning several windows is the first window's start to the last
+    /// window's end. Everything else falls through to the heading heuristic:
+    /// the first 10 lines are checked for markdown headings, colon headings, or
+    /// ALL CAPS headings.
     pub fn extract_section(&self, content: &str) -> Option<String> {
+        if let Some(span) = transcript_span(content) {
+            return Some(span);
+        }
+
         content
             .lines()
             .take(10)
@@ -299,6 +307,25 @@ impl MetadataExtractor {
                     .to_string()
             })
     }
+}
+
+/// Read the `[mm:ss–mm:ss]` window markers written by the audio extraction path.
+///
+/// Note the separator is an EN DASH (U+2013), per contract §4.8. A chunk may
+/// span several windows, so the span runs from the first marker's start to the
+/// last marker's end. The scan is over the whole chunk rather than line by line
+/// because `ChunkingService` joins sentences with spaces, which puts most
+/// markers mid-line.
+fn transcript_span(content: &str) -> Option<String> {
+    let re = lazy_regex::regex!(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\u{2013}(\d{1,2}:\d{2}(?::\d{2})?)\]");
+    let mut matches = re.captures_iter(content);
+    let first = matches.next()?;
+    let start = first.get(1)?.as_str().to_string();
+    let end = match re.captures_iter(content).last() {
+        Some(last) => last.get(2)?.as_str().to_string(),
+        None => first.get(2)?.as_str().to_string(),
+    };
+    Some(format!("{start}\u{2013}{end}"))
 }
 
 impl Default for MetadataExtractor {
@@ -408,5 +435,45 @@ mod tests {
         let tokens = extractor.count_tokens(content);
         // Should be approximately 4 * 1.3 = 5
         assert!((4..=6).contains(&tokens));
+    }
+
+    #[test]
+    fn extracts_a_transcript_span_across_windows() {
+        let extractor = MetadataExtractor::new();
+        let content = "[0:00\u{2013}0:45] hello. more words. [0:45\u{2013}1:30] tail.";
+        assert_eq!(
+            extractor.extract_section(content),
+            Some("0:00\u{2013}1:30".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_a_single_window_span() {
+        let extractor = MetadataExtractor::new();
+        let content = "[0:00\u{2013}0:45] just the one window of speech.";
+        assert_eq!(
+            extractor.extract_section(content),
+            Some("0:00\u{2013}0:45".to_string())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_heading_heuristic() {
+        let extractor = MetadataExtractor::new();
+        assert_eq!(
+            extractor.extract_section("## Methods\nbody"),
+            Some("Methods".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_a_hyphen_instead_of_an_en_dash() {
+        let extractor = MetadataExtractor::new();
+        // A plain hyphen is not the contract's separator, so this falls through
+        // to the heading heuristic rather than producing a bogus span.
+        assert_ne!(
+            extractor.extract_section("[0:00-0:45] x"),
+            Some("0:00-0:45".to_string())
+        );
     }
 }

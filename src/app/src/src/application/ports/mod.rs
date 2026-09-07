@@ -76,6 +76,7 @@ pub mod batch_job_repository_port;
 pub mod chunk_repository_port;
 pub mod content_addressed_storage_port;
 pub mod content_extraction_port;
+pub mod conversation_history_port;
 pub mod credentials_port;
 pub mod database_stats_port;
 pub mod document_repository_port;
@@ -97,6 +98,7 @@ pub mod settings_port;
 pub mod settings_side_effects_port;
 pub mod system_info;
 pub mod text_search_port;
+pub mod transcription_port;
 pub mod update_checker_port;
 pub mod vector_search_port;
 
@@ -109,6 +111,7 @@ pub use batch_job_repository_port::{
 pub use chunk_repository_port::ChunkRepositoryPort;
 pub use content_addressed_storage_port::ContentAddressedStoragePort;
 pub use content_extraction_port::{ContentExtractionPort, ExtractedContentData};
+pub use conversation_history_port::ConversationHistoryPort;
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
@@ -126,10 +129,12 @@ pub use model_storage::{DownloadedModel, ModelStoragePort};
 pub use notification_port::{events, NotificationPort, SubscriptionHandle};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use repository_port::{Filter, NoFilter, RepositoryPort};
+pub(crate) use settings_port::merge_json_update;
 pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
 pub use system_info::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort};
 pub use text_search_port::TextSearchPort;
+pub use transcription_port::{Transcript, TranscriptSegment, TranscriptionPort};
 pub use update_checker_port::{UpdateCheckerPort, UpdateInfoData};
 pub use vector_search_port::VectorSearchPort;
 

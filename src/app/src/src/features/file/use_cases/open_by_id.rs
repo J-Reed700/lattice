@@ -2,9 +2,9 @@
 //!
 //! Opens a file by document ID, looking up the file path first.
 
-use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
 use crate::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
 use crate::application::services::FileType;
+use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
 use crate::infrastructure::security::FileAccessConfig;
 use crate::infrastructure::web::WebArticleDetector;
 use crate::shared::error::{AppError, Result};
@@ -373,7 +373,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().action, "opened_external");
-        assert_eq!(file_system.get_opened_files(), vec!["/lattice/docs/file.txt"]);
+        assert_eq!(
+            file_system.get_opened_files(),
+            vec!["/lattice/docs/file.txt"]
+        );
     }
 
     #[tokio::test]

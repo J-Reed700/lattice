@@ -93,8 +93,8 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::WebArchiveServiceTrait;
-    /// use vault_desktop::application::dtos::function_calling_dto::CleanArticle;
+    /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
+    /// use lattice::application::dtos::function_calling_dto::CleanArticle;
     ///
     /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let article = CleanArticle {
@@ -134,7 +134,7 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::WebArchiveServiceTrait;
+    /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
     /// use std::path::PathBuf;
     ///
     /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
@@ -162,7 +162,7 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::WebArchiveServiceTrait;
+    /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
     /// use std::path::PathBuf;
     ///
     /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
@@ -186,7 +186,7 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use vault_desktop::infrastructure::services::traits::WebArchiveServiceTrait;
+    /// use lattice::infrastructure::services::traits::WebArchiveServiceTrait;
     ///
     /// # async fn example<S: WebArchiveServiceTrait>(service: &S) -> Result<(), Box<dyn std::error::Error>> {
     /// let articles = service.list_articles().await?;

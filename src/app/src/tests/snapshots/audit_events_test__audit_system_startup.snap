@@ -1,0 +1,18 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 141
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": null,
+  "action": "system_startup",
+  "resource_id": null,
+  "result": "success",
+  "metadata": {
+    "platform": "linux",
+    "rust_version": "1.75.0",
+    "version": "1.0.0"
+  }
+}

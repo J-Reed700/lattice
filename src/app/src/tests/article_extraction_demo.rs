@@ -148,7 +148,7 @@ let s2 = s1; // s1 is moved to s2
         "Should contain section headings"
     );
     assert!(
-        article.text_content.contains("moving"),
+        article.text_content.to_lowercase().contains("moving"),
         "Should contain key concepts"
     );
     assert!(

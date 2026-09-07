@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use vault_desktop::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
+//! use lattice::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
 //!
 //! // Create interpretation for a greeting
 //! let greeting = HyDEInterpretation::for_greeting("Hello!");
@@ -103,6 +103,7 @@ impl std::fmt::Display for SearchStrategy {
 /// Intended retrieval scope for answering a query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolIntent {
     /// Do not use retrieval tools.
     None,
@@ -111,6 +112,7 @@ pub enum ToolIntent {
     /// Use only web search.
     WebOnly,
     /// Try the lattice first, then web search if needed.
+    #[default]
     VaultThenWeb,
 }
 
@@ -121,12 +123,6 @@ impl ToolIntent {
             QueryType::Command => ToolIntent::VaultOnly,
             QueryType::Question | QueryType::Followup => ToolIntent::VaultThenWeb,
         }
-    }
-}
-
-impl Default for ToolIntent {
-    fn default() -> Self {
-        ToolIntent::VaultThenWeb
     }
 }
 
@@ -153,7 +149,7 @@ impl std::fmt::Display for ToolIntent {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
+/// use lattice::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy, ToolIntent};
 ///
 /// let interpretation = HyDEInterpretation {
 ///     query_type: QueryType::Question,
@@ -187,7 +183,7 @@ impl HyDEInterpretation {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy};
+    /// use lattice::domain::qa::{HyDEInterpretation, QueryType, SearchStrategy};
     ///
     /// let greeting = HyDEInterpretation::for_greeting("Hello!");
     /// assert_eq!(greeting.query_type, QueryType::Greeting);
@@ -209,7 +205,7 @@ impl HyDEInterpretation {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::qa::HyDEInterpretation;
+    /// use lattice::domain::qa::HyDEInterpretation;
     ///
     /// let question = HyDEInterpretation::for_question(
     ///     "What is DDD?",
@@ -292,7 +288,7 @@ impl HyDEInterpretation {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::qa::{EnrichedContext, HyDEInterpretation, DocumentChunk};
+/// use lattice::domain::qa::{EnrichedContext, HyDEInterpretation, DocumentChunk};
 ///
 /// let interpretation = HyDEInterpretation::for_greeting("Hello");
 /// let context = EnrichedContext::new(interpretation);
@@ -489,7 +485,7 @@ impl ChunkMetadata {
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::qa::{ChatResponse, ResponseMetadata};
+/// use lattice::domain::qa::{ChatResponse, ResponseMetadata};
 ///
 /// let response = ChatResponse {
 ///     answer: "Domain-Driven Design is...".to_string(),

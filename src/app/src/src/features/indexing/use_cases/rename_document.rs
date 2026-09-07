@@ -17,7 +17,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
+//! use lattice::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
 //!
 //! # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute("doc-123".to_string(), "New Name.txt".to_string()).await?;
@@ -118,7 +118,7 @@ impl RenameDocumentUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
+    /// # use lattice::application::use_cases::indexing::rename_document::RenameDocumentUseCase;
     /// # async fn example(use_case: RenameDocumentUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// // Rename a document
     /// match use_case.execute("doc-123".to_string(), "Updated Name.txt".to_string()).await {
@@ -146,31 +146,16 @@ impl RenameDocumentUseCase {
         // 3. Store old name for response message
         let old_name = document.file_name().to_string();
 
-        // 4. Update file_name field by reconstructing the document
-        // Clone/copy values from the document to reconstruct with new name
-        let updated_document = crate::domain::entities::Document::with_id(
-            document.id().clone(),
-            document.validated_file_path().clone(),
-            new_name.clone(),
-            document.file_type().map(|s| s.to_string()),
-            document.mime_type().to_string(),
-            document.size_bytes(),
-            *document.modified_at(),
-            *document.indexed_at(),
-            document.checksum().clone(),
-            document.status(), // DocumentStatus is Copy
-            document.error_message().map(|s| s.to_string()),
-            document.language().clone(),
-            document.category().clone(),
-            document.quality_score(),
-            document.access_count(),
-            document.last_accessed_at().copied(),
-            document.word_count(),
-            document.content().to_string(),
-        );
-
-        // 5. Save updated document
-        self.document_repo.save(&updated_document).await?;
+        // 4. Apply the rename as a metadata-only update.
+        //
+        // This used to rebuild the aggregate with `Document::with_id` and call
+        // `save()`. `with_id` produces a document with `chunks: Vec::new()`,
+        // and the aggregate save deletes every existing chunk before inserting
+        // that empty set — so renaming a file destroyed its chunks, cascaded
+        // its embeddings away, and dropped the document out of search. A
+        // rename touches one column; it must not travel through a path that
+        // rewrites children.
+        self.document_repo.rename(&document_id, &new_name).await?;
 
         // 6. Build success response
         Ok(RenameDocumentResponseDto {

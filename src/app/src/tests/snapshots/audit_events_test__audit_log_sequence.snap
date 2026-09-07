@@ -1,0 +1,54 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 181
+expression: events
+---
+[
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "system_startup",
+    "resource_id": null,
+    "result": "success",
+    "metadata": {
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "file_indexed",
+    "resource_id": "doc1.txt",
+    "result": "success",
+    "metadata": {
+      "chunks": "5"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "search_performed",
+    "resource_id": null,
+    "result": "success",
+    "metadata": {
+      "query": "test search",
+      "results": "10"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "file_indexed",
+    "resource_id": "doc2.pdf",
+    "result": {
+      "failure": {
+        "reason": "Parse error"
+      }
+    },
+    "metadata": {}
+  }
+]

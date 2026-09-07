@@ -16,11 +16,11 @@
 //! 3. Service orchestration
 use async_trait::async_trait;
 use futures::stream::{self, Stream};
-use std::sync::Arc;
 use lattice::application::ports::LLMPort;
 use lattice::domain::qa::hyde::{HyDEInterpretation, QueryType, SearchStrategy};
 use lattice::infrastructure::services::hyde::{HyDEGenerator, HyDEService, QueryClassifier};
 use lattice::shared::error::Result;
+use std::sync::Arc;
 
 // ============================================================================
 // Mock LLM for Testing

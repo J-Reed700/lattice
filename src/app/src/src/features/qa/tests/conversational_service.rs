@@ -25,16 +25,16 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::features::search::dto::SearchResultDto;
     use crate::domain::conversation::MessageRole;
-    use crate::infrastructure::observability::Metrics;
-    use crate::features::qa::conversational_service::ConversationalQAService;
-    use crate::infrastructure::services::traits::ContextManagerTrait;
-    use crate::infrastructure::services::mocks::MockContextManager;
-    use crate::features::conversation::ConversationServiceTrait;
     use crate::features::conversation::mocks::MockConversationService;
-    use crate::features::qa::QAEngineTrait;
+    use crate::features::conversation::ConversationServiceTrait;
+    use crate::features::qa::conversational_service::ConversationalQAService;
     use crate::features::qa::mocks::MockQAEngine;
+    use crate::features::qa::QAEngineTrait;
+    use crate::features::search::dto::SearchResultDto;
+    use crate::infrastructure::observability::Metrics;
+    use crate::infrastructure::services::mocks::MockContextManager;
+    use crate::infrastructure::services::traits::ContextManagerTrait;
     use crate::shared::error::{AppError, Result};
 
     // ========================================================================

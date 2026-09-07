@@ -764,6 +764,37 @@ impl DocumentRepositoryPort for DocumentRepository {
         }
     }
 
+    async fn rename(&self, document_id: &str, new_file_name: &str) -> Result<()> {
+        let pool = self.pool.clone();
+        let id = document_id.to_string();
+        let name = new_file_name.to_string();
+
+        // Non-macro form: this SQL is new, and the compile-time-checked
+        // macros require a regenerated offline cache to change.
+        let result = sqlx::query(
+            "UPDATE documents SET file_name = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+        )
+        .bind(&name)
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to rename document '{}': {}",
+                document_id, e
+            ))
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!(
+                "Document not found: {}",
+                document_id
+            )));
+        }
+
+        Ok(())
+    }
+
     async fn document_exists(&self, document_id: &str) -> Result<bool> {
         self.exists_internal(document_id).await
     }
@@ -899,9 +930,7 @@ impl DocumentRepositoryPort for DocumentRepository {
                 AppError::Database(format!("Failed to list documents (paginated): {}", e))
             })?;
 
-        Ok(
-            crate::infrastructure::persistence::mappers::DocumentMapper::to_entities(&db_models),
-        )
+        Ok(crate::infrastructure::persistence::mappers::DocumentMapper::to_entities(&db_models))
     }
 }
 

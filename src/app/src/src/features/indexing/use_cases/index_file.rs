@@ -12,8 +12,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::indexing::index_file::IndexFileUseCase;
-//! use vault_desktop::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
+//! use lattice::application::use_cases::indexing::index_file::IndexFileUseCase;
+//! use lattice::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
 //!
 //! # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = IndexFileRequestDto {
@@ -34,17 +34,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::application::factories::{ChecksumFactory, FileMetadataFactory};
-use crate::features::indexing::mapper::IndexingMapper;
 use crate::application::ports::{
     ContentAddressedStoragePort, ContentExtractionPort, DocumentRepositoryPort, EmbeddingPort,
     EmbeddingRepositoryPort, FileStoragePort, VectorSearchPort,
 };
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::domain::entities::Document;
-use crate::features::embedding::entity::Embedding;
 use crate::domain::repositories::UnitOfWorkFactory;
+use crate::features::embedding::entity::Embedding;
+use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
+use crate::features::indexing::mapper::IndexingMapper;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
@@ -59,7 +59,7 @@ pub type EmbeddingWithVector = (Embedding, Vec<f32>);
 pub type PreparedDocument = (Document, Vec<EmbeddingWithVector>, String, bool);
 
 pub enum PrepareForIndexingOutcome {
-    Prepared(PreparedDocument),
+    Prepared(Box<PreparedDocument>),
     Duplicate { document_id: String },
 }
 
@@ -155,8 +155,8 @@ impl IndexFileUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::indexing::index_file::IndexFileUseCase;
-    /// # use vault_desktop::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
+    /// # use lattice::application::use_cases::indexing::index_file::IndexFileUseCase;
+    /// # use lattice::application::dtos::indexing_dto::{IndexFileRequestDto, ChunkingStrategyDto};
     /// # async fn example(use_case: IndexFileUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = IndexFileRequestDto {
     ///     path: "/docs/paper.pdf".to_string(),
@@ -277,7 +277,6 @@ impl IndexFileUseCase {
             .await?;
         let content = extracted.text;
         self.validate_text_content(source_path.as_path(), &content)?;
-        self.validate_text_content(source_path.as_path(), &content)?;
 
         let chunking_strategy =
             IndexingMapper::chunking_strategy_to_domain(request.chunking_strategy)
@@ -351,12 +350,12 @@ impl IndexFileUseCase {
             })
             .collect();
 
-        Ok(PrepareForIndexingOutcome::Prepared((
+        Ok(PrepareForIndexingOutcome::Prepared(Box::new((
             document,
             embedding_entries,
             library_path.to_str().unwrap_or("").to_string(),
             imported_new,
-        )))
+        ))))
     }
 
     pub async fn cleanup_library_file(&self, path: &str) -> Result<()> {
@@ -581,6 +580,10 @@ impl IndexFileUseCase {
             "File indexing completed (UoW) - awaiting commit"
         );
 
+        // New content must be visible to the next search, not after the
+        // cache TTL expires.
+        crate::features::cache::query_cache::invalidate_query_cache();
+
         Ok(IndexFileResponseDto {
             document_id: document.document().id().to_string(),
             chunks_created: document.chunks().len(),
@@ -601,9 +604,9 @@ mod tests {
     use crate::application::ports::{
         ContentAddressedStoragePort, EmbeddingRepositoryPort, FileMetadata, Filter, NoFilter,
     };
-    use crate::features::embedding::entity::Embedding;
     use crate::domain::entities::Document;
     use crate::domain::repositories::UnitOfWorkFactory;
+    use crate::features::embedding::entity::Embedding;
     use async_trait::async_trait;
     use std::path::Path;
 
@@ -964,8 +967,9 @@ mod tests {
 
         let request = IndexFileRequestDto {
             path: file_path.to_str().unwrap().to_string(),
-            chunking_strategy:
-                crate::features::indexing::dto::ChunkingStrategyDto::FixedSize { size: 512 },
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
             tags: None,
             metadata: None,
             space_id: None,
@@ -1003,8 +1007,9 @@ mod tests {
 
         let request = IndexFileRequestDto {
             path: file_path.to_str().unwrap().to_string(),
-            chunking_strategy:
-                crate::features::indexing::dto::ChunkingStrategyDto::FixedSize { size: 100 },
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 100,
+            },
             tags: None,
             metadata: None,
             space_id: None,

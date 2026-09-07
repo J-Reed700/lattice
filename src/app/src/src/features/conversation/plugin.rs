@@ -1,5 +1,10 @@
 //! Conversation Plugin - Thin Tauri wrappers over conversation command implementations.
 
+use crate::features::conversation::branching_dto::{
+    ForkConversationRequestDto, ForkConversationResponseDto,
+    TruncateConversationAfterRequestDto, TruncateConversationAfterResponseDto,
+};
+use crate::features::conversation::chat::{ChatResponse, ToolPreferences};
 use crate::features::conversation::dto::{
     CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
     DeleteConversationResponseDto, GetConversationMessagesRequestDto,
@@ -12,6 +17,7 @@ use crate::features::conversation::message_bookmark_dto::{
     ListMessageBookmarksQueryDto, ListMessageBookmarksResponseDto,
     UnbookmarkConversationMessageRequestDto,
 };
+use crate::features::conversation::plugin_impl as conversation_impl;
 use crate::features::conversation::space_dto::{
     AddConversationToJournalRequestDto, ArchiveConversationJournalRequestDto,
     ArchiveConversationSpaceRequestDto, ConversationJournalDto, ConversationSpaceDto,
@@ -23,8 +29,6 @@ use crate::features::conversation::space_dto::{
     UpdateConversationJournalRequestDto, UpdateConversationSpaceRequestDto,
     UpsertConversationSpaceMemberRequestDto,
 };
-use crate::features::conversation::chat::{ChatResponse, ToolPreferences};
-use crate::features::conversation::plugin_impl as conversation_impl;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
 use tauri::{
@@ -99,6 +103,7 @@ pub async fn chat_with_conversation_wrapper(
     message: String,
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
+    request_id: Option<String>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_wrapper_impl(
@@ -107,6 +112,7 @@ pub async fn chat_with_conversation_wrapper(
         message,
         tool_preferences,
         cancel_only,
+        request_id,
         window,
     )
     .await
@@ -120,6 +126,7 @@ pub async fn chat_with_conversation(
     message: String,
     tool_preferences: Option<ToolPreferences>,
     cancel_only: Option<bool>,
+    request_id: Option<String>,
     window: tauri::Window,
 ) -> Result<ChatResponse, ApiError> {
     conversation_impl::chat_with_conversation_impl(
@@ -128,6 +135,7 @@ pub async fn chat_with_conversation(
         message,
         tool_preferences,
         cancel_only,
+        request_id,
         window,
     )
     .await
@@ -479,6 +487,52 @@ pub async fn synthesize_journal_entries(
     conversation_impl::synthesize_journal_entries_impl(request, container.inner(), window).await
 }
 
+/// Delete every message after `message_id` (and it too when `inclusive`),
+/// returning what remains (BRIEF rank 4, contract §4.2).
+#[tauri::command]
+#[specta::specta]
+pub async fn truncate_conversation_after(
+    request: TruncateConversationAfterRequestDto,
+    container: State<'_, Container>,
+) -> Result<TruncateConversationAfterResponseDto, ApiError> {
+    conversation_impl::truncate_conversation_after_impl(request, container.inner()).await
+}
+
+/// Create a sibling conversation carrying the messages up to a chosen turn.
+#[tauri::command]
+#[specta::specta]
+pub async fn fork_conversation(
+    request: ForkConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<ForkConversationResponseDto, ApiError> {
+    conversation_impl::fork_conversation_impl(request, container.inner()).await
+}
+
+/// Re-run the last user message, streaming over `llm-stream` exactly like a
+/// normal send. The user message is not duplicated.
+///
+/// Flat args, mirroring `chat_with_conversation`, because this re-enters the
+/// same streaming flow and needs the same `window`. No `#[specta::specta]`:
+/// `ChatResponse` does not derive `specta::Type`, and `export_bindings.rs`
+/// deliberately excludes the chat commands from the collector.
+#[tauri::command]
+pub async fn regenerate_response(
+    container: State<'_, Container>,
+    conversation_id: String,
+    tool_preferences: Option<ToolPreferences>,
+    request_id: Option<String>,
+    window: tauri::Window,
+) -> Result<ChatResponse, ApiError> {
+    conversation_impl::regenerate_response_impl(
+        container.inner(),
+        conversation_id,
+        tool_preferences,
+        request_id,
+        window,
+    )
+    .await
+}
+
 pub fn init() -> TauriPlugin<tauri::Wry> {
     Builder::new("conversation")
         .invoke_handler(tauri::generate_handler![
@@ -524,6 +578,9 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             list_conversations_explorer,
             list_journal_conversations,
             synthesize_journal_entries,
+            truncate_conversation_after,
+            fork_conversation,
+            regenerate_response,
         ])
         .build()
 }

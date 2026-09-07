@@ -474,6 +474,9 @@ impl ExternalModelMetadata {
                 ModelCategory::OCR => {
                     capabilities.push("vision".into());
                 }
+                ModelCategory::Transcription => {
+                    capabilities.push("transcription".into());
+                }
             }
         }
 
@@ -584,8 +587,8 @@ impl MockModelCatalogPort {
                 license: "apache-2.0".into(),
                 last_modified: "2024-01-01T00:00:00Z".into(),
                 gated: None,
-                preferred_filename: None,
-                preferred_size_bytes: None,
+                preferred_filename: Some("tinyllama-q4.gguf".into()),
+                preferred_size_bytes: Some(1_100_000_000),
                 embedding_compatibility: None,
             },
         );
@@ -612,8 +615,8 @@ impl MockModelCatalogPort {
                 license: "MIT".into(),
                 last_modified: "2024-06-15T00:00:00Z".into(),
                 gated: None,
-                preferred_filename: None,
-                preferred_size_bytes: None,
+                preferred_filename: Some("phi-3-mini-q4.gguf".into()),
+                preferred_size_bytes: Some(1_800_000_000),
                 embedding_compatibility: None,
             },
         );
@@ -634,8 +637,8 @@ impl MockModelCatalogPort {
                 license: "llama-3.2".into(),
                 last_modified: "2024-09-01T00:00:00Z".into(),
                 gated: None,
-                preferred_filename: None,
-                preferred_size_bytes: None,
+                preferred_filename: Some("llama-3.2-3b-q4.gguf".into()),
+                preferred_size_bytes: Some(2_300_000_000),
                 embedding_compatibility: None,
             },
         );
@@ -661,8 +664,8 @@ impl MockModelCatalogPort {
                 license: "llama-3.2".into(),
                 last_modified: "2024-09-01T00:00:00Z".into(),
                 gated: None,
-                preferred_filename: None,
-                preferred_size_bytes: None,
+                preferred_filename: Some("llama-3.2-7b-q4.gguf".into()),
+                preferred_size_bytes: Some(4_500_000_000),
                 embedding_compatibility: None,
             },
         );
@@ -685,8 +688,8 @@ impl MockModelCatalogPort {
                 license: "apache-2.0".into(),
                 last_modified: "2024-10-01T00:00:00Z".into(),
                 gated: None,
-                preferred_filename: None,
-                preferred_size_bytes: None,
+                preferred_filename: Some("qwen2.5-7b-q4.gguf".into()),
+                preferred_size_bytes: Some(4_500_000_000),
                 embedding_compatibility: None,
             },
         );
@@ -712,8 +715,8 @@ impl MockModelCatalogPort {
                 license: "apache-2.0".into(),
                 last_modified: "2024-02-01T00:00:00Z".into(),
                 gated: None,
-                preferred_filename: None,
-                preferred_size_bytes: None,
+                preferred_filename: Some("mixtral-8x7b-q4.gguf".into()),
+                preferred_size_bytes: Some(26_000_000_000),
                 embedding_compatibility: None,
             },
         );
@@ -768,7 +771,7 @@ impl ModelCatalogPort for MockModelCatalogPort {
             .collect();
 
         // Sort by downloads (popularity)
-        matching.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+        matching.sort_by_key(|model| std::cmp::Reverse(model.downloads));
 
         // Apply limit
         matching.truncate(limit);

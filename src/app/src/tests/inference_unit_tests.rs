@@ -32,7 +32,7 @@ mod generation_config_tests {
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.top_p, 0.9);
         assert_eq!(config.top_k, 40);
-        assert_eq!(config.max_tokens, 2048);
+        assert_eq!(config.max_tokens, 131_072);
         assert_eq!(config.repeat_penalty, 1.1);
     }
 

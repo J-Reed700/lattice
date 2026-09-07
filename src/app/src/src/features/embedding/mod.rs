@@ -30,6 +30,7 @@ pub mod candle_service;
 pub mod commands;
 pub mod compatibility;
 pub mod dto;
+pub mod encoding;
 pub mod entity;
 pub mod generator;
 pub mod persistence_mapper;

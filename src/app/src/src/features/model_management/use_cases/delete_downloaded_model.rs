@@ -97,14 +97,20 @@ impl DeleteDownloadedModelUseCase {
         for attempt in 0..MAX_RETRY_ATTEMPTS {
             if attempt > 0 {
                 let delay_ms = RETRY_BASE_DELAY_MS * (1 << attempt);
-                warn!(attempt, delay_ms, "Concurrent modification detected, retrying deletion");
+                warn!(
+                    attempt,
+                    delay_ms, "Concurrent modification detected, retrying deletion"
+                );
                 sleep(Duration::from_millis(delay_ms)).await;
             }
 
             match self.try_delete_atomic(id, delete_file).await {
                 Ok(()) => return Ok(()),
-                Err(AppError::ConcurrentModification { .. }) if attempt < MAX_RETRY_ATTEMPTS - 1 =>
-                    continue,
+                Err(AppError::ConcurrentModification { .. })
+                    if attempt < MAX_RETRY_ATTEMPTS - 1 =>
+                {
+                    continue
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -151,11 +157,10 @@ impl DeleteDownloadedModelUseCase {
                         return Ok(());
                     };
 
+                    // repository-barrier-allow: deletion verifies the model artifact before removing it.
                     if file_path.exists() {
-                        let model_dir = deleted_model
-                            .location()
-                            .enclosing_dir()
-                            .ok_or_else(|| {
+                        let model_dir =
+                            deleted_model.location().enclosing_dir().ok_or_else(|| {
                                 AppError::FileSystem(format!(
                                     "Cannot determine enclosing directory for: {}",
                                     file_path.display()
@@ -242,15 +247,14 @@ impl DeleteDownloadedModelUseCase {
                     } else {
                         info!(filepath = %file_path.display(), "Model file does not exist, skipping deletion");
                     }
-
-
                 }
 
-                return Ok(());
+                Ok(())
             }
-            None => {
-                return Err(AppError::NotFound(format!("Model with id {} is active or does not exist", id)));
-            }
+            None => Err(AppError::NotFound(format!(
+                "Model with id {} is active or does not exist",
+                id
+            ))),
         }
     }
 }
@@ -259,168 +263,235 @@ impl DeleteDownloadedModelUseCase {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::app_state::AppStorage;
-    use crate::domain::downloaded_model::ModelLocation;
-    use crate::domain::file::model::FileType;
-    use crate::infrastructure::persistence::repositories::{
-        FileRepository, MetadataRepository,
-    };
-    use chrono::Utc;
+    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
     use serde_json::json;
-    use serial_test::serial;
-    use std::io::Write;
-    use tempfile::tempdir;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::path::PathBuf;
+    use tempfile::{tempdir, TempDir};
 
-    async fn setup_test_state() -> (AppStorage, std::path::PathBuf) {
-        let temp_dir = tempdir().expect("create temp dir");
-        let models_dir = temp_dir.path().to_path_buf();
-
-        (
-            AppStorage::new(
-                models_dir.clone(),
-                true,
-                None,
-                None,
-                None,
-            )
+    async fn setup_repo() -> DownloadedModelRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
             .await
-            .expect("create app storage"),
-            models_dir,
+            .expect("create in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        DownloadedModelRepository::new(pool)
+    }
+
+    /// Builds a realistic on-disk layout: `<tmp>/models/<model_id>/model.gguf`.
+    /// The `models/` component matters — `is_safe_model_directory` refuses to
+    /// recurse into anything that isn't under it.
+    fn model_dir_with_weights(model_id: &str) -> (TempDir, PathBuf) {
+        let temp = tempdir().expect("create temp dir");
+        let dir = temp.path().join("models").join(model_id);
+        std::fs::create_dir_all(&dir).expect("create model dir");
+        let weights = dir.join("model.gguf");
+        std::fs::write(&weights, b"test weights").expect("write weights");
+        (temp, weights)
+    }
+
+    fn local_model(id: &str, model_id: &str, weights: &Path) -> DownloadedModel {
+        DownloadedModel::new(
+            id.to_string(),
+            format!("Test {}", model_id),
+            model_id.to_string(),
+            ModelLocation::LocalFile {
+                path: weights.to_path_buf(),
+            },
+            1024,
+            "llama".to_string(),
+            None,
         )
+        .expect("construct local model")
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn deletes_file_locally_and_removes_record_without_active_lock() {
-        let (app_storage, _models_dir) = setup_test_state().await;
+    // ---- is_safe_model_directory ----------------------------------------
 
-        let file_repo = FileRepository::new(app_storage.clone());
-        let repo = app_storage.downloaded_model_repository();
-
-        let model_info = serde_json::from_value(json!({
-            "id": "test_model_001",
-            "model_name": "Test Model",
-            "model_size_bytes": 12345,
-            "file_path": "/test/models/test_model.gguf",
-            "file_type": "GGUF",
-            "source": "model_directory",
-            "status": "downloaded",
-            "download_progress": 100.0,
-            "last_modified": "2023-01-01T00:00:00Z",
-            "created_at": "2023-01-01T00:00:00Z",
-            "updated_at": "2023-01-01T00:00:00Z"
-        }))
-        .expect("deserialize model info");
-
-        repo.insert_or_update_model_record(&model_info).await.expect("insert model");
-
-        // Create the physical file so deletion has something to remove
-        let file_path = Path::new("/test/models/test_model.gguf").parent().unwrap().to_path_buf();
-        let file_path = file_path.join("test_model.gguf");
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).await.expect("create parent dirs");
-        }
-        let mut file = fs::File::create(&file_path).await.expect("create file");
-        file.write_all(b"test data").await.expect("write file");
-
-        let use_case = DeleteDownloadedModelUseCase::new(repo.clone());
-        use_case.execute(&model_info.id, true).await.expect("delete model");
-
-        let result = repo.find_by_model_id(&model_info.id).await.expect("query model");
-        assert!(result.is_none(), "model should be deleted");
-
-        assert!(!file_path.exists(), "file should be deleted");
+    #[test]
+    fn safe_directory_accepts_model_dir_under_models() {
+        let path = Path::new("/home/u/.cache/lattice/models/my-model");
+        assert!(is_safe_model_directory(path, "my-model").expect("should validate"));
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn rejects_deletion_of_active_embedding_model() {
-        let (app_storage, _models_dir) = setup_test_state().await;
+    #[test]
+    fn safe_directory_accepts_dir_whose_parent_is_models() {
+        // Directory name need not contain the model id when the parent is `models`.
+        let path = Path::new("/home/u/.cache/lattice/models/some-other-name");
+        assert!(is_safe_model_directory(path, "my-model").expect("should validate"));
+    }
 
-        let repo = app_storage.downloaded_model_repository();
+    #[test]
+    fn safe_directory_rejects_path_outside_models() {
+        let path = Path::new("/home/u/Documents/important");
+        assert!(is_safe_model_directory(path, "my-model").is_err());
+    }
 
-        let model_info = serde_json::from_value(json!({
-            "id": "active_embedding_001",
-            "model_name": "Active Embedding Model",
-            "model_size_bytes": 1024,
-            "file_path": "/test/models/embedding.gguf",
-            "file_type": "GGUF",
-            "source": "model_directory",
-            "status": "downloaded",
-            "download_progress": 100.0,
-            "last_modified": "2023-01-01T00:00:00Z",
-            "created_at": "2023-01-01T00:00:00Z",
-            "updated_at": "2023-01-01T00:00:00Z"
-        }))
-        .expect("deserialize model info");
-
-        repo.insert_or_update_model_record(&model_info).await.expect("insert model");
-        repo.set_active_embedding_model(&model_info.model_name)
-            .await
-            .expect("set active embedding");
-
-        let use_case = DeleteDownloadedModelUseCase::new(repo.clone());
-        let result = use_case.execute(&model_info.id, true).await;
-
-        // Atomic delete-if-not-active should have failed; model record remains.
-        assert!(result.is_err(), "should reject deletion of active embedding model");
+    #[test]
+    fn safe_directory_rejects_models_root_itself() {
+        let path = Path::new("/home/u/.cache/lattice/models");
         assert!(
-            repo.find_by_model_id(&model_info.id).await.expect("query model").is_some(),
-            "model should still exist"
+            is_safe_model_directory(path, "my-model").is_err(),
+            "deleting the models root would wipe every model"
         );
     }
 
+    #[test]
+    fn safe_directory_rejects_deep_mismatched_dir() {
+        // Nested two levels below `models/`, name unrelated to the model id,
+        // and parent is neither `models` nor `custom`.
+        let path = Path::new("/home/u/.cache/lattice/models/vendor/unrelated");
+        assert!(is_safe_model_directory(path, "my-model").is_err());
+    }
+
+    // ---- execute ---------------------------------------------------------
+
     #[tokio::test]
-    #[serial]
-    async fn cleans_up_empty_directories_after_deletion() {
-        let (app_storage, _models_dir) = setup_test_state().await;
-        let repo = app_storage.downloaded_model_repository();
+    async fn deletes_record_and_file_for_inactive_local_model() {
+        let repo = setup_repo().await;
+        let (_temp, weights) = model_dir_with_weights("test-model-a");
+        let model = local_model("row-a", "test-model-a", &weights);
+        repo.save(&model).await.expect("save model");
 
-        // Seed two models in the same directory so that after deleting one, the other remains
-        // and the directory is NOT removed.
-        for name in &["shared_dir_model_a", "shared_dir_model_b"] {
-            let info = serde_json::from_value(json!({
-                "id": name,
-                "model_name": name,
-                "model_size_bytes": 100,
-                "file_path": format!("/test/models/shared/{}.gguf", name),
-                "file_type": "GGUF",
-                "source": "model_directory",
-                "status": "downloaded",
-                "download_progress": 100.0,
-                "last_modified": "2023-01-01T00:00:00Z",
-                "created_at": "2023-01-01T00:00:00Z",
-                "updated_at": "2023-01-01T00:00:00Z"
-            }))
-            .expect("deserialize");
-
-            repo.insert_or_update_model_record(&info).await.expect("insert");
-
-            let dir = format!("/test/models/shared");
-            fs::create_dir_all(&dir).await.expect("create dir");
-            let file = format!("{}/{}.gguf", dir, name);
-            let mut f = fs::File::create(&file).await.expect("create file");
-            f.write_all(b"test").await.expect("write");
-        }
-
-        // Delete only one of them
-        let use_case = DeleteDownloadedModelUseCase::new(repo.clone());
-        use_case
-            .execute("shared_dir_model_a", true)
+        DeleteDownloadedModelUseCase::new(repo.clone())
+            .execute("row-a", true)
             .await
-            .expect("delete model a");
+            .expect("delete should succeed");
 
-        // Model B should still exist, so directory should remain
         assert!(
-            repo.find_by_model_id("shared_dir_model_b")
+            repo.find_by_model_id("test-model-a")
                 .await
-                .expect("query b")
-                .is_some(),
-            "model b should remain"
+                .expect("query")
+                .is_none(),
+            "record should be gone"
+        );
+        assert!(!weights.exists(), "weights should be removed from disk");
+    }
+
+    #[tokio::test]
+    async fn keeps_file_when_delete_file_is_false() {
+        let repo = setup_repo().await;
+        let (_temp, weights) = model_dir_with_weights("test-model-b");
+        let model = local_model("row-b", "test-model-b", &weights);
+        repo.save(&model).await.expect("save model");
+
+        DeleteDownloadedModelUseCase::new(repo.clone())
+            .execute("row-b", false)
+            .await
+            .expect("delete should succeed");
+
+        assert!(
+            repo.find_by_model_id("test-model-b")
+                .await
+                .expect("query")
+                .is_none(),
+            "record should be gone"
         );
         assert!(
-            Path::new("/test/models/shared").exists(),
-            "shared directory should still exist"
+            weights.exists(),
+            "weights should survive delete_file = false"
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_deletion_of_active_embedding_model() {
+        let repo = setup_repo().await;
+        let (_temp, weights) = model_dir_with_weights("test-model-c");
+        let model = local_model("row-c", "test-model-c", &weights);
+        repo.save(&model).await.expect("save model");
+        repo.set_active_embedding_model("test-model-c")
+            .await
+            .expect("activate for embedding");
+
+        let result = DeleteDownloadedModelUseCase::new(repo.clone())
+            .execute("row-c", true)
+            .await;
+
+        assert!(result.is_err(), "active model must not be deletable");
+        assert!(
+            repo.find_by_model_id("test-model-c")
+                .await
+                .expect("query")
+                .is_some(),
+            "record should survive a rejected delete"
+        );
+        assert!(weights.exists(), "weights must survive a rejected delete");
+    }
+
+    #[tokio::test]
+    async fn external_model_record_is_removed_but_file_is_preserved() {
+        let repo = setup_repo().await;
+        let (_temp, weights) = model_dir_with_weights("test-model-d");
+        let model = DownloadedModel::new(
+            "row-d".to_string(),
+            "External Model".to_string(),
+            "test-model-d".to_string(),
+            ModelLocation::LocalFile {
+                path: weights.clone(),
+            },
+            1024,
+            "llama".to_string(),
+            Some(json!({ "source": "external_directory" })),
+        )
+        .expect("construct external model");
+        repo.save(&model).await.expect("save model");
+
+        DeleteDownloadedModelUseCase::new(repo.clone())
+            .execute("row-d", true)
+            .await
+            .expect("delete should succeed");
+
+        assert!(
+            repo.find_by_model_id("test-model-d")
+                .await
+                .expect("query")
+                .is_none(),
+            "record should be gone"
+        );
+        assert!(
+            weights.exists(),
+            "a user's own file outside our control must never be deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_model_deletion_touches_no_filesystem() {
+        let repo = setup_repo().await;
+        let model = DownloadedModel::new(
+            "row-e".to_string(),
+            "Ollama Model".to_string(),
+            "test-model-e".to_string(),
+            ModelLocation::RemoteOllama,
+            0,
+            "llama".to_string(),
+            None,
+        )
+        .expect("construct remote model");
+        repo.save(&model).await.expect("save model");
+
+        DeleteDownloadedModelUseCase::new(repo.clone())
+            .execute("row-e", true)
+            .await
+            .expect("remote delete should succeed");
+
+        assert!(
+            repo.find_by_model_id("test-model-e")
+                .await
+                .expect("query")
+                .is_none(),
+            "record should be gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_unknown_id_reports_not_found() {
+        let repo = setup_repo().await;
+        let result = DeleteDownloadedModelUseCase::new(repo)
+            .execute("no-such-row", true)
+            .await;
+        assert!(result.is_err(), "unknown id should error");
     }
 }

@@ -25,6 +25,8 @@ use crate::interfaces::commands::model_setup::{
 // Import LLM command for download delegation
 use crate::domain::download::DownloadOperationState;
 use crate::features::llm::commands::download_model as download_model_impl;
+use crate::shared::path_confinement::confine_to_root;
+use std::path::Path;
 
 // Re-export DownloadedModelResponse for TypeScript generation
 pub use crate::features::model_management::commands_extra::DownloadedModelResponse;
@@ -398,9 +400,7 @@ pub async fn warm_up_active_chat_model(container: State<'_, Container>) -> Resul
 
 #[tauri::command]
 #[specta::specta]
-pub async fn warm_up_active_utility_model(
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
+pub async fn warm_up_active_utility_model(container: State<'_, Container>) -> Result<(), ApiError> {
     warm_up_active_utility_model_impl(container.inner())
         .await
         .map_err(|e| ApiError {
@@ -509,7 +509,29 @@ pub async fn export_model(
         details: None,
     })?;
 
-    std::fs::write(&export_path, payload).map_err(|e| ApiError {
+    // Confine the destination. This previously called `std::fs::write` on a
+    // fully caller-supplied path with no validation whatsoever, which let a
+    // compromised renderer clobber any user-writable file — for example
+    // `~/.ssh/authorized_keys`.
+    let exports_root = container.exports_path();
+    std::fs::create_dir_all(&exports_root).map_err(|e| ApiError {
+        code: ErrorCode::InternalError,
+        message: format!("Failed to create exports directory: {}", e),
+        details: None,
+    })?;
+
+    let confined =
+        confine_to_root(&exports_root, Path::new(&export_path)).map_err(|e| ApiError {
+            code: ErrorCode::InvalidInput,
+            message: format!(
+                "Models can only be exported into {}: {}",
+                exports_root.display(),
+                e
+            ),
+            details: None,
+        })?;
+
+    std::fs::write(&confined, payload).map_err(|e| ApiError {
         code: ErrorCode::InvalidInput,
         message: format!("Failed to write export file: {}", e),
         details: None,
@@ -576,4 +598,34 @@ pub struct CompatibilityReport {
     pub compatible: bool,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+}
+
+/// Absolute path of the local models folder, created on first call.
+///
+/// Shown in Settings › Models so the user knows where model files land.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_model_download_path<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+) -> Result<String, ApiError> {
+    use tauri::Manager;
+
+    let internal = |message: String| ApiError {
+        code: ErrorCode::InternalError,
+        message: "Couldn't read the models folder".to_string(),
+        details: Some(message),
+    };
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| internal(e.to_string()))?;
+    let models_dir = app_data_dir.join("models");
+    tokio::fs::create_dir_all(&models_dir)
+        .await
+        .map_err(|e| internal(e.to_string()))?;
+    let canonical = tokio::fs::canonicalize(&models_dir)
+        .await
+        .map_err(|e| internal(e.to_string()))?;
+    Ok(canonical.to_string_lossy().into_owned())
 }

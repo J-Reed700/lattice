@@ -15,8 +15,8 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::services::web_capture::WebCaptureService;
-//! use vault_desktop::infrastructure::services::traits::WebCaptureServiceTrait;
+//! use lattice::infrastructure::services::web_capture::WebCaptureService;
+//! use lattice::infrastructure::services::traits::WebCaptureServiceTrait;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let service = WebCaptureService::new()?;

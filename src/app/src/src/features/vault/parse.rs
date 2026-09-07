@@ -81,7 +81,9 @@ pub fn parse_note(contents: &str) -> Result<ParsedNote, ParseError> {
 }
 
 fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
-    let trimmed = contents.strip_prefix("---\n").or_else(|| contents.strip_prefix("---\r\n"))?;
+    let trimmed = contents
+        .strip_prefix("---\n")
+        .or_else(|| contents.strip_prefix("---\r\n"))?;
     let close_unix = trimmed.find("\n---\n");
     let close_windows = trimmed.find("\n---\r\n");
     let close = match (close_unix, close_windows) {
@@ -222,7 +224,10 @@ mod tests {
     fn tags_with_quoted_comma_parse_correctly() {
         let raw = "---\nid: id1\ntitle: \"t\"\ncreated_at: t\nupdated_at: t\ntags: [\"hello, world\", \"foo\"]\n---\n\nb";
         let parsed = parse_note(raw).unwrap();
-        assert_eq!(parsed.tags, vec!["hello, world".to_string(), "foo".to_string()]);
+        assert_eq!(
+            parsed.tags,
+            vec!["hello, world".to_string(), "foo".to_string()]
+        );
     }
 
     #[test]

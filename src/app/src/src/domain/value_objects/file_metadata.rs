@@ -20,7 +20,7 @@ use std::path::Path;
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::value_objects::file_metadata::FileMetadata;
+/// use lattice::domain::value_objects::file_metadata::FileMetadata;
 /// use std::path::Path;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -53,7 +53,7 @@ impl FileMetadata {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::file_metadata::FileMetadata;
+    /// use lattice::domain::value_objects::file_metadata::FileMetadata;
     /// use chrono::Utc;
     ///
     /// let metadata = FileMetadata::new(

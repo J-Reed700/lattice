@@ -7,6 +7,12 @@ pub struct AuthManager {
     app_token: Option<String>,
 }
 
+impl Default for AuthManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthManager {
     pub fn new() -> Self {
         Self { app_token: None }
@@ -78,16 +84,16 @@ pub enum Permission {
 
 impl Permission {
     pub fn check(&self, required: &Permission) -> bool {
-        match (self, required) {
-            (Permission::Admin, _) => true,
-            (Permission::Delete, Permission::Delete) => true,
-            (Permission::Delete, Permission::Write) => true,
-            (Permission::Delete, Permission::Read) => true,
-            (Permission::Write, Permission::Write) => true,
-            (Permission::Write, Permission::Read) => true,
-            (Permission::Read, Permission::Read) => true,
-            _ => false,
-        }
+        matches!(
+            (self, required),
+            (Permission::Admin, _)
+                | (
+                    Permission::Delete,
+                    Permission::Delete | Permission::Write | Permission::Read
+                )
+                | (Permission::Write, Permission::Write | Permission::Read)
+                | (Permission::Read, Permission::Read)
+        )
     }
 }
 

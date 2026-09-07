@@ -30,7 +30,8 @@ use crate::features::corpus_shape::repository::{
     ClusterRepositoryPort, SqliteClusterRepository,
 };
 use crate::features::corpus_shape::use_cases::{
-    run_clustering::DocumentContentPreviewPort, RunClusteringOutcome, RunClusteringUseCase,
+    run_clustering::DocumentContentPreviewPort, ProgressSink, RunClusteringOutcome,
+    RunClusteringUseCase,
 };
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
@@ -64,6 +65,9 @@ pub struct ClusterDto {
     pub sample_titles: Vec<String>,
     pub label_source: String,
     pub inherited_from_cluster_id: Option<String>,
+    /// Member ids, so the Library can scope its list to a theme without a
+    /// second round trip.
+    pub member_document_ids: Vec<String>,
 }
 
 // ============================================================================
@@ -135,8 +139,17 @@ pub async fn cluster_vault_debug(container: State<'_, Container>) -> Result<Stri
 
 #[tauri::command]
 #[specta::specta]
-pub async fn cluster_vault_run(container: State<'_, Container>) -> Result<ClusterRunDto> {
-    let use_case = build_use_case(&container).await?;
+pub async fn cluster_vault_run<R: tauri::Runtime>(
+    container: State<'_, Container>,
+    window: tauri::Window<R>,
+) -> Result<ClusterRunDto> {
+    use tauri::Emitter;
+
+    let sink: ProgressSink = Arc::new(move |progress| {
+        // Progress is decoration; a dropped event never fails a run.
+        let _ = window.emit("corpus-shape://progress", &progress);
+    });
+    let use_case = build_use_case(&container).await?.with_progress(sink);
     let outcome = use_case.execute().await?;
     Ok(run_to_dto(&outcome.run))
 }
@@ -192,7 +205,9 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
     // LLM is best-effort — if loading fails (e.g. no utility model set),
     // the pipeline still runs with fallback labels.
     let llm: Option<Arc<dyn LLMPort>> = match container.get_or_load_utility_llm().await {
-        Ok(llm) => Some(llm),
+        // `get_or_load_utility_llm` already returns `Option` — no utility model
+        // configured is a normal state, not an error.
+        Ok(llm) => llm,
         Err(err) => {
             tracing::warn!(
                 error = %err,
@@ -213,10 +228,10 @@ async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
 
     // Container exposes the trait-object form as `Arc<dyn DocumentRepository>`
     // (= RepositoryPort<Document> + DocumentRepositoryPort). Trait upcasting
-    // (stable since 1.76) narrows it to the supertrait the use case wants.
-    let document_repo_generic: Arc<
-        dyn crate::application::ports::RepositoryPort<crate::domain::entities::Document>,
-    > = container.document_repository();
+    // (stable since 1.76) narrows it to the supertrait the use case wants —
+    // `DocumentRepositoryPort`, for `find_all_paginated`.
+    let document_repo_generic: Arc<dyn crate::application::ports::DocumentRepositoryPort> =
+        container.document_repository();
 
     Ok(RunClusteringUseCase::new(
         document_repo_generic,
@@ -354,6 +369,7 @@ fn cluster_to_dto(cluster: &Cluster, sample_titles: Vec<String>) -> ClusterDto {
             LabelSource::Fallback => "fallback".to_string(),
         },
         inherited_from_cluster_id: cluster.inherited_from_cluster_id.clone(),
+        member_document_ids: cluster.member_doc_ids.clone(),
     }
 }
 

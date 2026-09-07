@@ -699,7 +699,6 @@ impl From<keyring::Error> for AppError {
     }
 }
 
-
 /// Auto-convert from String to AppError
 impl From<String> for AppError {
     fn from(msg: String) -> Self {
@@ -741,12 +740,8 @@ impl From<crate::infrastructure::llm::types::LLMError> for AppError {
             LLMError::Network(msg) => AppError::Network(msg),
             LLMError::InvalidConfig(msg) => AppError::InvalidConfig(msg),
             LLMError::Timeout => AppError::Other("LLM request timed out".to_string()),
-            LLMError::InsufficientMemory(msg) => {
-                AppError::ModelLoadFailed(msg)
-            }
-            LLMError::PlatformNotSupported(msg) => {
-                AppError::ServiceNotAvailable(msg)
-            }
+            LLMError::InsufficientMemory(msg) => AppError::ModelLoadFailed(msg),
+            LLMError::PlatformNotSupported(msg) => AppError::ServiceNotAvailable(msg),
             LLMError::Io(e) => AppError::Io {
                 message: e.to_string(),
                 kind: format!("{:?}", e.kind()),
@@ -964,7 +959,7 @@ mod tests {
         assert_eq!(response.code, "NOT_FOUND");
         assert_eq!(response.status_code, 404);
         assert!(!response.recoverable);
-        assert!(response.message.len() > 0);
+        assert!(!response.message.is_empty());
     }
 
     #[test]

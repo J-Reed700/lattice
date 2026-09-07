@@ -17,11 +17,9 @@
 //! println!("Found {} mentions in document", result.mentions.len());
 //! ```
 
-use crate::features::mentions::dto::{
-    GetMentionsForDocumentResultDto, MentionWithContextDto,
-};
-use crate::features::mentions::mapper::MentionMapper;
 use crate::application::ports::MentionRepositoryPort;
+use crate::features::mentions::dto::{GetMentionsForDocumentResultDto, MentionWithContextDto};
+use crate::features::mentions::mapper::MentionMapper;
 use crate::shared::error::AppError;
 use std::sync::Arc;
 

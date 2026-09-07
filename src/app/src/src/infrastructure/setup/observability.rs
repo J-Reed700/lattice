@@ -22,7 +22,9 @@ pub fn setup_tracing() {
                 // OTEL subscriber is active — nothing more to do.
             }
             Ok(false) => {
-                eprintln!("[lattice] OTEL check returned disabled, falling back to regular tracing");
+                eprintln!(
+                    "[lattice] OTEL check returned disabled, falling back to regular tracing"
+                );
                 otel::init_regular_tracing();
             }
             Err(e) => {
@@ -43,6 +45,6 @@ mod tests {
     fn test_env_filter_creation() {
         // Verify we can create an EnvFilter without panicking
         let _filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("lattice_desktop=info,vault_desktop=info"));
+            .unwrap_or_else(|_| EnvFilter::new("lattice_desktop=info,lattice=info"));
     }
 }

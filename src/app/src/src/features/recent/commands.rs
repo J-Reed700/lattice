@@ -297,6 +297,7 @@ pub async fn track_document_access(
 /// Internal implementation for tracking document access
 async fn track_document_access_internal(document_id: &str, pool: &SqlitePool) -> Result<()> {
     // Check if document exists
+    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
     let doc_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = ?")
         .bind(document_id)
         .fetch_one(pool)
@@ -308,6 +309,7 @@ async fn track_document_access_internal(document_id: &str, pool: &SqlitePool) ->
     }
 
     // Check if already tracked
+    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
     let existing_record = sqlx::query_scalar::<_, Option<String>>(
         "SELECT id FROM recent_documents WHERE document_id = ?",
     )
@@ -318,6 +320,7 @@ async fn track_document_access_internal(document_id: &str, pool: &SqlitePool) ->
 
     if existing_record.is_some() {
         // Update existing record
+        // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
         sqlx::query(
             r#"
             UPDATE recent_documents
@@ -333,6 +336,7 @@ async fn track_document_access_internal(document_id: &str, pool: &SqlitePool) ->
     } else {
         // Insert new record
         let recent_id = Uuid::new_v4().to_string();
+        // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
         sqlx::query(
             r#"
             INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
@@ -354,6 +358,7 @@ async fn track_document_access_internal(document_id: &str, pool: &SqlitePool) ->
 
 /// Evict old recent documents (LRU)
 async fn evict_old_recent_documents(pool: &SqlitePool) -> Result<()> {
+    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
     sqlx::query(
         r#"
         DELETE FROM recent_documents
@@ -500,6 +505,7 @@ async fn get_recent_documents_internal(
     // Cap limit to reasonable max
     let safe_limit = limit.min(100);
 
+    // repository-barrier-allow: legacy read model pending consolidation into RecentDocumentsRepository.
     let recent_docs =
         sqlx::query_as::<_, (String, String, String, String, Option<String>, String, i64)>(
             r#"
@@ -660,6 +666,7 @@ pub async fn clear_recent_documents(container: State<'_, Container>) -> Result<(
 
 /// Internal implementation for clearing recent documents
 async fn clear_recent_documents_internal(pool: &SqlitePool) -> Result<()> {
+    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
     sqlx::query("DELETE FROM recent_documents")
         .execute(pool)
         .await

@@ -5,8 +5,8 @@
 //! This mapper handles conversion between:
 //! - `ChunkingStrategy` (domain) ↔ `ChunkingStrategyDto` (DTO)
 
-use crate::features::indexing::dto::ChunkingStrategyDto;
 use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
+use crate::features::indexing::dto::ChunkingStrategyDto;
 
 /// Mapper for indexing-related conversions.
 pub struct IndexingMapper;

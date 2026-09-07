@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Lattice — Local AI Knowledge Base",
+        "title": "Lattice",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -21,14 +21,26 @@
         "resizable": true,
         "fullscreen": false,
         "visible": true,
-        "devtools": true
+        "devtools": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://localhost:* ws://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; block-all-mixed-content; upgrade-insecure-requests;",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://localhost:* ws://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; block-all-mixed-content; upgrade-insecure-requests;",
       "dangerousDisableAssetCspModification": false,
       "freezePrototype": false,
-      "capabilities": ["main"]
+      "capabilities": [
+        "main"
+      ],
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$APPDATA/**",
+          "$APPLOCALDATA/**",
+          "$APPCACHE/**",
+          "/Volumes/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -47,7 +59,7 @@
       "frameworks": [],
       "minimumSystemVersion": "10.15",
       "exceptionDomain": "",
-      "signingIdentity": null,
+      "signingIdentity": "-",
       "entitlements": null
     },
     "windows": {

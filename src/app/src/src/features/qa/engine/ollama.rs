@@ -35,7 +35,7 @@ impl OllamaClient {
     ///
     /// # Examples
     /// ```no_run
-    /// use vault_desktop::qa::OllamaClient;
+    /// use lattice::qa::OllamaClient;
     ///
     /// let client = OllamaClient::new(
     ///     "http://localhost:11434",

@@ -2,15 +2,15 @@
 //!
 //! Connects plugin stubs to actual implementations in `interfaces::commands`.
 
+use crate::application::ports::DocumentRepositoryPort;
+use crate::features::file::commands as file_commands;
 use crate::features::file::dto::UpdateFileMetadataRequestDto;
+use crate::features::indexing::commands as indexing_commands;
 use crate::features::indexing::dto::{
     ChunkingStrategyDto, IndexDirectoryRequestDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
 };
-use crate::application::ports::DocumentRepositoryPort;
 use crate::features::indexing::use_cases::rename_document::RenameDocumentResponseDto;
-use crate::features::file::commands as file_commands;
-use crate::features::indexing::commands as indexing_commands;
 use crate::interfaces::commands::document_list;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::{ApiError, ErrorCode};
@@ -265,6 +265,82 @@ pub async fn get_indexing_stats(
     unwrap_api_result(result)
 }
 
+/// One row of the vault's type mix.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CorpusTypeCountDto {
+    pub r#type: String,
+    pub count: i64,
+}
+
+/// Vault-wide type mix and recent growth.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CorpusShapeDto {
+    pub total: i64,
+    pub by_type: Vec<CorpusTypeCountDto>,
+    pub grown_last7_days: i64,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_corpus_shape(
+    container: State<'_, Container>,
+) -> Result<CorpusShapeDto, ApiError> {
+    let shape = container
+        .get_corpus_shape_use_case()
+        .execute()
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(CorpusShapeDto {
+        total: shape.total,
+        by_type: shape
+            .by_type
+            .into_iter()
+            .map(|(label, count)| CorpusTypeCountDto {
+                r#type: label,
+                count,
+            })
+            .collect(),
+        grown_last7_days: shape.grown_last_7_days,
+    })
+}
+
+/// A conversation that has this document among its linked documents.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CitingConversationDto {
+    pub conversation_id: String,
+    pub title: String,
+    pub updated_at: String,
+    pub passage_count: i64,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_conversations_citing_document(
+    document_id: String,
+    limit: Option<i64>,
+    container: State<'_, Container>,
+) -> Result<Vec<CitingConversationDto>, ApiError> {
+    let rows = container
+        .list_citing_conversations_use_case()
+        .execute(document_id, limit)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| CitingConversationDto {
+            conversation_id: row.conversation_id,
+            title: row.title,
+            updated_at: row.updated_at,
+            passage_count: row.passage_count,
+        })
+        .collect())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_index_progress(
@@ -307,6 +383,16 @@ pub async fn resume_indexing(container: State<'_, Container>) -> Result<(), ApiE
             details: error.details,
         }),
     }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_indexing_failure(
+    path: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    let result = indexing_commands::clear_indexing_failure_impl(&container, path).await;
+    unwrap_api_result(result)
 }
 
 #[tauri::command]

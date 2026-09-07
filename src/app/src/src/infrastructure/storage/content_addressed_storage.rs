@@ -28,7 +28,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::infrastructure::storage::ContentAddressedStorage;
+//! use lattice::infrastructure::storage::ContentAddressedStorage;
 //! use std::path::Path;
 //!
 //! #[tokio::main]

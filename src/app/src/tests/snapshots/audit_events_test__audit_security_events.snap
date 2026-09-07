@@ -1,0 +1,48 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 317
+expression: events
+---
+[
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": "user@example.com",
+    "action": "auth_attempt",
+    "resource_id": null,
+    "result": "success",
+    "metadata": {
+      "ip_address": "192.168.1.100",
+      "method": "password"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": null,
+    "action": "auth_attempt",
+    "resource_id": null,
+    "result": {
+      "failure": {
+        "reason": "Invalid credentials"
+      }
+    },
+    "metadata": {
+      "attempted_user": "unknown@example.com",
+      "ip_address": "192.168.1.200"
+    }
+  },
+  {
+    "id": "[event_id]",
+    "timestamp": "[timestamp]",
+    "user_id": "user@example.com",
+    "action": "credential_accessed",
+    "resource_id": "sensitive_api_key",
+    "result": {
+      "denied": {
+        "reason": "MFA required"
+      }
+    },
+    "metadata": {}
+  }
+]

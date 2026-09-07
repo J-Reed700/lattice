@@ -5,10 +5,6 @@ edition = "2021"
 license = "MIT"
 default-run = "lattice-desktop"
 
-[lints.rustdoc]
-# Phase 2: Suppress missing documentation warnings (Phase 4 will add docs)
-missing_doc_code_examples = "allow"
-
 [lints.rust]
 # Phase 2: Suppress missing documentation warnings (Phase 4 will add docs)
 missing_docs = "allow"
@@ -28,6 +24,10 @@ missing_errors_doc = "allow"    # Phase 2: Suppress (Phase 4 will add docs)
 
 [lib]
 name = "lattice"
+# The documentation contains architectural and usage pseudocode with omitted
+# setup (mock repositories, async runtimes, application state). It is not an
+# executable doctest corpus; unit and integration targets provide the test gate.
+doctest = false
 
 [[bin]]
 name = "lattice-desktop"
@@ -41,7 +41,7 @@ tauri-build = { version = "2.5", features = [] }
 tauri-specta = { version = "2.0.0-rc.14", features = ["derive"] }  # Phase 5: Crystal Conduit - TypeScript generation
 
 [dependencies]
-tauri = { version = "=2.9.5", features = [] }
+tauri = { version = "=2.9.5", features = ["protocol-asset"] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-dialog = "2.6.0"
 
@@ -52,7 +52,8 @@ tauri-specta = { version = "2.0.0-rc.14", features = ["derive", "typescript"] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-jsonschema = "0.17"
+semver = "1.0"
+jsonschema = { version = "0.17", default-features = false }
 tokio = { version = "1.35", features = ["full"] }
 notify = "6.1"
 # Sibling of `notify` (same maintainers) that handles the editor-temp-file-
@@ -81,17 +82,16 @@ ndarray = "0.16.1"
 anyhow = "1.0"
 thiserror = "1.0"
 rayon = "1.10"
-memmap2 = "0.9"
+memmap2 = "0.9.11"
 usearch = "2.23"
 bytemuck = "1.14"
-bincode = "1.3"
-lru = "0.12"
+lru = "0.16.3"
 sha2 = "0.10"
 futures = "0.3"
 async-stream = "0.3"
-reqwest = { version = "0.11", features = ["stream", "json", "cookies", "gzip", "deflate", "brotli"] }
+reqwest = { version = "0.12", features = ["stream", "json", "cookies", "gzip", "deflate", "brotli"] }
 hex = "0.4"
-lopdf = "0.38"
+lopdf = { version = "0.44", default-features = false }
 docx-rs = "0.4"
 zip = "0.6"
 unicode-segmentation = "1.10"
@@ -130,7 +130,6 @@ tokio-util = "0.7"
 candle-core = "=0.10.2"
 candle-nn = "=0.10.2"
 candle-transformers = "=0.10.2"
-hf-hub = { version = "0.3", features = ["tokio"] }
 safetensors = "0.4"
 # Rust modernization dependencies
 derive_more = { version = "1.0", features = ["from", "into", "display", "deref"] }
@@ -146,6 +145,19 @@ html5ever = "0.26"
 ego-tree = "0.6"
 select = "0.6"
 readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extraction
+
+# Audio ingest (Track E). symphonia decodes the container+codec, rubato
+# resamples to the 16 kHz mono f32 whisper expects. default-features = false
+# drops mkv/adpcm we do not need; `ogg` is the container for `vorbis` and
+# `pcm` is the codec for `wav`, so both must be listed explicitly.
+symphonia = { version = "=0.5.5", default-features = false, features = [
+    "mp3", "aac", "isomp4", "flac", "ogg", "vorbis", "wav", "pcm",
+] }
+rubato = "=0.15.0"
+
+# HDBSCAN over per-document embeddings for `features/corpus_shape`.
+petal-clustering = "0.12"
+petal-neighbors = "0.13"
 
 # Platform-specific Metal GPU support for macOS (M-series chips).
 # Cargo unifies feature flags across the dep graph, so re-declaring
@@ -184,6 +196,7 @@ rand = "0.8"
 futures = "0.3"
 mockito = "1.0"
 wiremock = "0.6"
+hound = "=3.5.1"   # generates WAV fixtures for the audio-decode unit tests
 
 
 [features]

@@ -16,8 +16,8 @@
 //! ## Basic Usage
 //!
 //! ```no_run
-//! use vault_desktop::audit::{AuditLogger, AuditEvent, AuditAction, AuditResult};
-//! use vault_desktop::audit::sinks::MemoryAuditSink;
+//! use lattice::audit::{AuditLogger, AuditEvent, AuditAction, AuditResult};
+//! use lattice::audit::sinks::MemoryAuditSink;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -37,8 +37,8 @@
 //! ## Using Macros
 //!
 //! ```no_run
-//! use vault_desktop::audit::{audit_success, audit_failure, get_audit_logger};
-//! use vault_desktop::audit::AuditAction;
+//! use lattice::audit::{audit_success, audit_failure, get_audit_logger};
+//! use lattice::audit::AuditAction;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -81,7 +81,7 @@ static GLOBAL_AUDIT_LOGGER: Lazy<Arc<AuditLogger>> = Lazy::new(|| Arc::new(Audit
 /// # Examples
 ///
 /// ```
-/// use vault_desktop::audit::get_audit_logger;
+/// use lattice::audit::get_audit_logger;
 ///
 /// let logger = get_audit_logger();
 /// ```
@@ -96,7 +96,7 @@ pub fn get_audit_logger() -> Arc<AuditLogger> {
 /// # Examples
 ///
 /// ```no_run
-/// use vault_desktop::audit::{init_audit_logger, sinks::MemoryAuditSink};
+/// use lattice::audit::{init_audit_logger, sinks::MemoryAuditSink};
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -117,7 +117,7 @@ pub async fn init_audit_logger(sinks: Vec<Box<dyn AuditSink>>) {
 /// # Examples
 ///
 /// ```no_run
-/// # use vault_desktop::audit::{audit_success, get_audit_logger, AuditAction};
+/// # use lattice::audit::{audit_success, get_audit_logger, AuditAction};
 /// # #[tokio::main]
 /// # async fn main() {
 /// let logger = get_audit_logger();
@@ -157,7 +157,7 @@ macro_rules! audit_success {
 /// # Examples
 ///
 /// ```no_run
-/// # use vault_desktop::audit::{audit_failure, get_audit_logger, AuditAction};
+/// # use lattice::audit::{audit_failure, get_audit_logger, AuditAction};
 /// # #[tokio::main]
 /// # async fn main() {
 /// let logger = get_audit_logger();
@@ -206,7 +206,7 @@ macro_rules! audit_failure {
 /// # Examples
 ///
 /// ```no_run
-/// # use vault_desktop::audit::{audit_denied, get_audit_logger, AuditAction};
+/// # use lattice::audit::{audit_denied, get_audit_logger, AuditAction};
 /// # #[tokio::main]
 /// # async fn main() {
 /// let logger = get_audit_logger();
@@ -255,7 +255,7 @@ macro_rules! audit_denied {
 /// # Examples
 ///
 /// ```no_run
-/// # use vault_desktop::audit::{audit_event, get_audit_logger, AuditAction, AuditResult};
+/// # use lattice::audit::{audit_event, get_audit_logger, AuditAction, AuditResult};
 /// # #[tokio::main]
 /// # async fn main() {
 /// let logger = get_audit_logger();

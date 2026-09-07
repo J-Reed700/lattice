@@ -1,0 +1,19 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 109
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": "user123",
+  "action": "config_changed",
+  "resource_id": null,
+  "result": "success",
+  "metadata": {
+    "changed_by": "user_settings",
+    "new_value": "bge-large-en-v1.5",
+    "old_value": "all-MiniLM-L6-v2",
+    "setting_key": "embedding_model"
+  }
+}

@@ -11,8 +11,8 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::batch::RetryFailedItemsUseCase;
-//! use vault_desktop::application::dtos::batch_dto::RetryFailedItemsRequestDto;
+//! use lattice::application::use_cases::batch::RetryFailedItemsUseCase;
+//! use lattice::application::dtos::batch_dto::RetryFailedItemsRequestDto;
 //!
 //! # async fn example(use_case: RetryFailedItemsUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = RetryFailedItemsRequestDto {
@@ -27,10 +27,10 @@
 
 use std::sync::Arc;
 
+use crate::application::ports::BatchJobRepositoryPort;
 use crate::features::batch::dto::{
     RetryFailedItemsRequestDto, RetryFailedItemsResponseDto, StartBatchUrlImportRequestDto,
 };
-use crate::application::ports::BatchJobRepositoryPort;
 use crate::features::batch::use_cases::StartBatchUrlImportUseCase;
 use crate::shared::error::{AppError, Result};
 
@@ -85,8 +85,8 @@ impl RetryFailedItemsUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::batch::RetryFailedItemsUseCase;
-    /// # use vault_desktop::application::dtos::batch_dto::RetryFailedItemsRequestDto;
+    /// # use lattice::application::use_cases::batch::RetryFailedItemsUseCase;
+    /// # use lattice::application::dtos::batch_dto::RetryFailedItemsRequestDto;
     /// # async fn example(use_case: RetryFailedItemsUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = RetryFailedItemsRequestDto {
     ///     job_id: "batch-job-123".to_string(),
@@ -150,10 +150,10 @@ impl RetryFailedItemsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::batch::dto::StartBatchUrlImportResponseDto;
     use crate::application::ports::batch_job_repository_port::{
         BatchJobItem, BatchJobItemStatus, BatchJobStatus, BatchJobSummary,
     };
+    use crate::features::batch::dto::StartBatchUrlImportResponseDto;
     use async_trait::async_trait;
     use uuid::Uuid;
 

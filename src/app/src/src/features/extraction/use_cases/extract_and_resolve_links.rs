@@ -29,14 +29,14 @@
 //! assert_eq!(result.links.len(), 2);
 //! ```
 
+use crate::application::ports::RepositoryPort;
+use crate::domain::entities::Document;
 use crate::features::extraction::dto::{
     DocumentRefDto, ExtractAndResolveRequestDto, ExtractAndResolveResponseDto,
     ParseWikilinksRequestDto, ParseWikilinksResponseDto, ResolveWikilinkRequestDto,
     ResolveWikilinkResponseDto, ResolvedLinkDto,
 };
-use crate::application::ports::RepositoryPort;
 use crate::features::extraction::use_cases::{ParseWikilinksUseCase, ResolveWikilinkUseCase};
-use crate::domain::entities::Document;
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use std::sync::Arc;

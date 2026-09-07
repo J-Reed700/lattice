@@ -1,0 +1,20 @@
+---
+source: tests/audit_events_test.rs
+assertion_line: 39
+expression: event
+---
+{
+  "id": "[event_id]",
+  "timestamp": "[timestamp]",
+  "user_id": null,
+  "action": "file_indexed",
+  "resource_id": "[resource_path]",
+  "result": {
+    "failure": {
+      "reason": "Failed to extract text from PDF"
+    }
+  },
+  "metadata": {
+    "error_code": "EXTRACT_001"
+  }
+}

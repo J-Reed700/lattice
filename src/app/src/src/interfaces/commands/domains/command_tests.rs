@@ -60,12 +60,12 @@ mod tests {
 
     #[test]
     fn test_validate_top_k_bounds() {
-        let top_k_values = vec![0, -1, 1001];
-
-        for top_k in top_k_values {
-            if top_k <= 0 || top_k > 1000 {
-                assert!(true, "Invalid top_k should be rejected: {}", top_k);
-            }
+        for top_k in [0, -1, 1001] {
+            assert!(
+                !(1..=1000).contains(&top_k),
+                "Invalid top_k should be outside the accepted range: {}",
+                top_k
+            );
         }
     }
 
@@ -264,14 +264,14 @@ mod tests {
     fn test_permission_check() {
         use crate::infrastructure::security::auth::Permission;
 
-        let permissions = vec![
+        let permissions = [
             Permission::Read,
             Permission::Write,
             Permission::Delete,
             Permission::Admin,
         ];
 
-        assert_eq!(permissions.len(), 3);
+        assert_eq!(permissions.len(), 4);
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_error_codes_unique() {
-        let error_codes = vec![
+        let error_codes = [
             "INVALID_INPUT",
             "NOT_FOUND",
             "DATABASE_ERROR",

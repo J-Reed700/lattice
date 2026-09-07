@@ -198,7 +198,8 @@ mod tests {
     async fn test_has_api_key() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");
-        let adapter = CredentialsAdapter::with_service("com.lattice.test2".to_string(), config_path);
+        let adapter =
+            CredentialsAdapter::with_service("com.lattice.test2".to_string(), config_path);
 
         assert!(!adapter.has_api_key("test_key").await.unwrap());
 
@@ -240,7 +241,8 @@ mod tests {
     async fn test_clear_all_credentials() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");
-        let adapter = CredentialsAdapter::with_service("com.lattice.test3".to_string(), config_path);
+        let adapter =
+            CredentialsAdapter::with_service("com.lattice.test3".to_string(), config_path);
 
         adapter
             .set_api_key("anthropic_api_key", "key1")

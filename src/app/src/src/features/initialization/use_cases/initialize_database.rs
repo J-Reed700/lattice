@@ -69,6 +69,8 @@ impl InitializeDatabaseUseCase {
     /// - Schema initialization fails
     /// - Schema version cannot be determined
     pub async fn execute(&self) -> Result<InitializeDatabaseResponseDto> {
+        let is_new_database = !self.has_schema_version_table().await?;
+
         // 1. Run database initialization (idempotent)
         crate::infrastructure::persistence::database::init::initialize_database(
             &self.database_pool,
@@ -82,11 +84,7 @@ impl InitializeDatabaseUseCase {
         // 3. Get database path from pool options
         let database_path = self.get_database_path();
 
-        // 4. Determine if this is a new database
-        // If schema version is 1, it's likely a new database
-        let is_new_database = schema_version == 1;
-
-        // 5. Return success response
+        // 4. Return success response
         Ok(InitializeDatabaseResponseDto {
             success: true,
             database_path,
@@ -95,8 +93,20 @@ impl InitializeDatabaseUseCase {
         })
     }
 
+    async fn has_schema_version_table(&self) -> Result<bool> {
+        // repository-barrier-allow: database bootstrap must inspect migration state before repositories exist.
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'",
+        )
+        .fetch_one(self.database_pool.as_ref())
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to inspect database schema: {e}")))?;
+        Ok(count > 0)
+    }
+
     /// Get current schema version from database.
     async fn get_schema_version(&self) -> Result<i64> {
+        // repository-barrier-allow: database bootstrap inspects migration state before repositories exist.
         let result =
             sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM schema_version")
                 .fetch_one(self.database_pool.as_ref())

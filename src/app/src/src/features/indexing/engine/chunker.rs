@@ -198,12 +198,20 @@ impl SemanticChunker {
                 continue;
             }
 
-            let char_end = offsets.get(i).map(|o| o.1).unwrap_or(0);
-            if char_end > 0 && char_end <= text.len() {
-                let char_at_pos = text.chars().nth(char_end - 1);
+            // `offsets` holds **byte** offsets — the same values used to slice
+            // `text[start_char..end_char]` when chunks are built. Indexing with
+            // `chars().nth(byte_offset)` therefore inspected the wrong
+            // character on any text containing accents, CJK, or emoji, giving
+            // arbitrary mid-sentence splits that only degrade retrieval
+            // quality, never fail loudly. `chars().nth()` was also O(n) per
+            // probe, making boundary search quadratic on large documents.
+            let byte_end = offsets.get(i).map(|o| o.1).unwrap_or(0);
+            if byte_end > 0 && byte_end <= text.len() && text.is_char_boundary(byte_end) {
+                // Last character *ending* at this byte offset.
+                let char_at_pos = text[..byte_end].chars().next_back();
                 if let Some(ch) = char_at_pos {
                     if self.is_sentence_ending(ch) {
-                        let next_char = text.chars().nth(char_end);
+                        let next_char = text[byte_end..].chars().next();
                         if next_char.is_none_or(|c| c.is_whitespace()) {
                             let boundary = i + 1;
                             // Only accept boundaries that result in valid chunk sizes
@@ -377,6 +385,64 @@ mod tests {
 
         for chunk in &chunks {
             assert!(text.contains(&chunk.text));
+        }
+
+        Ok(())
+    }
+
+    /// Boundary detection indexes `text` by byte offset. Probing with
+    /// `chars().nth(byte_offset)` silently inspected the wrong character on
+    /// any multi-byte text, and could not be caught by ASCII-only fixtures.
+    /// The chunker must at minimum never panic and never lose content on
+    /// non-ASCII input.
+    #[test]
+    fn chunking_handles_multibyte_text_without_panicking() -> Result<()> {
+        let chunker = create_test_chunker()?;
+
+        for text in [
+            // Accents: multi-byte characters adjacent to sentence endings.
+            "Le café était très bon. Nous sommes restés longtemps. Puis nous \
+             sommes partis à la maison.",
+            // CJK: every character is 3 bytes.
+            "这是第一句话。这是第二句话。这是第三句话。这是第四句话。",
+            // Emoji: 4-byte characters, including right before a period.
+            "I love this 🎉. It works great 🚀. Ship it 🔥. Done ✅.",
+            // Mixed scripts in one document.
+            "Hello world. こんにちは世界。Café ☕ time. Ω≈ç√∫˜µ≤≥÷.",
+        ] {
+            let chunks = chunker.chunk_text(text)?;
+
+            for chunk in &chunks {
+                // Byte offsets must land on real character boundaries;
+                // otherwise slicing `text` with them would panic.
+                assert!(
+                    text.is_char_boundary(chunk.start_idx),
+                    "start_idx {} is not a char boundary in {:?}",
+                    chunk.start_idx,
+                    text
+                );
+                assert!(
+                    text.is_char_boundary(chunk.end_idx),
+                    "end_idx {} is not a char boundary in {:?}",
+                    chunk.end_idx,
+                    text
+                );
+                assert!(chunk.start_idx <= chunk.end_idx);
+                assert!(chunk.end_idx <= text.len());
+            }
+
+            // Content must survive chunking intact.
+            if !chunks.is_empty() {
+                let reassembled: String = chunks.iter().map(|c| c.text.as_str()).collect();
+                for word in text.split_whitespace().take(3) {
+                    assert!(
+                        reassembled.contains(word),
+                        "chunking dropped {:?} from {:?}",
+                        word,
+                        text
+                    );
+                }
+            }
         }
 
         Ok(())

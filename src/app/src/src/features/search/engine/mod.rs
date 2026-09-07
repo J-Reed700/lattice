@@ -61,7 +61,7 @@
 //! ### Basic Semantic Search
 //!
 //! ```rust,no_run
-//! use vault_desktop::search::USearchVectorIndex;
+//! use lattice::search::USearchVectorIndex;
 //!
 //! let index = USearchVectorIndex::new(768, None)?;
 //!
@@ -72,7 +72,7 @@
 //! ### Hybrid Search (Recommended)
 //!
 //! ```rust,no_run
-//! use vault_desktop::search::{
+//! use lattice::search::{
 //!     HybridSearchService, SearchMode, SearchConfig
 //! };
 //!
@@ -91,7 +91,7 @@
 //! ### With Query Expansion
 //!
 //! ```rust,no_run
-//! use vault_desktop::search::{QueryExpander, QueryExpansionConfig};
+//! use lattice::search::{QueryExpander, QueryExpansionConfig};
 //!
 //! let expander = QueryExpander::new(QueryExpansionConfig::default());
 //! let expanded = expander.expand("ML").await?;
@@ -105,7 +105,7 @@
 //! Search behavior can be tuned via `SearchConfig`:
 //!
 //! ```rust
-//! use vault_desktop::search::{SearchConfig, SearchMode};
+//! use lattice::search::{SearchConfig, SearchMode};
 //!
 //! let config = SearchConfig {
 //!     mode: SearchMode::Hybrid,
@@ -137,7 +137,7 @@
 //! Access via `PerformanceMetrics`:
 //!
 //! ```rust,no_run
-//! use vault_desktop::search::Profiler;
+//! use lattice::search::Profiler;
 //!
 //! let profiler = Profiler::new();
 //! profiler.start("search");

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Example
 /// ```rust
-/// use vault_desktop::application::dtos::web_dto::IngestWebUrlRequestDto;
+/// use lattice::application::dtos::web_dto::IngestWebUrlRequestDto;
 ///
 /// let request = IngestWebUrlRequestDto {
 ///     url: "https://example.com/article".to_string(),
@@ -44,7 +44,7 @@ pub struct IngestWebUrlRequestDto {
 ///
 /// # Example
 /// ```rust
-/// # use vault_desktop::application::dtos::web_dto::IngestWebUrlResponseDto;
+/// # use lattice::application::dtos::web_dto::IngestWebUrlResponseDto;
 /// let response = IngestWebUrlResponseDto {
 ///     document_id: "doc-123".to_string(),
 ///     url: "https://example.com/article".to_string(),
@@ -97,7 +97,7 @@ pub struct IngestWebUrlResponseDto {
 ///
 /// # Example
 /// ```rust
-/// use vault_desktop::application::dtos::web_dto::GetUrlPreviewRequestDto;
+/// use lattice::application::dtos::web_dto::GetUrlPreviewRequestDto;
 ///
 /// let request = GetUrlPreviewRequestDto {
 ///     url: "https://example.com/article".to_string(),
@@ -115,7 +115,7 @@ pub struct GetUrlPreviewRequestDto {
 ///
 /// # Example
 /// ```rust
-/// # use vault_desktop::application::dtos::web_dto::UrlPreviewDto;
+/// # use lattice::application::dtos::web_dto::UrlPreviewDto;
 /// let preview = UrlPreviewDto {
 ///     url: "https://example.com/article".to_string(),
 ///     title: "Article Title".to_string(),
@@ -156,7 +156,7 @@ pub struct UrlPreviewDto {
 ///
 /// # Example
 /// ```rust
-/// use vault_desktop::application::dtos::web_dto::CleanArticleRequestDto;
+/// use lattice::application::dtos::web_dto::CleanArticleRequestDto;
 ///
 /// let request = CleanArticleRequestDto {
 ///     html: "<html><body><article>...</article></body></html>".to_string(),
@@ -174,7 +174,7 @@ pub struct CleanArticleRequestDto {
 ///
 /// # Example
 /// ```rust
-/// # use vault_desktop::application::dtos::web_dto::CleanArticleResponseDto;
+/// # use lattice::application::dtos::web_dto::CleanArticleResponseDto;
 /// let cleaned = CleanArticleResponseDto {
 ///     content: "<p>Clean article content...</p>".to_string(),
 ///     title: Some("Article Title".to_string()),

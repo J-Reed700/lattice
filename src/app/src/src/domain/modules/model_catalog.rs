@@ -17,8 +17,8 @@
 //! ## Example
 //!
 //! ```rust
-//! use vault_desktop::domain::model_catalog::{SearchFilters, ModelCatalogService};
-//! use vault_desktop::domain::model_management::{ModelMetadata, ModelCategory};
+//! use lattice::domain::model_catalog::{SearchFilters, ModelCatalogService};
+//! use lattice::domain::model_management::{ModelMetadata, ModelCategory};
 //!
 //! let filters = SearchFilters {
 //!     category: Some(ModelCategory::LLM),
@@ -225,8 +225,8 @@ impl ModelSearchResult {
 /// # Example
 ///
 /// ```rust
-/// use vault_desktop::domain::model_catalog::{SearchFilters, ModelCatalogService, ModelSource};
-/// use vault_desktop::domain::model_management::{ModelMetadata, ModelCategory, PerformanceTier};
+/// use lattice::domain::model_catalog::{SearchFilters, ModelCatalogService, ModelSource};
+/// use lattice::domain::model_management::{ModelMetadata, ModelCategory, PerformanceTier};
 ///
 /// let service = ModelCatalogService::new();
 ///

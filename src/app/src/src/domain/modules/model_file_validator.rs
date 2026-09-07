@@ -43,7 +43,7 @@ impl FileExpectation {
 /// # Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::model_file_validator::ModelFileValidator;
+/// use lattice::domain::model_file_validator::ModelFileValidator;
 /// use std::path::Path;
 ///
 /// let validator = ModelFileValidator::new();

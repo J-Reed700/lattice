@@ -68,30 +68,34 @@ pub struct DownloadEventBridge {
     emitter: Arc<DownloadEventEmitter>,
     download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
     repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
-    event_rx_arc: Arc<RwLock<Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>>>,
-    downloaded_model_repository: Option<Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>>,
-    event_bus: Option<Arc<crate::infrastructure::event_bus::EventBus<crate::domain::events::model_download_events::ModelDownloadEvent>>>,
+    event_rx_arc: Arc<
+        RwLock<Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>>,
+    >,
+    downloaded_model_repository: Option<
+        Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,
+    >,
+    event_bus: Option<
+        Arc<
+            crate::infrastructure::event_bus::EventBus<
+                crate::domain::events::model_download_events::ModelDownloadEvent,
+            >,
+        >,
+    >,
 }
 
 impl DownloadEventBridge {
     pub fn new(
         app_handle: AppHandle,
-        download_manager: Arc<
-            dyn crate::features::download::manager::DownloadManager,
-        >,
-        repository: Arc<
-            dyn crate::features::download::download_repository::DownloadRepository,
-        >,
+        download_manager: Arc<dyn crate::features::download::manager::DownloadManager>,
+        repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
         event_rx_arc: Arc<
             RwLock<
-                Option<
-                    mpsc::UnboundedReceiver<
-                        crate::features::download::manager::DownloadEvent,
-                    >,
-                >,
+                Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>,
             >,
         >,
-        downloaded_model_repository: Option<Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>>,
+        downloaded_model_repository: Option<
+            Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,
+        >,
         event_bus: Option<
             Arc<
                 crate::infrastructure::event_bus::EventBus<
@@ -244,10 +248,8 @@ impl DownloadEventBridge {
             tracing::warn!("Failed to publish domain download event: {}", e);
         }
 
-        if let crate::features::download::manager::DownloadEvent::Failed {
-            id,
-            error,
-        } = &manager_event
+        if let crate::features::download::manager::DownloadEvent::Failed { id, error } =
+            &manager_event
         {
             if let Err(e) = self
                 .emitter
@@ -331,12 +333,7 @@ impl DownloadEventBridge {
             return Ok(());
         };
 
-        let file_name = session
-            .destination()
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let file_name = model_file_name_for_session(&session);
 
         let total_bytes = session
             .progress()
@@ -876,14 +873,37 @@ impl DownloadEventBridge {
     }
 }
 
+fn model_file_name_for_session(session: &crate::domain::download::DownloadSession) -> String {
+    session
+        .model_file_name()
+        .map(str::to_string)
+        .or_else(|| {
+            session
+                .destination()
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::model_file_name_for_session;
+    use crate::domain::download::DownloadSession;
+
     #[test]
-    fn destination_basename_used_for_file_name_when_url_has_subdirectory() {
-        let dest = std::path::PathBuf::from(
-            "/home/u/.cache/lattice/models/all-mpnet-base-v2/model.onnx",
-        );
-        let basename = dest.file_name().and_then(|s| s.to_str()).unwrap();
-        assert_eq!(basename, "model.onnx");
+    fn session_preserves_manifest_relative_file_name() {
+        let session = DownloadSession::new(
+            "download-id".to_string(),
+            "https://example.test/onnx/model.onnx".to_string(),
+            std::path::PathBuf::from("/home/u/.cache/lattice/models/all-mpnet-base-v2/model.onnx"),
+            Some(42),
+            None,
+        )
+        .expect("session")
+        .with_model_file_name("onnx/model.onnx".to_string());
+
+        assert_eq!(model_file_name_for_session(&session), "onnx/model.onnx");
     }
 }

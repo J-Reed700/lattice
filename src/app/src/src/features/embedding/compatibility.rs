@@ -66,16 +66,43 @@ const SUPPORTED_TAGS: &[&str] = &[
 /// in the UI tooltip so users understand what's blocking the model.
 const KNOWN_INCOMPATIBLE_TAGS: &[(&str, &str)] = &[
     // BERT-family variants without a Candle loader.
-    ("mpnet", "MPNet loader not yet wired (no Candle module today; planned)"),
+    (
+        "mpnet",
+        "MPNet loader not yet wired (no Candle module today; planned)",
+    ),
     // Decoder-style architectures need last-token pooling and a different runner.
-    ("gemma", "Gemma family — decoder-style, planned for a future release"),
-    ("gemma2", "Gemma 2 — decoder-style, planned for a future release"),
-    ("gemma3", "Gemma 3 — decoder-style, planned for a future release"),
-    ("gemma3_text", "Gemma 3 text — decoder-style, planned for a future release"),
-    ("qwen2", "Qwen2 — decoder-style, planned for a future release"),
-    ("qwen3", "Qwen3 — decoder-style, planned for a future release"),
-    ("llama", "Llama — decoder-style, planned for a future release"),
-    ("mistral", "Mistral — decoder-style, planned for a future release"),
+    (
+        "gemma",
+        "Gemma family — decoder-style, planned for a future release",
+    ),
+    (
+        "gemma2",
+        "Gemma 2 — decoder-style, planned for a future release",
+    ),
+    (
+        "gemma3",
+        "Gemma 3 — decoder-style, planned for a future release",
+    ),
+    (
+        "gemma3_text",
+        "Gemma 3 text — decoder-style, planned for a future release",
+    ),
+    (
+        "qwen2",
+        "Qwen2 — decoder-style, planned for a future release",
+    ),
+    (
+        "qwen3",
+        "Qwen3 — decoder-style, planned for a future release",
+    ),
+    (
+        "llama",
+        "Llama — decoder-style, planned for a future release",
+    ),
+    (
+        "mistral",
+        "Mistral — decoder-style, planned for a future release",
+    ),
 ];
 
 /// Inspect HF model tags and return a compatibility verdict.
@@ -129,25 +156,41 @@ mod tests {
     #[test]
     fn xlm_roberta_is_compatible() {
         let result = detect_from_tags(&tags(&["xlm-roberta", "feature-extraction"]));
-        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+        assert!(
+            result.is_compatible(),
+            "expected Compatible, got {:?}",
+            result
+        );
     }
 
     #[test]
     fn nomic_bert_is_compatible() {
         let result = detect_from_tags(&tags(&["sentence-transformers", "nomic_bert"]));
-        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+        assert!(
+            result.is_compatible(),
+            "expected Compatible, got {:?}",
+            result
+        );
     }
 
     #[test]
     fn modernbert_is_compatible() {
         let result = detect_from_tags(&tags(&["sentence-transformers", "modernbert"]));
-        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+        assert!(
+            result.is_compatible(),
+            "expected Compatible, got {:?}",
+            result
+        );
     }
 
     #[test]
     fn distilbert_is_compatible() {
         let result = detect_from_tags(&tags(&["sentence-transformers", "distilbert"]));
-        assert!(result.is_compatible(), "expected Compatible, got {:?}", result);
+        assert!(
+            result.is_compatible(),
+            "expected Compatible, got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -166,7 +209,10 @@ mod tests {
     fn qwen3_is_incompatible_with_reason() {
         let result = detect_from_tags(&tags(&["sentence-transformers", "qwen3", "safetensors"]));
         match result {
-            EmbeddingCompatibility::Incompatible { architecture, reason } => {
+            EmbeddingCompatibility::Incompatible {
+                architecture,
+                reason,
+            } => {
                 assert_eq!(architecture, "qwen3");
                 assert!(reason.to_lowercase().contains("decoder"));
             }
@@ -182,7 +228,10 @@ mod tests {
 
     #[test]
     fn empty_tags_are_unknown() {
-        assert!(matches!(detect_from_tags(&[]), EmbeddingCompatibility::Unknown));
+        assert!(matches!(
+            detect_from_tags(&[]),
+            EmbeddingCompatibility::Unknown
+        ));
     }
 
     #[test]

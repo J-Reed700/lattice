@@ -57,6 +57,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_constants_validity() {
         assert!(MAX_FILE_SIZE_BYTES > 0);
         assert!(DEFAULT_BATCH_SIZE > 0);

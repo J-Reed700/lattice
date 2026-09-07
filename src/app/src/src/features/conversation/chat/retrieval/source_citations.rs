@@ -8,6 +8,31 @@ use crate::features::search::dto::SearchResultDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::build_excerpt;
 
+/// Number the sources the user will see, so the prompt can cite the same
+/// numbers.
+///
+/// This must be the *only* place citation numbers are assigned, and it must
+/// run after every step that reorders or filters the list (dedup, score sort,
+/// appending tool/web sources). Numbering in two places is what made
+/// footnotes open the wrong document.
+pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
+    for (index, source) in sources.iter_mut().enumerate() {
+        source.citation_id = Some((index + 1) as u32);
+    }
+}
+
+/// Map each document id to the citation number the model was given.
+pub(super) fn citation_ids_by_document(sources: &[SourceDto]) -> HashMap<String, u32> {
+    sources
+        .iter()
+        .filter_map(|source| {
+            source
+                .citation_id
+                .map(|id| (source.document_id.clone(), id))
+        })
+        .collect()
+}
+
 pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
     let mut grouped_by_doc: HashMap<String, Vec<SourceDto>> = HashMap::new();
 
@@ -104,7 +129,7 @@ pub(super) async fn build_source_citations(
     let doc_results = futures::future::join_all(doc_futures).await;
 
     let mut doc_map = HashMap::new();
-    for (id, result) in doc_ids.iter().zip(doc_results.into_iter()) {
+    for (id, result) in doc_ids.iter().zip(doc_results) {
         match result {
             Ok(Some(doc)) => {
                 doc_map.insert(*id, doc);
@@ -200,6 +225,7 @@ pub(super) async fn build_source_citations(
             section,
             chunk_index,
             chunk_excerpts: None,
+            citation_id: None,
         });
     }
     sources
@@ -268,6 +294,7 @@ pub(super) fn build_web_source_citations(
             section: None,
             chunk_index: Some(idx + 1),
             chunk_excerpts: None,
+            citation_id: None,
         });
     }
 

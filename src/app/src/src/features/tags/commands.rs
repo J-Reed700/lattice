@@ -785,7 +785,7 @@ pub async fn apply_tags_ddd(
 /// 2. Execute RemoveTagFromDocumentUseCase (find and remove assignment)
 /// 3. Log audit event (tag_removed)
 /// 4. Return success
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn remove_tag_from_document_impl(
     container: &Container,
@@ -969,7 +969,7 @@ pub async fn remove_tag_from_document_ddd(
 /// - **Bulk Organization**: Tag large document collections automatically
 /// - **Tag Suggestion**: Provide tag recommendations in UI
 /// - **Content Analysis**: Understand document themes and topics
-
+///
 /// ## Implementation Layer (Pure Rust - No Tauri)
 pub async fn generate_tags_impl(
     container: &Container,

@@ -12,9 +12,7 @@
 
 use crate::application::ports::EmbeddingRepositoryPort;
 use crate::features::embedding::entity::Embedding as DomainEmbedding;
-use crate::features::embedding::persistence_mapper::{
-    EmbeddingDTO, EmbeddingMapper,
-};
+use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapper};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -68,10 +66,8 @@ impl EmbeddingRepositoryTrait for EmbeddingRepository {
         let created_at = Utc::now().to_rfc3339();
 
         // Serialize embedding as bytes
-        let embedding_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes: Vec<u8> =
+            crate::features::embedding::encoding::encode_embedding(embedding);
 
         sqlx::query(
             r#"
@@ -229,8 +225,8 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
         let dto = EmbeddingMapper::to_dto(entity, vector);
 
         // Serialize vector to bytes for SQLite BLOB storage
-        let embedding_bytes = bincode::serialize(&dto.embedding)
-            .map_err(|e| AppError::Serialization(e.to_string()))?;
+        let embedding_bytes =
+            crate::features::embedding::encoding::encode_embedding(&dto.embedding);
 
         // Generate a deterministic ID based on chunk_id for upserts
         let id = format!("emb_{}", dto.chunk_id);
@@ -272,8 +268,8 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
 
         for (entity, vector) in entries {
             let dto = EmbeddingMapper::to_dto(&entity, vector);
-            let embedding_bytes = bincode::serialize(&dto.embedding)
-                .map_err(|e| AppError::Serialization(e.to_string()))?;
+            let embedding_bytes =
+                crate::features::embedding::encoding::encode_embedding(&dto.embedding);
 
             // Generate a deterministic ID based on chunk_id for upserts
             let id = format!("emb_{}", dto.chunk_id);
@@ -329,8 +325,8 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
 
         match record {
             Some(rec) => {
-                let vector: Vec<f32> = bincode::deserialize(&rec.embedding)
-                    .map_err(|e| AppError::Deserialization(e.to_string()))?;
+                let vector: Vec<f32> =
+                    crate::features::embedding::encoding::decode_embedding(&rec.embedding)?;
 
                 let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
                     .map_err(|e| AppError::Parsing(e.to_string()))?
@@ -372,8 +368,8 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
 
         let mut results = Vec::new();
         for rec in records {
-            let vector: Vec<f32> = bincode::deserialize(&rec.embedding)
-                .map_err(|e| AppError::Deserialization(e.to_string()))?;
+            let vector: Vec<f32> =
+                crate::features::embedding::encoding::decode_embedding(&rec.embedding)?;
 
             let computed_at = DateTime::parse_from_rfc3339(&rec.created_at)
                 .map_err(|e| AppError::Parsing(e.to_string()))?

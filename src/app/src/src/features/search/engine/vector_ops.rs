@@ -1,10 +1,46 @@
 #![allow(unsafe_code)]
 
+/// True when the two vectors can be compared at all.
+///
+/// This has to be a **runtime** check, not `debug_assert_eq!`. The assert was
+/// downgraded to debug-only so a dimension mismatch wouldn't panic in release
+/// — but that traded a panic for something strictly worse. The SIMD paths
+/// derive their load offsets from `a.len()` and read `b` at those offsets, so
+/// in release a shorter `b` produced an out-of-bounds SIMD read: undefined
+/// behaviour, not a graceful degradation.
+///
+/// Mismatched dimensions are reachable in practice, not merely a programming
+/// error — the embeddings table can hold vectors from more than one model
+/// (see IDX-2 and IDX-4), so a 384-dim query really can meet a 768-dim row.
+///
+/// One comparison against a dot product over hundreds of lanes is free.
+#[inline]
+fn dimensions_match(a: &[f32], b: &[f32]) -> bool {
+    if a.len() == b.len() {
+        return true;
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                a_len = a.len(),
+                b_len = b.len(),
+                "cosine similarity called with mismatched dimensions; returning 0.0. \
+                 This usually means the embeddings table holds vectors from more than one model."
+            );
+        }
+    }
+
+    false
+}
+
 #[inline]
 pub fn cosine_similarity_naive(a: &[f32], b: &[f32]) -> f32 {
-    // ORACLE WEEK 4 FIX #5: Changed to debug_assert_eq! to prevent panics in release builds
-    // Dimension mismatch indicates a programming error, but should not crash production
-    debug_assert_eq!(a.len(), b.len());
+    if !dimensions_match(a, b) {
+        return 0.0;
+    }
 
     let mut dot = 0.0f32;
     let mut a_norm = 0.0f32;
@@ -118,9 +154,11 @@ unsafe fn hsum_ps_avx(v: std::arch::x86_64::__m256) -> f32 {
 /// 3. Silent failures that could lead to incorrect results
 #[cfg(target_arch = "x86_64")]
 pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
-    // ORACLE WEEK 4 FIX #5: Changed to debug_assert_eq! to prevent panics in release builds
-    // Dimension mismatch indicates a programming error, but should not crash production
-    debug_assert_eq!(a.len(), b.len());
+    // Hard gate before any SIMD path: the unsafe implementations below index
+    // `b` using offsets derived from `a.len()`.
+    if !dimensions_match(a, b) {
+        return 0.0;
+    }
 
     // SECURITY: Runtime CPU feature detection to prevent crashes on older processors
     // We check for both AVX2 and FMA support before using SIMD acceleration
@@ -243,9 +281,11 @@ unsafe fn cosine_similarity_neon_impl(a: &[f32], b: &[f32]) -> f32 {
 /// 2. Input data is properly aligned (guaranteed by Rust slices)
 #[cfg(target_arch = "aarch64")]
 pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
-    // ORACLE WEEK 4 FIX #5: Changed to debug_assert_eq! to prevent panics in release builds
-    // Dimension mismatch indicates a programming error, but should not crash production
-    debug_assert_eq!(a.len(), b.len());
+    // Hard gate before any SIMD path: the unsafe implementations below index
+    // `b` using offsets derived from `a.len()`.
+    if !dimensions_match(a, b) {
+        return 0.0;
+    }
 
     // SECURITY: Runtime CPU feature detection for ARM
     // NEON is standard on aarch64, but we check anyway for forward compatibility
@@ -327,6 +367,58 @@ pub fn normalize_batch(embeddings: &mut [Vec<f32>]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mismatched dimensions must degrade to 0.0 rather than read out of
+    /// bounds. Run this in release too (`cargo test --release`): in debug the
+    /// old `debug_assert_eq!` would have panicked, which masked the fact that
+    /// release performed an OOB SIMD read instead.
+    #[test]
+    fn mismatched_dimensions_return_zero_not_undefined_behaviour() {
+        // Long enough that the SIMD path takes several 8-wide chunks, so a
+        // missing tail in `b` would definitely be read past the end.
+        let a: Vec<f32> = (0..768).map(|i| i as f32 * 0.01).collect();
+        let b: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
+
+        assert_eq!(cosine_similarity_simd(&a, &b), 0.0);
+        assert_eq!(cosine_similarity_simd(&b, &a), 0.0);
+        assert_eq!(cosine_similarity_naive(&a, &b), 0.0);
+        assert_eq!(cosine_similarity_naive(&b, &a), 0.0);
+    }
+
+    /// Off-by-one lengths are the nastiest case: the chunk loop completes and
+    /// only the scalar remainder walks off the end.
+    #[test]
+    fn off_by_one_dimensions_return_zero() {
+        let a: Vec<f32> = vec![1.0; 385];
+        let b: Vec<f32> = vec![1.0; 384];
+        assert_eq!(cosine_similarity_simd(&a, &b), 0.0);
+        assert_eq!(cosine_similarity_simd(&b, &a), 0.0);
+    }
+
+    #[test]
+    fn empty_against_non_empty_returns_zero() {
+        let a: Vec<f32> = Vec::new();
+        let b: Vec<f32> = vec![1.0; 384];
+        assert_eq!(cosine_similarity_simd(&a, &b), 0.0);
+        assert_eq!(cosine_similarity_simd(&b, &a), 0.0);
+    }
+
+    /// The guard must not change results for well-formed input.
+    #[test]
+    fn matching_dimensions_are_unaffected_by_the_guard() {
+        let a: Vec<f32> = (0..384).map(|i| (i as f32).sin()).collect();
+        let b: Vec<f32> = (0..384).map(|i| (i as f32).cos()).collect();
+
+        let simd = cosine_similarity_simd(&a, &b);
+        let naive = cosine_similarity_naive(&a, &b);
+        assert!(
+            (simd - naive).abs() < 1e-4,
+            "simd {} and naive {} should agree",
+            simd,
+            naive
+        );
+        assert!((cosine_similarity_simd(&a, &a) - 1.0).abs() < 1e-4);
+    }
 
     #[test]
     fn test_cosine_similarity_naive() {

@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use vault_desktop::application::use_cases::health::HealthCheckUseCase;
+//! use lattice::application::use_cases::health::HealthCheckUseCase;
 //!
 //! # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let response = use_case.execute().await?;
@@ -27,8 +27,8 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use crate::features::health::dto::HealthCheckResponseDto;
 use crate::application::ports::{EmbeddingPort, LLMPort};
+use crate::features::health::dto::HealthCheckResponseDto;
 use crate::shared::error::Result;
 
 /// Health check use case.
@@ -61,10 +61,10 @@ impl HealthCheckUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::application::use_cases::health::HealthCheckUseCase;
+    /// use lattice::application::use_cases::health::HealthCheckUseCase;
     /// # use std::sync::Arc;
     /// # use sqlx::SqlitePool;
-    /// # use vault_desktop::application::ports::{EmbeddingPort, LLMPort};
+    /// # use lattice::application::ports::{EmbeddingPort, LLMPort};
     ///
     /// # async fn example(
     /// #     pool: SqlitePool,
@@ -101,7 +101,7 @@ impl HealthCheckUseCase {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use vault_desktop::application::use_cases::health::HealthCheckUseCase;
+    /// # use lattice::application::use_cases::health::HealthCheckUseCase;
     /// # async fn example(use_case: HealthCheckUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let response = use_case.execute().await?;
     ///

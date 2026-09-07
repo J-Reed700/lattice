@@ -58,12 +58,8 @@ pub struct AiTagsDi {
     pub auto_tag_all_documents_use_case: Arc<AutoTagAllDocumentsUseCase>,
 }
 
-pub fn build_ai(
-    db_pool: SqlitePool,
-    llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
-) -> AiTagsDi {
-    let tag_service =
-        Arc::new(TagServiceImpl::new(db_pool, llm_cache)) as Arc<dyn TagServiceTrait>;
+pub fn build_ai(db_pool: SqlitePool, llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>) -> AiTagsDi {
+    let tag_service = Arc::new(TagServiceImpl::new(db_pool, llm_cache)) as Arc<dyn TagServiceTrait>;
 
     AiTagsDi {
         generate_tags_use_case: Arc::new(GenerateTagsUseCase::new(tag_service.clone())),

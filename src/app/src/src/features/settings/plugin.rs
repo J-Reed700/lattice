@@ -238,10 +238,10 @@ pub async fn test_ollama_connection(
 
     match fetch_models_from_v1(&client, &base_url).await {
         Ok(models) => {
-            return Ok(TestOllamaConnectionResponse {
+            Ok(TestOllamaConnectionResponse {
                 endpoint: "/v1/models".to_string(),
                 models,
-            });
+            })
         }
         Err(v1_error) => match fetch_models_from_tags(&client, &base_url).await {
             Ok(models) => Ok(TestOllamaConnectionResponse {
@@ -340,7 +340,7 @@ pub async fn test_custom_tool(
     let body = response.text().await.unwrap_or_default();
     let mut body_preview = body.chars().take(2000).collect::<String>();
     if body.chars().count() > 2000 {
-        body_preview.push_str("…");
+        body_preview.push('…');
     }
 
     if !status.is_success() {
@@ -414,6 +414,14 @@ pub async fn update_settings(
         })
         .await
         .map_err(ApiError::from)?;
+
+    // The vault path and the indexed-folder list determine what file-read IPC
+    // is permitted to reach, so the policy has to be recomputed here. Skipping
+    // it leaves a newly added folder unreadable until restart, and — worse — a
+    // just-removed folder still readable.
+    if let Err(e) = container.refresh_allowed_roots().await {
+        tracing::warn!(error = %e, "failed to refresh file-access allowed roots after settings update");
+    }
 
     serde_json::to_value(updated).map_err(|e| {
         ApiError::from(AppError::Serialization(format!(

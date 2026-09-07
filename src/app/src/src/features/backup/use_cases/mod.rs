@@ -4,12 +4,14 @@
 //! `BackupAdapter::list_backups` directly.
 
 pub mod create;
+pub mod export_conversations;
 pub mod restore;
 pub mod start_auto;
 pub mod startup_auto;
 pub mod stop_auto;
 
 pub use create::CreateBackupUseCase;
+pub use export_conversations::{ExportConversationsUseCase, ExportFormat, ExportSummary};
 pub use restore::RestoreBackupUseCase;
 pub use start_auto::StartAutoBackupUseCase;
 pub use startup_auto::StartupAutoBackupUseCase;

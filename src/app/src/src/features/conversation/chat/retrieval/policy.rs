@@ -1,5 +1,5 @@
-use crate::features::search::dto::SearchResponseDto;
 use crate::domain::qa::hyde::QueryType;
+use crate::features::search::dto::SearchResponseDto;
 
 use super::SearchFlags;
 

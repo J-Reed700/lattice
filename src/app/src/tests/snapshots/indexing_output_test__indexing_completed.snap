@@ -1,0 +1,11 @@
+---
+source: tests/indexing_output_test.rs
+assertion_line: 141
+expression: event
+---
+{
+  "type": "Completed",
+  "total_files": 150,
+  "total_chunks": 1823,
+  "duration_ms": 125000
+}

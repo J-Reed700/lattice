@@ -14,7 +14,7 @@ use tracing;
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::utils::RetryConfig;
+/// use lattice::utils::RetryConfig;
 /// use std::time::Duration;
 ///
 /// // Default configuration (3 attempts, 100ms initial delay)
@@ -124,7 +124,7 @@ impl RetryConfig {
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::utils::{retry_with_backoff, RetryConfig};
+/// use lattice::utils::{retry_with_backoff, RetryConfig};
 /// use std::io;
 ///
 /// async fn example() -> Result<String, io::Error> {
@@ -209,7 +209,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::utils::retry_async;
+/// use lattice::utils::retry_async;
 ///
 /// async fn example() -> Result<String, String> {
 ///     retry_async(|| async {
@@ -245,7 +245,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use vault_desktop::utils::{retry_with_jitter, RetryConfig};
+/// use lattice::utils::{retry_with_jitter, RetryConfig};
 ///
 /// async fn example() -> Result<String, reqwest::Error> {
 ///     retry_with_jitter(

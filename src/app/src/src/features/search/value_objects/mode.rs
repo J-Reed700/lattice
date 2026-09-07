@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,no_run
-/// use vault_desktop::domain::value_objects::search_mode::SearchMode;
+/// use lattice::domain::value_objects::search_mode::SearchMode;
 ///
 /// let mode = SearchMode::Vector;
 /// assert!(mode.is_vector());
@@ -60,7 +60,7 @@ impl SearchMode {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_mode::SearchMode;
+    /// use lattice::domain::value_objects::search_mode::SearchMode;
     ///
     /// let mode = SearchMode::hybrid_balanced();
     /// assert!(mode.is_hybrid());
@@ -86,7 +86,7 @@ impl SearchMode {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_mode::SearchMode;
+    /// use lattice::domain::value_objects::search_mode::SearchMode;
     ///
     /// // Favor vector search more heavily
     /// let mode = SearchMode::hybrid(0.8, 0.2);
@@ -136,7 +136,7 @@ impl SearchMode {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_mode::SearchMode;
+    /// use lattice::domain::value_objects::search_mode::SearchMode;
     ///
     /// let balanced = SearchMode::hybrid_balanced();
     /// assert!(balanced.is_normalized());
@@ -166,7 +166,7 @@ impl SearchMode {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use vault_desktop::domain::value_objects::search_mode::SearchMode;
+    /// use lattice::domain::value_objects::search_mode::SearchMode;
     ///
     /// let mode = SearchMode::hybrid(0.7, 0.3);
     /// let combined = mode.combine_scores(0.9, 0.5);

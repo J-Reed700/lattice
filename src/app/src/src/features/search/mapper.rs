@@ -8,12 +8,12 @@
 //!
 //! Also provides utility functions for metadata enrichment.
 
-use crate::features::search::dto::{
-    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
-};
 use crate::domain::entities::search_result::SearchResult;
 use crate::domain::value_objects::search_mode::SearchMode;
 use crate::domain::value_objects::search_query::SearchQuery;
+use crate::features::search::dto::{
+    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto, SearchResultPortDto,
+};
 use crate::shared::error::Result;
 
 /// Mapper for search-related conversions.
@@ -32,7 +32,7 @@ pub struct SearchMapper;
 /// # Examples
 ///
 /// ```
-/// use vault_desktop::application::mappers::search_mapper::infer_category;
+/// use lattice::application::mappers::search_mapper::infer_category;
 ///
 /// assert_eq!(infer_category("application/pdf"), "PDF Document");
 /// assert_eq!(infer_category("text/markdown"), "Markdown");
