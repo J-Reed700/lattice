@@ -75,6 +75,10 @@ jobs:
         working-directory: src/app/src
         run: cargo clippy --all-targets
 
+      - name: generated bindings are current
+        working-directory: src/app/src
+        run: cargo run --bin export_bindings -- --check
+
       - name: cargo fmt --check
         working-directory: src/app/src
         run: cargo fmt --all -- --check

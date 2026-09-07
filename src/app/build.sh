@@ -245,7 +245,8 @@ run_tests() {
     if run_command "npm run test -- --run" "${SCRIPT_DIR}"; then
         log SUCCESS "Frontend tests passed"
     else
-        log WARNING "Frontend tests failed (continuing anyway)"
+        log ERROR "Frontend tests failed"
+        exit 1
     fi
     
     # Backend tests
@@ -253,7 +254,8 @@ run_tests() {
     if run_command "cargo test" "${TAURI_DIR}"; then
         log SUCCESS "Backend tests passed"
     else
-        log WARNING "Backend tests failed (continuing anyway)"
+        log ERROR "Backend tests failed"
+        exit 1
     fi
 }
 
@@ -324,6 +326,55 @@ build_application() {
             exit 1
         fi
     fi
+}
+
+verify_bundle() {
+    if [[ "${NO_BUNDLE}" == true ]] || [[ "$(detect_platform)" != "macos" ]]; then
+        return
+    fi
+
+    log HEADER "Verifying macOS Release Artifacts"
+
+    local bundle_subdir
+    if [[ "${MODE}" == "dev" ]]; then
+        bundle_subdir="debug"
+    else
+        bundle_subdir="release"
+    fi
+
+    local bundle_dir="${TAURI_DIR}/target/${bundle_subdir}/bundle"
+    local app_bundles=("${bundle_dir}/macos/"*.app)
+    local dmg_bundles=("${bundle_dir}/dmg/"*.dmg)
+
+    if [[ ! -d "${app_bundles[0]}" ]]; then
+        log ERROR "No macOS app bundle found in ${bundle_dir}/macos"
+        exit 1
+    fi
+
+    if [[ ! -f "${dmg_bundles[0]}" ]]; then
+        log ERROR "No macOS disk image found in ${bundle_dir}/dmg"
+        exit 1
+    fi
+
+    for app_bundle in "${app_bundles[@]}"; do
+        log INFO "Checking code signature: $(basename "${app_bundle}")"
+        if codesign --verify --deep --strict --verbose=2 "${app_bundle}" >> "${LOG_FILE}" 2>&1; then
+            log SUCCESS "Code signature is valid: $(basename "${app_bundle}")"
+        else
+            log ERROR "Invalid code signature: ${app_bundle}"
+            exit 1
+        fi
+    done
+
+    for dmg_bundle in "${dmg_bundles[@]}"; do
+        log INFO "Checking disk image: $(basename "${dmg_bundle}")"
+        if hdiutil verify "${dmg_bundle}" >> "${LOG_FILE}" 2>&1; then
+            log SUCCESS "Disk image is valid: $(basename "${dmg_bundle}")"
+        else
+            log ERROR "Invalid disk image: ${dmg_bundle}"
+            exit 1
+        fi
+    done
 }
 
 generate_checksums() {
@@ -412,8 +463,8 @@ show_summary() {
             
             case "$(detect_platform)" in
                 macos)
-                    find "${bundle_dir}" -name "*.dmg" -o -name "*.app" | while read -r file; do
-                        local size=$(du -h "${file}" | cut -f1)
+                    find "${bundle_dir}" \( -name "*.dmg" -o -name "*.app" \) -prune | while read -r file; do
+                        local size=$(du -sh "${file}" | cut -f1)
                         log INFO "  - $(basename ${file}) (${size})"
                     done
                     ;;
@@ -604,6 +655,7 @@ EOF
     install_dependencies
     run_tests
     build_application
+    verify_bundle
     generate_checksums
     show_summary
     
@@ -613,4 +665,3 @@ EOF
 
 # Run main function
 main "$@"
-
