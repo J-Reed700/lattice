@@ -11,6 +11,7 @@
 pub mod checksum;
 pub mod chunking_strategy;
 pub mod file_metadata;
+pub mod indexing_outcome;
 pub mod model_status;
 // Vertical-slice migration (search): value objects live in features/search/value_objects/.
 #[path = "../../features/search/value_objects/mode.rs"]
@@ -19,10 +20,10 @@ pub mod search_mode;
 pub mod search_query;
 
 // Re-export public types
-pub use crate::features::indexing::outcome::IndexingOutcome;
 pub use checksum::Checksum;
 pub use chunking_strategy::ChunkingStrategy;
 pub use file_metadata::FileMetadata;
+pub use indexing_outcome::IndexingOutcome;
 pub use model_status::{FileStatus, ModelStatus};
 pub use search_mode::SearchMode;
 pub use search_query::SearchQuery;
