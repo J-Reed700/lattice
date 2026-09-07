@@ -10,7 +10,23 @@ export { Message as MessageBubble } from './Message';
 
 // Utility components
 export { CitationFootnote } from './CitationFootnote';
+export { CitationRail } from './CitationRail';
+export { ChatDropStaging } from './ChatDropStaging';
+export { ChatModelNotice } from './ChatModelNotice';
+export { ChatStarters } from './ChatStarters';
 export { FilePreviewModal } from './FilePreviewModal';
+export { MessageEditor } from './MessageEditor';
+export { ModelPickerPopover } from './ModelPickerPopover';
+export { RetrievalTrace } from './RetrievalTrace';
+export { useChatFileDrop } from './useChatFileDrop';
+export type { StagedFile } from './useChatFileDrop';
+export {
+  isReferencedSource,
+  isVaultNoteSource,
+  provenanceLabel,
+  sourceProvenance,
+} from './sourceProvenance';
+export type { SourceProvenance } from './sourceProvenance';
 
 // Viewers
 export { ImageViewer } from './viewers/ImageViewer';

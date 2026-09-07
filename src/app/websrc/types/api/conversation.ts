@@ -187,12 +187,21 @@ export interface ListConversationsResponse {
  * Request to synthesize multiple journal conversations into one structured summary.
  */
 export interface SynthesizeJournalEntriesRequest {
-  /** Ordered conversation IDs to include in synthesis */
+  /** Ordered conversation IDs to include in synthesis. Empty for the 'week' scope. */
   conversationIds: string[];
   /** Scope label for synthesis metadata */
-  scope?: 'current' | 'deck' | 'pinned' | string;
+  scope?: 'current' | 'deck' | 'pinned' | 'conversation' | 'week' | string;
   /** Optional cap for backend processing */
   maxEntries?: number;
+}
+
+/**
+ * One source a synthesis drew on.
+ */
+export interface SynthesisCitationDto {
+  kind: 'conversation' | 'reference' | 'note';
+  id: string;
+  title: string;
 }
 
 /**
@@ -209,6 +218,8 @@ export interface SynthesizeJournalEntriesResponse {
   chunkCount: number;
   /** Conversation IDs used in synthesis */
   conversationIds: string[];
+  /** Sources the synthesis drew on. Optional: older backends omit it. */
+  citations?: SynthesisCitationDto[];
 }
 
 /**

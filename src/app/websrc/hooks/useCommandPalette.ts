@@ -67,7 +67,7 @@ export function useCommandPalette() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Cmd+K (Mac) or Ctrl+K (Windows/Linux)
-      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setState(prev => ({ ...prev, isOpen: !prev.isOpen, searchMode: false }))
       }

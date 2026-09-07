@@ -1,45 +1,65 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
 
 import { motion } from 'framer-motion';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router';
 
 import {
-  SearchSectionErrorBoundary,
   FilesSectionErrorBoundary,
   QASectionErrorBoundary,
+  SearchSectionErrorBoundary,
   SettingsSectionErrorBoundary,
 } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { RootLayout } from './components/RootLayout';
-import { pageTransition } from './lib/animations';
 
-// Lazy load all page components for code splitting
-const Dashboard = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
-const SearchInterface = lazy(() => import('./components/SearchInterface').then(m => ({ default: m.SearchInterface })));
-const FileTree = lazy(() => import('./components/FileTree').then(m => ({ default: m.FileTree })));
-const ChatView = lazy(() => import('./components/Chat').then(m => ({ default: m.ChatView })));
-const IngestHub = lazy(() => import('./components/IngestHub').then(m => ({ default: m.IngestHub })));
-const JournalWorkspace = lazy(() => import('./components/Journal').then(m => ({ default: m.JournalWorkspace })));
-const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then(m => ({ default: m.ReferenceInbox })));
-const Settings = lazy(() => import('./components/Settings').then(m => ({ default: m.Settings })));
+// Lazy-load every surface so the boot bundle stays small.
+const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
+const SearchInterface = lazy(() => import('./components/SearchInterface').then((m) => ({ default: m.SearchInterface })));
+const FileTree = lazy(() => import('./components/FileTree').then((m) => ({ default: m.FileTree })));
+const ChatView = lazy(() => import('./components/Chat').then((m) => ({ default: m.ChatView })));
+const IngestHub = lazy(() => import('./components/IngestHub').then((m) => ({ default: m.IngestHub })));
+const JournalWorkspace = lazy(() => import('./components/Journal').then((m) => ({ default: m.JournalWorkspace })));
+const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then((m) => ({ default: m.ReferenceInbox })));
+const ComparePage = lazy(() => import('./components/Compare').then((m) => ({ default: m.ComparePage })));
+const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })));
 
-// Loading fallback component with smooth animation
+/** Route transition: a short fade with a few pixels of travel. Nothing bounces. */
+const PAGE_VARIANTS = {
+  initial: { opacity: 0, y: 6 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -4 },
+};
+const PAGE_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] as const };
+
 const PageLoading = () => (
-  <motion.div
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    className="flex items-center justify-center h-full"
-  >
-    <motion.div
-      animate={{ rotate: 360 }}
-      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-      className="rounded-full h-8 w-8 border-b-2 border-[var(--accent-primary)]"
-    />
-  </motion.div>
+  <div className="flex h-full items-center justify-center">
+    <p className="text-sm text-text-muted">Loading…</p>
+  </div>
 );
 
-// Route configuration
+interface PageProps {
+  id: string;
+  boundary?: ComponentType<{ children: ReactNode }>;
+  children: ReactNode;
+}
+
+function Page({ id, boundary: Boundary, children }: PageProps) {
+  const content = <Suspense fallback={<PageLoading />}>{children}</Suspense>;
+  return (
+    <motion.div
+      key={id}
+      variants={PAGE_VARIANTS}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      transition={PAGE_TRANSITION}
+      className="h-full"
+    >
+      {Boundary ? <Boundary>{content}</Boundary> : content}
+    </motion.div>
+  );
+}
+
 export const router = createBrowserRouter([
   {
     path: '/',
@@ -49,158 +69,26 @@ export const router = createBrowserRouter([
         path: '/',
         element: <Layout />,
         children: [
-          {
-            // Daily Note is the default landing; Dashboard remains at /home.
-            index: true,
-            element: <Navigate to="/journals" replace />,
-          },
-          {
-            path: 'home',
-            element: (
-              <motion.div
-                key="home"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <Dashboard />
-                </Suspense>
-              </motion.div>
-            ),
-          },
+          // The journal is the landing surface; Home stays reachable at /home.
+          { index: true, element: <Navigate to="/journals" replace /> },
+          { path: 'home', element: <Page id="home"><Dashboard /></Page> },
           {
             path: 'search',
-            element: (
-              <motion.div
-                key="search"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <SearchSectionErrorBoundary>
-                    <SearchInterface />
-                  </SearchSectionErrorBoundary>
-                </Suspense>
-              </motion.div>
-            ),
+            element: <Page id="search" boundary={SearchSectionErrorBoundary}><SearchInterface /></Page>,
           },
           {
             path: 'files',
-            element: (
-              <motion.div
-                key="files"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <FilesSectionErrorBoundary>
-                    <FileTree />
-                  </FilesSectionErrorBoundary>
-                </Suspense>
-              </motion.div>
-            ),
+            element: <Page id="files" boundary={FilesSectionErrorBoundary}><FileTree /></Page>,
           },
-          {
-            path: 'chat',
-            element: (
-              <motion.div
-                key="chat"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <QASectionErrorBoundary>
-                    <ChatView />
-                  </QASectionErrorBoundary>
-                </Suspense>
-              </motion.div>
-            ),
-          },
-          {
-            path: 'ingest',
-            element: (
-              <motion.div
-                key="ingest"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <IngestHub />
-                </Suspense>
-              </motion.div>
-            ),
-          },
-          {
-            path: 'journals',
-            element: (
-              <motion.div
-                key="journals"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <JournalWorkspace />
-                </Suspense>
-              </motion.div>
-            ),
-          },
-          {
-            path: 'daily',
-            element: <Navigate to="/journals" replace />,
-          },
-          {
-            path: 'references',
-            element: (
-              <motion.div
-                key="references"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <ReferenceInbox />
-                </Suspense>
-              </motion.div>
-            ),
-          },
+          { path: 'chat', element: <Page id="chat" boundary={QASectionErrorBoundary}><ChatView /></Page> },
+          { path: 'ingest', element: <Page id="ingest"><IngestHub /></Page> },
+          { path: 'journals', element: <Page id="journals"><JournalWorkspace /></Page> },
+          { path: 'daily', element: <Navigate to="/journals" replace /> },
+          { path: 'references', element: <Page id="references"><ReferenceInbox /></Page> },
+          { path: 'compare', element: <Page id="compare"><ComparePage /></Page> },
           {
             path: 'settings',
-            element: (
-              <motion.div
-                key="settings"
-                variants={pageTransition}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-              >
-                <Suspense fallback={<PageLoading />}>
-                  <SettingsSectionErrorBoundary>
-                    <Settings />
-                  </SettingsSectionErrorBoundary>
-                </Suspense>
-              </motion.div>
-            ),
+            element: <Page id="settings" boundary={SettingsSectionErrorBoundary}><Settings /></Page>,
           },
         ],
       },

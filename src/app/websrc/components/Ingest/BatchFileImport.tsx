@@ -1,17 +1,11 @@
-import { type FC, useState, useCallback, useEffect, useMemo, type DragEvent } from 'react';
+import { type FC, useState, useCallback, useEffect, useMemo, useRef, type DragEvent } from 'react';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Upload, X, FileText, CheckCircle, XCircle, Loader2, Layers3, FolderTree } from 'lucide-react';
+import { X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { IconButton } from '@/components/ui/IconButton';
+import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
 import { useIndexing } from '@/hooks/useIndexing';
 import { useToast } from '@/hooks/useToast';
 import VaultAPI from '@/lib/api';
@@ -43,15 +37,16 @@ interface BatchFileImportProps {
 const isRetryableStatus = (status: FileItem['status']): boolean =>
   status === 'pending' || status === 'error';
 
-const ALL_SPACES_OPTION = '__all_spaces__';
-const NO_COLLECTION_OPTION = '__no_collection__';
-
 export const BatchFileImport: FC<BatchFileImportProps> = ({
   onImportComplete,
   onClose,
 }) => {
   const { startBatchImport, getOperation } = useIndexing();
   const { toast } = useToast();
+  // `useToast()` hands back a fresh object every render; depending on it would
+  // recreate `addFilePaths` and re-register the drag-drop listener forever.
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const selectedConversationSpaceId = useConversationsStore((state) => state.selectedSpaceId);
   const customCollections = useFileBrowserStore((state) => state.customCollections);
   const addDocumentsToCustomCollection = useFileBrowserStore(
@@ -102,15 +97,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [customCollections]);
-  const selectedSpace = useMemo(
-    () => spaces.find((space) => space.id === selectedSpaceId) ?? null,
-    [selectedSpaceId, spaces]
-  );
-  const selectedCollection = useMemo(
-    () => manualCollections.find((collection) => collection.id === selectedCollectionId) ?? null,
-    [manualCollections, selectedCollectionId]
-  );
-
   const buildFileItem = useCallback((path: string): FileItem => {
     const name = path.split('/').pop() || path.split('\\').pop() || path;
     const extension = name.split('.').pop()?.toLowerCase();
@@ -160,12 +146,12 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           rejected.length > 3
             ? `${rejectedNames.join(', ')} and ${rejected.length - 3} more`
             : rejectedNames.join(', ');
-        toast.error(`Unsupported file type(s): ${summary}`);
+        toastRef.current.error(`Unsupported file type(s): ${summary}`);
       }
 
       return next;
     });
-  }, [buildFileItem, toast]);
+  }, [buildFileItem]);
 
   // Handle file selection via dialog
   const handleFileSelect = useCallback(async () => {
@@ -203,9 +189,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         } else {
           const validation = validateIndexablePath(file.name);
           if (!validation.ok) {
-            toast.error(`Unsupported file type: ${file.name}`);
+            toastRef.current.error(`Unsupported file type: ${file.name}`);
           } else {
-            toast.error(
+            toastRef.current.error(
               `Dropped file "${file.name}" is missing a filesystem path. Please use the file picker.`
             );
           }
@@ -216,7 +202,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     if (droppedPaths.length > 0) {
       addFilePaths(droppedPaths);
     }
-  }, [addFilePaths, toast]);
+  }, [addFilePaths]);
 
   useEffect(() => {
     let mounted = true;
@@ -364,8 +350,8 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           const collectionName =
             manualCollections.find((collection) => collection.id === selectedCollectionId)?.label ??
             'selected collection';
-          toast.success(
-            `${indexedDocumentIds.length} document${indexedDocumentIds.length === 1 ? '' : 's'} added to ${collectionName}`
+          toastRef.current.success(
+            `Added ${indexedDocumentIds.length} ${indexedDocumentIds.length === 1 ? 'document' : 'documents'} to ${collectionName}`
           );
         }
 
@@ -410,7 +396,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     selectedCollectionId,
     selectedSpaceId,
     startBatchImport,
-    toast,
   ]);
 
   // Cancel import
@@ -511,171 +496,84 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   }, [currentJobId, getOperation, onImportComplete]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Import Files</h2>
-        {onClose && (
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
-
-      {/* Drag & Drop Zone */}
+    <div>
       <div
         className={cn(
-          'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
-          isDragging
-            ? 'border-primary bg-primary/10'
-            : 'border-muted-foreground/25 hover:border-muted-foreground/50'
+          'rounded-md border border-dashed py-10 text-center transition-colors duration-fast',
+          isDragging ? 'border-accent' : 'border-border-default'
         )}
         onDrop={handleAsyncEvent(handleDrop)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
       >
-        <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        <p className="text-lg mb-2">Drag & drop files here</p>
-        <p className="text-sm text-muted-foreground mb-4">
-          or click the button below to select files
+        <p className="text-sm text-text-secondary">
+          Drop files here, or{' '}
+          <button
+            type="button"
+            onClick={handleAsyncEvent(handleFileSelect)}
+            disabled={isImporting}
+            className="text-accent transition-colors duration-fast hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            choose files
+          </button>
         </p>
-        <Button onClick={handleAsyncEvent(handleFileSelect)} disabled={isImporting}>
-          <Upload className="mr-2 h-4 w-4" />
-          Select Files
-        </Button>
-        <p className="text-xs text-muted-foreground mt-2">
-        Supported: PDF, DOCX, RTF, ODT, XLSX, PPTX, TXT, MD, HTML, CSV, JSON, and code/config
-        files (max 50MB per file)
-      </p>
+        <p className="mt-1 text-xs text-text-muted">
+          PDF, DOCX, RTF, ODT, XLSX, PPTX, TXT, MD, HTML, CSV, JSON, code · up to 50 MB each
+        </p>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                Optional Space Scope
-              </p>
-              <p className="mt-1 truncate text-sm font-medium text-[hsl(var(--text-primary))]">
-                {selectedSpace
-                  ? `${selectedSpace.icon ? `${selectedSpace.icon} ` : ''}${selectedSpace.name}`
-                  : (isLoadingSpaces ? 'Loading spaces...' : 'All Spaces')}
-              </p>
-              <p className="mt-0.5 truncate text-[11px] text-[hsl(var(--text-secondary))]">
-                {selectedSpace?.description || 'Applies this import to one conversation space'}
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              {selectedSpaceId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHasCustomizedSpaceScope(true);
-                    setSelectedSpaceId('');
-                  }}
-                  disabled={isImporting}
-                  className="rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Clear
-                </button>
-              )}
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))]">
-                <Layers3 className="h-4 w-4" />
-              </span>
-            </div>
-          </div>
-          <Select
-            value={selectedSpaceId || ALL_SPACES_OPTION}
-            onValueChange={(value) => {
+      <div className="mt-8 border-t border-border-subtle">
+        <SettingsRow label="Add to space" htmlFor="batch-file-space-select">
+          <select
+            id="batch-file-space-select"
+            value={selectedSpaceId}
+            onChange={(event) => {
               setHasCustomizedSpaceScope(true);
-              setSelectedSpaceId(value === ALL_SPACES_OPTION ? '' : value);
+              setSelectedSpaceId(event.target.value);
             }}
             disabled={isImporting || isLoadingSpaces}
+            className={settingsFieldClass}
           >
-            <SelectTrigger
-              id="batch-file-space-select"
-              aria-label="Optional Space Scope"
-              className="h-10 border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] data-[placeholder]:text-[hsl(var(--text-secondary))]"
-            >
-              <SelectValue placeholder={isLoadingSpaces ? 'Loading spaces...' : 'All Spaces'} />
-            </SelectTrigger>
-            <SelectContent className="border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))]">
-              <SelectItem value={ALL_SPACES_OPTION}>All Spaces (No scope)</SelectItem>
-              {spaces.map((space) => (
-                <SelectItem key={space.id} value={space.id}>
-                  {space.icon ? `${space.icon} ` : ''}{space.name}{space.isArchived ? ' (archived)' : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+            <option value="">None</option>
+            {spaces.map((space) => (
+              <option key={space.id} value={space.id}>
+                {space.icon ? `${space.icon} ` : ''}{space.name}{space.isArchived ? ' (archived)' : ''}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
 
-        <div className="rounded-xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 shadow-[var(--shadow-sm)]">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                Optional Collection
-              </p>
-              <p className="mt-1 truncate text-sm font-medium text-[hsl(var(--text-primary))]">
-                {selectedCollection?.label ?? (manualCollections.length === 0 ? 'No collections available' : 'No Collection')}
-              </p>
-              <p className="mt-0.5 text-[11px] text-[hsl(var(--text-secondary))]">
-                Auto-add imported docs to a curated collection
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              {selectedCollectionId && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedCollectionId('')}
-                  disabled={isImporting}
-                  className="rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-[11px] text-[hsl(var(--text-secondary))] transition-colors hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Clear
-                </button>
-              )}
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-secondary))]">
-                <FolderTree className="h-4 w-4" />
-              </span>
-            </div>
-          </div>
-          <Select
-            value={selectedCollectionId || NO_COLLECTION_OPTION}
-            onValueChange={(value) =>
-              setSelectedCollectionId(value === NO_COLLECTION_OPTION ? '' : value)
-            }
-            disabled={isImporting || manualCollections.length === 0}
-          >
-            <SelectTrigger
+        <SettingsRow
+          label="Add to collection"
+          htmlFor={manualCollections.length > 0 ? 'batch-file-collection-select' : undefined}
+        >
+          {manualCollections.length === 0 ? (
+            <span className="text-xs text-text-muted">No collections yet</span>
+          ) : (
+            <select
               id="batch-file-collection-select"
-              aria-label="Optional Collection"
-              className="h-10 border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] data-[placeholder]:text-[hsl(var(--text-secondary))]"
+              value={selectedCollectionId}
+              onChange={(event) => setSelectedCollectionId(event.target.value)}
+              disabled={isImporting}
+              className={settingsFieldClass}
             >
-              <SelectValue
-                placeholder={manualCollections.length === 0 ? 'No collections available' : 'No Collection'}
-              />
-            </SelectTrigger>
-            <SelectContent className="border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))]">
-              <SelectItem value={NO_COLLECTION_OPTION}>
-                {manualCollections.length === 0 ? 'No collections available' : 'No Collection'}
-              </SelectItem>
+              <option value="">None</option>
               {manualCollections.map((collection) => (
-                <SelectItem key={collection.id} value={collection.id}>
+                <option key={collection.id} value={collection.id}>
                   {collection.label}
-                </SelectItem>
+                </option>
               ))}
-            </SelectContent>
-          </Select>
-        </div>
+            </select>
+          )}
+        </SettingsRow>
       </div>
 
-      {/* File List */}
       {files.length > 0 && (
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <h3 className="font-semibold">
-            Files to Import ({selectedCount})
-          </h3>
-          <div className="min-h-[8rem] flex-1 overflow-y-auto rounded-lg border divide-y">
+        <div className="mt-8">
+          <h2 className="pb-2 text-base font-medium text-text-primary">
+            {files.length} {files.length === 1 ? 'file' : 'files'}
+          </h2>
+          <div className="border-t border-border-subtle">
             {files.map((file) => (
               <FileListItem
                 key={file.path}
@@ -688,7 +586,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         </div>
       )}
 
-      {/* Progress */}
       {isImporting && currentJobId && (() => {
         const operation = getOperation(currentJobId);
         const progress = operation?.totalFiles
@@ -696,81 +593,76 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           : 0;
 
         return (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span>Importing files...</span>
-              <span>{progress}%</span>
-            </div>
-            <Progress value={progress} />
-          </div>
+          <p className="mt-4 text-sm tabular-nums text-text-muted">Importing… {progress}%</p>
         );
       })()}
 
-      {/* Actions */}
-      <div className="flex shrink-0 justify-end gap-2">
-        <Button variant="outline" onClick={handleCancel} disabled={isImporting}>
+      <div className="mt-6 flex shrink-0 items-center justify-end gap-2">
+        <Button variant="ghost" onClick={handleCancel} disabled={isImporting} className="h-9">
           Cancel
         </Button>
-        <Button onClick={handleAsyncEvent(handleStartImport)} disabled={!canImport}>
-          {isImporting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Importing...
-            </>
-          ) : (
-            <>Import {selectedCount} {selectedCount === 1 ? 'File' : 'Files'}</>
-          )}
+        <Button onClick={handleAsyncEvent(handleStartImport)} disabled={!canImport} className="h-9">
+          {isImporting
+            ? 'Importing…'
+            : selectedCount > 0
+              ? `Import ${selectedCount} ${selectedCount === 1 ? 'file' : 'files'}`
+              : 'Import'}
         </Button>
       </div>
     </div>
   );
 };
 
-// File List Item Component
 interface FileListItemProps {
   file: FileItem;
   onRemove: (path: string) => void;
   disabled?: boolean;
 }
 
-const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled }) => {
-  const StatusIcon = {
-    pending: FileText,
-    importing: Loader2,
-    success: CheckCircle,
-    error: XCircle,
-  }[file.status];
+/** Status as plain muted text. No badges, no colored dots. */
+const statusLabel = (file: FileItem): string => {
+  switch (file.status) {
+    case 'importing':
+      return 'Importing…';
+    case 'success':
+      return 'Imported';
+    case 'error':
+      return file.errorMessage ? `Failed — ${file.errorMessage}` : 'Failed';
+    default:
+      return '';
+  }
+};
 
-  const statusColor = {
-    pending: 'text-muted-foreground',
-    importing: 'text-[hsl(var(--accent))]',
-    success: 'text-[hsl(var(--success-fg))]',
-    error: 'text-[hsl(var(--danger-fg))]',
-  }[file.status];
+const formatSize = (bytes: number): string => {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+};
+
+const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled }) => {
+  const meta = file.size > 0
+    ? formatSize(file.size)
+    : file.path.slice(0, file.path.length - file.name.length).replace(/[\\/]$/, '');
+  const status = statusLabel(file);
 
   return (
-    <div className="flex items-center gap-3 p-3">
-      <StatusIcon
-        className={cn(
-          'h-5 w-5',
-          statusColor,
-          file.status === 'importing' && 'animate-spin'
-        )}
-      />
-      <div className="flex-1 min-w-0">
-        <p className="font-medium truncate">{file.name}</p>
-        {file.errorMessage && (
-          <p className="text-sm text-[hsl(var(--danger-fg))]">{file.errorMessage}</p>
-        )}
+    <div className="flex items-center gap-3 border-b border-border-subtle py-3">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-text-primary">{file.name}</div>
+        {meta && <div className="truncate text-xs text-text-muted">{meta}</div>}
       </div>
+      {status && (
+        <span className="max-w-[240px] shrink-0 truncate text-xs text-text-muted">{status}</span>
+      )}
       {!disabled && (file.status === 'pending' || file.status === 'error') && (
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onRemove(file.path)}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        <IconButton label="Remove file" onClick={() => onRemove(file.path)} className="shrink-0">
+          <X />
+        </IconButton>
       )}
     </div>
   );

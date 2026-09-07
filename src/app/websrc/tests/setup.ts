@@ -2,7 +2,7 @@ import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
-import * as apiMock from '../__mocks__/lib/api';
+import * as apiMock from '../lib/__mocks__/api';
 
 // Mock the VaultAPI globally for all tests (support both relative and alias imports)
 vi.mock('../lib/api', () => apiMock);

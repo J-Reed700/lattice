@@ -7,13 +7,11 @@
 
 import { create } from 'zustand';
 
-import VaultAPI from '../lib/api';
+import { typeBucket } from '../components/FileBrowser/docMeta';
 import {
   type CustomCollection,
-  type FileNode,
   type FileBrowserActions,
-  type ListColumnKey,
-  type ListColumnVisibility,
+  type LibraryScope,
   type SavedSearchPreset,
   type SourceConnection,
   type SourceFilter,
@@ -21,20 +19,11 @@ import {
   type SortField,
   type SortOrder,
   type DocumentMetadata,
-  type SavedLibraryView,
 } from '../types/fileBrowser';
-import { getDateGroup, groupBy, type DateGroup } from '../utils/dateUtils';
-
-export type Density = 'compact' | 'comfortable' | 'spacious';
-
-export type ListItem =
-  | { type: 'header'; label: DateGroup }
-  | { type: 'doc'; data: DocumentMetadata };
 
 interface FileBrowserState {
   // View configuration
   viewMode: ViewMode;
-  density: Density;
   groupByDate: boolean;
 
   // Sorting and filtering
@@ -47,19 +36,20 @@ interface FileBrowserState {
   isContentSearchLoading: boolean;
 
   // Data
-  documents: DocumentMetadata[];
   customCollections: CustomCollection[];
-  savedViews: SavedLibraryView[];
-  activeSavedViewId: string | null;
   savedSearches: SavedSearchPreset[];
   activeSavedSearchId: string | null;
   sourceConnections: SourceConnection[];
-  isLoading: boolean;
-  error: string | null;
-  listColumns: ListColumnVisibility;
+
+  // Scope
+  scope: LibraryScope;
 
   // Selection
   selectedDocumentIds: Set<string>;
+
+  // Neighborhood panel (pure UI preference)
+  focusedDocumentId: string | null;
+  isNeighborhoodOpen: boolean;
 
   // Context menu
   contextMenuPosition: { x: number; y: number } | null;
@@ -68,7 +58,7 @@ interface FileBrowserState {
 
 interface FileBrowserStore extends FileBrowserState, FileBrowserActions {}
 
-const sortDocuments = (
+export const sortLibraryDocuments = (
   documents: DocumentMetadata[],
   sortField: SortField,
   sortOrder: SortOrder
@@ -108,39 +98,6 @@ const isWebDocument = (doc: DocumentMetadata): boolean => {
     doc.filePath.includes('/.lattice/web-archive/')
   );
 };
-const CUSTOM_COLLECTIONS_STORAGE_KEY = 'lattice:file-browser-custom-collections:v1';
-const SOURCE_CONNECTIONS_STORAGE_KEY = 'lattice:file-browser-source-connections:v1';
-const SAVED_VIEWS_STORAGE_KEY = 'lattice:file-browser-saved-views:v1';
-const SAVED_SEARCHES_STORAGE_KEY = 'lattice:file-browser-saved-searches:v1';
-const DEFAULT_LIST_COLUMNS: ListColumnVisibility = {
-  words: true,
-  modified: true,
-  type: true,
-};
-
-const sanitizeCollectionName = (value: string): string => value.trim().replace(/\s+/g, ' ');
-const sanitizeSavedViewName = (value: string): string => value.trim().replace(/\s+/g, ' ');
-const buildUniqueName = (candidate: string, existingNames: string[]): string => {
-  const normalizedExisting = new Set(existingNames.map((name) => normalizeToken(name)));
-  let nextName = sanitizeSavedViewName(candidate);
-  if (!nextName) {
-    nextName = 'Untitled';
-  }
-  if (!normalizedExisting.has(normalizeToken(nextName))) {
-    return nextName;
-  }
-
-  let copyIndex = 2;
-  while (normalizedExisting.has(normalizeToken(`${nextName} (${copyIndex})`))) {
-    copyIndex += 1;
-  }
-
-  return `${nextName} (${copyIndex})`;
-};
-const isSameCollectionParent = (
-  collection: CustomCollection,
-  parentId: string | null
-): boolean => (collection.parentId ?? null) === parentId;
 
 const collectDescendantCollectionIds = (
   collections: CustomCollection[],
@@ -165,6 +122,112 @@ const collectDescendantCollectionIds = (
 
   return descendants;
 };
+
+export interface LibraryFilterState {
+  searchQuery: string;
+  filterByType: string | null;
+  filterBySource: SourceFilter;
+  contentSearchMatches: Set<string>;
+  customCollections: CustomCollection[];
+  /**
+   * Themes from the most recent clustering run, for `scope.kind === 'theme'`.
+   * Optional because themes live in React Query, not in this store — callers
+   * that never scope to a theme (and the store's own tests) omit it.
+   */
+  themes?: Array<{ id: string; memberDocumentIds: string[] }>;
+  scope: LibraryScope;
+}
+
+const normalizeFolderPath = (value: string): string => {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized.toLowerCase();
+};
+
+const isInsideFolder = (filePath: string, folderPath: string): boolean => {
+  const file = filePath.replace(/\\/g, '/').toLowerCase();
+  const folder = normalizeFolderPath(folderPath);
+  return folder.length > 0 && file.startsWith(`${folder}/`);
+};
+
+export const filterLibraryDocuments = (
+  documents: DocumentMetadata[],
+  state: LibraryFilterState
+): DocumentMetadata[] => {
+  const query = normalizeToken(state.searchQuery);
+  const normalizedFilter = state.filterByType ? normalizeToken(state.filterByType) : null;
+
+  let scopedDocIds: Set<string> | null = null;
+  if (state.scope.kind === 'collection') {
+    const inScope = new Set<string>([
+      state.scope.id,
+      ...collectDescendantCollectionIds(state.customCollections, state.scope.id),
+    ]);
+    scopedDocIds = new Set<string>();
+    for (const collection of state.customCollections) {
+      if (inScope.has(collection.id)) {
+        for (const docId of collection.documentIds) {
+          scopedDocIds.add(docId);
+        }
+      }
+    }
+  }
+  if (state.scope.kind === 'theme') {
+    const scopeId = state.scope.id;
+    const theme = state.themes?.find((candidate) => candidate.id === scopeId);
+    scopedDocIds = new Set<string>(theme?.memberDocumentIds ?? []);
+  }
+  const scopedFolder = state.scope.kind === 'folder' ? state.scope.path : null;
+
+  return documents.filter(doc => {
+    const normalizedCategory = normalizeToken(doc.category).replace(/[_-]+/g, ' ');
+    const normalizedFileType = normalizeToken(doc.fileType);
+    const normalizedFileName = normalizeToken(doc.fileName);
+    const matchesQuery = query
+      ? normalizedFileName.includes(query) || state.contentSearchMatches.has(doc.id)
+      : true;
+    const matchesType = normalizedFilter
+      ? normalizeToken(typeBucket(doc)) === normalizedFilter ||
+        normalizedCategory.includes(normalizedFilter) ||
+        normalizedFileType === normalizedFilter ||
+        (normalizedFilter === 'web' && normalizedCategory.includes('web article'))
+      : true;
+    const matchesSource =
+      state.filterBySource === 'all' ||
+      (state.filterBySource === 'web' && isWebDocument(doc)) ||
+      (state.filterBySource === 'local' && !isWebDocument(doc));
+    const matchesScope =
+      (!scopedDocIds || scopedDocIds.has(doc.id)) &&
+      (!scopedFolder || isInsideFolder(doc.filePath, scopedFolder));
+    return matchesQuery && matchesType && matchesSource && matchesScope;
+  });
+};
+const CUSTOM_COLLECTIONS_STORAGE_KEY = 'lattice:file-browser-custom-collections:v1';
+const SOURCE_CONNECTIONS_STORAGE_KEY = 'lattice:file-browser-source-connections:v1';
+const SAVED_SEARCHES_STORAGE_KEY = 'lattice:file-browser-saved-searches:v1';
+
+const sanitizeName = (value: string): string => value.trim().replace(/\s+/g, ' ');
+const sanitizeCollectionName = sanitizeName;
+const buildUniqueName = (candidate: string, existingNames: string[]): string => {
+  const normalizedExisting = new Set(existingNames.map((name) => normalizeToken(name)));
+  let nextName = sanitizeName(candidate);
+  if (!nextName) {
+    nextName = 'Untitled';
+  }
+  if (!normalizedExisting.has(normalizeToken(nextName))) {
+    return nextName;
+  }
+
+  let copyIndex = 2;
+  while (normalizedExisting.has(normalizeToken(`${nextName} (${copyIndex})`))) {
+    copyIndex += 1;
+  }
+
+  return `${nextName} (${copyIndex})`;
+};
+const isSameCollectionParent = (
+  collection: CustomCollection,
+  parentId: string | null
+): boolean => (collection.parentId ?? null) === parentId;
 
 const loadCustomCollections = (): CustomCollection[] => {
   if (typeof window === 'undefined') {
@@ -239,119 +302,6 @@ const persistCustomCollections = (collections: CustomCollection[]): void => {
   }
 };
 
-const sanitizeSavedView = (value: unknown): SavedLibraryView | null => {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const candidate = value as Partial<SavedLibraryView>;
-  const viewMode = typeof candidate.viewMode === 'string' ? candidate.viewMode : '';
-  const density = typeof candidate.density === 'string' ? candidate.density : '';
-  const sortField = typeof candidate.sortField === 'string' ? candidate.sortField : '';
-  const sortOrder = typeof candidate.sortOrder === 'string' ? candidate.sortOrder : '';
-  const sourceFilter = typeof candidate.filterBySource === 'string' ? candidate.filterBySource : 'all';
-  const groupByDate = Boolean(candidate.groupByDate);
-  const rawListColumns = candidate.listColumns;
-  const listColumns: ListColumnVisibility = {
-    words:
-      typeof rawListColumns === 'object' &&
-      rawListColumns !== null &&
-      'words' in rawListColumns &&
-      typeof (rawListColumns as ListColumnVisibility).words === 'boolean'
-        ? (rawListColumns as ListColumnVisibility).words
-        : DEFAULT_LIST_COLUMNS.words,
-    modified:
-      typeof rawListColumns === 'object' &&
-      rawListColumns !== null &&
-      'modified' in rawListColumns &&
-      typeof (rawListColumns as ListColumnVisibility).modified === 'boolean'
-        ? (rawListColumns as ListColumnVisibility).modified
-        : DEFAULT_LIST_COLUMNS.modified,
-    type:
-      typeof rawListColumns === 'object' &&
-      rawListColumns !== null &&
-      'type' in rawListColumns &&
-      typeof (rawListColumns as ListColumnVisibility).type === 'boolean'
-        ? (rawListColumns as ListColumnVisibility).type
-        : DEFAULT_LIST_COLUMNS.type,
-  };
-  const baseCollectionId =
-    typeof candidate.baseCollectionId === 'string' && candidate.baseCollectionId.trim()
-      ? candidate.baseCollectionId
-      : null;
-
-  if (
-    typeof candidate.id !== 'string' ||
-    typeof candidate.name !== 'string' ||
-    typeof candidate.searchQuery !== 'string' ||
-    typeof candidate.createdAt !== 'string' ||
-    typeof candidate.updatedAt !== 'string' ||
-    !['tree', 'list', 'grid'].includes(viewMode) ||
-    !['compact', 'comfortable', 'spacious'].includes(density) ||
-    !['name', 'size', 'modified', 'type'].includes(sortField) ||
-    !['asc', 'desc'].includes(sortOrder) ||
-    !['all', 'local', 'web'].includes(sourceFilter)
-  ) {
-    return null;
-  }
-
-  return {
-    id: candidate.id,
-    name: sanitizeSavedViewName(candidate.name),
-    baseCollectionId,
-    viewMode: viewMode as ViewMode,
-    density: density as Density,
-    sortField: sortField as SortField,
-    sortOrder: sortOrder as SortOrder,
-    filterByType:
-      typeof candidate.filterByType === 'string' && normalizeToken(candidate.filterByType)
-        ? normalizeToken(candidate.filterByType)
-        : null,
-    filterBySource: sourceFilter as SourceFilter,
-    groupByDate,
-    searchQuery: candidate.searchQuery,
-    listColumns,
-    createdAt: candidate.createdAt,
-    updatedAt: candidate.updatedAt,
-  };
-};
-
-const loadSavedViews = (): SavedLibraryView[] => {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-
-  try {
-    const raw = window.localStorage.getItem(SAVED_VIEWS_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed
-      .map((item) => sanitizeSavedView(item))
-      .filter((item): item is SavedLibraryView => item !== null);
-  } catch {
-    return [];
-  }
-};
-
-const persistSavedViews = (views: SavedLibraryView[]): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(SAVED_VIEWS_STORAGE_KEY, JSON.stringify(views));
-  } catch {
-    // Ignore persistence failures; in-memory state remains valid
-  }
-};
-
 const sanitizeSavedSearch = (value: unknown): SavedSearchPreset | null => {
   if (!value || typeof value !== 'object') {
     return null;
@@ -372,7 +322,7 @@ const sanitizeSavedSearch = (value: unknown): SavedSearchPreset | null => {
 
   return {
     id: candidate.id,
-    name: sanitizeSavedViewName(candidate.name),
+    name: sanitizeName(candidate.name),
     query: candidate.query,
     filterByType:
       typeof candidate.filterByType === 'string' && normalizeToken(candidate.filterByType)
@@ -441,7 +391,7 @@ const sanitizeSourceConnection = (item: unknown): SourceConnection | null => {
   }
 
   if (
-    !['local_folder', 'web_import', 'dropbox', 'google_drive', 'onedrive', 'icloud'].includes(candidate.provider) ||
+    !['web_import', 'dropbox', 'google_drive', 'onedrive', 'icloud'].includes(candidate.provider) ||
     !['referenced', 'managed'].includes(candidate.mode) ||
     !['healthy', 'attention', 'error', 'paused'].includes(candidate.health)
   ) {
@@ -492,7 +442,8 @@ const persistSourceConnections = (connections: SourceConnection[]): void => {
   }
 
   try {
-    window.localStorage.setItem(SOURCE_CONNECTIONS_STORAGE_KEY, JSON.stringify(connections));
+    const clientOnlyConnections = connections.filter(connection => connection.provider !== 'local_folder');
+    window.localStorage.setItem(SOURCE_CONNECTIONS_STORAGE_KEY, JSON.stringify(clientOnlyConnections));
   } catch {
     // Ignore persistence failures; in-memory state remains valid
   }
@@ -504,7 +455,6 @@ const sortSourceConnections = (connections: SourceConnection[]): SourceConnectio
 export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
   // Initial state
   viewMode: 'tree',
-  density: 'comfortable',
   groupByDate: false,
   sortField: 'name',
   sortOrder: 'asc',
@@ -513,31 +463,28 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
   filterBySource: 'all',
   contentSearchMatches: new Set(),
   isContentSearchLoading: false,
-  documents: [],
   customCollections: loadCustomCollections(),
-  savedViews: loadSavedViews(),
-  activeSavedViewId: null,
   savedSearches: loadSavedSearches(),
   activeSavedSearchId: null,
   sourceConnections: loadSourceConnections(),
-  isLoading: false,
-  error: null,
-  listColumns: { ...DEFAULT_LIST_COLUMNS },
+  scope: { kind: 'all' },
   selectedDocumentIds: new Set(),
+  focusedDocumentId: null,
+  isNeighborhoodOpen: false,
   contextMenuPosition: null,
   contextMenuDocument: null,
 
   // View management
   setViewMode: (mode: ViewMode) => {
-    set({ viewMode: mode, activeSavedViewId: null });
-  },
-
-  setDensity: (density: Density) => {
-    set({ density, activeSavedViewId: null });
+    set({ viewMode: mode });
   },
 
   toggleGroupByDate: () => {
-    set((state) => ({ groupByDate: !state.groupByDate, activeSavedViewId: null }));
+    set((state) => ({ groupByDate: !state.groupByDate }));
+  },
+
+  setScope: (scope: LibraryScope) => {
+    set({ scope, selectedDocumentIds: new Set() });
   },
 
   // Selection actions
@@ -567,39 +514,44 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
     });
   },
 
-  selectAll: () => {
-    const { documents } = get();
-    set({ selectedDocumentIds: new Set(documents.map((d) => d.id)) });
+  selectAll: (fileIds: Iterable<string>) => {
+    set({ selectedDocumentIds: new Set(fileIds) });
   },
 
+  // Selection and focus are different things: focus is "the row you last
+  // clicked" and is what the neighborhood panel is about. A plain click
+  // clears the selection before selecting the clicked row, so clearing
+  // focus here would blank the panel on every click.
   clearSelection: () => {
     set({ selectedDocumentIds: new Set() });
   },
 
+  setFocusedDocument: (documentId: string | null) => {
+    set({ focusedDocumentId: documentId });
+  },
+
+  toggleNeighborhood: () => {
+    set((state) => ({ isNeighborhoodOpen: !state.isNeighborhoodOpen }));
+  },
+
   // Sorting and filtering
   setSortField: (field: SortField) => {
-    set((state) => ({
+    set({
       sortField: field,
-      documents: sortDocuments(state.documents, field, state.sortOrder),
-      activeSavedViewId: null,
-    }));
+    });
   },
 
   setSortOrder: (order: SortOrder) => {
-    set((state) => ({
+    set({
       sortOrder: order,
-      documents: sortDocuments(state.documents, state.sortField, order),
-      activeSavedViewId: null,
-    }));
+    });
   },
 
   toggleSortOrder: () => {
-    const { sortOrder, sortField, documents } = get();
+    const { sortOrder } = get();
     const newOrder = sortOrder === 'asc' ? 'desc' : 'asc';
     set({
       sortOrder: newOrder,
-      documents: sortDocuments(documents, sortField, newOrder),
-      activeSavedViewId: null,
     });
   },
 
@@ -612,7 +564,6 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
         searchQuery: query,
         contentSearchMatches: new Set(),
         isContentSearchLoading: false,
-        activeSavedViewId: null,
         activeSavedSearchId: null,
       };
     });
@@ -622,13 +573,12 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
     const normalized = type ? normalizeToken(type) : null;
     set({
       filterByType: normalized && normalized !== 'all' ? normalized : null,
-      activeSavedViewId: null,
       activeSavedSearchId: null,
     });
   },
 
   setFilterBySource: (source: SourceFilter) => {
-    set({ filterBySource: source, activeSavedViewId: null, activeSavedSearchId: null });
+    set({ filterBySource: source, activeSavedSearchId: null });
   },
 
   setContentSearchMatches: (matches: Iterable<string>) => {
@@ -646,212 +596,8 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
     });
   },
 
-  setListColumnVisibility: (updates: Partial<ListColumnVisibility>) => {
-    set((state) => ({
-      listColumns: {
-        ...state.listColumns,
-        ...updates,
-      },
-      activeSavedViewId: null,
-    }));
-  },
-
-  toggleListColumnVisibility: (column: ListColumnKey) => {
-    set((state) => ({
-      listColumns: {
-        ...state.listColumns,
-        [column]: !state.listColumns[column],
-      },
-      activeSavedViewId: null,
-    }));
-  },
-
-  createSavedView: (name: string) => {
-    const normalizedName = sanitizeSavedViewName(name);
-    if (!normalizedName) {
-      return null;
-    }
-
-    const now = new Date().toISOString();
-    const viewId = `view:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 9)}`;
-    const state = get();
-    const hasDuplicate = state.savedViews.some(
-      (view) => normalizeToken(view.name) === normalizeToken(normalizedName)
-    );
-    if (hasDuplicate) {
-      return null;
-    }
-
-    const nextView: SavedLibraryView = {
-      id: viewId,
-      name: normalizedName,
-      baseCollectionId: null,
-      viewMode: state.viewMode,
-      density: state.density,
-      sortField: state.sortField,
-      sortOrder: state.sortOrder,
-      filterByType: state.filterByType,
-      filterBySource: state.filterBySource,
-      groupByDate: state.groupByDate,
-      searchQuery: state.searchQuery,
-      listColumns: { ...state.listColumns },
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    set((currentState) => {
-      const savedViews = [nextView, ...currentState.savedViews];
-      persistSavedViews(savedViews);
-      return {
-        savedViews,
-        activeSavedViewId: viewId,
-      };
-    });
-
-    return viewId;
-  },
-
-  applySavedView: (viewId: string) => {
-    set((state) => {
-      const target = state.savedViews.find((view) => view.id === viewId);
-      if (!target) {
-        return state;
-      }
-
-      return {
-        activeSavedViewId: target.id,
-        activeSavedSearchId: null,
-        viewMode: target.viewMode,
-        density: target.density,
-        sortField: target.sortField,
-        sortOrder: target.sortOrder,
-        filterByType: target.filterByType,
-        filterBySource: target.filterBySource,
-        groupByDate: target.groupByDate,
-        searchQuery: target.searchQuery,
-        listColumns: { ...target.listColumns },
-        contentSearchMatches: new Set(),
-        isContentSearchLoading: false,
-      };
-    });
-  },
-
-  updateSavedView: (viewId, updates) => {
-    set((state) => {
-      const target = state.savedViews.find((view) => view.id === viewId);
-      if (!target) {
-        return state;
-      }
-
-      const normalizedName =
-        typeof updates.name === 'string' ? sanitizeSavedViewName(updates.name) : target.name;
-      if (!normalizedName) {
-        return state;
-      }
-
-      const hasDuplicateName = state.savedViews.some(
-        (view) =>
-          view.id !== viewId &&
-          normalizeToken(view.name) === normalizeToken(normalizedName)
-      );
-      if (hasDuplicateName) {
-        return state;
-      }
-
-      const nextView: SavedLibraryView = {
-        ...target,
-        ...updates,
-        name: normalizedName,
-        baseCollectionId:
-          typeof updates.baseCollectionId === 'string' && updates.baseCollectionId.trim()
-            ? updates.baseCollectionId
-            : updates.baseCollectionId === null
-              ? null
-              : target.baseCollectionId,
-        filterByType:
-          typeof updates.filterByType === 'string'
-            ? normalizeToken(updates.filterByType) || null
-            : updates.filterByType === null
-              ? null
-              : target.filterByType,
-        listColumns:
-          updates.listColumns
-            ? {
-                ...target.listColumns,
-                ...updates.listColumns,
-              }
-            : target.listColumns,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const savedViews = state.savedViews.map((view) => (view.id === viewId ? nextView : view));
-      persistSavedViews(savedViews);
-
-      if (state.activeSavedViewId !== viewId) {
-        return { savedViews };
-      }
-
-      return {
-        savedViews,
-        viewMode: nextView.viewMode,
-        density: nextView.density,
-        sortField: nextView.sortField,
-        sortOrder: nextView.sortOrder,
-        filterByType: nextView.filterByType,
-        filterBySource: nextView.filterBySource,
-        groupByDate: nextView.groupByDate,
-        searchQuery: nextView.searchQuery,
-        listColumns: { ...nextView.listColumns },
-        contentSearchMatches: new Set(),
-        isContentSearchLoading: false,
-      };
-    });
-  },
-
-  captureSavedViewState: (viewId) => {
-    set((state) => {
-      const target = state.savedViews.find((view) => view.id === viewId);
-      if (!target) {
-        return state;
-      }
-
-      const nextView: SavedLibraryView = {
-        ...target,
-        viewMode: state.viewMode,
-        density: state.density,
-        sortField: state.sortField,
-        sortOrder: state.sortOrder,
-        filterByType: state.filterByType,
-        filterBySource: state.filterBySource,
-        groupByDate: state.groupByDate,
-        searchQuery: state.searchQuery,
-        listColumns: { ...state.listColumns },
-        updatedAt: new Date().toISOString(),
-      };
-
-      const savedViews = state.savedViews.map((view) => (view.id === viewId ? nextView : view));
-      persistSavedViews(savedViews);
-      return { savedViews };
-    });
-  },
-
-  deleteSavedView: (viewId: string) => {
-    set((state) => {
-      const savedViews = state.savedViews.filter((view) => view.id !== viewId);
-      persistSavedViews(savedViews);
-      return {
-        savedViews,
-        activeSavedViewId: state.activeSavedViewId === viewId ? null : state.activeSavedViewId,
-      };
-    });
-  },
-
-  clearActiveSavedView: () => {
-    set({ activeSavedViewId: null });
-  },
-
   createSavedSearch: (name: string, options) => {
-    const normalizedName = sanitizeSavedViewName(name);
+    const normalizedName = sanitizeName(name);
     if (!normalizedName) {
       return null;
     }
@@ -906,7 +652,6 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
 
       return {
         activeSavedSearchId: target.id,
-        activeSavedViewId: null,
         searchQuery: target.query,
         filterByType: target.filterByType,
         filterBySource: target.filterBySource,
@@ -924,7 +669,7 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
       }
 
       const normalizedName =
-        typeof updates.name === 'string' ? sanitizeSavedViewName(updates.name) : target.name;
+        typeof updates.name === 'string' ? sanitizeName(updates.name) : target.name;
       if (!normalizedName) {
         return state;
       }
@@ -1313,6 +1058,10 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
   },
 
   createSourceConnection: (connection) => {
+    if (connection.provider === 'local_folder') {
+      throw new Error('Local folders are backend-owned and cannot be stored as client connections.');
+    }
+
     const now = new Date().toISOString();
     const sourceId = `source:${connection.provider}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 9)}`;
 
@@ -1332,51 +1081,10 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
     return sourceId;
   },
 
-  reconcileLocalSources: (connections: SourceConnection[]) => {
-    set((state) => {
-      const nonLocalSources = state.sourceConnections.filter(connection => connection.provider !== 'local_folder');
-
-      const mergedLocalSources = connections.map((incoming) => {
-        const existing = state.sourceConnections.find(connection => connection.id === incoming.id);
-        if (!existing) {
-          return incoming;
-        }
-
-        return {
-          ...incoming,
-          mode: existing.mode,
-          createdAt: existing.createdAt,
-          updatedAt: new Date().toISOString(),
-        };
-      });
-
-      const sourceConnections = sortSourceConnections([...nonLocalSources, ...mergedLocalSources]);
-      persistSourceConnections(sourceConnections);
-      return { sourceConnections };
-    });
-  },
-
-  upsertSourceConnections: (connections: SourceConnection[]) => {
-    if (connections.length === 0) {
-      return;
-    }
-
-    set((state) => {
-      const byId = new Map(state.sourceConnections.map(connection => [connection.id, connection]));
-      for (const connection of connections) {
-        byId.set(connection.id, connection);
-      }
-
-      const sourceConnections = sortSourceConnections(Array.from(byId.values()));
-      persistSourceConnections(sourceConnections);
-      return { sourceConnections };
-    });
-  },
-
   updateSourceConnection: (sourceId: string, updates: Partial<SourceConnection>) => {
     set((state) => {
       const sourceConnections = state.sourceConnections.map((connection) =>
-        connection.id === sourceId
+        connection.id === sourceId && connection.provider !== 'local_folder'
           ? {
               ...connection,
               ...updates,
@@ -1400,63 +1108,11 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
     });
   },
 
-  // Data operations
-  loadFiles: async () => {
-    console.log('[FileBrowserStore] loadFiles called');
-    set({ isLoading: true, error: null });
-
-    try {
-      // Query documents table to show ALL indexed documents
-      console.log('[FileBrowserStore] Calling VaultAPI.listAllDocuments...');
-      const result = await VaultAPI.listAllDocuments(10000);
-      console.log('[FileBrowserStore] API result:', result);
-
-      if (!result.ok) {
-        console.error('[FileBrowserStore] API error:', result.error);
-        set({
-          error: result.error,
-          isLoading: false,
-        });
-        return;
-      }
-
-      // Backend returns DocumentMetadata directly (camelCase from serde)
-      const documents: DocumentMetadata[] = result.data;
-      const { sortField, sortOrder } = get();
-      const sortedDocuments = sortDocuments(documents, sortField, sortOrder);
-      console.log('[FileBrowserStore] Documents received:', documents.length, documents);
-
-      set({
-        documents: sortedDocuments,
-        isLoading: false,
-        error: null,
-        selectedDocumentIds: new Set(),
-        contentSearchMatches: new Set(),
-        isContentSearchLoading: false,
-      });
-
-      console.log('[FileBrowserStore] State updated. Documents length:', get().documents.length);
-    } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : 'Failed to load files',
-        isLoading: false,
-      });
-    }
-  },
-
-  refreshFiles: async () => {
-    await get().loadFiles();
-  },
-
   // Context menu
-  openContextMenu: (position: { x: number; y: number }, file: FileNode) => {
-    // Find the corresponding document metadata by id
-    const { documents } = get();
-    const document = documents.find(d => d.id === file.id);
-
+  openContextMenu: (position: { x: number; y: number }, document: DocumentMetadata) => {
     set({
       contextMenuPosition: position,
-      contextMenuDocument: document || null,
+      contextMenuDocument: document,
     });
   },
 
@@ -1476,14 +1132,8 @@ export const selectSortOrder = (state: FileBrowserStore) => state.sortOrder;
 export const selectSearchQuery = (state: FileBrowserStore) => state.searchQuery;
 export const selectFilterByType = (state: FileBrowserStore) => state.filterByType;
 export const selectFilterBySource = (state: FileBrowserStore) => state.filterBySource;
-export const selectSavedViews = (state: FileBrowserStore) => state.savedViews;
-export const selectActiveSavedViewId = (state: FileBrowserStore) => state.activeSavedViewId;
 export const selectSavedSearches = (state: FileBrowserStore) => state.savedSearches;
 export const selectActiveSavedSearchId = (state: FileBrowserStore) => state.activeSavedSearchId;
-export const selectDocuments = (state: FileBrowserStore) => state.documents;
-export const selectIsLoading = (state: FileBrowserStore) => state.isLoading;
-export const selectError = (state: FileBrowserStore) => state.error;
-export const selectListColumns = (state: FileBrowserStore) => state.listColumns;
 export const selectContextMenuDocument = (state: FileBrowserStore) => ({
   position: state.contextMenuPosition,
   document: state.contextMenuDocument,
@@ -1492,135 +1142,6 @@ export const selectContextMenuDocument = (state: FileBrowserStore) => ({
 // Computed selectors
 export const selectSelectedCount = (state: FileBrowserStore) => state.selectedDocumentIds.size;
 export const selectHasSelection = (state: FileBrowserStore) => state.selectedDocumentIds.size > 0;
-const buildFilteredDocumentsSelector = () => {
-  let lastDocuments: DocumentMetadata[] | null = null;
-  let lastCustomCollections: CustomCollection[] | null = null;
-  let lastSavedViews: SavedLibraryView[] | null = null;
-  let lastActiveSavedViewId: string | null = null;
-  let lastQuery = '';
-  let lastFilter: string | null = null;
-  let lastSourceFilter: SourceFilter = 'all';
-  let lastContentMatches: Set<string> | null = null;
-  let lastResult: DocumentMetadata[] = [];
-
-  return (state: FileBrowserStore): DocumentMetadata[] => {
-    const query = normalizeToken(state.searchQuery);
-    const normalizedFilter = state.filterByType ? normalizeToken(state.filterByType) : null;
-    const sourceFilter = state.filterBySource;
-    const activeSavedView = state.activeSavedViewId
-      ? state.savedViews.find((view) => view.id === state.activeSavedViewId) ?? null
-      : null;
-    const baseCollectionId = activeSavedView?.baseCollectionId ?? null;
-    const baseCollection =
-      baseCollectionId
-        ? state.customCollections.find((collection) => collection.id === baseCollectionId) ?? null
-        : null;
-    const baseCollectionDocIds = baseCollection ? new Set(baseCollection.documentIds) : null;
-
-    if (
-      state.documents === lastDocuments &&
-      state.customCollections === lastCustomCollections &&
-      state.savedViews === lastSavedViews &&
-      state.activeSavedViewId === lastActiveSavedViewId &&
-      query === lastQuery &&
-      normalizedFilter === lastFilter &&
-      sourceFilter === lastSourceFilter &&
-      state.contentSearchMatches === lastContentMatches
-    ) {
-      return lastResult;
-    }
-
-    const { documents } = state;
-    if (!query && !normalizedFilter && sourceFilter === 'all' && !baseCollectionDocIds) {
-      lastDocuments = documents;
-      lastCustomCollections = state.customCollections;
-      lastSavedViews = state.savedViews;
-      lastActiveSavedViewId = state.activeSavedViewId;
-      lastQuery = query;
-      lastFilter = normalizedFilter;
-      lastSourceFilter = sourceFilter;
-      lastContentMatches = state.contentSearchMatches;
-      lastResult = documents;
-      return lastResult;
-    }
-
-    const filtered = documents.filter((doc) => {
-      const normalizedCategory = normalizeToken(doc.category).replace(/[_-]+/g, ' ');
-      const normalizedFileType = normalizeToken(doc.fileType);
-      const normalizedFileName = normalizeToken(doc.fileName);
-
-      const matchesQuery = query
-        ? normalizedFileName.includes(query) || state.contentSearchMatches.has(doc.id)
-        : true;
-      const matchesType = normalizedFilter
-        ? normalizedCategory.includes(normalizedFilter) ||
-          normalizedFileType === normalizedFilter ||
-          (normalizedFilter === 'web' && normalizedCategory.includes('web article'))
-        : true;
-      const matchesSource =
-        sourceFilter === 'all' ||
-        (sourceFilter === 'web' && isWebDocument(doc)) ||
-        (sourceFilter === 'local' && !isWebDocument(doc));
-      const matchesBaseCollection = !baseCollectionDocIds || baseCollectionDocIds.has(doc.id);
-
-      return matchesQuery && matchesType && matchesSource && matchesBaseCollection;
-    });
-
-    lastDocuments = documents;
-    lastCustomCollections = state.customCollections;
-    lastSavedViews = state.savedViews;
-    lastActiveSavedViewId = state.activeSavedViewId;
-    lastQuery = query;
-    lastFilter = normalizedFilter;
-    lastSourceFilter = sourceFilter;
-    lastContentMatches = state.contentSearchMatches;
-    lastResult = filtered;
-    return lastResult;
-  };
-};
-
-export const selectFilteredDocuments = buildFilteredDocumentsSelector();
-
-const buildGroupedDocumentsSelector = () => {
-  let lastFiltered: DocumentMetadata[] | null = null;
-  let lastGroupByDate = true;
-  let lastResult: ListItem[] = [];
-
-  return (state: FileBrowserStore): ListItem[] => {
-    const filtered = selectFilteredDocuments(state);
-
-    if (filtered === lastFiltered && state.groupByDate === lastGroupByDate) {
-      return lastResult;
-    }
-
-    if (!state.groupByDate) {
-      lastFiltered = filtered;
-      lastGroupByDate = false;
-      lastResult = filtered.map(doc => ({ type: 'doc' as const, data: doc }));
-      return lastResult;
-    }
-
-    const grouped = groupBy(filtered, doc => getDateGroup(doc.modifiedAt));
-    const items: ListItem[] = [];
-    const groupOrder: DateGroup[] = ['Today', 'Yesterday', 'This Week', 'Last Week', 'This Month', 'Older'];
-
-    for (const label of groupOrder) {
-      const docs = grouped[label];
-      if (docs && docs.length > 0) {
-        items.push({ type: 'header', label });
-        docs.forEach(doc => items.push({ type: 'doc', data: doc }));
-      }
-    }
-
-    lastFiltered = filtered;
-    lastGroupByDate = true;
-    lastResult = items;
-    return lastResult;
-  };
-};
-
-export const selectGroupedDocuments = buildGroupedDocumentsSelector();
-
-export const selectDensity = (state: FileBrowserStore) => state.density;
 export const selectGroupByDate = (state: FileBrowserStore) => state.groupByDate;
+export const selectScope = (state: FileBrowserStore) => state.scope;
 export const selectContentSearchLoading = (state: FileBrowserStore) => state.isContentSearchLoading;

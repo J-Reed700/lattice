@@ -11,10 +11,15 @@ import { getSourceExternalUrl } from '../../utils/sourcePreview';
 
 interface ConversationLinkedDocumentsPanelProps {
   conversationId: string;
+  /** Retrieval is narrowed to this conversation's own files (contract §4.5). */
+  isScopedToLinkedFiles?: boolean;
+  onSearchWholeVault?: () => void;
 }
 
 export function ConversationLinkedDocumentsPanel({
   conversationId,
+  isScopedToLinkedFiles = false,
+  onSearchWholeVault,
 }: ConversationLinkedDocumentsPanelProps) {
   const {
     spaces,
@@ -260,27 +265,31 @@ export function ConversationLinkedDocumentsPanel({
     }
   };
 
-  if (linkedContextCount === 0 && !expanded) {
+  const showScopeRelease = isScopedToLinkedFiles && Boolean(onSearchWholeVault);
+
+  if (linkedContextCount === 0 && !expanded && !showScopeRelease) {
     return null;
   }
 
   return (
     <section className="border-t border-subtle py-4">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center gap-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))]"
-        aria-expanded={expanded}
-      >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5" />
-        )}
-        <span>
-          Sources in this conversation · {linkedContextCount}
-        </span>
-      </button>
+      {/* No count when there is nothing to count: "· 0" is a stat that is always
+          zero (UX-OVERHAUL-BRIEF §1), and there is nothing behind it to open. */}
+      {(linkedContextCount > 0 || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="flex w-full items-center gap-2 text-xs text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))]"
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+          <span>Sources in this conversation · {linkedContextCount}</span>
+        </button>
+      )}
 
       {expanded && (
         <div className="mt-3 space-y-3">
@@ -323,7 +332,7 @@ export function ConversationLinkedDocumentsPanel({
                       type="button"
                       onClick={() => void handleOpenDocument(document.documentId)}
                       disabled={openingDocumentId === document.documentId}
-                      className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-60"
+                      className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-60"
                     >
                       <ExternalLink className="h-3 w-3" />
                       Open
@@ -332,7 +341,7 @@ export function ConversationLinkedDocumentsPanel({
                       type="button"
                       onClick={() => void handleRemoveDocument(document.documentId)}
                       disabled={removingDocumentId === document.documentId}
-                      className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
+                      className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
                     >
                       <Trash2 className="h-3 w-3" />
                       Remove
@@ -374,7 +383,7 @@ export function ConversationLinkedDocumentsPanel({
                               )
                             }
                             disabled={savingMembershipKey === key}
-                            className="h-3.5 w-3.5 rounded-sm border-default bg-transparent accent-[hsl(var(--accent))]"
+                            className="h-3.5 w-3.5 rounded-sm border-border-default bg-transparent accent-[hsl(var(--accent))]"
                           />
                           <span className="truncate">
                             {space.name}
@@ -403,7 +412,7 @@ export function ConversationLinkedDocumentsPanel({
                     type="button"
                     onClick={() => void handleIngestAllSources()}
                     disabled={isIngestingAllSources}
-                    className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:opacity-50"
                   >
                     Index all
                   </button>
@@ -427,7 +436,7 @@ export function ConversationLinkedDocumentsPanel({
                         <button
                           type="button"
                           onClick={() => void handleOpenSourceUrl(source.url)}
-                          className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
+                          className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                         >
                           <ExternalLink className="h-3 w-3" />
                           Open URL
@@ -437,7 +446,7 @@ export function ConversationLinkedDocumentsPanel({
                             type="button"
                             onClick={() => void handleRemoveSource(source.sourceId!)}
                             disabled={removingSourceId === source.sourceId}
-                            className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
+                            className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger-fg))] disabled:opacity-60"
                           >
                             <Trash2 className="h-3 w-3" />
                             Remove link
@@ -447,7 +456,7 @@ export function ConversationLinkedDocumentsPanel({
                             type="button"
                             onClick={() => void handleLinkSource(source)}
                             disabled={linkingSourceKey === source.key}
-                            className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-60"
+                            className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-60"
                           >
                             Link
                           </button>
@@ -456,7 +465,7 @@ export function ConversationLinkedDocumentsPanel({
                           type="button"
                           onClick={() => void ingestSourceUrl(source)}
                           disabled={ingestingSourceKey === source.key || isIngestingAllSources}
-                          className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:opacity-50"
                         >
                           Index
                         </button>
@@ -468,6 +477,24 @@ export function ConversationLinkedDocumentsPanel({
             </article>
           )}
         </div>
+      )}
+
+      {/*
+        The scope is a standing narrowing of every future answer in this thread,
+        so the way out of it stands with it — not only while files happen to be
+        staged above the composer.
+      */}
+      {showScopeRelease && (
+        <p className="mt-2 text-xs text-[hsl(var(--text-muted))]">
+          Answers use only this conversation&apos;s files.{' '}
+          <button
+            type="button"
+            onClick={onSearchWholeVault}
+            className="text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+          >
+            Search the whole vault
+          </button>
+        </p>
       )}
     </section>
   );

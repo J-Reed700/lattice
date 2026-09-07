@@ -145,73 +145,51 @@ export const ToastItem: React.FC<ToastItemProps> = ({
       aria-atomic="true"
       className={`
         relative w-full max-w-sm overflow-hidden
-        bg-[hsl(var(--surface-raised))]
-        border-l-4
-        rounded-md shadow-md
+        rounded-md border border-border-subtle bg-surface-raised shadow-md
         transition-opacity duration-base ease-out
-        ${isExiting ? 'opacity-0 translate-x-full scale-95' : 'opacity-100 translate-x-0 scale-100'}
-        ${index > 0 ? 'mt-3' : ''}
+        ${isExiting ? 'opacity-0' : 'opacity-100'}
+        ${index > 0 ? 'mt-2' : ''}
       `}
-      style={{
-        borderLeftColor: styles.border,
-        boxShadow: 'var(--shadow-md)',
-      }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {/* Main content */}
-      <div className="flex items-start gap-3 p-4">
-        {/* Icon */}
-        <div
-          className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: styles.iconBg }}
-        >
+      <div className="flex items-start gap-3 px-3.5 py-3">
+        <div className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center [&>svg]:h-4 [&>svg]:w-4">
           {toast.icon || styles.icon}
         </div>
 
-        {/* Text content */}
-        <div className="flex-1 min-w-0 pt-0.5">
-          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))] mb-1">
-            {toast.title}
-          </h3>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">{toast.title}</p>
           {toast.message && (
-            <p className="text-sm text-[hsl(var(--text-secondary))] break-words">
-              {toast.message}
-            </p>
+            <p className="mt-0.5 text-xs text-text-secondary break-words">{toast.message}</p>
           )}
-
-          {/* Action button */}
           {toast.action && (
             <button
+              type="button"
               onClick={handleAction}
-              className="mt-2 text-sm font-medium hover:underline"
-              style={{ color: styles.border }}
+              className="mt-2 text-xs font-medium text-text-primary underline-offset-2 hover:underline"
             >
               {toast.action.label}
             </button>
           )}
         </div>
 
-        {/* Close button */}
         {toast.dismissible && (
           <button
+            type="button"
             onClick={handleDismiss}
-            className="flex-shrink-0 p-1 rounded-md hover:bg-[hsl(var(--surface))] transition-colors duration-fast"
+            className="-mr-1 -mt-1 shrink-0 rounded-sm p-1 text-text-muted transition-colors duration-fast hover:bg-surface hover:text-text-primary"
             aria-label="Dismiss notification"
           >
-            <CloseIcon className="text-[hsl(var(--text-secondary))]" />
+            <CloseIcon className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
 
-      {/* Progress bar */}
       {toast.duration && toast.duration > 0 && (
         <div
-          className="absolute bottom-0 left-0 h-1 transition-[width] duration-fast ease-linear"
-          style={{
-            width: `${progress}%`,
-            backgroundColor: styles.border,
-          }}
+          className="absolute bottom-0 left-0 h-px transition-[width] duration-fast ease-linear"
+          style={{ width: `${progress}%`, backgroundColor: styles.border }}
           role="progressbar"
           aria-valuenow={progress}
           aria-valuemin={0}

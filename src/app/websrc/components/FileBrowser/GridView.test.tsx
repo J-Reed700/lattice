@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { GridView } from './GridView';
+import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 
 import type { DocumentMetadata } from '../../types/fileBrowser';
@@ -30,7 +31,10 @@ vi.mock('../../stores/fileBrowserStore', () => ({
       doc.fileName.toLowerCase().includes(query)
     );
   },
-  selectDensity: (state: any) => state.density || 'comfortable',
+}));
+
+vi.mock('../../hooks/queries/useLibraryDocumentsQuery', () => ({
+  useLibraryDocumentsQuery: vi.fn(),
 }));
 
 describe('GridView', () => {
@@ -80,6 +84,7 @@ describe('GridView', () => {
   const mockNavigateUp = vi.fn();
   const mockNavigateTo = vi.fn();
   const mockDeselectFile = vi.fn();
+  const mockSetFocusedDocument = vi.fn();
   const mockSelectRange = vi.fn();
   const mockToggleFolder = vi.fn();
   const mockExpandFolder = vi.fn();
@@ -98,7 +103,6 @@ describe('GridView', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         // View configuration
@@ -136,6 +140,7 @@ describe('GridView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -160,6 +165,16 @@ describe('GridView', () => {
       }
       return state;
     });
+    vi.mocked(useLibraryDocumentsQuery).mockImplementation(() => {
+      const documents = useFileBrowserStore((state: any) => state.documents) ?? [];
+      return {
+        documents,
+        filteredDocuments: documents,
+        isLoading: useFileBrowserStore((state: any) => state.isLoading) ?? false,
+        error: useFileBrowserStore((state: any) => state.error) ?? null,
+        refreshFiles: vi.fn(),
+      };
+    });
   });
 
   it('renders file grid', () => {
@@ -176,7 +191,6 @@ describe('GridView', () => {
   });
 
   it('shows loading state', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'grid' as const,
@@ -202,6 +216,7 @@ describe('GridView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -226,7 +241,6 @@ describe('GridView', () => {
   });
 
   it('shows error state', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'grid' as const,
@@ -252,6 +266,7 @@ describe('GridView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -272,12 +287,11 @@ describe('GridView', () => {
     });
 
     render(<GridView />);
-    expect(screen.getByText('Error loading files')).toBeInTheDocument();
+    expect(screen.getByText("Couldn’t load your files.")).toBeInTheDocument();
     expect(screen.getByText('Connection failed')).toBeInTheDocument();
   });
 
   it('shows empty state', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'grid' as const,
@@ -303,6 +317,7 @@ describe('GridView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -323,8 +338,8 @@ describe('GridView', () => {
     });
 
     render(<GridView />);
-    expect(screen.getByText('No documents found')).toBeInTheDocument();
-    expect(screen.getByText('Add files to start indexing')).toBeInTheDocument();
+    expect(screen.getByText('Nothing indexed yet.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add a folder' })).toBeInTheDocument();
   });
 
   describe('Selection', () => {
@@ -385,7 +400,6 @@ describe('GridView', () => {
   });
 
   it('displays selected files with highlight', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'grid' as const,
@@ -412,6 +426,7 @@ describe('GridView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -434,7 +449,7 @@ describe('GridView', () => {
     render(<GridView />);
 
     const selectedCard = screen.getByText('document.pdf').closest('.group');
-    expect(selectedCard).toHaveClass('border-[hsl(var(--accent))]');
-    expect(selectedCard).toHaveClass('bg-[hsl(var(--accent-muted))]/30');
+    expect(selectedCard).toHaveClass('border-border-default');
+    expect(selectedCard).toHaveClass('bg-surface-raised');
   });
 });

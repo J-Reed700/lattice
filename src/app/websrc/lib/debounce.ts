@@ -5,8 +5,8 @@
  * until after a specified period of inactivity.
  */
 
-export interface DebouncedFunction<T extends (...args: any[]) => any> {
-  (...args: Parameters<T>): void;
+export interface DebouncedFunction<TArgs extends unknown[]> {
+  (...args: TArgs): void;
   cancel: () => void;
   flush: () => void;
 }
@@ -18,14 +18,14 @@ export interface DebouncedFunction<T extends (...args: any[]) => any> {
  * @param delay - The delay in milliseconds
  * @returns A debounced version of the function with cancel and flush methods
  */
-export function debounce<T extends (...args: any[]) => any>(
-  func: T,
+export function debounce<TArgs extends unknown[]>(
+  func: (...args: TArgs) => unknown,
   delay: number
-): DebouncedFunction<T> {
+): DebouncedFunction<TArgs> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let lastArgs: Parameters<T> | null = null;
+  let lastArgs: TArgs | null = null;
 
-  const debounced = (...args: Parameters<T>) => {
+  const debounced = (...args: TArgs) => {
     lastArgs = args;
 
     if (timeoutId !== null) {

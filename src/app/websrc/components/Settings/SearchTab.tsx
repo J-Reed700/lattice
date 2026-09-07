@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
-import { VaultAPI } from '../../lib/api';
+import { NUMBER_FIELD_CLASS, SWITCH_CLASS } from './settingsStyles';
+import { useSettingsQuery, useUpdateSettingsMutation } from '../../hooks/queries/useSettingsQuery';
 import { toast } from '../../stores/toastStore';
+import { PageHeader, SettingsRow, SettingsSection, Switch } from '../ui';
 
 import type {
   RetrievalTuningSettings as ApiRetrievalTuningSettings,
@@ -18,58 +20,63 @@ type NumericFieldConfig = {
   step: number;
 };
 
+type TuningGroup = {
+  title: string;
+  fields: NumericFieldConfig[];
+};
+
 const CANDIDATE_FIELDS: NumericFieldConfig[] = [
-  { key: 'kbSearchMinLimit', label: 'KB Search Min Limit', min: 1, max: 256, step: 1 },
-  { key: 'kbSearchMaxLimit', label: 'KB Search Max Limit', min: 1, max: 512, step: 1 },
+  { key: 'kbSearchMinLimit', label: 'KB search min limit', min: 1, max: 256, step: 1 },
+  { key: 'kbSearchMaxLimit', label: 'KB search max limit', min: 1, max: 512, step: 1 },
   {
     key: 'docShortlistCandidateMin',
-    label: 'Doc Shortlist Candidate Min',
+    label: 'Doc shortlist candidate min',
     min: 1,
     max: 512,
     step: 1,
   },
   {
     key: 'docShortlistCandidateMax',
-    label: 'Doc Shortlist Candidate Max',
+    label: 'Doc shortlist candidate max',
     min: 1,
     max: 512,
     step: 1,
   },
-  { key: 'docShortlistDocMin', label: 'Doc Shortlist Doc Min', min: 1, max: 128, step: 1 },
-  { key: 'docShortlistDocMax', label: 'Doc Shortlist Doc Max', min: 1, max: 128, step: 1 },
+  { key: 'docShortlistDocMin', label: 'Doc shortlist doc min', min: 1, max: 128, step: 1 },
+  { key: 'docShortlistDocMax', label: 'Doc shortlist doc max', min: 1, max: 128, step: 1 },
   {
     key: 'shortlistGateMinCandidates',
-    label: 'Shortlist Gate Min Candidates',
+    label: 'Shortlist gate min candidates',
     min: 1,
     max: 128,
     step: 1,
   },
-  { key: 'shortlistGateMinDocs', label: 'Shortlist Gate Min Docs', min: 1, max: 128, step: 1 },
+  { key: 'shortlistGateMinDocs', label: 'Shortlist gate min docs', min: 1, max: 128, step: 1 },
 ];
 
 const EXTERNAL_SOURCE_FIELDS: NumericFieldConfig[] = [
-  { key: 'wikiSearchMaxResults', label: 'Wiki Search Max Results', min: 1, max: 50, step: 1 },
-  { key: 'wikiSnippetMaxChars', label: 'Wiki Snippet Max Chars', min: 64, max: 4000, step: 1 },
-  { key: 'wikiContextLimit', label: 'Wiki Context Limit', min: 1, max: 20, step: 1 },
-  { key: 'webSearchMaxResults', label: 'Web Search Max Results', min: 1, max: 50, step: 1 },
-  { key: 'webSnippetMaxChars', label: 'Web Snippet Max Chars', min: 64, max: 4000, step: 1 },
+  { key: 'wikiSearchMaxResults', label: 'Wiki search max results', min: 1, max: 50, step: 1 },
+  { key: 'wikiSnippetMaxChars', label: 'Wiki snippet max chars', min: 64, max: 4000, step: 1 },
+  { key: 'wikiContextLimit', label: 'Wiki context limit', min: 1, max: 20, step: 1 },
+  { key: 'webSearchMaxResults', label: 'Web search max results', min: 1, max: 50, step: 1 },
+  { key: 'webSnippetMaxChars', label: 'Web snippet max chars', min: 64, max: 4000, step: 1 },
   {
     key: 'externalSearchMaxWikiTerms',
-    label: 'External Max Wiki Terms',
+    label: 'External max wiki terms',
     min: 1,
     max: 64,
     step: 1,
   },
   {
     key: 'externalSearchMaxWebTerms',
-    label: 'External Max Web Terms',
+    label: 'External max web terms',
     min: 1,
     max: 64,
     step: 1,
   },
   {
     key: 'externalSearchQueryMaxChars',
-    label: 'External Search Query Max Chars',
+    label: 'External search query max chars',
     min: 32,
     max: 2000,
     step: 1,
@@ -77,10 +84,10 @@ const EXTERNAL_SOURCE_FIELDS: NumericFieldConfig[] = [
 ];
 
 const DEEP_RESEARCH_FIELDS: NumericFieldConfig[] = [
-  { key: 'deepResearchDepth', label: 'Deep Research Depth', min: 1, max: 4, step: 1 },
+  { key: 'deepResearchDepth', label: 'Deep research depth', min: 1, max: 4, step: 1 },
   {
     key: 'deepResearchBranchQueries',
-    label: 'Deep Research Branch Queries',
+    label: 'Deep research branch queries',
     min: 1,
     max: 4,
     step: 1,
@@ -88,11 +95,11 @@ const DEEP_RESEARCH_FIELDS: NumericFieldConfig[] = [
 ];
 
 const RERANK_FIELDS: NumericFieldConfig[] = [
-  { key: 'rerankMaxCandidates', label: 'Rerank Max Candidates', min: 1, max: 256, step: 1 },
-  { key: 'rerankQueryMaxChars', label: 'Rerank Query Max Chars', min: 32, max: 8000, step: 1 },
+  { key: 'rerankMaxCandidates', label: 'Rerank max candidates', min: 1, max: 256, step: 1 },
+  { key: 'rerankQueryMaxChars', label: 'Rerank query max chars', min: 32, max: 8000, step: 1 },
   {
     key: 'overlapMinHitsForMultiTerm',
-    label: 'Overlap Min Hits (Multi-term)',
+    label: 'Overlap min hits (multi-term)',
     min: 1,
     max: 8,
     step: 1,
@@ -100,42 +107,56 @@ const RERANK_FIELDS: NumericFieldConfig[] = [
 ];
 
 const DOC_SUPPORT_FIELDS: NumericFieldConfig[] = [
-  { key: 'docSupportMultiHitRatioFactor', label: 'Doc Support Multi-hit Factor', min: 0, max: 1, step: 0.01 },
+  {
+    key: 'docSupportMultiHitRatioFactor',
+    label: 'Doc support multi-hit factor',
+    min: 0,
+    max: 1,
+    step: 0.01,
+  },
   {
     key: 'docSupportSingleHitRatioFactor',
-    label: 'Doc Support Single-hit Factor',
+    label: 'Doc support single-hit factor',
     min: 0,
     max: 1,
     step: 0.01,
   },
   {
     key: 'docSupportMultiHitRatioMin',
-    label: 'Doc Support Multi-hit Min',
+    label: 'Doc support multi-hit min',
     min: 0,
     max: 1,
     step: 0.01,
   },
   {
     key: 'docSupportMultiHitRatioMax',
-    label: 'Doc Support Multi-hit Max',
+    label: 'Doc support multi-hit max',
     min: 0,
     max: 1,
     step: 0.01,
   },
   {
     key: 'docSupportSingleHitRatioMin',
-    label: 'Doc Support Single-hit Min',
+    label: 'Doc support single-hit min',
     min: 0,
     max: 1,
     step: 0.01,
   },
   {
     key: 'docSupportSingleHitRatioMax',
-    label: 'Doc Support Single-hit Max',
+    label: 'Doc support single-hit max',
     min: 0,
     max: 1,
     step: 0.01,
   },
+];
+
+const TUNING_GROUPS: TuningGroup[] = [
+  { title: 'Candidates and shortlist', fields: CANDIDATE_FIELDS },
+  { title: 'External sources', fields: EXTERNAL_SOURCE_FIELDS },
+  { title: 'Deep research', fields: DEEP_RESEARCH_FIELDS },
+  { title: 'Rerank and overlap', fields: RERANK_FIELDS },
+  { title: 'Document support ratios', fields: DOC_SUPPORT_FIELDS },
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -218,66 +239,53 @@ function normalizeTuningPairBounds(
 }
 
 export function SearchTab() {
-  const [searchSettings, setSearchSettings] = useState<ApiSearchSettings | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { data: settings, isPending, refetch } = useSettingsQuery();
+  const { mutate: updateSettings } = useUpdateSettingsMutation();
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
+  // A half-typed number is UI state, so each field may hold a draft while it
+  // has focus. Everything else reads the query — the repository is the source
+  // of truth and the mutation invalidates it, so there is nothing to roll back.
+  const [drafts, setDrafts] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    let isActive = true;
+  const searchSettings = settings?.search ?? null;
 
-    const loadSettings = async () => {
-      const result = await VaultAPI.getSettings();
-      if (!isActive) {
-        return;
-      }
-
-      if (result.ok) {
-        setSearchSettings(result.data.search);
-      } else {
-        toast.error('Failed to load search settings', {
-          message: result.error,
-        });
-      }
-
-      setIsLoading(false);
-    };
-
-    void loadSettings();
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
-
-  const saveSearchUpdates = async (updates: Partial<ApiSearchSettings>): Promise<boolean> => {
-    if (!searchSettings) {
-      return false;
-    }
-
-    const previous = searchSettings;
-    const next = { ...searchSettings, ...updates };
-    setSearchSettings(next);
-
-    const result = await VaultAPI.updateSettings({
-      category: 'search',
-      updates,
-    });
-
-    if (!result.ok) {
-      setSearchSettings(previous);
-      toast.error('Failed to update search settings', {
-        message: result.error,
-      });
-      return false;
-    }
-
-    return true;
+  const setDraft = (key: string, value: number) => {
+    setDrafts((previous) => ({ ...previous, [key]: value }));
   };
 
-  const saveTuningField = async <K extends keyof ApiRetrievalTuningSettings>(
-    key: K,
-    value: ApiRetrievalTuningSettings[K]
-  ) => {
+  const clearDrafts = (keys: string[]) => {
+    setDrafts((previous) => {
+      if (!keys.some((key) => key in previous)) {
+        return previous;
+      }
+      const next = { ...previous };
+      for (const key of keys) {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const saveSearchUpdates = (updates: Partial<ApiSearchSettings>, draftKeys: string[] = []) => {
+    updateSettings(
+      { category: 'search', updates },
+      {
+        onError: (error) => {
+          toast.error("Couldn't save search settings", { message: error.message });
+        },
+        // Drop the draft either way: on success the query already holds the
+        // saved value, on failure the field must snap back to what is stored.
+        onSettled: () => clearDrafts(draftKeys),
+      }
+    );
+  };
+
+  const fieldValue = (key: string, stored: number): number => drafts[key] ?? stored;
+
+  const tuningValue = (key: keyof ApiRetrievalTuningSettings, stored: number): number =>
+    drafts[`tuning.${String(key)}`] ?? stored;
+
+  const saveTuningField = (key: keyof ApiRetrievalTuningSettings, value: number) => {
     if (!searchSettings) {
       return;
     }
@@ -287,37 +295,17 @@ export function SearchTab() {
       [key]: value,
     });
 
-    setSearchSettings((previous) => {
-      if (!previous) {
-        return previous;
-      }
-      return {
-        ...previous,
-        retrievalTuning: normalizedTuning,
-      };
-    });
+    // A paired bound can move its partner, so both drafts go.
+    const touched = Object.keys(normalizedTuning).filter(
+      (candidate) =>
+        normalizedTuning[candidate as keyof ApiRetrievalTuningSettings] !==
+        searchSettings.retrievalTuning[candidate as keyof ApiRetrievalTuningSettings]
+    );
 
-    await saveSearchUpdates({
-      retrievalTuning: normalizedTuning,
-    });
-  };
-
-  const updateDraftTuningField = <K extends keyof ApiRetrievalTuningSettings>(
-    key: K,
-    value: ApiRetrievalTuningSettings[K]
-  ) => {
-    setSearchSettings((previous) => {
-      if (!previous) {
-        return previous;
-      }
-      return {
-        ...previous,
-        retrievalTuning: {
-          ...previous.retrievalTuning,
-          [key]: value,
-        },
-      };
-    });
+    saveSearchUpdates(
+      { retrievalTuning: normalizedTuning },
+      [key, ...touched].map((candidate) => `tuning.${String(candidate)}`)
+    );
   };
 
   const renderTuningField = (field: NumericFieldConfig) => {
@@ -325,14 +313,12 @@ export function SearchTab() {
       return null;
     }
 
-    const value = searchSettings.retrievalTuning[field.key];
+    const stored = searchSettings.retrievalTuning[field.key];
+    const value = tuningValue(field.key, stored);
     const inputId = `search-tuning-${String(field.key)}`;
 
     return (
-      <div key={field.key} className="space-y-1.5">
-        <label htmlFor={inputId} className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-          {field.label}
-        </label>
+      <SettingsRow key={field.key} label={field.label} htmlFor={inputId}>
         <input
           id={inputId}
           type="number"
@@ -341,213 +327,158 @@ export function SearchTab() {
           step={field.step}
           value={value}
           onChange={(event) => {
-            const next = toFinite(event.target.value, value);
-            updateDraftTuningField(field.key, next);
+            setDraft(`tuning.${String(field.key)}`, toFinite(event.target.value, value));
           }}
           onBlur={(event) => {
-            const currentValue = toFinite(event.target.value, value);
-            const normalized = normalizeFieldValue(field, currentValue);
-            updateDraftTuningField(field.key, normalized);
-            void saveTuningField(field.key, normalized);
+            const normalized = normalizeFieldValue(field, toFinite(event.target.value, value));
+            if (normalized === stored) {
+              clearDrafts([`tuning.${String(field.key)}`]);
+              return;
+            }
+            saveTuningField(field.key, normalized);
           }}
-          className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
+          className={NUMBER_FIELD_CLASS}
         />
-      </div>
+      </SettingsRow>
     );
   };
 
-  if (isLoading) {
+  if (isPending) {
     return (
-      <div className="space-y-4">
-        <div className="h-7 w-56 animate-pulse rounded bg-[hsl(var(--surface-raised))]" />
-        <div className="h-24 animate-pulse rounded bg-[hsl(var(--surface-raised))]" />
-      </div>
+      <>
+        <PageHeader title="Search" />
+        <p className="text-sm text-text-muted">Loading…</p>
+      </>
     );
   }
 
   if (!searchSettings) {
     return (
-      <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-4 text-sm text-[hsl(var(--text-secondary))]">
-        Search settings are unavailable right now.
-      </div>
+      <>
+        <PageHeader title="Search" />
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-text-muted">Couldn&apos;t read search settings.</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
+          >
+            Retry
+          </button>
+        </div>
+      </>
     );
   }
 
+  const maxResults = fieldValue('maxResults', searchSettings.maxResults);
+  const similarityThreshold = fieldValue(
+    'similarityThreshold',
+    searchSettings.similarityThreshold
+  );
+  const hybridSearchAlpha = fieldValue('hybridSearchAlpha', searchSettings.hybridSearchAlpha);
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 border-b border-[hsl(var(--border-subtle))] pb-4">
-        <div className="rounded-lg bg-[hsl(var(--accent-muted))] p-2">
-          <Search className="h-5 w-5 text-[hsl(var(--accent))]" />
-        </div>
-        <div>
-          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Search Settings</h2>
-          <p className="text-sm text-[hsl(var(--text-secondary))]">
-            Configure retrieval behavior, reranking, and pipeline tuning
-          </p>
-        </div>
-      </div>
+    <>
+      <PageHeader title="Search" />
 
-      <div className="space-y-4 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
-        <div className="text-sm font-semibold text-[hsl(var(--text-primary))]">Core Retrieval</div>
-        <label className="inline-flex items-center gap-2 text-sm text-[hsl(var(--text-secondary))]">
-          <input
-            type="checkbox"
+      <SettingsSection title="Retrieval">
+        <SettingsRow label="Rerank results" htmlFor="search-rerank">
+          <Switch
+            id="search-rerank"
             checked={searchSettings.enableReranking}
-            onChange={(event) => void saveSearchUpdates({ enableReranking: event.target.checked })}
-            className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
+            onCheckedChange={(checked) => saveSearchUpdates({ enableReranking: checked })}
+            className={SWITCH_CLASS}
           />
-          Enable reranking
-        </label>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">Max Results</label>
-            <input
-              type="number"
-              min={1}
-              max={128}
-              step={1}
-              value={searchSettings.maxResults}
-              onChange={(event) =>
-                setSearchSettings((previous) =>
-                  previous
-                    ? { ...previous, maxResults: Math.round(toFinite(event.target.value, previous.maxResults)) }
-                    : previous
-                )
-              }
-              onBlur={() =>
-                void saveSearchUpdates({ maxResults: Math.round(clamp(searchSettings.maxResults, 1, 128)) })
-              }
-              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-              Similarity Threshold
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={searchSettings.similarityThreshold}
-              onChange={(event) =>
-                setSearchSettings((previous) =>
-                  previous
-                    ? {
-                        ...previous,
-                        similarityThreshold: toFinite(
-                          event.target.value,
-                          previous.similarityThreshold
-                        ),
-                      }
-                    : previous
-                )
-              }
-              onBlur={() =>
-                void saveSearchUpdates({
-                  similarityThreshold: clamp(searchSettings.similarityThreshold, 0, 1),
-                })
-              }
-              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-              Hybrid Search Alpha
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={searchSettings.hybridSearchAlpha}
-              onChange={(event) =>
-                setSearchSettings((previous) =>
-                  previous
-                    ? {
-                        ...previous,
-                        hybridSearchAlpha: toFinite(event.target.value, previous.hybridSearchAlpha),
-                      }
-                    : previous
-                )
-              }
-              onBlur={() =>
-                void saveSearchUpdates({
-                  hybridSearchAlpha: clamp(searchSettings.hybridSearchAlpha, 0, 1),
-                })
-              }
-              className="w-full rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm text-[hsl(var(--text-primary))] focus:border-[hsl(var(--accent))] focus:outline-none"
-            />
-          </div>
-        </div>
-      </div>
+        </SettingsRow>
 
-      <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]">
+        <SettingsRow label="Maximum results" htmlFor="search-max-results">
+          <input
+            id="search-max-results"
+            type="number"
+            min={1}
+            max={128}
+            step={1}
+            value={maxResults}
+            onChange={(event) => setDraft('maxResults', toFinite(event.target.value, maxResults))}
+            onBlur={() =>
+              saveSearchUpdates({ maxResults: Math.round(clamp(maxResults, 1, 128)) }, [
+                'maxResults',
+              ])
+            }
+            className={NUMBER_FIELD_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow label="Similarity threshold" htmlFor="search-similarity">
+          <input
+            id="search-similarity"
+            type="number"
+            min={0}
+            max={1}
+            step={0.01}
+            value={similarityThreshold}
+            onChange={(event) =>
+              setDraft('similarityThreshold', toFinite(event.target.value, similarityThreshold))
+            }
+            onBlur={() =>
+              saveSearchUpdates({ similarityThreshold: clamp(similarityThreshold, 0, 1) }, [
+                'similarityThreshold',
+              ])
+            }
+            className={NUMBER_FIELD_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Hybrid alpha"
+          hint="0 is keyword only, 1 is vector only"
+          htmlFor="search-hybrid-alpha"
+        >
+          <input
+            id="search-hybrid-alpha"
+            type="number"
+            min={0}
+            max={1}
+            step={0.01}
+            value={hybridSearchAlpha}
+            onChange={(event) =>
+              setDraft('hybridSearchAlpha', toFinite(event.target.value, hybridSearchAlpha))
+            }
+            onBlur={() =>
+              saveSearchUpdates({ hybridSearchAlpha: clamp(hybridSearchAlpha, 0, 1) }, [
+                'hybridSearchAlpha',
+              ])
+            }
+            className={NUMBER_FIELD_CLASS}
+          />
+        </SettingsRow>
+      </SettingsSection>
+
+      <div className="border-t border-border-subtle">
         <button
           type="button"
           onClick={() => setShowAdvancedTuning((previous) => !previous)}
-          className="flex w-full items-center justify-between px-4 py-3 text-left"
+          aria-expanded={showAdvancedTuning}
+          className="flex w-full items-center gap-2 border-b border-border-subtle py-3 text-left text-sm text-text-primary transition-colors duration-fast hover:text-text-primary"
         >
-          <div>
-            <div className="text-sm font-semibold text-[hsl(var(--text-primary))]">
-              Advanced Retrieval Tuning
-            </div>
-            <div className="text-xs text-[hsl(var(--text-secondary))]">
-              Pipeline knobs for shortlist, external search shaping, overlap, and support filters
-            </div>
-          </div>
           {showAdvancedTuning ? (
-            <ChevronDown className="h-4 w-4 text-[hsl(var(--text-secondary))]" />
+            <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-[hsl(var(--text-secondary))]" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
           )}
+          Advanced retrieval tuning
         </button>
-
-        {showAdvancedTuning && (
-          <div className="space-y-5 border-t border-[hsl(var(--border-subtle))] px-4 py-4">
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                Candidate + Shortlist
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{CANDIDATE_FIELDS.map(renderTuningField)}</div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                External Sources
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {EXTERNAL_SOURCE_FIELDS.map(renderTuningField)}
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                Deep Research
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {DEEP_RESEARCH_FIELDS.map(renderTuningField)}
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                Rerank + Overlap
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{RERANK_FIELDS.map(renderTuningField)}</div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-                Document Support Ratios
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {DOC_SUPPORT_FIELDS.map(renderTuningField)}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
-    </div>
+
+      {showAdvancedTuning ? (
+        <div className="mt-8">
+          {TUNING_GROUPS.map((group) => (
+            <SettingsSection key={group.title} title={group.title}>
+              {group.fields.map(renderTuningField)}
+            </SettingsSection>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }

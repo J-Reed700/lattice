@@ -6,10 +6,11 @@
 
 import { useEffect } from 'react';
 
-import type { UnlistenFn } from '@tauri-apps/api/event';
 
 import { toast } from '../stores/toastStore';
 import { TauriEventNames, EventSchemas, listenValidated } from '../types/events';
+
+import type { UnlistenFn } from '@tauri-apps/api/event';
 
 export function useVaultWriteErrorListener(): void {
   useEffect(() => {

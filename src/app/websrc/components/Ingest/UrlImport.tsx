@@ -1,10 +1,7 @@
 import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 
-import { motion, AnimatePresence } from 'framer-motion';
-import { Globe, Download, Loader2, FileText, Clock } from 'lucide-react';
-
 import { Button } from '@/components/ui/button';
-import Input from '@/components/ui/input/Input';
+import { settingsFieldClass } from '@/components/ui/SettingsSection';
 import { VaultAPI } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { UrlPreview } from '@/types/api/web';
@@ -55,6 +52,15 @@ function debounce<T extends (..._args: never[]) => unknown>(
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => func(...args), delay);
   };
+}
+
+function previewMeta(preview: UrlPreview): string {
+  const parts: string[] = [];
+  if (preview.siteName) parts.push(preview.siteName);
+  if (preview.author) parts.push(preview.author);
+  if (preview.readingTimeMinutes > 0) parts.push(`${preview.readingTimeMinutes} min read`);
+  else if (preview.wordCount) parts.push(`${preview.wordCount.toLocaleString()} words`);
+  return parts.join(' · ');
 }
 
 export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete }) => {
@@ -132,99 +138,43 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
     }
   };
 
+  const meta = preview ? previewMeta(preview) : '';
+
   return (
-    <div className="space-y-4">
-      <div className="flex gap-3">
-        <Input
+    <div>
+      <div className="flex items-center gap-2">
+        <input
           type="url"
           placeholder="https://example.com/article"
+          aria-label="URL to import"
           value={url}
           onChange={handleUrlChange}
-          className="flex-1"
-          leftIcon={<Globe className="w-4 h-4" />}
-          isLoading={loading}
-          error={error || undefined}
+          className={cn(settingsFieldClass, 'h-9 flex-1')}
         />
-
         <Button
           onClick={handleImport}
           disabled={!resolvedUrl || loading}
+          className="h-9 shrink-0"
         >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <>
-              <Download className="w-4 h-4 mr-2" />
-              Import
-            </>
-          )}
+          {loading ? 'Importing…' : 'Import'}
         </Button>
       </div>
 
-      <AnimatePresence>
-        {preview && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className={cn(
-              "border rounded-lg p-4",
-              "border-[hsl(var(--border-subtle))]",
-              "bg-[hsl(var(--surface-raised))]"
+      {error && <p className="mt-3 text-sm text-danger-fg">{error}</p>}
+
+      {preview && (
+        <div className="mt-6 border-t border-border-subtle">
+          <div className="border-b border-border-subtle py-3">
+            <div className="truncate text-sm font-medium text-text-primary">{preview.title}</div>
+            {meta && <div className="mt-0.5 truncate text-xs text-text-muted">{meta}</div>}
+            {preview.description && (
+              <p className="mt-1.5 line-clamp-2 text-sm text-text-secondary">
+                {preview.description}
+              </p>
             )}
-          >
-            <div className="flex gap-4">
-              {preview.image && (
-                <img
-                  src={preview.image}
-                  alt={preview.title}
-                  className="w-24 h-24 object-cover rounded-md flex-shrink-0"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                  }}
-                />
-              )}
-
-              <div className="flex-1 min-w-0">
-                <h4 className="font-semibold text-lg truncate text-[hsl(var(--text-primary))]">
-                  {preview.title}
-                </h4>
-                {preview.author && (
-                  <p className="text-sm text-[hsl(var(--text-secondary))]">
-                    by {preview.author}
-                  </p>
-                )}
-                {preview.description && (
-                  <p className="text-sm text-[hsl(var(--text-secondary))] mt-2 line-clamp-2">
-                    {preview.description}
-                  </p>
-                )}
-
-                <div className="flex gap-4 mt-3 text-xs text-[hsl(var(--text-secondary))]">
-                  {preview.siteName && (
-                    <span className="flex items-center gap-1">
-                      <Globe className="w-3 h-3" />
-                      {preview.siteName}
-                    </span>
-                  )}
-                  {preview.wordCount && (
-                    <span className="flex items-center gap-1">
-                      <FileText className="w-3 h-3" />
-                      {preview.wordCount.toLocaleString()} words
-                    </span>
-                  )}
-                  {preview.readingTimeMinutes > 0 && (
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {preview.readingTimeMinutes} min read
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

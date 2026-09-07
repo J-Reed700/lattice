@@ -92,79 +92,16 @@ function getIconComponent(file: FileNode | DocumentMetadata): React.ComponentTyp
 }
 
 function getIconColor(file: FileNode | DocumentMetadata): string {
-  // Check if it's a directory
+  // Folders and web articles pick up the accent; every document type stays
+  // quiet so status colors (danger/warning/success) keep their meaning.
   if ('type' in file && file.type === 'directory') {
     return 'text-[hsl(var(--accent))]';
   }
 
-  // Get path from either FileNode or DocumentMetadata
   const path = 'filePath' in file ? file.filePath : file.path;
-
-  // Web archive files - blue globe theme
   if (path.includes('/.lattice/web-archive/')) {
     return 'text-[hsl(var(--accent))]';
   }
 
-  // Get name and extension
-  const name = 'fileName' in file ? file.fileName : file.name;
-  const fileExt = 'fileType' in file ? file.fileType : file.extension;
-  const ext = fileExt || getFileExtension(name);
-
-  // Documents
-  if (['pdf', 'doc', 'docx'].includes(ext)) {
-    return 'text-[hsl(var(--danger-fg))]';
-  }
-
-  // Text
-  if (['txt', 'md', 'markdown'].includes(ext)) {
-    return 'text-[hsl(var(--text-secondary))]';
-  }
-
-  // Images
-  if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) {
-    return 'text-[hsl(var(--accent))]';
-  }
-
-  // Code
-  if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
-    return 'text-[hsl(var(--warning-fg))]';
-  }
-
-  if (['py'].includes(ext)) {
-    return 'text-[hsl(var(--accent))]';
-  }
-
-  if (['rs'].includes(ext)) {
-    return 'text-[hsl(var(--warning-fg))]';
-  }
-
-  if (['html', 'css'].includes(ext)) {
-    return 'text-[hsl(var(--accent))]';
-  }
-
-  if (['json', 'xml', 'yml', 'yaml'].includes(ext)) {
-    return 'text-[hsl(var(--success-fg))]';
-  }
-
-  // Archives
-  if (['zip', 'rar', 'tar', 'gz', '7z'].includes(ext)) {
-    return 'text-[hsl(var(--warning-fg))]';
-  }
-
-  // Media
-  if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
-    return 'text-[hsl(var(--accent))]';
-  }
-
-  if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
-    return 'text-[hsl(var(--accent))]';
-  }
-
-  // Spreadsheets
-  if (['xlsx', 'xls', 'csv'].includes(ext)) {
-    return 'text-[hsl(var(--success-fg))]';
-  }
-
-  // Default
   return 'text-[hsl(var(--text-secondary))]';
 }

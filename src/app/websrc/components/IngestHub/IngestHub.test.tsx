@@ -43,16 +43,16 @@ describe('IngestHub', () => {
   it('renders the component with default tab', () => {
     render(<IngestHub />);
 
-    expect(screen.getByText('Import Content')).toBeInTheDocument();
-    expect(screen.getByText(/Import URLs, bulk content, or upload files/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Import' })).toBeInTheDocument();
   });
 
-  it('renders all three tabs', () => {
+  it('renders all four tabs', () => {
     render(<IngestHub />);
 
-    expect(screen.getByText('Single URL')).toBeInTheDocument();
-    expect(screen.getByText('Bulk URLs')).toBeInTheDocument();
-    expect(screen.getByText('Files')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'URL' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'URLs' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Files' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument();
   });
 
   it('shows Single URL tab content by default', () => {
@@ -65,7 +65,7 @@ describe('IngestHub', () => {
     const user = userEvent.setup();
     render(<IngestHub />);
 
-    await user.click(screen.getByText('Bulk URLs'));
+    await user.click(screen.getByRole('tab', { name: 'URLs' }));
 
     expect(screen.getByTestId('batch-url-import')).toBeInTheDocument();
   });
@@ -74,7 +74,7 @@ describe('IngestHub', () => {
     const user = userEvent.setup();
     render(<IngestHub />);
 
-    await user.click(screen.getByText('Files'));
+    await user.click(screen.getByRole('tab', { name: 'Files' }));
 
     expect(screen.getByTestId('batch-file-import')).toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe('IngestHub', () => {
     localStorage.removeItem('ingestHub.lastTab');
     render(<IngestHub />);
 
-    const singleUrlTab = screen.getByText('Single URL');
+    const singleUrlTab = screen.getByRole('tab', { name: 'URL' });
     expect(singleUrlTab).toHaveAttribute('data-state', 'active');
   });
 
@@ -98,7 +98,7 @@ describe('IngestHub', () => {
     localStorage.removeItem('ingestHub.lastTab');
     render(<IngestHub defaultTab="files" />);
 
-    const filesTab = screen.getByText('Files');
+    const filesTab = screen.getByRole('tab', { name: 'Files' });
     expect(filesTab).toHaveAttribute('data-state', 'active');
   });
 
@@ -107,8 +107,8 @@ describe('IngestHub', () => {
     const onImportComplete = vi.fn();
     render(<IngestHub onImportComplete={onImportComplete} />);
 
-    await user.click(screen.getByText('Files'));
-    await user.click(screen.getByText('Import Files'));
+    await user.click(screen.getByRole('tab', { name: 'Files' }));
+    await user.click(screen.getByRole('button', { name: 'Import Files' }));
 
     expect(onImportComplete).toHaveBeenCalledWith({
       type: 'files',

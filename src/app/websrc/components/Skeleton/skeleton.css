@@ -19,37 +19,21 @@
 .skeleton {
   background: linear-gradient(
     90deg,
-    #f0f0f0 0%,
-    #e0e0e0 20%,
-    #f0f0f0 40%,
-    #f0f0f0 100%
+    hsl(var(--surface)) 0%,
+    hsl(var(--surface-raised)) 20%,
+    hsl(var(--surface)) 40%,
+    hsl(var(--surface)) 100%
   );
   background-size: 1000px 100%;
   animation: shimmer 2s infinite linear;
   will-change: background-position;
 }
 
-/* Dark mode skeleton */
-.dark .skeleton {
-  background: linear-gradient(
-    90deg,
-    #374151 0%,
-    #4b5563 20%,
-    #374151 40%,
-    #374151 100%
-  );
-  background-size: 1000px 100%;
-}
-
 /* Reduced motion support - disable shimmer animation */
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
-    background: #e5e7eb;
-  }
-
-  .dark .skeleton {
-    background: #374151;
+    background: hsl(var(--surface-raised));
   }
 }
 

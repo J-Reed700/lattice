@@ -126,31 +126,32 @@ export function isCustomError(error: unknown): error is NetworkError | Authentic
  */
 export function getUserFriendlyMessage(error: Error): string {
   if (error instanceof NetworkError) {
-    return 'Unable to connect to the service. Please check your internet connection.';
+    return "Couldn't reach the service. Check your connection.";
   }
 
   if (error instanceof AuthenticationError) {
-    return 'Authentication required. Please sign in to continue.';
+    return 'Sign in to continue.';
   }
 
   if (error instanceof DatabaseError) {
-    return 'Database operation failed. Your data is safe, but this action could not be completed.';
+    return "The database couldn't complete that. Your data is intact.";
   }
 
   if (error instanceof FileSystemError) {
-    return 'File operation failed. Please check file permissions and try again.';
+    return "Couldn't read or write the file. Check its permissions.";
   }
 
   if (error instanceof SearchError) {
-    return 'Search operation failed. Please try a different query.';
+    return 'Search failed. Try a different query.';
   }
 
   if (error instanceof ConfigurationError) {
-    return 'Configuration error detected. Please check your settings.';
+    return 'A setting is invalid. Check Settings.';
   }
 
-  // Generic fallback
-  return 'An unexpected error occurred. Our team has been notified.';
+  // Unknown error: the message itself is the most useful thing we have.
+  const message = error.message?.trim();
+  return message ? sanitizeErrorMessage(message) : 'Something unexpected happened.';
 }
 
 /**

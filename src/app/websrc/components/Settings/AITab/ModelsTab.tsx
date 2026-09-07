@@ -1,17 +1,23 @@
 /**
- * Models Tab - Model storage, external folders, and model catalog browser.
+ * Models — where model files live, extra folders to scan, and the catalog.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
-import { ChevronDown, ChevronRight, Download, FolderPlus, X } from 'lucide-react';
+import { Boxes, X } from 'lucide-react';
 
+import { ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS } from './shared';
 import { useLlmSettings } from './useLlmSettings';
-import { ModelCatalogBrowser } from '../ModelCatalog';
+import { useRegisterPaletteCommands } from '../../../hooks/useRegisterPaletteCommands';
 import { VaultAPI } from '../../../lib/api';
 import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
 import { toast } from '../../../stores/toastStore';
+import { PageHeader, SettingsRow, SettingsSection } from '../../ui';
+import { HuggingFaceSettings } from '../HuggingFaceSettings';
+import { ModelCatalogBrowser } from '../ModelCatalog';
+
+import type { PaletteCommand } from '../../../stores/paletteCommandsStore';
 
 export function ModelsTab() {
   const { llmSettings, saveLlmUpdates } = useLlmSettings();
@@ -21,33 +27,33 @@ export function ModelsTab() {
   const [isModelCatalogExpanded, setIsModelCatalogExpanded] = useState(false);
   const [isAddingExternalDirectory, setIsAddingExternalDirectory] = useState(false);
   const selectedCatalogModel = useModelCatalogStore((state) => state.selectedModel);
-  const downloadSectionRef = useRef<HTMLElement | null>(null);
+  const catalogSectionRef = useRef<HTMLDivElement | null>(null);
 
   const provider = llmSettings?.provider ?? 'auto';
   const externalModelDirectories = llmSettings?.externalModelDirectories ?? [];
 
-  useEffect(() => {
-    let isActive = true;
-
-    const loadModelDownloadPath = async () => {
-      setIsLoadingModelDownloadPath(true);
+  const loadModelDownloadPath = useCallback(async () => {
+    setIsLoadingModelDownloadPath(true);
+    try {
       const result = await VaultAPI.getModelDownloadPath();
-      if (!isActive) return;
       setModelDownloadPath(result.ok ? result.data : '');
+    } catch {
+      // The command can be missing on older builds. Fall through to the
+      // error copy instead of leaving the row stuck on "Loading…".
+      setModelDownloadPath('');
+    } finally {
       setIsLoadingModelDownloadPath(false);
-    };
-
-    loadModelDownloadPath();
-
-    return () => {
-      isActive = false;
-    };
+    }
   }, []);
 
   useEffect(() => {
-    if (selectedCatalogModel && downloadSectionRef.current) {
+    void loadModelDownloadPath();
+  }, [loadModelDownloadPath]);
+
+  useEffect(() => {
+    if (selectedCatalogModel && catalogSectionRef.current) {
       setIsModelCatalogExpanded(true);
-      downloadSectionRef.current.scrollIntoView({
+      catalogSectionRef.current.scrollIntoView({
         block: 'start',
         behavior: 'smooth',
       });
@@ -58,11 +64,7 @@ export function ModelsTab() {
     if (!llmSettings) return;
 
     const normalized = Array.from(
-      new Set(
-        directories
-          .map((dir) => dir.trim())
-          .filter((dir) => dir.length > 0)
-      )
+      new Set(directories.map((dir) => dir.trim()).filter((dir) => dir.length > 0))
     );
 
     await saveLlmUpdates({
@@ -91,7 +93,7 @@ export function ModelsTab() {
       await persistExternalDirectories([...externalModelDirectories, selected]);
       toast.success('External model folder added');
     } catch (error) {
-      toast.error('Failed to add external model folder', {
+      toast.error("Couldn't add that folder", {
         message: String(error),
       });
     } finally {
@@ -105,115 +107,127 @@ export function ModelsTab() {
     );
   };
 
+  const canBrowseCatalog = provider === 'auto' || provider === 'local';
+
+  const goToChatTab = () => {
+    window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));
+  };
+
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      {
+        id: 'models.browseCatalog',
+        label: 'Browse model catalog',
+        group: 'Models',
+        icon: Boxes,
+        run: () => {
+          setIsModelCatalogExpanded(true);
+          catalogSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        },
+      },
+    ],
+    [],
+  );
+  useRegisterPaletteCommands(paletteCommands);
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
-        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
-          <Download className="w-5 h-5 text-[hsl(var(--accent))]" />
-        </div>
-        <div>
-          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Models</h2>
-          <p className="text-sm text-[hsl(var(--text-secondary))]">
-            Model storage, external folders, and catalog browser
-          </p>
-        </div>
-      </div>
+    <>
+      <PageHeader title="Models" />
 
-      <section className="space-y-4" ref={downloadSectionRef}>
-        <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-2">
-          <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">Model Storage</div>
+      <SettingsSection title="Model storage">
+        <SettingsRow label="Downloads folder" stacked>
           {isLoadingModelDownloadPath ? (
-            <p className="text-xs text-[hsl(var(--text-tertiary))]">Loading model folder...</p>
+            <p className="text-sm text-text-muted">Loading…</p>
           ) : modelDownloadPath ? (
-            <code className="block rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-xs text-[hsl(var(--text-primary))]">
-              {modelDownloadPath}
-            </code>
+            <p className="break-all font-mono text-xs text-text-primary">{modelDownloadPath}</p>
           ) : (
-            <p className="text-xs text-[hsl(var(--text-tertiary))]">
-              Unable to read local model folder path right now.
-            </p>
-          )}
-          <p className="text-xs text-[hsl(var(--text-tertiary))]">
-            This location is always available, even if your current chat provider is Ollama.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
-                External Model Folders
-              </h4>
-              <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
-                Reuse models from LM Studio or other local directories.
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-text-muted">
+                Couldn&apos;t read the models folder. Check that the app has disk access.
               </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleAddExternalDirectory}
-              disabled={isAddingExternalDirectory}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity whitespace-nowrap"
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-              {isAddingExternalDirectory ? 'Adding...' : 'Add Folder'}
-            </button>
-          </div>
-
-          {externalModelDirectories.length === 0 ? (
-            <p className="text-xs text-[hsl(var(--text-tertiary))]">
-              No external model folders configured.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {externalModelDirectories.map((directory) => (
-                <div
-                  key={directory}
-                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]"
-                >
-                  <code className="text-xs text-[hsl(var(--text-primary))] truncate">{directory}</code>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveExternalDirectory(directory)}
-                    className="p-1 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--danger-fg))] transition-colors"
-                    aria-label={`Remove external folder ${directory}`}
-                    title="Remove folder"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+              <button
+                type="button"
+                onClick={() => void loadModelDownloadPath()}
+                className="shrink-0 text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
+              >
+                Try again
+              </button>
             </div>
           )}
+        </SettingsRow>
+      </SettingsSection>
 
-          <p className="text-xs text-[hsl(var(--text-tertiary))]">
-            Scans these folders for `.gguf` and `.onnx` files. Removing an external model entry
-            from Lattice does not delete the original file.
-          </p>
-        </div>
+      <SettingsSection
+        title="External model folders"
+        actions={
+          <button
+            type="button"
+            onClick={handleAddExternalDirectory}
+            disabled={isAddingExternalDirectory}
+            className={SECONDARY_BUTTON_CLASS}
+          >
+            {isAddingExternalDirectory ? 'Adding…' : 'Add folder'}
+          </button>
+        }
+      >
+        {externalModelDirectories.length === 0 ? (
+          <div className="border-b border-border-subtle py-3 text-sm text-text-muted">
+            No external folders.
+          </div>
+        ) : (
+          externalModelDirectories.map((directory) => (
+            <div
+              key={directory}
+              className="flex items-center justify-between gap-4 border-b border-border-subtle py-2.5"
+            >
+              <span className="truncate font-mono text-xs text-text-primary">{directory}</span>
+              <button
+                type="button"
+                onClick={() => handleRemoveExternalDirectory(directory)}
+                className={ROW_ACTION_CLASS}
+                aria-label={`Remove external folder ${directory}`}
+                title="Remove folder"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))
+        )}
+      </SettingsSection>
 
-        {(provider === 'auto' || provider === 'local') ? (
-          <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">
-                  Browse Model Catalog
-                </h4>
-                <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">
-                  Browse public Hugging Face models. Expand only when needed.
-                </p>
-              </div>
+      <HuggingFaceSettings />
+
+      <div ref={catalogSectionRef}>
+        <SettingsSection
+          title="Catalog"
+          actions={
+            canBrowseCatalog ? (
               <button
                 type="button"
                 onClick={() => setIsModelCatalogExpanded((previous) => !previous)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
+                aria-expanded={isModelCatalogExpanded}
+                className={SECONDARY_BUTTON_CLASS}
               >
-                {isModelCatalogExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                {isModelCatalogExpanded ? 'Collapse' : 'Expand'}
+                {isModelCatalogExpanded ? 'Hide catalog' : 'Browse catalog'}
+              </button>
+            ) : null
+          }
+        >
+          {!canBrowseCatalog ? (
+            <div className="flex items-center gap-2 border-b border-border-subtle py-3">
+              <p className="text-sm text-text-muted">
+                Local downloads are off while the provider is Ollama.
+              </p>
+              <button
+                type="button"
+                onClick={goToChatTab}
+                className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
+              >
+                Change provider
               </button>
             </div>
-
-            {isModelCatalogExpanded ? (
+          ) : isModelCatalogExpanded ? (
+            <div className="pt-4">
               <ModelCatalogBrowser
                 routerModelId={llmSettings?.router?.model}
                 onSetRouterModel={async (modelId) => {
@@ -226,20 +240,10 @@ export function ModelsTab() {
                   });
                 }}
               />
-            ) : (
-              <p className="text-xs text-[hsl(var(--text-tertiary))]">
-                Catalog hidden to keep this page compact. Expand when you want to search or download models.
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4 space-y-2">
-            <p className="text-xs text-[hsl(var(--text-secondary))]">
-              You are currently using Ollama. Switch to <strong>Auto</strong> or <strong>Local Only</strong> to browse and download local models.
-            </p>
-          </div>
-        )}
-      </section>
-    </div>
+            </div>
+          ) : null}
+        </SettingsSection>
+      </div>
+    </>
   );
 }

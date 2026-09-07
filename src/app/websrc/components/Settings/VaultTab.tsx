@@ -1,13 +1,19 @@
+/**
+ * Vault settings — the plain-markdown mirror of your notes on disk.
+ */
+
 import { useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
-import { Folder, FolderOpen, Info } from 'lucide-react';
 
+import { BackupSection } from './BackupSection';
+import { GHOST_BUTTON_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
 import {
   useSettingsQuery,
   useUpdateSettingsMutation,
 } from '../../hooks/queries/useSettingsQuery';
 import { toast } from '../../stores/toastStore';
+import { PageHeader, SettingsRow, SettingsSection, Switch } from '../ui';
 
 export function VaultTab() {
   const { data: settings, isLoading } = useSettingsQuery();
@@ -90,123 +96,66 @@ export function VaultTab() {
   };
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h2 className="text-lg font-semibold text-[hsl(var(--text-primary))]">
-          Vault
-        </h2>
-        <p className="text-sm text-[hsl(var(--text-secondary))] mt-1">
-          Mirror your notes as plain markdown files on disk so you can manage them with
-          Obsidian, git, iCloud, or anything else. SQLite stays the index; the vault
-          folder is your portable copy.
-        </p>
-      </header>
+    <>
+      <PageHeader title="Vault" />
 
-      {/* Vault folder */}
-      <section className="space-y-2">
-        <label className="block text-sm font-medium text-[hsl(var(--text-primary))]">
-          Vault folder
-        </label>
-        <div className="flex items-center gap-2">
-          <div className="flex-1 min-w-0 px-3 py-2 rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-sm text-[hsl(var(--text-primary))] truncate">
-            <span className="inline-flex items-center gap-2">
-              <Folder className="w-4 h-4 text-[hsl(var(--text-tertiary))] shrink-0" />
-              <span className="truncate">
-                {vaultPath || (
-                  <span className="text-[hsl(var(--text-tertiary))]">
-                    Default: ~/Lattice
-                  </span>
-                )}
-              </span>
+      <SettingsSection title="Folder">
+        <SettingsRow label="Path" stacked>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
+              {vaultPath || '~/Lattice'}
             </span>
-          </div>
-          <button
-            type="button"
-            onClick={handlePickFolder}
-            disabled={isPicking || isSaving || isSyncing}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] text-sm text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
-          >
-            <FolderOpen className="w-4 h-4" />
-            Choose…
-          </button>
-          {vaultPath && (
             <button
               type="button"
-              onClick={handleResetToDefault}
-              disabled={isSaving || isSyncing}
-              className="px-3 py-2 rounded-md text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
+              onClick={handlePickFolder}
+              disabled={isPicking || isSaving || isSyncing}
+              className={SECONDARY_BUTTON_CLASS}
             >
-              Reset
+              Choose
             </button>
-          )}
-        </div>
-        <p className="text-xs text-[hsl(var(--text-tertiary))]">
-          Notes will be written to <code>{vaultPath || '~/Lattice'}/notes/&lt;id&gt;.md</code>{' '}
-          with YAML frontmatter.
-        </p>
-      </section>
+            {vaultPath ? (
+              <button
+                type="button"
+                onClick={handleResetToDefault}
+                disabled={isSaving || isSyncing}
+                className={GHOST_BUTTON_CLASS}
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
+        </SettingsRow>
+      </SettingsSection>
 
-      {/* Enable toggle */}
-      <Toggle
-        title="Mirror notes to disk"
-        description="When on, every note save also writes a markdown file to the vault folder. Turning it on the first time backfills your existing notes."
-        checked={enabled}
-        disabled={isSaving || isSyncing}
-        onChange={handleEnabledChange}
-      />
+      <SettingsSection title="Sync">
+        <SettingsRow
+          label="Mirror notes to disk"
+          hint="Turning this on the first time backfills your existing notes."
+        >
+          <Switch
+            className={SWITCH_CLASS}
+            checked={enabled}
+            disabled={isSaving || isSyncing}
+            onCheckedChange={handleEnabledChange}
+            aria-label="Mirror notes to disk"
+          />
+        </SettingsRow>
 
-      {/* External-watcher toggle */}
-      <Toggle
-        title="Watch for external edits"
-        description="Re-import changes you make in Obsidian / VS Code / iCloud / etc. back into Lattice. Real-time via OS filesystem events, plus a refresh whenever you switch back to Lattice. Toggle takes effect on next app launch."
-        checked={watchExternal}
-        disabled={isSaving || isSyncing}
-        onChange={handleWatchChange}
-      />
+        <SettingsRow
+          label="Watch for external edits"
+          hint="Takes effect on next launch."
+        >
+          <Switch
+            className={SWITCH_CLASS}
+            checked={watchExternal}
+            disabled={isSaving || isSyncing}
+            onCheckedChange={handleWatchChange}
+            aria-label="Watch for external edits"
+          />
+        </SettingsRow>
+      </SettingsSection>
 
-      {/* Footnote */}
-      <div className="flex items-start gap-2 text-xs text-[hsl(var(--text-tertiary))] pt-4 border-t border-[hsl(var(--border-subtle))]">
-        <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        <p>
-          Frontmatter format is Obsidian-compatible. Files are written atomically
-          (temp file + rename) so an external watcher never sees a half-written file.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-interface ToggleProps {
-  title: string;
-  description: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (next: boolean) => void;
-}
-
-function Toggle({ title, description, checked, disabled, onChange }: ToggleProps) {
-  return (
-    <div className="flex items-start justify-between gap-4 py-2">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-[hsl(var(--text-primary))]">{title}</p>
-        <p className="text-xs text-[hsl(var(--text-secondary))] mt-1">{description}</p>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        disabled={disabled}
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-          checked ? 'bg-[hsl(var(--accent))]' : 'bg-[hsl(var(--border-default))]'
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
-      >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transform transition-transform ${
-            checked ? 'translate-x-5' : 'translate-x-1'
-          }`}
-        />
-      </button>
-    </div>
+      <BackupSection />
+    </>
   );
 }

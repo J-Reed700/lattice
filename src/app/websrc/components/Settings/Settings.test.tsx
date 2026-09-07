@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,7 +8,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Settings } from './Settings';
 import { toast } from '../../stores/toastStore';
 
-import type { ReactNode } from 'react';
 
 const mockSave = vi.hoisted(() => vi.fn());
 const mockOpen = vi.hoisted(() => vi.fn());
@@ -71,29 +72,38 @@ describe('Settings', () => {
     mockResetSettings.mockResolvedValue({ ok: true, data: {} });
   });
 
-  it('renders settings dialog with all tabs', () => {
+  it('renders the tab list, grouped, without icons', () => {
     renderSettings();
 
-    expect(screen.getByText('Settings')).toBeInTheDocument();
-    expect(screen.getByText('Search')).toBeInTheDocument();
-    expect(screen.getByText('Indexing')).toBeInTheDocument();
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByText('Models')).toBeInTheDocument();
-    expect(screen.getByText('Prompts')).toBeInTheDocument();
-    expect(screen.getByText('Tuning')).toBeInTheDocument();
-    expect(screen.getByText('Tools')).toBeInTheDocument();
-    expect(screen.getByText('Display')).toBeInTheDocument();
-    expect(screen.getByText('Privacy')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByText('General')).toBeInTheDocument();
+    expect(screen.getByText('AI')).toBeInTheDocument();
+
+    for (const label of [
+      'Search',
+      'Indexing',
+      'Vault',
+      'Display',
+      'Privacy',
+      'Chat',
+      'Models',
+      'Downloaded',
+      'Prompts',
+      'Tuning',
+      'Tools',
+    ]) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
   });
 
   it('switches between tabs when clicked', async () => {
     const user = userEvent.setup();
     renderSettings();
 
-    const indexingTab = screen.getByRole('button', { name: /indexing/i });
+    const indexingTab = screen.getByRole('button', { name: 'Indexing' });
     await user.click(indexingTab);
 
-    expect(screen.getByText('Indexing Settings')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
   });
 
   describe('Export functionality', () => {
@@ -186,7 +196,7 @@ describe('Settings', () => {
       const resetButton = screen.getByRole('button', { name: /reset all/i });
       await user.click(resetButton);
 
-      const confirmButton = screen.getByRole('button', { name: /reset settings/i });
+      const confirmButton = screen.getByRole('button', { name: /^reset$/i });
       await user.click(confirmButton);
 
       await waitFor(() => {
@@ -210,8 +220,8 @@ describe('Settings', () => {
     });
   });
 
-  it('shows auto-save indicator', () => {
+  it('does not announce autosave', () => {
     renderSettings();
-    expect(screen.getByText('Settings saved automatically')).toBeInTheDocument();
+    expect(screen.queryByText('Saved automatically')).not.toBeInTheDocument();
   });
 });

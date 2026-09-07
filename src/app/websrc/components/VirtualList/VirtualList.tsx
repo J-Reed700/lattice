@@ -14,7 +14,7 @@ export function VirtualizedSearchResults({
   onResultOpen,
 }: VirtualizedSearchResultsProps) {
   return (
-    <div className="flex flex-col gap-4 pb-4">
+    <div className="border-t border-border-subtle">
       {results.map((result) => (
         <SearchResult
           key={result.id}

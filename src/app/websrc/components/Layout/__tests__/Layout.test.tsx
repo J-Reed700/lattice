@@ -1,18 +1,36 @@
-import { render, screen} from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemoryRouter, Route, Routes } from 'react-router';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TooltipProvider } from '../../ui/tooltip';
 import { Layout } from '../Layout';
+
+vi.mock('../../Downloads/DownloadsDrawer', () => ({ DownloadsDrawer: () => null }));
+vi.mock('../../Downloads/DrawerTrigger', () => ({ DrawerTrigger: () => null }));
+vi.mock('../../Downloads/HeaderDownloadsIndicator', () => ({
+  HeaderDownloadsIndicator: () => null,
+}));
+vi.mock('../../IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
+
+// The rail renders `null` under the mock above (and on a real idle vault), so
+// this list is still the complete set of buttons Layout puts in the nav.
+const NAV_LABELS = ['Home', 'Search', 'Library', 'Journal', 'Chat', 'References', 'Import', 'Settings'];
 
 describe('Layout', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
-  // Helper to render Layout with Router
-  const renderLayout = (initialPath = '/home') => render(
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Layout />
-      </MemoryRouter>
+  const renderLayout = (initialPath = '/home') =>
+    render(
+      <TooltipProvider>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="*" element={<div data-testid="outlet" />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>,
     );
 
   beforeEach(() => {
@@ -20,279 +38,33 @@ describe('Layout', () => {
     vi.clearAllMocks();
   });
 
-  describe('Rendering', () => {
-    it('renders all navigation items', () => {
-      renderLayout();
-
-      // Both mobile and desktop nav exist, so check for multiple instances
-      expect(screen.getAllByLabelText('Home').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Search').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Files').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Chat').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Journals').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('References').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByLabelText('Settings').length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('highlights active view', () => {
-      renderLayout('/search');
-
-      const searchButtons = screen.getAllByLabelText('Search');
-      // At least one should be active
-      const activeButton = searchButtons.find(btn =>
-        btn.className.includes('bg-[var(--accent-primary)]')
-      );
-      expect(activeButton).toBeDefined();
-    });
-
-    it('shows current page with aria-current', () => {
-      renderLayout('/files');
-
-      const filesButtons = screen.getAllByLabelText('Files');
-      // At least one should have aria-current
-      const currentButton = filesButtons.find(btn =>
-        btn.getAttribute('aria-current') === 'page'
-      );
-      expect(currentButton).toBeDefined();
-    });
+  it('renders every navigation item once, in rail order', () => {
+    renderLayout();
+    const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+    const buttons = Array.from(nav.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'));
+    expect(buttons).toEqual(NAV_LABELS);
   });
 
-  describe('Navigation', () => {
-    it('navigates when nav item clicked', async () => {
-      renderLayout('/home');
-
-      const searchButtons = screen.getAllByLabelText('Search');
-      await user.click(searchButtons[0]);
-
-      // At least one button should now be active
-      const activeButtons = screen.getAllByLabelText('Search').filter(btn =>
-        btn.className.includes('bg-[var(--accent-primary)]')
-      );
-      expect(activeButtons.length).toBeGreaterThan(0);
-    });
-
-    it('navigates to each view', async () => {
-      renderLayout('/home');
-
-      const views = [
-        { view: 'search', label: 'Search' },
-        { view: 'files', label: 'Files' },
-        { view: 'chat', label: 'Chat' },
-        { view: 'journals', label: 'Journals' },
-        { view: 'references', label: 'References' },
-        { view: 'settings', label: 'Settings' }
-      ] as const;
-
-      for (const { label } of views) {
-        const buttons = screen.getAllByLabelText(label);
-        await user.click(buttons[0]);
-        // Check at least one button becomes active
-        const activeButtons = screen.getAllByLabelText(label).filter(btn =>
-          btn.className.includes('bg-[var(--accent-primary)]')
-        );
-        expect(activeButtons.length).toBeGreaterThan(0);
-      }
-    });
+  it('marks the current route with aria-current', () => {
+    renderLayout('/search');
+    expect(screen.getByLabelText('Search')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByLabelText('Home')).not.toHaveAttribute('aria-current');
   });
 
-  describe('Mobile Menu', () => {
-    beforeEach(() => {
-      global.innerWidth = 375;
-    });
-
-    it('shows mobile header', () => {
-      renderLayout();
-
-      expect(screen.getByText('Lattice Lattice')).toBeInTheDocument();
-    });
-
-    it('toggles mobile menu on hamburger click', async () => {
-      renderLayout();
-
-      const menuButton = screen.getByLabelText('Toggle menu');
-      expect(menuButton).toHaveAttribute('aria-expanded', 'false');
-
-      await user.click(menuButton);
-
-      expect(menuButton).toHaveAttribute('aria-expanded', 'true');
-    });
-
-    it('closes menu when nav item clicked', async () => {
-      renderLayout();
-
-      const menuButton = screen.getByLabelText('Toggle menu');
-      await user.click(menuButton);
-
-      const searchButtons = screen.getAllByLabelText('Search');
-      await user.click(searchButtons[1]);
-
-      // Menu should close
-      expect(menuButton).toHaveAttribute('aria-expanded', 'false');
-    });
-
-    it('closes menu when backdrop clicked', async () => {
-      renderLayout();
-
-      const menuButton = screen.getByLabelText('Toggle menu');
-      await user.click(menuButton);
-
-      const backdrop = document.querySelector('.bg-black.bg-opacity-50');
-      if (backdrop) {
-        await user.click(backdrop as HTMLElement);
-      }
-    });
+  it('maps /daily to the Journal item', () => {
+    renderLayout('/daily');
+    expect(screen.getByLabelText('Journal')).toHaveAttribute('aria-current', 'page');
   });
 
-  describe('Tooltips', () => {
-    it('shows tooltip with label and shortcut', () => {
-      renderLayout();
-
-      const homeButtons = screen.getAllByLabelText('Home');
-      // All buttons should have the tooltip
-      homeButtons.forEach(btn => {
-        expect(btn).toHaveAttribute('title', 'Home (⌘0)');
-      });
-    });
-
-    it('has tooltip for each nav item', () => {
-      renderLayout();
-
-      const tooltips = [
-        { label: 'Home', title: 'Home (⌘0)' },
-        { label: 'Search', title: 'Search (⌘1)' },
-        { label: 'Files', title: 'Files (⌘2)' },
-        { label: 'Chat', title: 'Chat (⌘4)' },
-        { label: 'Journals', title: 'Journals (⌘3)' },
-        { label: 'References', title: 'References (⌘5)' },
-        { label: 'Settings', title: 'Settings (⌘,)' }
-      ];
-
-      tooltips.forEach(({ label, title }) => {
-        const buttons = screen.getAllByLabelText(label);
-        buttons.forEach(btn => {
-          expect(btn).toHaveAttribute('title', title);
-        });
-      });
-    });
+  it('navigates when an item is clicked', async () => {
+    renderLayout('/home');
+    await user.click(screen.getByLabelText('Library'));
+    expect(screen.getByLabelText('Library')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByLabelText('Home')).not.toHaveAttribute('aria-current');
   });
 
-  describe('Accessibility', () => {
-    it('has navigation landmark', () => {
-      renderLayout();
-
-      const navs = screen.getAllByRole('navigation');
-      expect(navs.length).toBeGreaterThan(0);
-      navs.forEach(nav => {
-        expect(nav).toHaveAttribute('aria-label', 'Main navigation');
-      });
-    });
-
-    it('all buttons are keyboard accessible', async () => {
-      renderLayout('/home');
-
-      const searchButtons = screen.getAllByLabelText('Search');
-      const searchButton = searchButtons[0];
-      searchButton.focus();
-
-      expect(searchButton).toHaveFocus();
-
-      await user.keyboard('{Enter}');
-
-      // At least one button should become active after navigation
-      const activeButtons = screen.getAllByLabelText('Search').filter(btn =>
-        btn.className.includes('bg-[var(--accent-primary)]')
-      );
-      expect(activeButtons.length).toBeGreaterThan(0);
-    });
-
-    it('has accessible button labels', () => {
-      renderLayout();
-
-      const labels = ['Home', 'Search', 'Files', 'Chat', 'Journals', 'References', 'Settings'];
-      labels.forEach(label => {
-        const buttons = screen.getAllByLabelText(label);
-        buttons.forEach(btn => {
-          expect(btn).toHaveAccessibleName();
-        });
-      });
-    });
-
-    it('mobile menu button has accessible state', async () => {
-      renderLayout();
-
-      const menuButton = screen.getByLabelText('Toggle menu');
-      expect(menuButton).toHaveAttribute('aria-expanded', 'false');
-
-      await user.click(menuButton);
-
-      expect(menuButton).toHaveAttribute('aria-expanded', 'true');
-    });
-
-    it('has minimum touch target sizes (44x44px)', () => {
-      const { container } = renderLayout();
-
-      const buttons = container.querySelectorAll('button');
-      buttons.forEach(button => {
-        expect(button).toHaveClass('min-w-[44px]', 'min-h-[44px]');
-      });
-    });
-  });
-
-  describe('Responsive Behavior', () => {
-    it('hides desktop sidebar on mobile', () => {
-      const { container } = renderLayout();
-
-      const desktopNav = container.querySelector('.hidden.md\\:flex');
-      expect(desktopNav).toBeInTheDocument();
-    });
-
-    it('applies mobile top margin', () => {
-      const { container } = renderLayout();
-
-      const mainContent = container.querySelector('.mt-14.md\\:mt-0');
-      expect(mainContent).toBeInTheDocument();
-    });
-  });
-
-  describe('Visual States', () => {
-    it('applies active styles to current view', () => {
-      renderLayout('/home');
-
-      const homeButtons = screen.getAllByLabelText('Home');
-      // At least one should be active
-      const activeButton = homeButtons.find(btn =>
-        btn.className.includes('bg-[var(--accent-primary)]/10') &&
-        btn.className.includes('text-[var(--accent-primary)]')
-      );
-      expect(activeButton).toBeDefined();
-    });
-
-    it('applies inactive styles to other views', () => {
-      renderLayout('/home');
-
-      const searchButtons = screen.getAllByLabelText('Search');
-      // At least one should be inactive
-      const inactiveButton = searchButtons.find(btn =>
-        btn.className.includes('text-[var(--text-tertiary)]') &&
-        btn.className.includes('hover:bg-[var(--surface-hover)]')
-      );
-      expect(inactiveButton).toBeDefined();
-    });
-
-    it('shows proper icons for each view', () => {
-      const { container } = renderLayout();
-
-      const svgs = container.querySelectorAll('svg.w-5.h-5');
-      expect(svgs.length).toBeGreaterThanOrEqual(7);
-    });
-  });
-
-  describe('Settings Position', () => {
-    it('positions settings at bottom of sidebar', () => {
-      const { container } = renderLayout();
-
-      const spacers = container.querySelectorAll('.flex-1');
-      expect(spacers.length).toBeGreaterThan(0);
-    });
+  it('renders the routed content', () => {
+    renderLayout('/chat');
+    expect(screen.getByTestId('outlet')).toBeInTheDocument();
   });
 });

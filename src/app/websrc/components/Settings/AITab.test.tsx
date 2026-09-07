@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -57,6 +57,7 @@ const mockLlmSettings: LlmSettingsContextValue = {
   } as never,
   isLoading: false,
   saveLlmUpdates: vi.fn().mockResolvedValue(true),
+  reload: vi.fn(),
 };
 
 vi.mock('./AITab/useLlmSettings', () => ({
@@ -81,23 +82,27 @@ describe('ChatTab', () => {
     vi.clearAllMocks();
   });
 
-  it('renders Chat settings header', () => {
+  it('renders one page header, a noun, with no explanatory subtitle', () => {
     render(<ChatTab />);
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByText('Provider connection, active models, and runtime options')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Chat' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Provider connection, active models, and runtime options')
+    ).not.toBeInTheDocument();
   });
 
-  it('renders section headers with icons', () => {
+  it('renders the section headings', () => {
     render(<ChatTab />);
 
-    expect(screen.getByText('Chat Provider')).toBeInTheDocument();
+    expect(screen.getByText('Provider')).toBeInTheDocument();
+    expect(screen.getByText('Ollama server')).toBeInTheDocument();
+    expect(screen.getByText('Active models')).toBeInTheDocument();
   });
 
   describe('Ollama Connection', () => {
     it('shows a model dropdown and connection test button', async () => {
       render(<ChatTab />);
 
-      expect(await screen.findByRole('button', { name: 'Test Connection' })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: 'Test connection' })).toBeInTheDocument();
       const ollamaModel = await screen.findByLabelText('Model');
       expect(ollamaModel.tagName).toBe('SELECT');
       expect(ollamaModel).toBeDisabled();
@@ -115,13 +120,14 @@ describe('ChatTab', () => {
       vi.spyOn(VaultAPI, 'testOllamaConnection').mockImplementation(testConnectionMock);
 
       render(<ChatTab />);
-      const testConnection = await screen.findByRole('button', { name: 'Test Connection' });
+      const testConnection = await screen.findByRole('button', { name: 'Test connection' });
       await user.click(testConnection);
 
       expect(testConnectionMock).toHaveBeenCalled();
-      expect(await screen.findByRole('option', { name: 'llama3.2:latest' })).toBeInTheDocument();
-      expect(await screen.findByRole('option', { name: 'qwen2.5:latest' })).toBeInTheDocument();
-      expect(await screen.findByLabelText('Model')).not.toBeDisabled();
+      const modelSelect = await screen.findByLabelText('Model');
+      expect(within(modelSelect).getByRole('option', { name: 'llama3.2:latest' })).toBeInTheDocument();
+      expect(within(modelSelect).getByRole('option', { name: 'qwen2.5:latest' })).toBeInTheDocument();
+      expect(modelSelect).not.toBeDisabled();
     });
   });
 });

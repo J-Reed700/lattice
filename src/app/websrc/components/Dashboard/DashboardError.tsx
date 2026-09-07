@@ -1,17 +1,11 @@
-import { AlertCircle } from 'lucide-react';
-
 import { EmptyState } from '@/components/EmptyState';
 
 export const DashboardError = ({ error }: { error: string }) => (
-    <div className="h-full overflow-auto bg-[hsl(var(--bg))] flex items-center justify-center">
-      <EmptyState
-        icon={<AlertCircle size={48} />}
-        title="Failed to load dashboard"
-        description={error}
-        action={{
-          label: 'Retry',
-          onClick: () => window.location.reload(),
-        }}
-      />
-    </div>
-  );
+  <div className="flex h-full items-center justify-center overflow-auto bg-bg">
+    <EmptyState
+      title="Couldn't load Home."
+      description={error}
+      action={{ label: 'Try again', onClick: () => window.location.reload() }}
+    />
+  </div>
+);

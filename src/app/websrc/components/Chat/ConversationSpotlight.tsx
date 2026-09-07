@@ -207,7 +207,7 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
               placeholder="Search conversations and references"
               className="flex-1 bg-transparent text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none"
             />
-            <kbd className="rounded-sm border border-default px-1.5 py-0.5 font-mono text-xxs text-[hsl(var(--text-muted))]">
+            <kbd className="rounded-sm border border-border-default px-1.5 py-0.5 font-mono text-xxs text-[hsl(var(--text-muted))]">
               Esc
             </kbd>
           </div>

@@ -224,7 +224,15 @@ export function createCitationMap(
 ): Map<number, SourceWithMetadata> {
   const map = new Map<number, SourceWithMetadata>();
   sources.forEach((source, index) => {
-    map.set(index + 1, source);
+    // Prefer the id the backend assigned when building the prompt. Array
+    // position is only a fallback for responses from an older backend that
+    // didn't send one — relying on position is what made footnotes open the
+    // wrong document whenever a document contributed more than one chunk, or
+    // token budgeting trimmed the chunk list.
+    const key = source.citationId ?? index + 1;
+    if (!map.has(key)) {
+      map.set(key, source);
+    }
   });
   return map;
 }

@@ -12,9 +12,15 @@ interface EntryHighlightsStripProps {
   onRemoveHighlight: (highlightId: string) => void;
   onTogglePinned: (highlightId: string) => void;
   editorContainerRef: React.RefObject<HTMLElement | null>;
+  /**
+   * Render the floating "Highlight" button over a selection. Off when the
+   * editor's own selection toolbar carries the verb, so one selection never
+   * grows two toolbars.
+   */
+  showFloatingToolbar?: boolean;
 }
 
-const HIGHLIGHT_CHAR_LIMIT = 8000;
+export const HIGHLIGHT_CHAR_LIMIT = 8000;
 
 function formatWhen(iso: string): string {
   const d = new Date(iso);
@@ -40,6 +46,7 @@ export function EntryHighlightsStrip({
   onRemoveHighlight,
   onTogglePinned,
   editorContainerRef,
+  showFloatingToolbar = true,
 }: EntryHighlightsStripProps) {
   const prefersReducedMotion = useReducedMotion();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -50,6 +57,7 @@ export function EntryHighlightsStrip({
   const toolbarRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (!showFloatingToolbar) return;
     const container = editorContainerRef.current;
     if (!container) return;
 
@@ -98,7 +106,7 @@ export function EntryHighlightsStrip({
       document.removeEventListener('selectionchange', onSelectionChange);
       document.removeEventListener('mousedown', onMouseDown, true);
     };
-  }, [editorContainerRef]);
+  }, [editorContainerRef, showFloatingToolbar]);
 
   const handleAdd = () => {
     if (!toolbarState) return;

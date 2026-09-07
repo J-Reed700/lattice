@@ -1,83 +1,81 @@
-/* Command Palette Styles */
+/* Command palette (cmdk) — tokens only, one floating surface. */
 
-/* Backdrop */
 .command-palette-backdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: hsl(var(--overlay));
   z-index: 9998;
 }
 
-/* Container - centered modal */
 .command-palette-container {
   position: fixed;
-  top: 20vh;
+  top: 18vh;
   left: 50%;
   transform: translateX(-50%);
   width: 90%;
-  max-width: 640px;
+  max-width: 600px;
   z-index: 9999;
 }
 
-/* Main command palette */
 .command-palette {
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+  overflow: hidden;
   background: hsl(var(--surface-raised));
   border: 1px solid hsl(var(--border-subtle));
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  max-height: 60vh;
 }
 
-/* Input wrapper */
 .command-input-wrapper {
   position: relative;
   display: flex;
   align-items: center;
-  padding: 16px;
   border-bottom: 1px solid hsl(var(--border-subtle));
 }
 
-/* Search icon */
 .command-input-icon {
   position: absolute;
-  left: 20px;
-  width: 18px;
-  height: 18px;
+  left: 14px;
+  width: 16px;
+  height: 16px;
   color: hsl(var(--text-muted));
   pointer-events: none;
 }
 
-/* Input field */
 .command-input {
   flex: 1;
-  padding: 12px 16px 12px 40px;
-  font-size: 16px;
-  font-weight: 400;
+  width: 100%;
+  padding: 12px 14px 12px 38px;
+  font-size: 15px;
   color: hsl(var(--text-primary));
   background: transparent;
   border: none;
   outline: none;
-  width: 100%;
+}
+
+.command-input:focus-visible {
+  outline: none;
 }
 
 .command-input::placeholder {
   color: hsl(var(--text-muted));
 }
 
-/* Command list */
-.command-list {
-  overflow-y: auto;
-  max-height: calc(60vh - 140px);
-  padding: 8px;
+.command-input-loading {
+  position: absolute;
+  right: 14px;
+  font-size: 12px;
+  color: hsl(var(--text-muted));
 }
 
-/* Custom scrollbar */
+.command-list {
+  overflow-y: auto;
+  max-height: calc(60vh - 96px);
+  padding: 6px;
+}
+
 .command-list::-webkit-scrollbar {
   width: 8px;
 }
@@ -91,224 +89,62 @@
   border-radius: 4px;
 }
 
-.command-list::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--border-strong));
+.command-group + .command-group {
+  margin-top: 6px;
 }
 
-/* Command group */
-.command-group {
-  margin-bottom: 12px;
-}
-
-.command-group:last-child {
-  margin-bottom: 0;
-}
-
-/* Group heading */
 [cmdk-group-heading] {
-  padding: 8px 12px 4px;
+  padding: 6px 12px 2px;
   font-size: 11px;
-  font-weight: 600;
-  color: hsl(var(--text-muted));
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: hsl(var(--text-muted));
   user-select: none;
 }
 
-/* Command item */
 .command-item {
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   user-select: none;
   transition: background-color var(--duration-fast) var(--ease-out);
-  margin: 2px 0;
 }
 
-.command-item:hover {
+.command-item[aria-selected='true'] {
   background: hsl(var(--surface));
 }
 
-.command-item[aria-selected="true"] {
-  background: hsl(var(--accent-muted));
-}
-
-/* Keyboard shortcut badge */
 .command-shortcut {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  font-size: 11px;
-  font-weight: 600;
+  flex-shrink: 0;
   font-family: var(--font-mono);
-  color: hsl(var(--text-secondary));
-  background: hsl(var(--surface));
-  border-radius: var(--radius-sm);
-  border: 1px solid hsl(var(--border-subtle));
-  line-height: 1;
-  min-width: 24px;
-}
-
-/* Empty state */
-.command-empty {
-  padding: 48px 24px;
-  text-align: center;
-  font-size: 14px;
+  font-size: 11px;
   color: hsl(var(--text-muted));
 }
 
-/* Footer */
-.command-footer {
-  padding: 12px 16px;
-  border-top: 1px solid hsl(var(--border-subtle));
-  background: hsl(var(--surface));
+.command-empty {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: hsl(var(--text-muted));
 }
 
-.command-footer-hints {
+.command-footer {
   display: flex;
   gap: 16px;
-  align-items: center;
-  justify-content: center;
+  padding: 8px 14px;
+  border-top: 1px solid hsl(var(--border-subtle));
+  font-size: 11px;
+  color: hsl(var(--text-muted));
 }
 
 .command-footer-hint {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: hsl(var(--text-secondary));
 }
 
 .command-footer-hint kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-weight: 600;
   font-family: var(--font-mono);
-  color: hsl(var(--text-secondary));
-  background: hsl(var(--surface-raised));
-  border-radius: var(--radius-sm);
-  border: 1px solid hsl(var(--border-subtle));
-  line-height: 1;
-  min-width: 20px;
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-  .command-palette-backdrop,
-  .command-palette-container,
-  .command-item {
-    transition: none;
-    animation: none;
-  }
-}
-
-/* Focus visible for accessibility */
-.command-input:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
-  border-radius: var(--radius-md);
-}
-
-.command-item:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: -2px;
-}
-
-/* Loading indicator in input */
-.command-input-loading {
-  position: absolute;
-  right: 20px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Enhanced search result items */
-.search-result-item {
-  padding: 0 !important;
-}
-
-.search-result-item:hover {
-  background: hsl(var(--surface));
-}
-
-.search-result-item[aria-selected="true"] {
-  background: hsl(var(--accent-muted));
-}
-
-/* Line clamping for search results */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Empty state error styling */
-.command-empty-error {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-/* Score badges */
-.score-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 600;
-  background: hsl(var(--accent-muted));
-  color: hsl(var(--accent));
-}
-
-/* Improved focus states for better accessibility */
-.command-item:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: -2px;
-  z-index: 1;
-}
-
-/* Smooth transitions */
-.command-item,
-.command-group,
-.search-result-item {
-  transition: background-color var(--duration-fast) var(--ease-out);
-}
-
-/* Responsive adjustments */
-@media (max-width: 640px) {
-  .command-palette-container {
-    width: 95%;
-    top: 10vh;
-  }
-
-  .command-palette {
-    max-height: 70vh;
-  }
-
-  .command-list {
-    max-height: calc(70vh - 140px);
-  }
-
-  .command-footer-hints {
-    gap: 12px;
-  }
-
-  .command-footer-hint {
-    font-size: 11px;
-  }
-
-  .search-result-item .flex {
-    flex-direction: column;
-    gap: 8px;
-  }
+  color: hsl(var(--text-tertiary));
 }

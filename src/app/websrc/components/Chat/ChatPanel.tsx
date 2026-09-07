@@ -1,20 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { MessageSquare, Plus, Send, Settings2, Square } from 'lucide-react';
+import { Cpu, Globe, GitBranch, Paperclip, RefreshCw, Send, Settings2, Square } from 'lucide-react';
 
+import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
+
+import { ChatDropStaging } from './ChatDropStaging';
+import { ChatEmptyStateIngestDelta } from './ChatEmptyStateIngestDelta';
+import { ChatModelNotice } from './ChatModelNotice';
+import { ChatStarters } from './ChatStarters';
 import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from './ComposerControls';
 import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
 import { Message } from './Message';
+import { ModelPickerPopover } from './ModelPickerPopover';
+import { useChatFileDrop } from './useChatFileDrop';
+import { useSettingsQuery } from '../../hooks/queries/useSettingsQuery';
+import { conversationKeys } from '../../hooks/useConversationsController';
+import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
-import { getConversationMessages, useConversationsStore } from '../../stores/conversationsStore';
-import { useDownloadedModelsStore } from '../../stores/downloadedModelsStore';
+import { useConversationsStore } from '../../stores/conversationsStore';
 import { selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarmupStore';
 import { toast } from '../../stores/toastStore';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 
 import type { CustomToolSettings, ToolPreferences } from '../../types';
+
+const GENERAL_SPACE_ID = 'space_general';
+
+/** Poll a batch job until it stops moving, or five minutes elapse. */
+const BATCH_POLL_INTERVAL_MS = 1000;
+const BATCH_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 type TurnMode = 'auto' | 'followup' | 'query';
 
@@ -73,17 +90,24 @@ const resolveTurnMode = (parsed: Record<string, unknown>): TurnMode => {
   return followupMode ? 'followup' : 'auto';
 };
 
-const loadInitialToolPreferences = (): ToolPreferences => {
-  try {
-    const stored = localStorage.getItem('toolPreferences');
-    if (!stored) {
-      return defaultToolPreferences();
-    }
+const parseToolPreferences = (serialized: string | null | undefined): ToolPreferences => {
+  const defaults = defaultToolPreferences();
+  if (!serialized) {
+    return defaults;
+  }
 
-    const parsed = JSON.parse(stored) as Record<string, unknown>;
-    if (typeof parsed.knowledgeBase !== 'boolean' || typeof parsed.webSearch !== 'boolean') {
-      return defaultToolPreferences();
-    }
+  try {
+    const parsed = JSON.parse(serialized) as Record<string, unknown>;
+    const knowledgeBase =
+      typeof parsed.knowledgeBase === 'boolean'
+        ? parsed.knowledgeBase
+        : (typeof parsed.knowledge_base === 'boolean'
+          ? parsed.knowledge_base
+          : defaults.knowledgeBase);
+    const webSearch =
+      typeof parsed.webSearch === 'boolean'
+        ? parsed.webSearch
+        : (typeof parsed.web_search === 'boolean' ? parsed.web_search : defaults.webSearch);
     const deepResearchMode =
       typeof parsed.deepResearchMode === 'boolean'
         ? parsed.deepResearchMode
@@ -91,11 +115,12 @@ const loadInitialToolPreferences = (): ToolPreferences => {
     const turnMode = resolveTurnMode(parsed);
     const followupMode = turnMode === 'followup';
 
-    const enabledTools = normalizeEnabledTools(parsed.enabledTools);
+    const enabledTools =
+      normalizeEnabledTools(parsed.enabledTools) ?? normalizeEnabledTools(parsed.enabled_tools);
     if (enabledTools) {
       return {
-        knowledgeBase: parsed.knowledgeBase,
-        webSearch: parsed.webSearch,
+        knowledgeBase,
+        webSearch,
         deepResearchMode,
         followupMode,
         turnMode,
@@ -104,39 +129,58 @@ const loadInitialToolPreferences = (): ToolPreferences => {
     }
 
     return {
-      knowledgeBase: parsed.knowledgeBase,
-      webSearch: parsed.webSearch,
+      knowledgeBase,
+      webSearch,
       deepResearchMode,
       followupMode,
       turnMode,
-      enabledTools: parsed.webSearch ? [...WEB_TOOL_NAMES] : [],
+      enabledTools: webSearch ? [...WEB_TOOL_NAMES] : [],
     };
   } catch {
-    return defaultToolPreferences();
+    return defaults;
   }
 };
 
 export function ChatPanel() {
+  const { activeModel, downloadedModels, setActiveChatModel } = useDownloadedModels();
   const {
     activeConversationId,
     conversations,
     spaces,
-    isSending,
+    inFlightGenerations,
     sendMessage,
     cancelGeneration,
     createConversation,
     optimisticMessages,
+    liveRetrieval,
+    messageRetrieval,
+    composerDraft,
+    setComposerDraft,
+    regenerateResponse,
+    forkConversation,
+    moveConversationToSpace,
+    loadConversationLinkedDocuments,
   } = useConversationsStore();
+  const queryClient = useQueryClient();
+  const settings = useSettingsQuery().data;
+
+  const isSending = activeConversationId
+    ? inFlightGenerations.has(activeConversationId)
+    : false;
 
   const [input, setInput] = useState('');
-  const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(loadInitialToolPreferences);
+  const [toolPreferences, setToolPreferences] = useState<ToolPreferences>(defaultToolPreferences);
   const [customTools, setCustomTools] = useState<CustomToolSettings[]>([]);
   const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [isImportingFiles, setIsImportingFiles] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const modelLabelRef = useRef<HTMLButtonElement>(null);
   const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
   const lastAppliedToolPreferenceConversationRef = useRef<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const previousConversationIdRef = useRef<string | null>(null);
+  const shouldAutoScrollRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const knownMessageIdsRef = useRef<{ conversationId: string | null; ids: Set<string> }>({
     conversationId: null,
@@ -149,10 +193,23 @@ export function ChatPanel() {
     [toolPreferences.enabledTools]
   );
 
-  const messages = getConversationMessages(activeConversationId);
+  const messages = useMemo(() => {
+    if (!activeConversationId) return [];
 
-  const getMessageKey = (message: typeof messages[number]): string =>
-    'tempId' in message ? message.tempId : message.id;
+    const realMessages =
+      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
+    const optimisticForConversation = Array.from(optimisticMessages.values()).filter(
+      (message) =>
+        message.conversationId === activeConversationId || message.conversationId === 'temp'
+    );
+    return [...realMessages, ...optimisticForConversation];
+  }, [activeConversationId, conversations, optimisticMessages]);
+
+  const getMessageKey = useCallback(
+    (message: typeof messages[number]): string =>
+      'tempId' in message ? message.tempId : message.id,
+    []
+  );
 
   const freshMessageKeys = useMemo(() => {
     const fresh = new Set<string>();
@@ -170,7 +227,7 @@ export function ChatPanel() {
       }
     }
     return fresh;
-  }, [activeConversationId, messages]);
+  }, [activeConversationId, getMessageKey, messages]);
 
   useEffect(() => {
     const loadCustomTools = async () => {
@@ -196,11 +253,20 @@ export function ChatPanel() {
     const isConversationChange = previousConversationId !== activeConversationId;
     previousConversationIdRef.current = activeConversationId ?? null;
 
+    if (isConversationChange) {
+      shouldAutoScrollRef.current = true;
+    } else if (!shouldAutoScrollRef.current) {
+      return;
+    }
+
+    // The global `prefers-reduced-motion` rule in index.css covers CSS
+    // transitions, not programmatic scrolling: this ride has to be opted out
+    // of here or it happens on every message.
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: isConversationChange ? 'auto' : 'smooth',
+      behavior: isConversationChange || prefersReducedMotion ? 'auto' : 'smooth',
     });
-  }, [messages, optimisticMessages, activeConversationId]);
+  }, [messages, activeConversationId, prefersReducedMotion]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -210,17 +276,11 @@ export function ChatPanel() {
   }, [input]);
 
   useEffect(() => {
-    toolPreferencesRef.current = toolPreferences;
-    try {
-      localStorage.setItem('toolPreferences', JSON.stringify(toolPreferences));
-    } catch {
-      // Ignore storage errors
-    }
-  }, [toolPreferences]);
-
-  useEffect(() => {
     if (!activeConversationId) {
       lastAppliedToolPreferenceConversationRef.current = null;
+      const defaults = defaultToolPreferences();
+      setToolPreferences(defaults);
+      toolPreferencesRef.current = defaults;
       return;
     }
     if (lastAppliedToolPreferenceConversationRef.current === activeConversationId) {
@@ -230,56 +290,27 @@ export function ChatPanel() {
     const activeConversation = conversations.find(
       (conversation) => conversation.id === activeConversationId
     );
+    if (!activeConversation) {
+      return;
+    }
+
     const spaceId = activeConversation?.spaceId;
     if (!spaceId) {
+      const defaults = defaultToolPreferences();
+      setToolPreferences(defaults);
+      toolPreferencesRef.current = defaults;
       lastAppliedToolPreferenceConversationRef.current = activeConversationId;
       return;
     }
 
     const space = spaces.find((item) => item.id === spaceId);
-    if (!space?.toolPreferencesJson) {
-      lastAppliedToolPreferenceConversationRef.current = activeConversationId;
+    if (!space) {
       return;
     }
 
-    try {
-      const parsed = JSON.parse(space.toolPreferencesJson) as Record<string, unknown>;
-      const knowledgeBase =
-        typeof parsed.knowledgeBase === 'boolean'
-          ? parsed.knowledgeBase
-          : (typeof parsed.knowledge_base === 'boolean' ? parsed.knowledge_base : undefined);
-      const webSearch =
-        typeof parsed.webSearch === 'boolean'
-          ? parsed.webSearch
-          : (typeof parsed.web_search === 'boolean' ? parsed.web_search : undefined);
-      const turnMode = resolveTurnMode(parsed);
-      const followupMode = turnMode === 'followup';
-      const deepResearchMode =
-        typeof parsed.deepResearchMode === 'boolean'
-          ? parsed.deepResearchMode
-          : (typeof parsed.deep_research_mode === 'boolean' ? parsed.deep_research_mode : false);
-
-      if (typeof knowledgeBase === 'boolean' && typeof webSearch === 'boolean') {
-        const explicitEnabledTools =
-          normalizeEnabledTools(parsed.enabledTools) ??
-          normalizeEnabledTools(parsed.enabled_tools);
-        const enabledTools =
-          explicitEnabledTools ??
-          setToolNames(toolPreferencesRef.current.enabledTools, WEB_TOOL_NAMES, webSearch);
-        const next = {
-          knowledgeBase,
-          webSearch,
-          deepResearchMode,
-          followupMode,
-          turnMode,
-          enabledTools,
-        };
-        setToolPreferences(next);
-        toolPreferencesRef.current = next;
-      }
-    } catch {
-      // Ignore malformed per-space tool preference JSON
-    }
+    const next = parseToolPreferences(space.toolPreferencesJson);
+    setToolPreferences(next);
+    toolPreferencesRef.current = next;
 
     lastAppliedToolPreferenceConversationRef.current = activeConversationId;
   }, [activeConversationId, conversations, spaces]);
@@ -359,7 +390,7 @@ export function ChatPanel() {
     if (!input.trim() || isSending || !activeConversationId) return;
     // Block submit while warming up or before chat model downloads.
     if (useModelWarmupStore.getState().chat.phase === 'started') return;
-    if (useDownloadedModelsStore.getState().activeModel === null) return;
+    if (isChatUnavailable) return;
 
     const message = input.trim();
     setInput('');
@@ -399,6 +430,157 @@ export function ChatPanel() {
     await cancelGeneration(activeConversationId);
   };
 
+  const activeConversation = useMemo(
+    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [conversations, activeConversationId]
+  );
+  const conversationSpaceId = activeConversation?.spaceId ?? null;
+  const isScopedToLinkedFiles = Boolean(
+    conversationSpaceId && conversationSpaceId !== GENERAL_SPACE_ID
+  );
+
+  const {
+    isDragging,
+    staged,
+    add: addStagedPaths,
+    clear: clearStaged,
+    remove: removeStaged,
+  } = useChatFileDrop(panelRef, () => {
+    // Staging is the hook's own state; the panel only needs to re-render.
+  });
+
+  /** The palette's way in, for people who would rather not drag. */
+  const handleChooseFiles = useCallback(async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({ multiple: true });
+      if (!picked) return;
+      addStagedPaths(Array.isArray(picked) ? picked : [picked]);
+    } catch {
+      // Not in a Tauri webview: the drop target is still there.
+    }
+  }, [addStagedPaths]);
+
+  const handleSearchWholeVault = useCallback(async () => {
+    if (!activeConversationId) return;
+    await moveConversationToSpace(activeConversationId, GENERAL_SPACE_ID);
+    toast.success('Searching your whole vault.');
+  }, [activeConversationId, moveConversationToSpace]);
+
+  const handleImportStagedFiles = useCallback(async () => {
+    if (!activeConversationId || staged.length === 0 || isImportingFiles) return;
+    setIsImportingFiles(true);
+    try {
+      const started = await VaultAPI.startBatchFileImport(staged.map((file) => file.path));
+      if (!started.ok) {
+        toast.error("Couldn't add these files", { message: started.error });
+        return;
+      }
+
+      const jobId = started.data;
+      const deadline = Date.now() + BATCH_POLL_TIMEOUT_MS;
+      let documentIds: string[] = [];
+      let addedCount: number | null = null;
+      let failedCount = 0;
+      // Poll rather than subscribe: the batch slice emits no per-job event.
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_POLL_INTERVAL_MS));
+        const status = await VaultAPI.getBatchJobStatus(jobId);
+        if (!status.ok) break;
+        const job = status.data;
+        const terminal =
+          job.status === 'completed' ||
+          job.status === 'failed' ||
+          job.status === 'cancelled' ||
+          job.completedItems + job.failedItems >= job.totalItems;
+        if (terminal) {
+          documentIds = (job.items ?? [])
+            .map((item) => item.documentId)
+            .filter((id): id is string => Boolean(id));
+          addedCount = job.completedItems;
+          failedCount = job.failedItems;
+          break;
+        }
+      }
+
+      // Scoping only applies to a conversation that already has its own space.
+      // Creating one behind the user's back would silently narrow every future
+      // answer in this thread.
+      if (documentIds.length > 0 && isScopedToLinkedFiles && conversationSpaceId) {
+        await VaultAPI.setDocumentsSpaceMembership(documentIds, conversationSpaceId, true);
+      }
+
+      await queryClient.invalidateQueries({
+        queryKey: conversationKeys.linkedDocuments(activeConversationId),
+      });
+      void loadConversationLinkedDocuments(activeConversationId);
+
+      const requested = staged.length;
+      clearStaged();
+      // Report what the job actually did. Saying "Added 4 files" after the
+      // batch failed, or after we stopped waiting, is a claim we cannot make.
+      if (addedCount === null) {
+        toast.info(`Still adding ${requested} file${requested !== 1 ? 's' : ''}`, {
+          message: "They'll appear in this conversation when indexing finishes.",
+        });
+      } else if (addedCount === 0) {
+        toast.error("Couldn't add these files", {
+          message: `${failedCount || requested} failed to import.`,
+        });
+      } else {
+        toast.success(`Added ${addedCount} file${addedCount !== 1 ? 's' : ''}`, {
+          message:
+            failedCount > 0
+              ? `${failedCount} couldn't be read. The rest are indexing now.`
+              : "They're indexing now.",
+        });
+      }
+    } finally {
+      setIsImportingFiles(false);
+    }
+  }, [
+    activeConversationId,
+    staged,
+    isImportingFiles,
+    isScopedToLinkedFiles,
+    conversationSpaceId,
+    queryClient,
+    loadConversationLinkedDocuments,
+    clearStaged,
+  ]);
+
+  const handleSwitchActiveModel = useCallback(
+    async (modelId: string, modelLabel: string) => {
+      const previousModelId = activeModel?.model_id ?? null;
+      const previousLabel = activeModel?.model_name ?? previousModelId;
+      try {
+        await setActiveChatModel(modelId);
+      } catch (error) {
+        toast.error("Couldn't switch model", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      // The switch is app-wide, so always offer the way back — same as the
+      // "Try with another model" toast on a message.
+      toast.success(`Switched to ${modelLabel}`, {
+        ...(previousModelId && previousModelId !== modelId
+          ? {
+              action: {
+                label: 'Switch back',
+                onClick: () => {
+                  void setActiveChatModel(previousModelId).then(() => {
+                    toast.success(`Back to ${previousLabel}`);
+                  });
+                },
+              },
+            }
+          : {}),
+      });
+    },
+    [activeModel, setActiveChatModel]
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !(e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -412,51 +594,177 @@ export function ChatPanel() {
   const turnMode: TurnMode =
     normalizeTurnMode(toolPreferences.turnMode) ?? (toolPreferences.followupMode ? 'followup' : 'auto');
 
-  // Mask the input during warmup, and during the first-run window
-  // between "Install Recommended AI" and the chat download finishing.
+  // Mask the input during warmup, and while there is no model to answer with.
   const isChatWarming = useModelWarmupStore(selectIsChatWarming);
-  const hasActiveChatModel = useDownloadedModelsStore((s) => s.activeModel !== null);
-  const isChatUnavailable = isChatWarming || !hasActiveChatModel;
+  const chatWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
 
-  const placeholder = !hasActiveChatModel
-    ? 'AI is downloading… notes and search work now'
-    : isChatWarming
-      ? 'Warming up AI… you can keep typing'
-      : turnMode === 'followup'
-        ? 'Follow up'
-        : turnMode === 'query'
-          ? 'Search sources and answer'
-          : 'Ask anything';
+  // An Ollama-only install has no `is_active_for_chat` row, but the controller
+  // will happily build a conversation from the configured endpoint. Reading
+  // only `activeModel` left those users with a dead send button forever.
+  const llmSettings = settings?.llm;
+  const hasOllamaChat =
+    Boolean(llmSettings?.ollamaUrl && llmSettings?.model) &&
+    (llmSettings?.provider === 'ollama' || llmSettings?.provider === 'auto');
+  const hasChatModel = activeModel !== null || hasOllamaChat;
+  const isChatUnavailable = isChatWarming || !hasChatModel;
+
+  const activeModelLabel = activeModel
+    ? activeModel.model_name || activeModel.model_id
+    : hasOllamaChat
+      ? (llmSettings?.model ?? null)
+      : null;
+
+  // The last thing the backend told us about why it could not read the vault.
+  // Never inferred here.
+  const retrievalUnavailableReason = useMemo(() => {
+    if (!activeConversationId) return null;
+    const live = liveRetrieval.get(activeConversationId);
+    if (live?.unavailableReason) return live.unavailableReason;
+    const conversationMessages =
+      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
+    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = conversationMessages[index];
+      if (candidate.role !== 'assistant') continue;
+      return messageRetrieval.get(candidate.id)?.unavailableReason ?? null;
+    }
+    return null;
+  }, [activeConversationId, conversations, liveRetrieval, messageRetrieval]);
+
+  // Model state lives in the notice below the composer, not in the placeholder.
+  const placeholder =
+    turnMode === 'followup'
+      ? 'Follow up'
+      : turnMode === 'query'
+        ? 'Search sources and answer'
+        : 'Ask anything';
 
   const handleCreateEmptyStateConversation = async () => {
     if (isCreatingConversation) return;
     setIsCreatingConversation(true);
     try {
       await createConversation(createDefaultConversationTitle());
-    } catch {
-      // Error surfaces via conversationsStore
+    } catch (error) {
+      // The controller's message names the actual fix ("Select a local model in
+      // Settings or configure Ollama"); swallowing it left a dead button.
+      toast.error("Couldn't start a conversation", {
+        message: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setIsCreatingConversation(false);
     }
   };
 
+  // Deep links and failed regenerations hand the composer its text this way.
+  useEffect(() => {
+    if (!composerDraft) return;
+    setInput(composerDraft);
+    setComposerDraft(null);
+    textareaRef.current?.focus();
+  }, [composerDraft, setComposerDraft]);
+
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const canRegenerate = Boolean(
+    activeConversationId && !isSending && lastMessage?.role === 'assistant'
+  );
+  const paletteCommands = useMemo(
+    () => [
+      {
+        id: 'chat.regenerate',
+        label: 'Regenerate answer',
+        group: 'Chat',
+        icon: RefreshCw,
+        enabled: canRegenerate,
+        run: () => {
+          if (!activeConversationId) return;
+          void regenerateResponse(activeConversationId).then((outcome) => {
+            if (outcome === 'answered' || outcome === 'cancelled') return;
+            toast.error("Couldn't regenerate", {
+              message:
+                outcome === 'busy'
+                  ? 'This conversation is still answering.'
+                  : 'Your question is back in the composer.',
+            });
+          });
+        },
+      },
+      {
+        id: 'chat.branch',
+        label: 'Branch this conversation',
+        group: 'Chat',
+        icon: GitBranch,
+        enabled: Boolean(activeConversationId) && messages.length > 0,
+        run: () => {
+          if (activeConversationId) {
+            void forkConversation(activeConversationId).then((newId) => {
+              if (newId) toast.success('Branched', { message: "You're in the new conversation." });
+            });
+          }
+        },
+      },
+      {
+        id: 'chat.switch-model',
+        label: 'Switch chat model',
+        group: 'Chat',
+        icon: Cpu,
+        // The picker hangs off the active-model label, so the verb only works
+        // when that label is on screen. No verb that does nothing.
+        enabled:
+          Boolean(activeModelLabel) &&
+          downloadedModels.some((model) => model.model_type === 'language_model'),
+        run: () => {
+          modelLabelRef.current?.click();
+        },
+      },
+      {
+        id: 'chat.add-files',
+        label: 'Add files to this conversation',
+        group: 'Chat',
+        icon: Paperclip,
+        enabled: Boolean(activeConversationId),
+        description: 'Or drop them onto the conversation.',
+        run: () => {
+          void handleChooseFiles();
+        },
+      },
+      {
+        id: 'chat.search-vault',
+        label: 'Search the whole vault',
+        group: 'Chat',
+        icon: Globe,
+        enabled: isScopedToLinkedFiles,
+        run: () => {
+          void handleSearchWholeVault();
+        },
+      },
+    ],
+    [
+      activeConversationId,
+      activeModelLabel,
+      canRegenerate,
+      downloadedModels,
+      forkConversation,
+      handleChooseFiles,
+      handleSearchWholeVault,
+      isScopedToLinkedFiles,
+      messages.length,
+      regenerateResponse,
+    ]
+  );
+  useRegisterPaletteCommands(paletteCommands);
+
   if (!activeConversationId) {
     return (
-      <div className="flex-1 min-w-0 flex items-center justify-center bg-bg">
-        <div className="text-center px-8 max-w-md">
-          <MessageSquare className="mx-auto mb-4 h-8 w-8 text-[hsl(var(--text-muted))]" aria-hidden="true" />
-          <h2 className="text-lg font-semibold font-serif text-[hsl(var(--text-primary))]">
-            No conversation open.
-          </h2>
+      <div className="flex min-w-0 flex-1 items-center justify-center bg-bg">
+        <div className="max-w-md px-8 text-center">
+          <p className="text-sm text-text-secondary">No conversation open.</p>
           <button
             type="button"
             onClick={() => { void handleCreateEmptyStateConversation(); }}
             disabled={isCreatingConversation}
             aria-label="Create new conversation"
-            className="mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-[hsl(var(--accent))] px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-4 inline-flex items-center justify-center rounded-sm border border-border-default px-3 py-1.5 text-sm text-text-primary transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            <span>New conversation</span>
+            New conversation
           </button>
         </div>
       </div>
@@ -464,17 +772,36 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col bg-bg">
+    <div ref={panelRef} className="relative flex-1 min-w-0 flex flex-col bg-bg">
+      {isDragging && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-[hsl(var(--accent))] bg-bg/80 transition-opacity duration-fast">
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
+            Drop files to add them to this conversation.
+          </p>
+        </div>
+      )}
       {/* Thread scroll region */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto"
+        onScroll={(event) => {
+          const container = event.currentTarget;
+          const distanceFromBottom =
+            container.scrollHeight - container.scrollTop - container.clientHeight;
+          shouldAutoScrollRef.current = distanceFromBottom <= 96;
+        }}
+      >
         <div className="mx-auto w-full max-w-[clamp(680px,72vw,900px)]">
           {messages.length === 0 ? (
-            <div className="flex items-center justify-center min-h-[60vh] px-6">
-              <div className="text-center max-w-md">
-                <MessageSquare className="mx-auto mb-4 h-8 w-8 text-[hsl(var(--text-muted))]" aria-hidden="true" />
-                <h3 className="text-lg font-semibold font-serif text-[hsl(var(--text-primary))]">
-                  No messages yet.
-                </h3>
+            <div className="flex min-h-[50vh] flex-col items-center justify-center px-6">
+              <div className="w-full max-w-[520px]">
+                <ChatStarters
+                  onPick={(question) => {
+                    setInput(question);
+                    textareaRef.current?.focus();
+                  }}
+                />
+                <ChatEmptyStateIngestDelta />
               </div>
             </div>
           ) : (
@@ -484,13 +811,18 @@ export function ChatPanel() {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             >
-              {messages.map((message) => {
+              {messages.map((message, index) => {
                 const key = getMessageKey(message);
+                const previous = index > 0 ? messages[index - 1] : null;
                 return (
                   <Message
                     key={key}
                     message={message}
                     isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
+                    isLastTurn={index === messages.length - 1}
+                    previousMessageId={
+                      previous && 'id' in previous ? previous.id : undefined
+                    }
                   />
                 );
               })}
@@ -499,15 +831,52 @@ export function ChatPanel() {
 
           {/* Sticky sources-in-this-conversation footer, above the composer */}
           <div className="px-6">
-            <ConversationLinkedDocumentsPanel conversationId={activeConversationId} />
+            <ConversationLinkedDocumentsPanel
+              conversationId={activeConversationId}
+              isScopedToLinkedFiles={isScopedToLinkedFiles}
+              onSearchWholeVault={() => void handleSearchWholeVault()}
+            />
           </div>
         </div>
       </div>
 
       {/* Composer — pinned bottom (CHAT-REDESIGN-SPEC §4) */}
       <div className="border-t border-subtle bg-bg">
+        <ChatDropStaging
+          staged={staged}
+          isImporting={isImportingFiles}
+          onRemove={removeStaged}
+          onImport={() => void handleImportStagedFiles()}
+          onClear={clearStaged}
+        />
+
+        <ChatModelNotice
+          hasChatModel={hasChatModel}
+          warmupPhase={chatWarmupPhase}
+          retrievalUnavailableReason={retrievalUnavailableReason}
+        />
+
+        {activeModelLabel && (
+          <div className="mx-auto w-full max-w-[clamp(680px,72vw,900px)] px-6 pb-1 pt-2">
+            <ModelPickerPopover
+              activeModelId={activeModel?.model_id ?? null}
+              onSelect={handleSwitchActiveModel}
+              align="start"
+            >
+              <button
+                ref={modelLabelRef}
+                type="button"
+                title="Active chat model"
+                className="text-xxs text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))]"
+              >
+                {activeModelLabel}
+              </button>
+            </ModelPickerPopover>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[clamp(680px,72vw,900px)] px-6 py-4">
-          <div className="relative rounded-md border border-default bg-surface focus-within:ring-2 focus-within:ring-[hsl(var(--ring))]">
+          <div className="relative rounded-md border border-border-default bg-surface focus-within:ring-2 focus-within:ring-[hsl(var(--ring))]">
             <textarea
               ref={textareaRef}
               value={input}
@@ -575,28 +944,13 @@ export function ChatPanel() {
               <button
                 type="submit"
                 disabled={!input.trim() || isChatUnavailable}
-                aria-label={
-                  !hasActiveChatModel
-                    ? 'AI is still downloading'
-                    : isChatWarming
-                      ? 'Warming up AI…'
-                      : 'Send message'
-                }
-                title={
-                  !hasActiveChatModel
-                    ? 'Chat model is downloading — submit available once ready'
-                    : isChatWarming
-                      ? 'AI is warming up — try again in a few seconds'
-                      : 'Send · Enter'
-                }
+                aria-label="Send message"
+                title="Send · Enter"
                 className="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-sm bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] transition-[background-color,color,transform] duration-fast active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--border-default))] disabled:text-[hsl(var(--text-muted))] disabled:active:scale-100"
               >
                 <Send className="h-4 w-4" />
               </button>
             )}
-          </div>
-          <div className="mt-2 text-right text-xs text-[hsl(var(--text-muted))]">
-            <kbd className="font-mono">Enter</kbd> to send · <kbd className="font-mono">Shift</kbd> + <kbd className="font-mono">Enter</kbd> for new line
           </div>
         </form>
       </div>

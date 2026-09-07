@@ -32,6 +32,9 @@ export * from './mentions';
 // Files
 export * from './files';
 
+// Corpus (type mix, themes, neighbourhood)
+export * from './corpus';
+
 // Updates
 export * from './updates';
 
@@ -70,3 +73,12 @@ export * from './watch';
 
 // Statistics (Wave 4)
 export * from './stats';
+
+// Indexing status (Track D)
+export * from './indexing';
+
+// Passage references (Track C)
+export * from './references';
+
+// Compare (Track C)
+export * from './compare';

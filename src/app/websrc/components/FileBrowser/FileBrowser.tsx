@@ -1,45 +1,59 @@
 /**
- * File Browser Component
+ * Library — the corpus surface.
  *
- * Purpose: Main file browser interface with multiple view modes
- *
- * Features:
- * - Tree/List/Grid view modes
- * - Breadcrumb navigation
- * - Search and filter
- * - Context menu
- * - Keyboard shortcuts
- * - Responsive layout
+ * Header (title + one data line + view toggles), one toolbar row, an optional
+ * rail of the things the corpus is organised by, and the documents themselves
+ * as hairline rows. No cards, no badges, no explanatory copy.
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { FileUp } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { EyeOff, LayoutGrid, Layers, List, ListTree, MessageSquare, PanelRight, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router';
 
 import { ContextMenu } from './ContextMenu';
+import { isHttpUrl, isWebDocument, pathBasename, typeBucket } from './docMeta';
 import { GridView } from './GridView';
+import { useCorpusIdentity } from './hooks/useCorpusIdentity';
+import { LibraryRail } from './LibraryRail';
 import { LibraryToolbar } from './LibraryToolbar';
 import { ListView } from './ListView';
 import { RenameDialog } from './RenameDialog';
 import { SavedSearchNameDialog, type SavedSearchNameDialogMode } from './SavedSearchNameDialog';
+import { SelectionBar } from './SelectionBar';
 import { TreeView } from './TreeView';
+import { TypeFacets } from './TypeFacets';
+import {
+  THEMES_MIN_DOCUMENTS,
+  useClustersQuery,
+  useRebuildProgress,
+  useRebuildThemes,
+} from '../../hooks/queries/useClustersQuery';
+import { useIndexedFoldersQuery } from '../../hooks/queries/useIndexedFoldersQuery';
+import {
+  LIBRARY_DOCUMENTS_QUERY_KEY,
+  useLibraryDocumentsQuery,
+} from '../../hooks/queries/useLibraryDocumentsQuery';
+import { useRegisterPaletteCommands } from '../../hooks/useRegisterPaletteCommands';
 import VaultAPI from '../../lib/api';
-import { useFileBrowserStore, selectFilteredDocuments } from '../../stores/fileBrowserStore';
+import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 import { toast } from '../../stores/toastStore';
 import { type ConversationSpaceDto } from '../../types';
-import { type DocumentMetadata } from '../../types/fileBrowser';
+import { type DocumentMetadata, type SortField, type SortOrder } from '../../types/fileBrowser';
 import { isSupportedFileType } from '../../utils/fileTypeDetector';
 import { handleAsyncEvent } from '../../utils/promiseHandlers';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { ContentViewer } from '../ContentViewer';
-import Button from '../ui/Button/Button';
+import { NeighborhoodPanel } from '../Neighborhood';
+import { IconButton } from '../ui/IconButton';
+import { PageHeader } from '../ui/PageHeader';
+
+import type { PaletteCommand } from '../../stores/paletteCommandsStore';
 
 const isAbsolutePath = (path: string): boolean =>
   path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path);
-
-const isHttpUrl = (path: string): boolean => /^https?:\/\//i.test(path);
 
 const normalizeCategory = (category: string): string =>
   category.toLowerCase().replace(/[_-]+/g, ' ').trim();
@@ -47,41 +61,17 @@ const normalizeCategory = (category: string): string =>
 const normalizeSearchToken = (value: string): string => value.trim().toLowerCase();
 
 const NON_TEXT_FILE_TYPES = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'svg',
-  'bmp',
-  'ico',
-  'mp3',
-  'wav',
-  'flac',
-  'ogg',
-  'm4a',
-  'mp4',
-  'mkv',
-  'mov',
-  'avi',
-  'webm',
-  'zip',
-  'rar',
-  '7z',
-  'tar',
-  'gz',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico',
+  'mp3', 'wav', 'flac', 'ogg', 'm4a',
+  'mp4', 'mkv', 'mov', 'avi', 'webm',
+  'zip', 'rar', '7z', 'tar', 'gz',
 ]);
 
-const isWebDocument = (doc: DocumentMetadata): boolean => {
-  const normalizedCategory = normalizeCategory(doc.category || '');
-  return (
-    normalizedCategory.includes('web article') ||
-    normalizedCategory === 'web' ||
-    isHttpUrl(doc.filePath) ||
-    doc.filePath.includes('/.lattice/web-archive/')
-  );
-};
-
+/**
+ * Which documents the content search reads. Must stay in step with
+ * `filterLibraryDocuments`'s `matchesType`, or a facet would narrow the list
+ * while the content search kept reading a different set.
+ */
 const matchesTypeFilter = (doc: DocumentMetadata, activeFilter: string | null): boolean => {
   if (!activeFilter) {
     return true;
@@ -91,6 +81,7 @@ const matchesTypeFilter = (doc: DocumentMetadata, activeFilter: string | null): 
   const normalizedFileType = (doc.fileType ?? '').toLowerCase();
 
   return (
+    typeBucket(doc).toLowerCase() === activeFilter ||
     normalizedCategory.includes(activeFilter) ||
     normalizedFileType === activeFilter ||
     (activeFilter === 'web' && normalizedCategory.includes('web article'))
@@ -105,36 +96,40 @@ const canSearchByContent = (doc: DocumentMetadata): boolean => {
   return !NON_TEXT_FILE_TYPES.has(normalizedFileType);
 };
 
+const plural = (count: number, noun: string): string =>
+  `${count.toLocaleString()} ${noun}${count === 1 ? '' : 's'}`;
+
 export function FileBrowser() {
-  const documents = useFileBrowserStore(state => state.documents);
-  const filteredDocuments = useFileBrowserStore(selectFilteredDocuments);
+  const { documents, filteredDocuments, refreshFiles } = useLibraryDocumentsQuery();
+  const indexedFoldersQuery = useIndexedFoldersQuery();
   const viewMode = useFileBrowserStore(state => state.viewMode);
   const setViewMode = useFileBrowserStore(state => state.setViewMode);
-  const density = useFileBrowserStore(state => state.density);
-  const setDensity = useFileBrowserStore(state => state.setDensity);
   const selectedDocumentIds = useFileBrowserStore(state => state.selectedDocumentIds);
+  const selectAll = useFileBrowserStore(state => state.selectAll);
   const clearSelection = useFileBrowserStore(state => state.clearSelection);
+  const scope = useFileBrowserStore(state => state.scope);
+  const setScope = useFileBrowserStore(state => state.setScope);
+  const customCollections = useFileBrowserStore(state => state.customCollections);
+  const createCustomCollection = useFileBrowserStore(state => state.createCustomCollection);
   const createSnapshotCollection = useFileBrowserStore(state => state.createSnapshotCollection);
+  const sourceConnections = useFileBrowserStore(state => state.sourceConnections);
   const searchQuery = useFileBrowserStore(state => state.searchQuery);
   const setSearchQuery = useFileBrowserStore(state => state.setSearchQuery);
   const filterByType = useFileBrowserStore(state => state.filterByType);
+  const setFilterByType = useFileBrowserStore(state => state.setFilterByType);
   const filterBySource = useFileBrowserStore(state => state.filterBySource);
   const setFilterBySource = useFileBrowserStore(state => state.setFilterBySource);
+  const sortField = useFileBrowserStore(state => state.sortField);
+  const sortOrder = useFileBrowserStore(state => state.sortOrder);
+  const setSortField = useFileBrowserStore(state => state.setSortField);
+  const setSortOrder = useFileBrowserStore(state => state.setSortOrder);
   const groupByDate = useFileBrowserStore(state => state.groupByDate);
   const toggleGroupByDate = useFileBrowserStore(state => state.toggleGroupByDate);
-  const savedViews = useFileBrowserStore(state => state.savedViews);
-  const activeSavedViewId = useFileBrowserStore(state => state.activeSavedViewId);
-  const applySavedView = useFileBrowserStore(state => state.applySavedView);
-  const clearActiveSavedView = useFileBrowserStore(state => state.clearActiveSavedView);
   const savedSearches = useFileBrowserStore(state => state.savedSearches);
   const activeSavedSearchId = useFileBrowserStore(state => state.activeSavedSearchId);
   const createSavedSearch = useFileBrowserStore(state => state.createSavedSearch);
   const applySavedSearch = useFileBrowserStore(state => state.applySavedSearch);
   const updateSavedSearch = useFileBrowserStore(state => state.updateSavedSearch);
-  const duplicateSavedSearch = useFileBrowserStore(state => state.duplicateSavedSearch);
-  const deleteSavedSearch = useFileBrowserStore(state => state.deleteSavedSearch);
-  const reorderSavedSearches = useFileBrowserStore(state => state.reorderSavedSearches);
-  const clearActiveSavedSearch = useFileBrowserStore(state => state.clearActiveSavedSearch);
   const isContentSearchLoading = useFileBrowserStore(state => state.isContentSearchLoading);
   const setContentSearchMatches = useFileBrowserStore(state => state.setContentSearchMatches);
   const setContentSearchLoading = useFileBrowserStore(state => state.setContentSearchLoading);
@@ -143,40 +138,30 @@ export function FileBrowser() {
   const contextMenuDocument = useFileBrowserStore(state => state.contextMenuDocument);
   const openContextMenu = useFileBrowserStore(state => state.openContextMenu);
   const closeContextMenu = useFileBrowserStore(state => state.closeContextMenu);
-  const refreshFiles = useFileBrowserStore(state => state.refreshFiles);
-  const loadFiles = useFileBrowserStore(state => state.loadFiles);
+  const focusedDocumentId = useFileBrowserStore(state => state.focusedDocumentId);
+  const setFocusedDocument = useFileBrowserStore(state => state.setFocusedDocument);
+  const isNeighborhoodOpen = useFileBrowserStore(state => state.isNeighborhoodOpen);
+  const toggleNeighborhood = useFileBrowserStore(state => state.toggleNeighborhood);
 
+  const [isRailOpen, setIsRailOpen] = useState(true);
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
   const [renameDocument, setRenameDocument] = useState<DocumentMetadata | null>(null);
   const [pendingDeleteDoc, setPendingDeleteDoc] = useState<DocumentMetadata | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState<{ ids: string[]; count: number } | null>(null);
-  const [pendingDeleteSavedSearch, setPendingDeleteSavedSearch] = useState<{ id: string; name: string } | null>(null);
   const [savedSearchNameDialogMode, setSavedSearchNameDialogMode] = useState<SavedSearchNameDialogMode | null>(null);
   const [savedSearchNameDialogValue, setSavedSearchNameDialogValue] = useState('');
   const [savedSearchNameDialogTargetId, setSavedSearchNameDialogTargetId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [spaces, setSpaces] = useState<ConversationSpaceDto[]>([]);
-  const [selectedBulkSpaceId, setSelectedBulkSpaceId] = useState('');
   const [isLoadingSpaces, setIsLoadingSpaces] = useState(false);
   const [isAssigningSpace, setIsAssigningSpace] = useState(false);
-  const [draggedSearchId, setDraggedSearchId] = useState<string | null>(null);
 
   const contentCacheRef = useRef<Map<string, string>>(new Map());
   const contentReadFailuresRef = useRef<Set<string>>(new Set());
   const contentSearchSequenceRef = useRef(0);
-  const documentSpaceMembershipCacheRef = useRef<Map<string, string[]>>(new Map());
-  const bulkSpaceSelectionSequenceRef = useRef(0);
 
   const navigate = useNavigate();
-
-  // Load files on initial mount only
-  useEffect(() => {
-    if (!activeSavedViewId && viewMode !== 'tree') {
-      setViewMode('tree');
-    }
-    void loadFiles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let cancelled = false;
@@ -221,80 +206,9 @@ export function FileBrowser() {
         contentReadFailuresRef.current.delete(id);
       }
     }
-
-    for (const id of documentSpaceMembershipCacheRef.current.keys()) {
-      if (!currentIds.has(id)) {
-        documentSpaceMembershipCacheRef.current.delete(id);
-      }
-    }
   }, [documents]);
 
-  useEffect(() => {
-    const selectedIds = Array.from(selectedDocumentIds);
-    const requestId = bulkSpaceSelectionSequenceRef.current + 1;
-    bulkSpaceSelectionSequenceRef.current = requestId;
-    let cancelled = false;
-
-    const inferSelectedSpace = async () => {
-      if (selectedIds.length === 0) {
-        setSelectedBulkSpaceId('');
-        return;
-      }
-
-      if (spaces.length === 0) {
-        setSelectedBulkSpaceId('');
-        return;
-      }
-
-      const validSpaceIds = new Set(spaces.map((space) => space.id));
-
-      const membershipsByDocument = await Promise.all(
-        selectedIds.map(async (documentId) => {
-          const cached = documentSpaceMembershipCacheRef.current.get(documentId);
-          if (cached) {
-            return cached;
-          }
-
-          const result = await VaultAPI.listDocumentSpaceMemberships(documentId);
-          if (!result.ok) {
-            return [];
-          }
-
-          const spaceIds = result.data.map((membership) => membership.spaceId);
-          documentSpaceMembershipCacheRef.current.set(documentId, spaceIds);
-          return spaceIds;
-        })
-      );
-
-      if (cancelled || bulkSpaceSelectionSequenceRef.current !== requestId) {
-        return;
-      }
-
-      const normalizedMemberships = membershipsByDocument.map((spaceIds) =>
-        spaceIds.filter((spaceId) => validSpaceIds.has(spaceId))
-      );
-
-      if (normalizedMemberships.length === 0) {
-        setSelectedBulkSpaceId('');
-        return;
-      }
-
-      let sharedSpaceIds = new Set(normalizedMemberships[0]);
-      for (let index = 1; index < normalizedMemberships.length; index += 1) {
-        const next = new Set(normalizedMemberships[index]);
-        sharedSpaceIds = new Set([...sharedSpaceIds].filter((spaceId) => next.has(spaceId)));
-      }
-
-      const inferredSpaceId = spaces.find((space) => sharedSpaceIds.has(space.id))?.id ?? '';
-      setSelectedBulkSpaceId(inferredSpaceId);
-    };
-
-    void inferSelectedSpace();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedDocumentIds, spaces]);
+  const indexedFolders = useMemo(() => indexedFoldersQuery.data ?? [], [indexedFoldersQuery.data]);
 
   const sourceCounts = useMemo(() => {
     let web = 0;
@@ -308,6 +222,53 @@ export function FileBrowser() {
     }
     return { all: documents.length, web, local };
   }, [documents]);
+
+  // Counted over the unfiltered list on purpose: the facet line is a readout of
+  // the whole library, so the numbers do not move while a facet is active.
+  const identity = useCorpusIdentity(documents);
+
+  const documentsById = useMemo(
+    () => new Map(documents.map((doc) => [doc.id, doc])),
+    [documents]
+  );
+  const focusedDoc = useMemo(
+    () => (focusedDocumentId ? documentsById.get(focusedDocumentId) ?? null : null),
+    [documentsById, focusedDocumentId]
+  );
+
+  const themesEnabled = documents.length >= THEMES_MIN_DOCUMENTS;
+  const themesQuery = useClustersQuery(themesEnabled);
+  const themes = useMemo(() => themesQuery.data ?? [], [themesQuery.data]);
+  const rebuildThemes = useRebuildThemes();
+  const isFindingThemes = rebuildThemes.isPending;
+  const themeProgress = useRebuildProgress(isFindingThemes);
+  const hasRunThemes = themes.length > 0;
+
+  const headerMeta = useMemo(
+    () =>
+      [
+        plural(documents.length, 'document'),
+        `${sourceCounts.local.toLocaleString()} local`,
+        `${sourceCounts.web.toLocaleString()} web`,
+        plural(indexedFolders.length, 'folder'),
+      ].join(' · '),
+    [documents.length, indexedFolders.length, sourceCounts.local, sourceCounts.web]
+  );
+
+  const scopeName = useMemo(() => {
+    if (scope.kind === 'folder') {
+      return pathBasename(scope.path);
+    }
+    if (scope.kind === 'collection') {
+      return customCollections.find((collection) => collection.id === scope.id)?.name ?? 'Collection';
+    }
+    if (scope.kind === 'theme') {
+      return themes.find((theme) => theme.id === scope.id)?.label ?? 'Theme';
+    }
+    if (filterBySource === 'web') return 'Web';
+    if (filterBySource === 'local') return 'Local';
+    return 'All documents';
+  }, [customCollections, filterBySource, scope, themes]);
 
   const normalizedSearchQuery = useMemo(() => normalizeSearchToken(searchQuery), [searchQuery]);
   const activeFilter = useMemo(() => normalizeSearchToken(filterByType ?? '') || null, [filterByType]);
@@ -405,21 +366,8 @@ export function FileBrowser() {
     setContentSearchMatches,
   ]);
 
-  const filteredCount = filteredDocuments.length;
-  const pinnedSearches = useMemo(
-    () => savedSearches.filter((search) => search.pinned),
-    [savedSearches]
-  );
-  const activeSavedSearch = useMemo(
-    () => savedSearches.find((search) => search.id === activeSavedSearchId) ?? null,
-    [activeSavedSearchId, savedSearches]
-  );
-  const activeSavedViewName = useMemo(
-    () => savedViews.find((view) => view.id === activeSavedViewId)?.name ?? null,
-    [activeSavedViewId, savedViews]
-  );
-
   const handleFileOpen = useCallback(async (doc: DocumentMetadata) => {
+    setFocusedDocument(doc.id);
     if (isWebDocument(doc)) {
       if (isHttpUrl(doc.filePath)) {
         try {
@@ -464,22 +412,158 @@ export function FileBrowser() {
     if (!openById.ok) {
       toast.error('Failed to open file', { message: openById.error });
     }
+  }, [setFocusedDocument]);
+
+  const invalidateLibrary = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: LIBRARY_DOCUMENTS_QUERY_KEY });
+  }, [queryClient]);
+
+  const askAbout = useCallback(
+    (doc: DocumentMetadata) => {
+      navigate(`/chat?${new URLSearchParams({ new: '1', documentId: doc.id }).toString()}`);
+    },
+    [navigate]
+  );
+
+  /** An absolute local path, resolving through the backend when needed. */
+  const resolveDocumentPath = useCallback(async (doc: DocumentMetadata): Promise<string | null> => {
+    if (!isHttpUrl(doc.filePath) && isAbsolutePath(doc.filePath)) return doc.filePath;
+    const result = await VaultAPI.getFilePathById(doc.id);
+    return result.ok ? result.data : null;
   }, []);
+
+  const reindexDocument = useCallback(
+    async (doc: DocumentMetadata) => {
+      const path = await resolveDocumentPath(doc);
+      if (!path) {
+        toast.error(`Couldn't reindex ${doc.fileName}`, { message: 'No file path for this document.' });
+        return;
+      }
+      const result = await VaultAPI.reindexFile(path);
+      if (result.ok) {
+        toast.success(`Reindexing ${doc.fileName}`);
+      } else {
+        toast.error(`Couldn't reindex ${doc.fileName}`, { message: result.error });
+      }
+    },
+    [resolveDocumentPath]
+  );
+
+  const removeFromIndex = useCallback(
+    async (doc: DocumentMetadata) => {
+      const path = await resolveDocumentPath(doc);
+      if (!path) {
+        toast.error(`Couldn't remove ${doc.fileName} from the index`, {
+          message: 'No file path for this document.',
+        });
+        return;
+      }
+      const result = await VaultAPI.removeIndexedFile(path);
+      if (result.ok) {
+        toast.success(`Removed ${doc.fileName} from the index`);
+        invalidateLibrary();
+      } else {
+        toast.error(`Couldn't remove ${doc.fileName} from the index`, { message: result.error });
+      }
+    },
+    [invalidateLibrary, resolveDocumentPath]
+  );
+
+  const handleFindThemes = useCallback(() => {
+    rebuildThemes.mutate();
+  }, [rebuildThemes]);
+
+  const openConversation = useCallback(
+    (conversationId: string) => {
+      navigate(`/chat?${new URLSearchParams({ conversationId }).toString()}`);
+    },
+    [navigate]
+  );
+
+  const openDocumentById = useCallback(
+    (documentId: string) => {
+      const doc = documentsById.get(documentId);
+      if (doc) void handleFileOpen(doc);
+    },
+    [documentsById, handleFileOpen]
+  );
+
+  // A theme that vanished in the last run must not leave the list empty and
+  // unexplained; fall back to the whole library.
+  useEffect(() => {
+    if (scope.kind === 'theme' && themes.length > 0 && !themes.some((theme) => theme.id === scope.id)) {
+      setScope({ kind: 'all' });
+    }
+  }, [scope, setScope, themes]);
+
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      {
+        id: 'library.askAboutDocument',
+        label: 'Ask about this document',
+        group: 'Library',
+        icon: MessageSquare,
+        enabled: focusedDoc !== null,
+        run: () => {
+          if (focusedDoc) askAbout(focusedDoc);
+        },
+      },
+      {
+        id: 'library.reindexFile',
+        label: 'Reindex this file',
+        group: 'Library',
+        icon: RefreshCw,
+        enabled: focusedDoc !== null && !isWebDocument(focusedDoc),
+        run: () => {
+          if (focusedDoc) void reindexDocument(focusedDoc);
+        },
+      },
+      {
+        id: 'library.removeFromIndex',
+        label: 'Remove this file from the index',
+        group: 'Library',
+        icon: EyeOff,
+        enabled: focusedDoc !== null && !isWebDocument(focusedDoc),
+        run: () => {
+          if (focusedDoc) void removeFromIndex(focusedDoc);
+        },
+      },
+      {
+        id: 'library.toggleRelated',
+        label: isNeighborhoodOpen ? 'Hide related documents' : 'Show related documents',
+        group: 'Library',
+        icon: PanelRight,
+        enabled: focusedDoc !== null,
+        run: toggleNeighborhood,
+      },
+      {
+        id: 'library.findThemes',
+        label: hasRunThemes ? 'Refresh themes' : 'Find themes in vault',
+        group: 'Library',
+        icon: Layers,
+        enabled: themesEnabled && !isFindingThemes,
+        run: handleFindThemes,
+      },
+    ],
+    [
+      askAbout,
+      focusedDoc,
+      handleFindThemes,
+      hasRunThemes,
+      isFindingThemes,
+      isNeighborhoodOpen,
+      reindexDocument,
+      removeFromIndex,
+      themesEnabled,
+      toggleNeighborhood,
+    ]
+  );
+  useRegisterPaletteCommands(paletteCommands);
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent, doc: DocumentMetadata) => {
       event.preventDefault();
-      const fileNode = {
-        id: doc.id,
-        name: doc.fileName,
-        path: doc.filePath,
-        type: 'file' as const,
-        size: 0,
-        modified: doc.modifiedAt,
-        extension: doc.fileType,
-        isIndexed: true,
-      };
-      openContextMenu({ x: event.clientX, y: event.clientY }, fileNode);
+      openContextMenu({ x: event.clientX, y: event.clientY }, doc);
     },
     [openContextMenu]
   );
@@ -488,47 +572,40 @@ export function FileBrowser() {
     await refreshFiles();
   }, [refreshFiles]);
 
-  const handleSaveResultsAsCollection = useCallback(() => {
-    const docIds = filteredDocuments.map((doc) => doc.id);
-    if (docIds.length === 0) {
-      toast.warning('No results to freeze');
-      return;
-    }
+  const handleAddFolder = useCallback(() => {
+    navigate('/ingest');
+  }, [navigate]);
 
-    const queryLabel = searchQuery.trim();
-    const timestamp = new Date().toLocaleString();
-    const suggestedName = queryLabel
-      ? `Frozen: ${queryLabel}`
-      : `Frozen ${timestamp}`;
-
-    const collectionId = createSnapshotCollection(suggestedName, docIds);
+  const handleCreateCollection = useCallback((name: string) => {
+    const collectionId = createCustomCollection(name);
     if (!collectionId) {
-      toast.warning('Frozen collection not created', {
-        message: 'Name may already exist at this level.',
-      });
+      toast.warning('Collection not created', { message: 'That name is already in use.' });
+      return;
+    }
+    setScope({ kind: 'collection', id: collectionId });
+  }, [createCustomCollection, setScope]);
+
+  const handleSnapshotSelection = useCallback(() => {
+    const docIds = Array.from(selectedDocumentIds);
+    if (docIds.length === 0) {
       return;
     }
 
-    toast.success('Frozen collection created', {
-      message: `${docIds.length} documents captured as a locked collection.`,
-    });
-  }, [createSnapshotCollection, filteredDocuments, searchQuery]);
-
-  const handleSavedViewChange = useCallback((value: string) => {
-    if (!value) {
-      clearActiveSavedView();
+    const label = searchQuery.trim() || new Date().toLocaleDateString();
+    const collectionId = createSnapshotCollection(`Snapshot: ${label}`, docIds);
+    if (!collectionId) {
+      toast.warning('Snapshot not created', { message: 'That name is already in use.' });
       return;
     }
-    applySavedView(value);
-  }, [applySavedView, clearActiveSavedView]);
 
-  const handleSavedSearchChange = useCallback((value: string) => {
-    if (!value) {
-      clearActiveSavedSearch();
-      return;
-    }
-    applySavedSearch(value);
-  }, [applySavedSearch, clearActiveSavedSearch]);
+    toast.success(`${plural(docIds.length, 'document')} captured`);
+    clearSelection();
+  }, [clearSelection, createSnapshotCollection, searchQuery, selectedDocumentIds]);
+
+  const handleSortChange = useCallback((field: SortField, order: SortOrder) => {
+    setSortField(field);
+    setSortOrder(order);
+  }, [setSortField, setSortOrder]);
 
   const openSavedSearchNameDialog = useCallback((
     mode: SavedSearchNameDialogMode,
@@ -557,18 +634,16 @@ export function FileBrowser() {
       const searchId = createSavedSearch(name);
       if (!searchId) {
         toast.warning('Saved search not created', {
-          message: 'Name may already exist, or no query/filter is active.',
+          message: 'That name is already in use, or nothing is being searched.',
         });
         return;
       }
-      toast.success('Saved search created');
       closeSavedSearchNameDialog();
       return;
     }
 
     if (savedSearchNameDialogMode === 'rename' && savedSearchNameDialogTargetId) {
       updateSavedSearch(savedSearchNameDialogTargetId, { name });
-      toast.success('Saved search renamed');
       closeSavedSearchNameDialog();
     }
   }, [
@@ -580,156 +655,36 @@ export function FileBrowser() {
     updateSavedSearch,
   ]);
 
-  const handleSaveSearch = useCallback(() => {
+  const handleCreateSavedSearch = useCallback((name: string) => {
     const hasCriteria = Boolean(searchQuery.trim()) || Boolean(activeFilter) || filterBySource !== 'all';
     if (!hasCriteria) {
-      toast.warning('No active search to save');
+      toast.warning('Nothing to save', { message: 'Search or filter first.' });
       return;
     }
 
-    const suggestedName = searchQuery.trim()
-      ? `Search: ${searchQuery.trim()}`
-      : `Search ${new Date().toLocaleString()}`;
-    openSavedSearchNameDialog('create', suggestedName);
-  }, [activeFilter, filterBySource, openSavedSearchNameDialog, searchQuery]);
-
-  const handleReorderPinnedSearch = useCallback((sourceId: string, targetId: string) => {
-    if (sourceId === targetId) {
-      return;
+    const searchId = createSavedSearch(name);
+    if (!searchId) {
+      toast.warning('Saved search not created', { message: 'That name is already in use.' });
     }
+  }, [activeFilter, createSavedSearch, filterBySource, searchQuery]);
 
-    const pinnedIds = pinnedSearches.map((search) => search.id);
-    const sourceIndex = pinnedIds.indexOf(sourceId);
-    const targetIndex = pinnedIds.indexOf(targetId);
-    if (sourceIndex < 0 || targetIndex < 0) {
-      return;
-    }
-
-    const nextPinnedIds = [...pinnedIds];
-    const [moved] = nextPinnedIds.splice(sourceIndex, 1);
-    nextPinnedIds.splice(targetIndex, 0, moved);
-
-    const unpinnedIds = savedSearches
-      .filter((search) => !search.pinned)
-      .map((search) => search.id);
-    reorderSavedSearches([...nextPinnedIds, ...unpinnedIds]);
-  }, [pinnedSearches, reorderSavedSearches, savedSearches]);
-
-  const handleMovePinnedSearchByDirection = useCallback((searchId: string, direction: 'left' | 'right') => {
-    const pinnedIds = pinnedSearches.map((search) => search.id);
-    const sourceIndex = pinnedIds.indexOf(searchId);
-    if (sourceIndex < 0) {
-      return;
-    }
-
-    const targetIndex = direction === 'left' ? sourceIndex - 1 : sourceIndex + 1;
-    if (targetIndex < 0 || targetIndex >= pinnedIds.length) {
-      return;
-    }
-
-    const nextPinnedIds = [...pinnedIds];
-    const [moved] = nextPinnedIds.splice(sourceIndex, 1);
-    nextPinnedIds.splice(targetIndex, 0, moved);
-
-    const unpinnedIds = savedSearches
-      .filter((search) => !search.pinned)
-      .map((search) => search.id);
-    reorderSavedSearches([...nextPinnedIds, ...unpinnedIds]);
-  }, [pinnedSearches, reorderSavedSearches, savedSearches]);
-
-  const handleRenamePinnedSearch = useCallback((searchId: string, name: string) => {
-    openSavedSearchNameDialog('rename', name, searchId);
-  }, [openSavedSearchNameDialog]);
-
-  const handleRenameActiveSearch = useCallback(() => {
-    if (!activeSavedSearch) {
-      return;
-    }
-    openSavedSearchNameDialog('rename', activeSavedSearch.name, activeSavedSearch.id);
-  }, [activeSavedSearch, openSavedSearchNameDialog]);
-
-  const handleDuplicateActiveSearch = useCallback(() => {
-    if (!activeSavedSearch) {
-      return;
-    }
-
-    const duplicateId = duplicateSavedSearch(activeSavedSearch.id);
-    if (!duplicateId) {
-      toast.warning('Saved search duplication failed');
-      return;
-    }
-
-    toast.success('Saved search duplicated');
-  }, [activeSavedSearch, duplicateSavedSearch]);
-
-  const handleTogglePinActiveSearch = useCallback(() => {
-    if (!activeSavedSearch) {
-      return;
-    }
-
-    updateSavedSearch(activeSavedSearch.id, { pinned: !activeSavedSearch.pinned });
-  }, [activeSavedSearch, updateSavedSearch]);
-
-  const handleDeleteActiveSearch = useCallback(() => {
-    if (!activeSavedSearch) {
-      return;
-    }
-    setPendingDeleteSavedSearch({
-      id: activeSavedSearch.id,
-      name: activeSavedSearch.name,
-    });
-  }, [activeSavedSearch]);
-
-  const executeDeleteSavedSearch = useCallback(() => {
-    if (!pendingDeleteSavedSearch) {
-      return;
-    }
-
-    deleteSavedSearch(pendingDeleteSavedSearch.id);
-    toast.success('Saved search deleted');
-    setPendingDeleteSavedSearch(null);
-  }, [deleteSavedSearch, pendingDeleteSavedSearch]);
-
-  const handleBulkDelete = useCallback(async () => {
-    const selectedIds = Array.from(selectedDocumentIds);
-    const count = selectedIds.length;
-
-    if (count === 0) return;
-
-    setPendingBulkDelete({ ids: selectedIds, count });
-  }, [selectedDocumentIds]);
-
-  const handleBulkAssignToSpace = useCallback(async () => {
+  const handleBulkAssignToSpace = useCallback(async (spaceId: string) => {
     const selectedIds = Array.from(selectedDocumentIds);
     if (selectedIds.length === 0) {
-      toast.warning('No documents selected');
-      return;
-    }
-
-    if (!selectedBulkSpaceId) {
-      toast.warning('Choose a space first');
       return;
     }
 
     setIsAssigningSpace(true);
-    const result = await VaultAPI.setDocumentsSpaceMembership(selectedIds, selectedBulkSpaceId, true);
+    const result = await VaultAPI.setDocumentsSpaceMembership(selectedIds, spaceId, true);
     if (result.ok) {
-      for (const documentId of selectedIds) {
-        const existingSpaceIds = documentSpaceMembershipCacheRef.current.get(documentId) ?? [];
-        if (!existingSpaceIds.includes(selectedBulkSpaceId)) {
-          documentSpaceMembershipCacheRef.current.set(documentId, [...existingSpaceIds, selectedBulkSpaceId]);
-        }
-      }
-      const spaceName = spaces.find((space) => space.id === selectedBulkSpaceId)?.name ?? 'selected space';
-      toast.success(
-        `${selectedIds.length} document${selectedIds.length === 1 ? '' : 's'} assigned to ${spaceName}`
-      );
+      const spaceName = spaces.find((space) => space.id === spaceId)?.name ?? 'space';
+      toast.success(`${plural(selectedIds.length, 'document')} added to ${spaceName}`);
       clearSelection();
     } else {
-      toast.error('Failed to assign selected documents', { message: result.error });
+      toast.error('Failed to add documents to space', { message: result.error });
     }
     setIsAssigningSpace(false);
-  }, [clearSelection, selectedBulkSpaceId, selectedDocumentIds, spaces]);
+  }, [clearSelection, selectedDocumentIds, spaces]);
 
   const executeBulkDelete = useCallback(async () => {
     if (!pendingBulkDelete) return;
@@ -751,14 +706,14 @@ export function FileBrowser() {
     }
 
     if (successCount > 0) {
-      toast.success(`${successCount} document${successCount === 1 ? '' : 's'} deleted successfully`);
+      toast.success(`${plural(successCount, 'document')} deleted`);
       clearSelection();
       await refreshFiles();
     }
 
     if (errorCount > 0) {
-      toast.error(`Failed to delete ${errorCount} document${errorCount === 1 ? '' : 's'}`, {
-        message: errors.slice(0, 3).join(', ') + (errors.length > 3 ? '...' : ''),
+      toast.error(`Failed to delete ${plural(errorCount, 'document')}`, {
+        message: errors.slice(0, 3).join(', ') + (errors.length > 3 ? '…' : ''),
       });
     }
 
@@ -784,7 +739,7 @@ export function FileBrowser() {
     setIsDeleting(true);
     const result = await VaultAPI.deleteDocument(pendingDeleteDoc.id);
     if (result.ok) {
-      toast.success('Document deleted successfully');
+      toast.success('Document deleted');
       await refreshFiles();
     } else {
       toast.error('Failed to delete document', { message: result.error });
@@ -793,148 +748,157 @@ export function FileBrowser() {
     setPendingDeleteDoc(null);
   }, [pendingDeleteDoc, refreshFiles]);
 
+  const viewProps = {
+    onFileOpen: handleAsyncEvent(handleFileOpen),
+    onContextMenu: handleContextMenu,
+    onRename: handleRename,
+    onDelete: handleAsyncEvent(handleDelete),
+    onAddFolder: handleAddFolder,
+  };
+
   return (
-    <div className="flex h-full flex-col bg-[hsl(var(--surface))]">
-      <LibraryToolbar
-        filteredCount={filteredCount}
-        totalCount={documents.length}
-        selectedCount={selectedDocumentIds.size}
-        savedViews={savedViews}
-        activeSavedViewId={activeSavedViewId}
-        activeSavedViewName={activeSavedViewName}
-        onSavedViewChange={handleSavedViewChange}
-        onClearActiveSavedView={clearActiveSavedView}
-        savedSearches={savedSearches}
-        activeSavedSearchId={activeSavedSearchId}
-        activeSavedSearchName={activeSavedSearch?.name ?? null}
-        onSavedSearchChange={handleSavedSearchChange}
-        onClearActiveSavedSearch={clearActiveSavedSearch}
-        onRenameActiveSearch={handleRenameActiveSearch}
-        onDuplicateActiveSearch={handleDuplicateActiveSearch}
-        onTogglePinActiveSearch={handleTogglePinActiveSearch}
-        onDeleteActiveSearch={handleDeleteActiveSearch}
-        onSaveSearch={handleSaveSearch}
-        saveSearchDisabled={!searchQuery.trim() && !activeFilter && filterBySource === 'all'}
-        onSaveResultsAsCollection={handleSaveResultsAsCollection}
-        saveResultsDisabled={filteredCount === 0}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        onClearSearch={() => setSearchQuery('')}
-        isContentSearchLoading={isContentSearchLoading}
-        hasNormalizedSearchQuery={Boolean(normalizedSearchQuery)}
-        sourceCounts={sourceCounts}
-        filterBySource={filterBySource}
-        onFilterBySourceChange={setFilterBySource}
-        groupByDate={groupByDate}
-        onToggleGroupByDate={toggleGroupByDate}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        density={density}
-        onDensityChange={setDensity}
-        onRefresh={handleAsyncEvent(handleRefresh)}
-        normalizedSearchQuery={normalizedSearchQuery}
-        activeFilter={activeFilter}
-        pinnedSearches={pinnedSearches}
-        draggedSearchId={draggedSearchId}
-        onSetDraggedSearchId={setDraggedSearchId}
-        onReorderPinnedSearch={handleReorderPinnedSearch}
-        onMovePinnedSearchByDirection={handleMovePinnedSearchByDirection}
-        onRenamePinnedSearch={handleRenamePinnedSearch}
-        onApplySavedSearch={applySavedSearch}
-      />
-
-      {selectedDocumentIds.size > 0 && (
-        <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[hsl(var(--accent))]/20 bg-[hsl(var(--accent-muted))]/25 px-3 py-2">
-          <span className="text-sm font-semibold text-[hsl(var(--text-primary))]">
-            {selectedDocumentIds.size} selected
-          </span>
-          <select
-            value={selectedBulkSpaceId}
-            onChange={(event) => setSelectedBulkSpaceId(event.target.value)}
-            disabled={isLoadingSpaces || isAssigningSpace || spaces.length === 0}
-            className="h-9 min-w-[180px] rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 text-sm text-[hsl(var(--text-primary))]"
-            aria-label="Bulk assign space"
-          >
-            <option value="">
-              {isLoadingSpaces ? 'Loading spaces...' : 'Choose space'}
-            </option>
-            {spaces.map((space) => (
-              <option key={space.id} value={space.id}>
-                {space.name}{space.isArchived ? ' (Archived)' : ''}
-              </option>
-            ))}
-          </select>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleAsyncEvent(handleBulkAssignToSpace)}
-            disabled={isAssigningSpace || !selectedBulkSpaceId || isLoadingSpaces || spaces.length === 0}
-            className="h-9 rounded-lg border border-[hsl(var(--accent))]/30 px-3 text-sm text-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-muted))]/40"
-          >
-            Assign to Space
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleAsyncEvent(handleBulkDelete)}
-            className="h-9 rounded-lg border border-[hsl(var(--danger-fg))]/30 px-3 text-sm text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))]"
-          >
-            Delete Selected
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={clearSelection}
-            className="h-9 rounded-lg border border-[hsl(var(--border-subtle))] px-3 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]"
-          >
-            Clear Selection
-          </Button>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-hidden px-4 pb-4 pt-0.5">
-        <div className="h-full overflow-hidden rounded-2xl border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] shadow-[var(--shadow-sm)]">
-          {documents.length === 0 ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="max-w-md p-8 text-center">
-                <div className="mb-4 flex justify-center">
-                  <div className="rounded-full border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
-                    <FileUp className="h-12 w-12 text-[hsl(var(--text-tertiary))]" />
-                  </div>
-                </div>
-                <h3 className="mb-2 text-xl font-semibold">No Documents Yet</h3>
-                <p className="mb-6 text-[hsl(var(--text-secondary))]">
-                  Get started by adding files to your knowledge base.
-                </p>
-                <Button onClick={() => navigate('/ingest')} className="inline-flex items-center gap-2">
-                  <FileUp className="h-4 w-4" />
-                  Add Files
-                </Button>
-              </div>
-            </div>
-          ) : (
+    <main className="h-full overflow-y-auto bg-bg">
+      <div
+        className={`mx-auto flex h-full w-full flex-col px-6 pb-10 pt-10 ${
+          isNeighborhoodOpen && focusedDoc ? 'max-w-[1360px]' : 'max-w-[1100px]'
+        }`}
+      >
+        <PageHeader
+          title="Library"
+          meta={headerMeta}
+          actions={
             <>
-              {viewMode === 'tree' && (
-                <TreeView
-                  onFileOpen={handleAsyncEvent(handleFileOpen)}
-                  onContextMenu={handleContextMenu}
-                  onRename={handleRename}
-                  onDelete={handleAsyncEvent(handleDelete)}
-                />
-              )}
-              {viewMode === 'list' && (
-                <ListView
-                  onFileOpen={handleAsyncEvent(handleFileOpen)}
-                  onContextMenu={handleContextMenu}
-                  onRename={handleRename}
-                  onDelete={handleAsyncEvent(handleDelete)}
-                />
-              )}
-              {viewMode === 'grid' && (
-                <GridView onFileOpen={handleAsyncEvent(handleFileOpen)} onContextMenu={handleContextMenu} />
-              )}
+              <IconButton
+                label="List view"
+                active={viewMode === 'list'}
+                onClick={() => setViewMode('list')}
+              >
+                <List strokeWidth={1.75} />
+              </IconButton>
+              <IconButton
+                label="Grid view"
+                active={viewMode === 'grid'}
+                onClick={() => setViewMode('grid')}
+              >
+                <LayoutGrid strokeWidth={1.75} />
+              </IconButton>
+              <IconButton
+                label="Tree view"
+                active={viewMode === 'tree'}
+                onClick={() => setViewMode('tree')}
+              >
+                <ListTree strokeWidth={1.75} />
+              </IconButton>
+              <IconButton
+                label="Related"
+                active={isNeighborhoodOpen}
+                disabled={focusedDocumentId === null}
+                onClick={toggleNeighborhood}
+              >
+                <PanelRight strokeWidth={1.75} />
+              </IconButton>
+              <IconButton label="Refresh" onClick={handleAsyncEvent(handleRefresh)}>
+                <RefreshCw strokeWidth={1.75} />
+              </IconButton>
             </>
-          )}
+          }
+        />
+
+        <LibraryToolbar
+          isRailOpen={isRailOpen}
+          onToggleRail={() => setIsRailOpen((open) => !open)}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          isContentSearchLoading={isContentSearchLoading}
+          sourceCounts={sourceCounts}
+          filterBySource={filterBySource}
+          onFilterBySourceChange={setFilterBySource}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          onSortChange={handleSortChange}
+          groupByDate={groupByDate}
+          onToggleGroupByDate={toggleGroupByDate}
+        />
+
+        <div className="flex min-h-0 flex-1 gap-6">
+          {isRailOpen ? (
+            <LibraryRail
+              scope={scope}
+              onScopeChange={setScope}
+              collections={customCollections}
+              onCreateCollection={handleCreateCollection}
+              savedSearches={savedSearches}
+              activeSavedSearchId={activeSavedSearchId}
+              onApplySavedSearch={applySavedSearch}
+              onRenameSavedSearch={(searchId, name) =>
+                openSavedSearchNameDialog('rename', name, searchId)
+              }
+              onCreateSavedSearch={handleCreateSavedSearch}
+              sources={sourceConnections}
+              themes={themes}
+              themesEnabled={themesEnabled}
+              hasRunThemes={hasRunThemes}
+              isFindingThemes={isFindingThemes}
+              themeProgress={themeProgress}
+              onFindThemes={handleFindThemes}
+            />
+          ) : null}
+
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex items-baseline gap-2">
+              <h2 className="pb-3 text-lg font-medium text-text-secondary">{scopeName}</h2>
+              <span className="text-sm tabular-nums text-text-muted">
+                {filteredDocuments.length.toLocaleString()}
+              </span>
+            </div>
+            <TypeFacets
+              buckets={identity.buckets}
+              activeType={filterByType}
+              onSelect={setFilterByType}
+            />
+
+            {selectedDocumentIds.size > 0 ? (
+              <SelectionBar
+                selectedCount={selectedDocumentIds.size}
+                spaces={spaces}
+                isLoadingSpaces={isLoadingSpaces}
+                isAssigningSpace={isAssigningSpace}
+                onAssignToSpace={handleAsyncEvent(handleBulkAssignToSpace)}
+                onSnapshot={handleSnapshotSelection}
+                onDelete={() =>
+                  setPendingBulkDelete({
+                    ids: Array.from(selectedDocumentIds),
+                    count: selectedDocumentIds.size,
+                  })
+                }
+                onSelectAll={() => selectAll(filteredDocuments.map((doc) => doc.id))}
+                onClear={clearSelection}
+              />
+            ) : null}
+
+            <div className="min-h-0 flex-1">
+              {viewMode === 'tree' && <TreeView {...viewProps} />}
+              {viewMode === 'list' && <ListView {...viewProps} />}
+              {viewMode === 'grid' && (
+                <GridView
+                  onFileOpen={viewProps.onFileOpen}
+                  onContextMenu={viewProps.onContextMenu}
+                  onAddFolder={viewProps.onAddFolder}
+                />
+              )}
+            </div>
+          </div>
+
+          {isNeighborhoodOpen && focusedDoc ? (
+            <NeighborhoodPanel
+              documentId={focusedDoc.id}
+              documentTitle={focusedDoc.fileName}
+              documentsById={documentsById}
+              onOpenDocument={openDocumentById}
+              onOpenConversation={openConversation}
+              onClose={toggleNeighborhood}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -948,6 +912,7 @@ export function FileBrowser() {
           }}
           onRename={handleRename}
           onDelete={handleAsyncEvent(handleDelete)}
+          onIndexChanged={invalidateLibrary}
         />
       )}
 
@@ -973,7 +938,7 @@ export function FileBrowser() {
       <ConfirmDialog
         isOpen={pendingDeleteDoc !== null}
         title="Delete document?"
-        message={`Delete "${pendingDeleteDoc?.fileName ?? 'this document'}"? This will permanently remove the document and its embeddings from the search index.`}
+        message={`Delete "${pendingDeleteDoc?.fileName ?? 'this document'}"? The document and its embeddings are removed from the index.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
@@ -985,7 +950,7 @@ export function FileBrowser() {
       <ConfirmDialog
         isOpen={pendingBulkDelete !== null}
         title="Delete documents?"
-        message={`Delete ${pendingBulkDelete?.count ?? 0} document${(pendingBulkDelete?.count ?? 0) === 1 ? '' : 's'}? This will permanently remove the selected documents and their embeddings from the search index.`}
+        message={`Delete ${plural(pendingBulkDelete?.count ?? 0, 'document')}? They and their embeddings are removed from the index.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
@@ -993,17 +958,6 @@ export function FileBrowser() {
         onConfirm={executeBulkDelete}
         onCancel={() => setPendingBulkDelete(null)}
       />
-
-      <ConfirmDialog
-        isOpen={pendingDeleteSavedSearch !== null}
-        title="Delete saved search?"
-        message={`Delete "${pendingDeleteSavedSearch?.name ?? 'this saved search'}"? This preset will be removed from your library toolbar and views.`}
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        variant="danger"
-        onConfirm={executeDeleteSavedSearch}
-        onCancel={() => setPendingDeleteSavedSearch(null)}
-      />
-    </div>
+    </main>
   );
 }

@@ -10,7 +10,7 @@ import {
   MessageSquare,
   MoreHorizontal,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import VaultAPI from '@/lib/api';
@@ -171,17 +171,17 @@ export function EntryFromConversation({
         <span>
           {isLoading && !hasAssistantYet ? (
             <span className="text-[hsl(var(--text-muted))]">
-              From this conversation · loading…
+              Conversation · loading…
             </span>
           ) : !hasAssistantYet ? (
             <span className="text-[hsl(var(--text-muted))]">
-              From this conversation · waiting for assistant
+              Conversation · no replies yet
             </span>
           ) : (
             <>
-              From this conversation <span aria-hidden="true">·</span> {insightCount} insight
-              {insightCount === 1 ? '' : 's'} <span aria-hidden="true">·</span> {sourceCount} cited
-              source{sourceCount === 1 ? '' : 's'}
+              Conversation <span aria-hidden="true">·</span> {insightCount}{' '}
+              {insightCount === 1 ? 'reply' : 'replies'} <span aria-hidden="true">·</span> {sourceCount}{' '}
+              {sourceCount === 1 ? 'source' : 'sources'}
             </>
           )}
         </span>
@@ -214,7 +214,7 @@ export function EntryFromConversation({
                 ) : (
                   <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.75} />
                 )}
-                Insights ({insightCount})
+                Replies ({insightCount})
               </button>
               <div className="flex items-center gap-1">
                 <button

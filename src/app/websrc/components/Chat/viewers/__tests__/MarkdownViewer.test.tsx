@@ -49,9 +49,9 @@ describe('MarkdownViewer', () => {
 
   it('should render code blocks safely', () => {
     const content = '```javascript\nconst x = 1;\n```';
-    render(<MarkdownViewer content={content} />);
+    const { container } = render(<MarkdownViewer content={content} />);
     
-    expect(screen.getByText(/const x = 1/)).toBeInTheDocument();
+    expect(container.querySelector('code')).toHaveTextContent('const x = 1;');
   });
 
   it('should sanitize links with javascript URLs', () => {

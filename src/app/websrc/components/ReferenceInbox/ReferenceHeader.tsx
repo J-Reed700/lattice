@@ -84,7 +84,7 @@ export function ReferenceHeader({
             </button>
           </>
         )}
-        {space && <> · Space: {space.name}</>}
+        {space && <> · {space.name}</>}
       </p>
     </header>
   );

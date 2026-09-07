@@ -66,9 +66,8 @@ export function ReferenceReader({
             Your reference shelf.
           </h1>
           <p className="mt-3 max-w-[400px] text-sm text-[hsl(var(--text-tertiary))]">
-            Saved messages live here — the fragments you wanted to keep from a
-            conversation. Open one from the sidebar to read it, or save a new one
-            from Chat by clicking the bookmark icon on any message.
+            Messages you bookmark in Chat and passages you save while reading
+            collect here.
           </p>
         </div>
       </main>
@@ -98,7 +97,15 @@ export function ReferenceReader({
             <SourceCitations sources={sources} onViewSource={onViewSource} />
           </div>
         )}
-        <ReferenceAnnotationStrip bookmark={bookmark} onSave={onSaveAnnotations} />
+        <ReferenceAnnotationStrip
+          id={bookmark.id}
+          title={bookmark.title}
+          note={bookmark.note}
+          onSave={onSaveAnnotations}
+        />
+        <p className="mt-6 text-xs text-[hsl(var(--text-muted))]">
+          Lattice uses your saved references in future answers.
+        </p>
         <ReferenceActionRail
           isCaptured={Boolean(capture)}
           captureDestinationLabel={captureLabel}

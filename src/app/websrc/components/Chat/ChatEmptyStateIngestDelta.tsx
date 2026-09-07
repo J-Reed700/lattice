@@ -1,17 +1,12 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { useChatEmptyStateStats } from '@/hooks/queries/useChatEmptyStateStats';
 
 /**
  * ChatEmptyStateIngestDelta
  *
- * Subtle one-line readout of lattice size + recent ingest activity,
- * shown under a Chat empty-state headline. Teaches the user that
- * the lattice is the substrate behind the empty prompt — the corpus
- * is already there, ready to be queried.
- *
- * Degrades silently on query failure so the empty state still looks
- * clean when the backend is unreachable.
+ * One quiet line of library size and recent ingest activity, shown under a
+ * Chat empty state. Degrades to nothing when the backend is unreachable.
  */
 export function ChatEmptyStateIngestDelta() {
   const { data, isLoading, isError } = useChatEmptyStateStats();
@@ -24,15 +19,12 @@ export function ChatEmptyStateIngestDelta() {
 
   if (totalDocuments === 0) {
     return (
-      <p className="mt-3 text-xs text-[hsl(var(--text-muted))]">
-        Your lattice is empty.{' '}
-        <Link
-          to="/ingest"
-          className="text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-        >
-          Add content
+      <p className="mt-3 text-xs text-text-muted">
+        Nothing indexed yet.{' '}
+        <Link to="/ingest" className="text-accent underline-offset-2 hover:underline">
+          Add a folder
         </Link>{' '}
-        to start asking questions.
+        to start.
       </p>
     );
   }
@@ -43,30 +35,26 @@ export function ChatEmptyStateIngestDelta() {
   if (documentsAddedToday > 0) {
     deltaFragment = (
       <>
-        <span className="font-mono tabular-nums">{formatted(documentsAddedToday)}</span>
-        {' '}added today · {' '}
+        <span className="tabular-nums">{formatted(documentsAddedToday)}</span>
+        {' added today · '}
       </>
     );
   } else if (documentsAddedThisWeek > 0) {
     deltaFragment = (
       <>
-        <span className="font-mono tabular-nums">{formatted(documentsAddedThisWeek)}</span>
-        {' '}added this week · {' '}
+        <span className="tabular-nums">{formatted(documentsAddedThisWeek)}</span>
+        {' added this week · '}
       </>
     );
   }
 
   return (
-    <p className="mt-3 text-xs text-[hsl(var(--text-muted))]">
+    <p className="mt-3 text-xs text-text-muted">
       {deltaFragment}
-      <span className="font-mono tabular-nums">{formatted(totalDocuments)}</span>
-      {' '}
-      {totalDocuments === 1 ? 'document' : 'documents'} in your lattice ·{' '}
-      <Link
-        to="/files"
-        className="text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-      >
-        Browse
+      <span className="tabular-nums">{formatted(totalDocuments)}</span>{' '}
+      {totalDocuments === 1 ? 'document' : 'documents'} ·{' '}
+      <Link to="/files" className="text-accent underline-offset-2 hover:underline">
+        Library
       </Link>
     </p>
   );

@@ -5,6 +5,8 @@ import * as Popover from '@radix-ui/react-popover';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { sanitizeFileName } from '@/utils/sanitize';
 
+import { formatSourceLocation } from '../Reading/passageLocator';
+
 /**
  * CitationFootnote
  *
@@ -18,27 +20,34 @@ import { sanitizeFileName } from '@/utils/sanitize';
 interface CitationFootnoteProps {
   number: number;
   source: SourceWithMetadata;
+  /** "from your journal" / "from your references", when earned. */
+  provenanceLabel?: string;
+  /** A location a viewer has already resolved, e.g. "p. 12". */
+  resolvedLocation?: string;
   onViewFile: () => void;
 }
 
 export const CitationFootnote: FC<CitationFootnoteProps> = ({
   number,
   source,
+  provenanceLabel,
+  resolvedLocation,
   onViewFile,
 }) => {
   const sanitizedFileName = sanitizeFileName(source.fileName);
+  // Only what is known: a resolved page, a timestamp, or a heading.
+  const location = resolvedLocation ?? formatSourceLocation(source);
 
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <sup
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           aria-label={`Citation ${number}: ${sanitizedFileName}`}
-          className="inline-block cursor-pointer px-0.5 font-mono text-xs text-[hsl(var(--accent))] transition-colors duration-fast hover:text-[hsl(var(--accent-hover))] hover:underline"
+          className="inline-flex h-[18px] min-w-[18px] cursor-pointer items-center justify-center rounded-sm border border-border-subtle bg-surface px-1 font-mono text-xxs tabular-nums text-text-secondary transition-colors duration-fast hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          [{number}]
-        </sup>
+          {number}
+        </button>
       </Popover.Trigger>
 
       <Popover.Portal>
@@ -57,6 +66,12 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
                 {source.category}
               </p>
             )}
+            {location && (
+              <p className="text-xs text-[hsl(var(--text-muted))]">{location}</p>
+            )}
+            {provenanceLabel && (
+              <p className="text-xs text-[hsl(var(--text-muted))]">{provenanceLabel}</p>
+            )}
             <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-3 break-words">
               {source.excerpt ?? source.content}
             </p>
@@ -64,6 +79,7 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
               type="button"
               onClick={onViewFile}
               className="block pt-1 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+              title={`Open ${sanitizedFileName}`}
             >
               View source
             </button>

@@ -1,4 +1,8 @@
-import { SynthesizePopover, type SynthesisScope } from './SynthesizePopover';
+import {
+  SynthesizePopover,
+  type SynthesisScope,
+  type WeekCandidateCounts,
+} from './SynthesizePopover';
 
 interface EntryActionRailProps {
   selectedEntryId: string | null;
@@ -6,6 +10,7 @@ interface EntryActionRailProps {
   deckCount: number;
   onSynthesize: (scope: SynthesisScope) => Promise<boolean>;
   disabled?: boolean;
+  weekCandidates?: WeekCandidateCounts;
 }
 
 /**
@@ -19,6 +24,7 @@ export function EntryActionRail({
   deckCount,
   onSynthesize,
   disabled,
+  weekCandidates,
 }: EntryActionRailProps) {
   return (
     <div className="mt-6 flex items-center justify-between border-t border-[hsl(var(--border-subtle))] pt-3">
@@ -28,6 +34,7 @@ export function EntryActionRail({
         deckCount={deckCount}
         onSynthesize={onSynthesize}
         disabled={disabled}
+        weekCandidates={weekCandidates}
       />
       <p className="text-xs text-[hsl(var(--text-muted))]">
         Select text to highlight

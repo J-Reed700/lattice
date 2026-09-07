@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { ListView } from './ListView';
+import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 
 import type { DocumentMetadata, FileNode } from '../../types/fileBrowser';
@@ -30,7 +31,10 @@ vi.mock('../../stores/fileBrowserStore', () => ({
       doc.fileName.toLowerCase().includes(query)
     );
   },
-  selectDensity: (state: any) => state.density || 'comfortable',
+}));
+
+vi.mock('../../hooks/queries/useLibraryDocumentsQuery', () => ({
+  useLibraryDocumentsQuery: vi.fn(),
 }));
 
 describe('ListView', () => {
@@ -79,6 +83,7 @@ describe('ListView', () => {
   const mockNavigateUp = vi.fn();
   const mockNavigateTo = vi.fn();
   const mockDeselectFile = vi.fn();
+  const mockSetFocusedDocument = vi.fn();
   const mockSelectRange = vi.fn();
   const mockToggleFolder = vi.fn();
   const mockExpandFolder = vi.fn();
@@ -94,7 +99,6 @@ describe('ListView', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         // View configuration
@@ -132,6 +136,7 @@ describe('ListView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -156,6 +161,16 @@ describe('ListView', () => {
       }
       return state;
     });
+    vi.mocked(useLibraryDocumentsQuery).mockImplementation(() => {
+      const documents = useFileBrowserStore((state: any) => state.documents) ?? [];
+      return {
+        documents,
+        filteredDocuments: documents,
+        isLoading: useFileBrowserStore((state: any) => state.isLoading) ?? false,
+        error: useFileBrowserStore((state: any) => state.error) ?? null,
+        refreshFiles: vi.fn(),
+      };
+    });
   });
 
   it('renders file list', () => {
@@ -166,7 +181,6 @@ describe('ListView', () => {
   });
 
   it('shows loading state', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'list' as const,
@@ -193,6 +207,7 @@ describe('ListView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -217,7 +232,6 @@ describe('ListView', () => {
   });
 
   it('shows error state', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'list' as const,
@@ -244,6 +258,7 @@ describe('ListView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -264,12 +279,11 @@ describe('ListView', () => {
     });
 
     render(<ListView />);
-    expect(screen.getByText('Error loading files')).toBeInTheDocument();
+    expect(screen.getByText("Couldn’t load your files.")).toBeInTheDocument();
     expect(screen.getByText('Failed to load files')).toBeInTheDocument();
   });
 
   it('shows empty state', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'list' as const,
@@ -296,6 +310,7 @@ describe('ListView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,
@@ -316,29 +331,7 @@ describe('ListView', () => {
     });
 
     render(<ListView />);
-    expect(screen.getByText('No documents found')).toBeInTheDocument();
-  });
-
-  describe('Sorting', () => {
-    it('toggles sort order when clicking same column header', async () => {
-      const user = userEvent.setup();
-      render(<ListView />);
-
-      const nameHeader = screen.getByText('Name');
-      await user.click(nameHeader);
-
-      expect(mockToggleSortOrder).toHaveBeenCalled();
-    });
-
-    it('changes sort field when clicking different column header', async () => {
-      const user = userEvent.setup();
-      render(<ListView />);
-
-      const sizeHeader = screen.getByText('Words');
-      await user.click(sizeHeader);
-
-      expect(mockSetSortField).toHaveBeenCalledWith('size');
-    });
+    expect(screen.getByText('Nothing indexed yet.')).toBeInTheDocument();
   });
 
   describe('Selection', () => {
@@ -371,24 +364,13 @@ describe('ListView', () => {
       expect(mockToggleSelection).toHaveBeenCalledWith('1');
     });
 
-    it('toggles selection via checkbox', async () => {
+    it('toggles selection via the row checkbox', async () => {
       const user = userEvent.setup();
       render(<ListView />);
 
-      const checkboxes = screen.getAllByRole('checkbox');
-      await user.click(checkboxes[1]);
+      await user.click(screen.getByLabelText('Select document.pdf'));
 
       expect(mockToggleSelection).toHaveBeenCalledWith('1');
-    });
-
-    it('selects all files when header checkbox clicked', async () => {
-      const user = userEvent.setup();
-      render(<ListView />);
-
-      const checkboxes = screen.getAllByRole('checkbox');
-      await user.click(checkboxes[0]);
-
-      expect(mockSelectAll).toHaveBeenCalled();
     });
   });
 
@@ -418,7 +400,6 @@ describe('ListView', () => {
   });
 
   it('displays selected files with highlight', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(useFileBrowserStore).mockImplementation((selector: any) => {
       const state = {
         viewMode: 'list' as const,
@@ -445,6 +426,7 @@ describe('ListView', () => {
         toggleSelection: mockToggleSelection,
         selectAll: mockSelectAll,
         clearSelection: mockClearSelection,
+        setFocusedDocument: mockSetFocusedDocument,
         selectRange: mockSelectRange,
         toggleFolder: mockToggleFolder,
         expandFolder: mockExpandFolder,

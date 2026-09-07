@@ -19,9 +19,9 @@ export interface IndexedFolder {
   path: string;
   recursive: boolean;
   enabled: boolean;
-  last_scan: string | null;
-  document_count: number;
-  created_at: string;
+  lastScan: string | null;
+  documentCount: number;
+  createdAt: string;
 }
 
 export interface IndexingActivity {

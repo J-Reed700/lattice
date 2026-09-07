@@ -1,3 +1,5 @@
+import { createElement, type ReactNode } from 'react';
+
 export type SourcePreviewKind = 'local-file' | 'archived-web' | 'external-web';
 
 const WEB_ARCHIVE_SEGMENT = '/.lattice/web-archive/';
@@ -148,4 +150,98 @@ export function getSourcePreviewKind(source: SourcePathLike): SourcePreviewKind 
   }
 
   return 'local-file';
+}
+
+// ---------------------------------------------------------------
+// Excerpt term highlighting
+//
+// Shared by `SourceCitations` (the footnote list) and `CitationRail` (the
+// pinned excerpt beside an open file) so the same excerpt is marked the same
+// way in both places. Built with `createElement` rather than JSX because this
+// module is a `.ts` file that predates any React in it.
+// ---------------------------------------------------------------
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const termEntropy = (term: string) => {
+  if (!term) return 0;
+  const counts = new Map<string, number>();
+  for (const ch of term) {
+    counts.set(ch, (counts.get(ch) || 0) + 1);
+  }
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / term.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+};
+
+/**
+ * How much a term is worth highlighting: character entropy scaled by length.
+ * Marking every stop word would make the excerpt harder to read, not easier.
+ */
+export const termSalience = (term: string) => {
+  const entropy = termEntropy(term);
+  const lengthFactor = Math.log(term.length + 1);
+  return entropy * (0.65 + 0.35 * lengthFactor);
+};
+
+/** The most informative of a set of search terms, at most `maxTerms`. */
+export const selectInformativeTerms = (terms: string[], maxTerms: number) => {
+  const normalized = Array.from(
+    new Set(
+      terms
+        .map((term) => term.trim().toLowerCase())
+        .filter((term) => term.length >= 3 && /[a-z]/i.test(term))
+    )
+  );
+  if (normalized.length === 0) return [];
+
+  const ranked = normalized
+    .map((term) => ({ term, score: termSalience(term) }))
+    .sort((a, b) => b.score - a.score || a.term.localeCompare(b.term));
+
+  const bestScore = ranked[0]?.score ?? 0;
+  if (bestScore <= Number.EPSILON) {
+    return ranked.slice(0, maxTerms).map((entry) => entry.term);
+  }
+
+  const selected = ranked
+    .filter((entry) => entry.score >= bestScore * 0.45)
+    .slice(0, maxTerms)
+    .map((entry) => entry.term);
+
+  if (selected.length > 0) return selected;
+  return ranked.slice(0, maxTerms).map((entry) => entry.term);
+};
+
+/** Excerpt text with the informative search terms wrapped in `<mark>`. */
+export function renderHighlightedText(
+  text: string,
+  highlights?: string[]
+): ReactNode {
+  if (!highlights || highlights.length === 0) return text;
+
+  const selected = selectInformativeTerms(highlights, 10);
+  if (selected.length === 0) return text;
+
+  const ordered = [...selected].sort((a, b) => b.length - a.length);
+  const pattern = new RegExp(`\\b(${ordered.map(escapeRegExp).join('|')})\\b`, 'gi');
+  const parts = text.split(pattern);
+  const lookup = new Set(selected.map((term) => term.toLowerCase()));
+
+  return parts.map((part, idx) =>
+    lookup.has(part.toLowerCase())
+      ? createElement(
+          'mark',
+          {
+            key: `hl-${idx}`,
+            className:
+              'rounded-sm bg-[hsl(var(--accent-muted))] px-0.5 text-[hsl(var(--text-primary))]',
+          },
+          part
+        )
+      : createElement('span', { key: `hl-${idx}` }, part)
+  );
 }

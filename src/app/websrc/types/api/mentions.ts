@@ -33,5 +33,12 @@ export interface SearchMentionsResponse {
 }
 
 export interface BacklinksResponse {
-  document_ids: string[];
+  documentIds: string[];
+}
+
+/** `get_mentions_for_document` returns the whole result object, not a bare array. */
+export interface GetMentionsForDocumentResult {
+  documentId: string;
+  mentions: MentionWithContext[];
+  count: number;
 }

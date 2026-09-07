@@ -120,23 +120,23 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
     return (
       <div className="flex items-center justify-center h-full p-8">
         <div className="text-center space-y-2">
-          <AlertCircle className="w-12 h-12 text-destructive mx-auto" />
-          <p className="text-destructive font-medium">Failed to load article</p>
-          <p className="text-sm text-muted-foreground">{error}</p>
+          <AlertCircle className="w-12 h-12 text-[hsl(var(--danger))] mx-auto" />
+          <p className="text-[hsl(var(--danger))] font-medium">Failed to load article</p>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-background">
+    <div className="h-full min-h-0 flex flex-col bg-[hsl(var(--bg))]">
       {showTitle && title && (
         <div className="px-6 py-4 border-b">
-          <h1 className="m-0 text-xl font-semibold text-foreground">{title}</h1>
+          <h1 className="m-0 text-xl font-semibold text-[hsl(var(--text-primary))]">{title}</h1>
         </div>
       )}
       {(originalUrl || siteName || links.length > 0) && (
-        <div className="px-6 py-3 border-b bg-muted/10">
+        <div className="px-6 py-3 border-b bg-[hsl(var(--surface))]/10">
           <div className="flex flex-wrap items-center gap-3">
             {originalUrl && (
               <button
@@ -149,14 +149,14 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
               </button>
             )}
             {siteName && (
-              <span className="inline-flex items-center rounded-full border border-[hsl(var(--border-subtle))]/60 bg-[hsl(var(--surface))]/70 px-3 py-1 text-xs font-medium text-muted-foreground">
+              <span className="inline-flex items-center rounded-full border border-[hsl(var(--border-subtle))]/60 bg-[hsl(var(--surface))]/70 px-3 py-1 text-xs font-medium text-[hsl(var(--text-secondary))]">
                 {siteName}
               </span>
             )}
             {links.length > 0 && (
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/80 px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/80 px-3 py-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
                 onClick={() => setShowLinks((prev) => !prev)}
               >
                 <Link2 size={12} />
@@ -177,7 +177,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
                 </button>
               ))}
               {links.length > 20 && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-[hsl(var(--text-secondary))]">
                   Showing 20 of {links.length} links
                 </p>
               )}

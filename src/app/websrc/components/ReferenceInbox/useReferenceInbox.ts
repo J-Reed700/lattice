@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import {
+  useDeletePassageReferenceMutation,
+  usePassageReferencesQuery,
+  useUpdatePassageReferenceMutation,
+} from '@/hooks/queries/usePassageReferencesQuery';
 import { useDebounce } from '@/hooks/useDebounce';
 import { VaultAPI } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
@@ -8,6 +13,7 @@ import type {
   ConversationJournalDto,
   ConversationSpaceDto,
 } from '@/types/api/conversation';
+import type { PassageReferenceDto } from '@/types/api/references';
 import { resolveBookmarkPayload, type BookmarkPayload } from '@/utils/chatBookmarks';
 import { captureChatReferenceToWorkspaceNote } from '@/utils/chatReferenceCapture';
 import {
@@ -16,7 +22,9 @@ import {
   type CapturedChatReference,
 } from '@/utils/chatReferenceIndex';
 
-export type OriginFilter = 'all' | 'chat' | 'journal';
+import { mergeInboxItems, type InboxItem } from './inboxItems';
+
+export type OriginFilter = 'all' | 'chat' | 'journal' | 'document';
 export type StatusChip = 'all' | 'recent' | 'captured';
 
 export interface CaptureDestination {
@@ -27,13 +35,13 @@ export interface CaptureDestination {
 
 export interface UseReferenceInboxResult {
   bookmarks: ConversationMessageBookmarkDto[];
-  filteredBookmarks: ConversationMessageBookmarkDto[];
+  /** Message bookmarks and passage references merged, newest first, filtered. */
+  filteredItems: InboxItem[];
+  selectedItem: InboxItem | null;
   spacesById: Map<string, ConversationSpaceDto>;
   journalsById: Map<string, ConversationJournalDto>;
   capturedIndex: Map<string, CapturedChatReference>;
-  payloadCache: Map<string, BookmarkPayload>;
   isLoading: boolean;
-  isRefreshing: boolean;
   query: string;
   setQuery: (value: string) => void;
   originFilter: OriginFilter;
@@ -48,15 +56,18 @@ export interface UseReferenceInboxResult {
   selectedPayload: BookmarkPayload | null;
   isResolvingSelected: boolean;
   resolutionFailed: boolean;
-  totalCount: number;
   resolveCaptureDestination: (bookmark: ConversationMessageBookmarkDto) => CaptureDestination;
-  refresh: () => Promise<void>;
   saveAnnotations: (
     bookmark: ConversationMessageBookmarkDto,
     next: { title: string | null; note: string | null },
   ) => Promise<boolean>;
   captureReference: (bookmark: ConversationMessageBookmarkDto) => Promise<CapturedChatReference | null>;
   removeReference: (bookmark: ConversationMessageBookmarkDto) => Promise<boolean>;
+  savePassageAnnotations: (
+    passage: PassageReferenceDto,
+    next: { title: string | null; note: string | null },
+  ) => Promise<boolean>;
+  removePassage: (passage: PassageReferenceDto) => Promise<boolean>;
   getPayload: (bookmark: ConversationMessageBookmarkDto) => Promise<BookmarkPayload>;
   resolveJournalSpaceIdForNote: (noteId: string) => string | null;
 }
@@ -95,18 +106,20 @@ export function useReferenceInbox(options: {
   const [resolutionFailures, setResolutionFailures] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isResolvingSelected, setIsResolvingSelected] = useState(false);
 
   const debouncedQuery = useDebounce(query, 220);
 
+  // Passage references are React Query's, not local state: the repository is
+  // the SSOT and this is its read-only mirror (CLAUDE.md rule 3).
+  const passagesQuery = usePassageReferencesQuery();
+  const updatePassageMutation = useUpdatePassageReferenceMutation();
+  const deletePassageMutation = useDeletePassageReferenceMutation();
+  const passages = useMemo(() => passagesQuery.data ?? [], [passagesQuery.data]);
+
   const load = useCallback(
-    async (showRefreshState: boolean) => {
-      if (showRefreshState) {
-        setIsRefreshing(true);
-      } else {
-        setIsLoading(true);
-      }
+    async () => {
+      setIsLoading(true);
 
       const [bookmarksResult, notesResult, spacesResult, journalsResult] = await Promise.all([
         VaultAPI.listMessageBookmarks({
@@ -144,61 +157,103 @@ export function useReferenceInbox(options: {
       }
 
       setIsLoading(false);
-      setIsRefreshing(false);
     },
     [debouncedQuery],
   );
 
   useEffect(() => {
-    void load(false);
+    void load();
   }, [load]);
 
-  const filteredBookmarks = useMemo(() => {
-    return bookmarks.filter((bookmark) => {
-      if (originFilter !== 'all') {
-        const isJournalBookmark = journalsById.has(bookmark.spaceId);
-        if (originFilter === 'journal' && !isJournalBookmark) return false;
-        if (originFilter === 'chat' && isJournalBookmark) return false;
-      }
-      if (statusChip === 'captured') {
-        const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
-        if (!capturedIndex.has(key)) return false;
-      }
-      if (statusChip === 'recent') {
-        const created = new Date(bookmark.createdAt).getTime();
-        if (!Number.isFinite(created)) return false;
-        const weekMs = 7 * 24 * 60 * 60 * 1000;
-        if (Date.now() - created > weekMs) return false;
-      }
-      return true;
-    });
-  }, [bookmarks, capturedIndex, journalsById, originFilter, statusChip]);
+  const items = useMemo(
+    () => mergeInboxItems(bookmarks, passages),
+    [bookmarks, passages],
+  );
 
-  // Selection reconciliation: respect requested reference id, fall back to first.
+  const normalizedQuery = debouncedQuery.trim().toLowerCase();
+
+  const filteredItems = useMemo(
+    () =>
+      items.filter((item) => {
+        if (originFilter !== 'all') {
+          if (originFilter === 'document') {
+            if (item.kind !== 'passage') return false;
+          } else {
+            if (item.kind !== 'message') return false;
+            const isJournalBookmark = journalsById.has(item.bookmark.spaceId);
+            if (originFilter === 'journal' && !isJournalBookmark) return false;
+            if (originFilter === 'chat' && isJournalBookmark) return false;
+          }
+        }
+        // "Captured" is a chat-reference concept; a passage has none, so the
+        // filter keeps meaning what it says.
+        if (statusChip === 'captured') {
+          if (item.kind !== 'message') return false;
+          const key = chatReferenceKey(item.bookmark.conversationId, item.bookmark.messageId);
+          if (!capturedIndex.has(key)) return false;
+        }
+        if (statusChip === 'recent') {
+          const created = new Date(item.createdAt).getTime();
+          if (!Number.isFinite(created)) return false;
+          const weekMs = 7 * 24 * 60 * 60 * 1000;
+          if (Date.now() - created > weekMs) return false;
+        }
+        // Bookmark search is server-side; passages are filtered here.
+        if (normalizedQuery && item.kind === 'passage') {
+          const haystack = [
+            item.passage.title ?? '',
+            item.passage.note ?? '',
+            item.passage.text,
+            item.passage.fileName,
+          ]
+            .join('\n')
+            .toLowerCase();
+          if (!haystack.includes(normalizedQuery)) return false;
+        }
+        return true;
+      }),
+    [capturedIndex, items, journalsById, normalizedQuery, originFilter, statusChip],
+  );
+
+  // The URL is a follower, not a second source of truth. `ReferenceInbox`
+  // mirrors `selectedId` into `?referenceId=`, so if this effect kept forcing
+  // the URL's value back onto the selection the two would trade places forever:
+  // click B → URL still says A → selection reverts to A while the URL becomes B
+  // → selection becomes B while the URL reverts to A → repeat, pinning the CPU.
+  // A requested id is therefore applied once, when it arrives; after that the
+  // user's clicks own the selection.
+  const appliedRequestRef = useRef<string | null>(null);
+
+  // Selection reconciliation: respect a newly requested reference id, fall back
+  // to the first item.
   useEffect(() => {
-    if (filteredBookmarks.length === 0) {
+    if (filteredItems.length === 0) {
       if (selectedId !== null) setSelectedId(null);
       return;
     }
-    if (requestedReferenceId) {
-      const match = filteredBookmarks.find((b) => b.id === requestedReferenceId);
+    if (requestedReferenceId && requestedReferenceId !== appliedRequestRef.current) {
+      const match = filteredItems.find((item) => item.id === requestedReferenceId);
       if (match) {
+        appliedRequestRef.current = requestedReferenceId;
         if (selectedId !== match.id) setSelectedId(match.id);
         return;
       }
     }
     const stillValid = selectedId
-      ? filteredBookmarks.some((b) => b.id === selectedId)
+      ? filteredItems.some((item) => item.id === selectedId)
       : false;
     if (!stillValid) {
-      setSelectedId(filteredBookmarks[0]?.id ?? null);
+      setSelectedId(filteredItems[0]?.id ?? null);
     }
-  }, [filteredBookmarks, requestedReferenceId, selectedId]);
+  }, [filteredItems, requestedReferenceId, selectedId]);
 
-  const selectedBookmark = useMemo(
-    () => filteredBookmarks.find((b) => b.id === selectedId) ?? null,
-    [filteredBookmarks, selectedId],
+  const selectedItem = useMemo(
+    () => filteredItems.find((item) => item.id === selectedId) ?? null,
+    [filteredItems, selectedId],
   );
+
+  const selectedBookmark =
+    selectedItem?.kind === 'message' ? selectedItem.bookmark : null;
 
   const selectedCapture = selectedBookmark
     ? capturedIndex.get(
@@ -305,10 +360,6 @@ export function useReferenceInbox(options: {
     [journalsById],
   );
 
-  const refresh = useCallback(async () => {
-    await load(true);
-  }, [load]);
-
   const saveAnnotations = useCallback(
     async (
       bookmark: ConversationMessageBookmarkDto,
@@ -371,6 +422,41 @@ export function useReferenceInbox(options: {
     [getPayload, resolveCaptureDestination],
   );
 
+  const savePassageAnnotations = useCallback(
+    async (
+      passage: PassageReferenceDto,
+      next: { title: string | null; note: string | null },
+    ): Promise<boolean> => {
+      try {
+        await updatePassageMutation.mutateAsync({
+          id: passage.id,
+          title: next.title,
+          note: next.note,
+        });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        toast.error('Failed to save annotation', { message });
+        return false;
+      }
+    },
+    [updatePassageMutation],
+  );
+
+  const removePassage = useCallback(
+    async (passage: PassageReferenceDto): Promise<boolean> => {
+      try {
+        await deletePassageMutation.mutateAsync(passage.id);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        toast.error('Failed to remove reference', { message });
+        return false;
+      }
+    },
+    [deletePassageMutation],
+  );
+
   const removeReference = useCallback(
     async (bookmark: ConversationMessageBookmarkDto): Promise<boolean> => {
       const result = await VaultAPI.unbookmarkConversationMessage({
@@ -402,13 +488,12 @@ export function useReferenceInbox(options: {
 
   return {
     bookmarks,
-    filteredBookmarks,
+    filteredItems,
+    selectedItem,
     spacesById,
     journalsById,
     capturedIndex,
-    payloadCache,
     isLoading,
-    isRefreshing,
     query,
     setQuery,
     originFilter,
@@ -423,12 +508,12 @@ export function useReferenceInbox(options: {
     selectedPayload,
     isResolvingSelected,
     resolutionFailed,
-    totalCount: bookmarks.length,
     resolveCaptureDestination,
-    refresh,
     saveAnnotations,
     captureReference,
     removeReference,
+    savePassageAnnotations,
+    removePassage,
     getPayload,
     resolveJournalSpaceIdForNote,
   };

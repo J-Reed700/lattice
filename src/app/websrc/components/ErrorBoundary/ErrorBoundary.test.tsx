@@ -153,7 +153,7 @@ describe('RootErrorBoundary', () => {
       </RootErrorBoundary>
     );
 
-    expect(screen.getByText(/something went wrong/i)).toBeDefined();
+    expect(screen.getByText(/ran into a problem/i)).toBeDefined();
   });
 });
 
@@ -175,7 +175,7 @@ describe('SectionErrorBoundary', () => {
       </SectionErrorBoundary>
     );
 
-    expect(screen.getByText(/Test Section Error/i)).toBeDefined();
+    expect(screen.getByText(/Couldn't load Test Section/i)).toBeDefined();
   });
 
   it('displays section name in error', () => {
@@ -185,7 +185,7 @@ describe('SectionErrorBoundary', () => {
       </SectionErrorBoundary>
     );
 
-    expect(screen.getByText(/Search Error/i)).toBeDefined();
+    expect(screen.getByText(/Couldn't load Search/i)).toBeDefined();
   });
 });
 
@@ -205,7 +205,7 @@ describe('FullPageError', () => {
       />
     );
 
-    expect(screen.getByText(/something went wrong/i)).toBeDefined();
+    expect(screen.getByText(/ran into a problem/i)).toBeDefined();
   });
 
   it('shows error details', () => {
@@ -217,7 +217,8 @@ describe('FullPageError', () => {
       />
     );
 
-    expect(screen.getByText(/Test error message/i)).toBeDefined();
+    fireEvent.click(screen.getByText(/Show details/i));
+    expect(screen.getAllByText(/Test error message/i).length).toBeGreaterThan(0);
   });
 
   it('has reload app button', () => {
@@ -229,7 +230,7 @@ describe('FullPageError', () => {
       />
     );
 
-    expect(screen.getByText(/Reload App/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Reload$/i })).toBeDefined();
   });
 
   it('has try again button', () => {
@@ -274,7 +275,7 @@ describe('SectionError', () => {
       />
     );
 
-    expect(screen.getByText(/Search Error/i)).toBeDefined();
+    expect(screen.getByText(/Couldn't load Search/i)).toBeDefined();
   });
 
   it('renders error message', () => {
@@ -298,7 +299,7 @@ describe('SectionError', () => {
       />
     );
 
-    const retryButton = screen.getByText(/Retry/i);
+    const retryButton = screen.getByText(/Try again/i);
     expect(retryButton).toBeDefined();
 
     fireEvent.click(retryButton);
@@ -314,7 +315,7 @@ describe('SectionError', () => {
       />
     );
 
-    expect(screen.getByText(/other sections of the app are still working/i)).toBeDefined();
+    expect(screen.getByText(/Couldn't load/i)).toBeDefined();
   });
 });
 
@@ -423,7 +424,7 @@ describe('Accessibility', () => {
     );
 
     // Retry button should be accessible
-    const retryButton = screen.getByText(/Retry/i);
+    const retryButton = screen.getByText(/Try again/i);
     expect(retryButton.tagName).toBe('BUTTON');
   });
 });

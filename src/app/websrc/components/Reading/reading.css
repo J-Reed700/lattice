@@ -1,0 +1,23 @@
+/*
+ * Passage highlighting for the reading surface (BRIEF rank 1).
+ *
+ * No animation: a highlight that fades in draws the eye to the motion rather
+ * than the sentence (AESTHETIC-GUIDE §6). No new tokens either — the accent
+ * pair already exists.
+ */
+
+.lattice-passage-block {
+  background-color: hsl(var(--accent-muted));
+  box-shadow: inset 2px 0 0 hsl(var(--accent));
+  border-radius: 2px;
+}
+
+.lattice-passage-term {
+  background-color: hsl(var(--accent-muted));
+  border-radius: 2px;
+}
+
+.lattice-pdf-mark {
+  background-color: hsl(var(--accent-muted));
+  border-radius: 2px;
+}

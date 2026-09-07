@@ -8,14 +8,20 @@ import {
   isYesterday,
   startOfMonth,
 } from 'date-fns';
-import { Bookmark, PanelLeft, Search } from 'lucide-react';
+import { PanelLeft } from 'lucide-react';
 
+import { IconButton } from '@/components/ui/IconButton';
+import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
+import { usePassageReferencesQuery } from '@/hooks/queries/usePassageReferencesQuery';
 import type { ConversationMessageBookmarkDto } from '@/types';
+import type { PassageReferenceDto } from '@/types/api/references';
 import { chatReferenceKey } from '@/utils/chatReferenceIndex';
 
+import { PassageListItem } from './PassageListItem';
 import { ReferenceListItem } from './ReferenceListItem';
 import { ReferenceOriginPicker } from './ReferenceOriginPicker';
 
+import type { InboxItem } from './inboxItems';
 import type {
   OriginFilter,
   StatusChip,
@@ -28,6 +34,9 @@ interface ReferenceListProps {
   onOpenInOrigin: (bookmark: ConversationMessageBookmarkDto) => void;
   onCopy: (bookmark: ConversationMessageBookmarkDto) => void;
   onDelete: (bookmark: ConversationMessageBookmarkDto) => void;
+  onOpenPassageSource: (passage: PassageReferenceDto) => void;
+  onCopyPassage: (passage: PassageReferenceDto) => void;
+  onDeletePassage: (passage: PassageReferenceDto) => void;
 }
 
 type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | string;
@@ -35,37 +44,37 @@ type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | string;
 interface Group {
   key: GroupKey;
   label: string;
-  items: ConversationMessageBookmarkDto[];
+  items: InboxItem[];
 }
 
-function groupByDate(bookmarks: ConversationMessageBookmarkDto[]): Group[] {
+function groupByDate(items: InboxItem[]): Group[] {
   const now = new Date();
   const groups = new Map<GroupKey, Group>();
 
-  const push = (key: GroupKey, label: string, bookmark: ConversationMessageBookmarkDto) => {
+  const push = (key: GroupKey, label: string, item: InboxItem) => {
     let group = groups.get(key);
     if (!group) {
       group = { key, label, items: [] };
       groups.set(key, group);
     }
-    group.items.push(bookmark);
+    group.items.push(item);
   };
 
-  for (const bookmark of bookmarks) {
-    const date = new Date(bookmark.createdAt);
+  for (const item of items) {
+    const date = new Date(item.createdAt);
     if (Number.isNaN(date.getTime())) {
-      push('unknown', 'Earlier', bookmark);
+      push('unknown', 'Earlier', item);
       continue;
     }
-    if (isToday(date)) push('today', 'Today', bookmark);
-    else if (isYesterday(date)) push('yesterday', 'Yesterday', bookmark);
-    else if (differenceInCalendarDays(now, date) < 7) push('thisWeek', 'This week', bookmark);
-    else if (isSameMonth(date, now)) push('thisMonth', 'This month', bookmark);
+    if (isToday(date)) push('today', 'Today', item);
+    else if (isYesterday(date)) push('yesterday', 'Yesterday', item);
+    else if (differenceInCalendarDays(now, date) < 7) push('thisWeek', 'This week', item);
+    else if (isSameMonth(date, now)) push('thisMonth', 'This month', item);
     else {
       const monthStart = startOfMonth(date);
       const key = format(monthStart, 'yyyy-MM');
       const label = format(monthStart, 'MMM yyyy');
-      push(key, label, bookmark);
+      push(key, label, item);
     }
   }
 
@@ -103,9 +112,12 @@ export function ReferenceList({
   onOpenInOrigin,
   onCopy,
   onDelete,
+  onOpenPassageSource,
+  onCopyPassage,
+  onDeletePassage,
 }: ReferenceListProps) {
   const {
-    filteredBookmarks,
+    filteredItems,
     journalsById,
     capturedIndex,
     isLoading,
@@ -119,113 +131,89 @@ export function ReferenceList({
     setSelectedId,
   } = state;
 
-  const groups = useMemo(() => groupByDate(filteredBookmarks), [filteredBookmarks]);
+  // The passage list is React Query's; when it fails, an empty shelf would
+  // read as "you have saved nothing" instead of "we could not look".
+  const passagesQuery = usePassageReferencesQuery();
 
-  const isEmpty = !isLoading && filteredBookmarks.length === 0;
+  const groups = useMemo(() => groupByDate(filteredItems), [filteredItems]);
+
+  const isEmpty = !isLoading && filteredItems.length === 0;
+  const hasLoadError = passagesQuery.isError;
   const isFilteredEmpty =
     isEmpty && (query.trim() !== '' || originFilter !== 'all' || statusChip !== 'all');
 
   const handleOriginChange = (value: OriginFilter) => setOriginFilter(value);
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]">
-      {/* Top rail */}
-      <div className="flex h-12 items-center justify-between border-b border-[hsl(var(--border-subtle))] px-4">
-        <h2 className="font-serif text-sm font-semibold text-[hsl(var(--text-primary))]">
-          References
-        </h2>
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="rounded-sm p-1.5 text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
-          aria-label="Collapse sidebar"
-          title="Collapse sidebar"
-        >
-          <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-      </div>
+    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-subtle bg-surface">
+      <SidebarHeader
+        title="References"
+        actions={
+          <IconButton label="Hide sidebar" shortcut="⌘\" onClick={onToggleCollapse}>
+            <PanelLeft />
+          </IconButton>
+        }
+      />
 
-      {/* Origin picker */}
-      <div className="border-b border-[hsl(var(--border-subtle))] px-4 py-3">
+      {/* Origin — one line */}
+      <div className="shrink-0 border-b border-border-subtle px-4 py-2">
         <ReferenceOriginPicker value={originFilter} onChange={handleOriginChange} />
       </div>
 
-      {/* Search + chips */}
-      <div className="space-y-2 border-b border-[hsl(var(--border-subtle))] px-4 py-3">
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[hsl(var(--text-tertiary))]"
-            strokeWidth={1.75}
-          />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search references..."
-            className="h-8 w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--bg))] pl-8 pr-2 text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] outline-none focus:border-[hsl(var(--accent))] transition-colors duration-fast"
-          />
-        </div>
-        <div className="flex items-center gap-3 text-xs">
-          {FILTER_OPTIONS.map((option) => {
-            const isActive = statusChip === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setStatusChip(option.id)}
-                className={`pb-1 border-b-2 transition-colors duration-fast ${
-                  isActive
-                    ? 'border-[hsl(var(--accent))] text-[hsl(var(--text-primary))]'
-                    : 'border-transparent text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]'
-                }`}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+      <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 py-2.5">
+        <SidebarSearch value={query} onChange={setQuery} placeholder="Search references" />
+        <SidebarTabs value={statusChip} onChange={setStatusChip} options={FILTER_OPTIONS} />
       </div>
 
       {/* List body */}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <p className="px-4 py-6 text-center text-xs text-[hsl(var(--text-muted))]">
-            Loading references…
+          <p className="px-4 py-6 text-sm text-text-muted">Loading…</p>
+        ) : isEmpty && hasLoadError ? (
+          <p className="px-4 py-6 text-sm text-text-secondary">
+            Couldn&apos;t load references.{' '}
+            <button
+              type="button"
+              onClick={() => void passagesQuery.refetch()}
+              disabled={passagesQuery.isFetching}
+              className="text-accent underline-offset-2 hover:underline disabled:opacity-60"
+            >
+              Retry
+            </button>
           </p>
         ) : isEmpty ? (
-          <div className="flex flex-col items-center gap-4 px-6 py-10 text-center">
-            <Bookmark
-              className="h-8 w-8 text-[hsl(var(--text-muted))]"
-              strokeWidth={1.5}
-            />
-            {isFilteredEmpty ? (
-              <p className="text-sm text-[hsl(var(--text-tertiary))]">
-                No references match.
-              </p>
-            ) : (
-              <>
-                <p className="text-sm text-[hsl(var(--text-tertiary))]">
-                  Nothing saved yet.
-                </p>
-                <p className="max-w-[240px] text-xs text-[hsl(var(--text-muted))]">
-                  Bookmark any message in Chat using the bookmark icon — it'll collect
-                  here so you can come back to it.
-                </p>
-              </>
-            )}
-          </div>
+          <p className="px-4 py-6 text-sm text-text-secondary">
+            {isFilteredEmpty ? 'No references match.' : 'No references yet.'}
+          </p>
         ) : (
           <div className="pb-2">
             {groups.map((group, groupIndex) => (
               <div key={group.key}>
+                {/* REFERENCE-REDESIGN-SPEC §4.3: serif italic, not an
+                    uppercase tracked label (UX-OVERHAUL-BRIEF §1). */}
                 <h3
-                  className={`px-4 py-2 font-serif italic text-xs text-[hsl(var(--text-tertiary))] ${
+                  className={`px-4 py-2 font-serif text-xs italic text-text-tertiary ${
                     groupIndex > 0 ? 'mt-4' : ''
                   }`}
                 >
                   {group.label}
                 </h3>
-                {group.items.map((bookmark) => {
+                {group.items.map((item) => {
+                  if (item.kind === 'passage') {
+                    const { passage } = item;
+                    return (
+                      <PassageListItem
+                        key={passage.id}
+                        passage={passage}
+                        isActive={selectedId === passage.id}
+                        onSelect={() => setSelectedId(passage.id)}
+                        onOpenSource={() => onOpenPassageSource(passage)}
+                        onCopy={() => onCopyPassage(passage)}
+                        onDelete={() => onDeletePassage(passage)}
+                      />
+                    );
+                  }
+                  const { bookmark } = item;
                   const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
                   const isCaptured = capturedIndex.has(key);
                   const isJournalOrigin = journalsById.has(bookmark.spaceId);
@@ -250,9 +238,9 @@ export function ReferenceList({
       </div>
 
       {/* Footer */}
-      <div className="flex h-8 items-center justify-end border-t border-[hsl(var(--border-subtle))] px-4">
-        <span className="text-xxs text-[hsl(var(--text-muted))]">
-          {filteredBookmarks.length} reference{filteredBookmarks.length === 1 ? '' : 's'}
+      <div className="flex h-8 shrink-0 items-center justify-end border-t border-border-subtle px-4">
+        <span className="text-xs text-text-muted">
+          {filteredItems.length} reference{filteredItems.length === 1 ? '' : 's'}
         </span>
       </div>
     </aside>

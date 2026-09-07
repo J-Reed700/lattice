@@ -1,33 +1,62 @@
+import { useMemo } from 'react';
+
+import { SectionHeading } from '@/components/ui';
+
 interface SearchEmptyStateProps {
   hasSearched: boolean;
-  searchMode: string;
+  query: string;
   isSearching: boolean;
+  /** Called with a recent query when the user picks one. */
+  onPickRecent?: (query: string) => void;
 }
 
-export function SearchEmptyState({ hasSearched, searchMode, isSearching }: SearchEmptyStateProps) {
+interface RecentItem {
+  id: string;
+  label: string;
+}
+
+/** Recent searches are kept by the command palette under this key. */
+const RECENT_STORAGE_KEY = 'lattice-command-palette';
+
+function readRecentSearches(): RecentItem[] {
+  try {
+    const raw = localStorage.getItem(RECENT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { recentSearches?: unknown };
+    if (!Array.isArray(parsed.recentSearches)) return [];
+    return parsed.recentSearches
+      .filter((item): item is RecentItem => Boolean(item && typeof item === 'object' && typeof (item as RecentItem).label === 'string'))
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+export function SearchEmptyState({ hasSearched, query, isSearching, onPickRecent }: SearchEmptyStateProps) {
+  const recent = useMemo(() => (hasSearched ? [] : readRecentSearches()), [hasSearched]);
+
   if (!hasSearched) {
+    if (recent.length === 0 || !onPickRecent) return null;
     return (
-      <div className="text-center text-[hsl(var(--text-secondary))] mt-20">
-        <svg className="mx-auto w-16 h-16 text-[hsl(var(--text-tertiary))] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <p className="text-lg">Start typing to search your files</p>
-        <p className="text-sm mt-2">Using {searchMode} search mode</p>
-      </div>
+      <section className="mt-6">
+        <SectionHeading>Recent</SectionHeading>
+        <div className="border-t border-border-subtle">
+          {recent.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onPickRecent(item.label)}
+              className="flex w-full items-center border-b border-border-subtle px-2 py-2.5 text-left text-sm text-text-secondary transition-colors duration-fast hover:bg-surface hover:text-text-primary"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </section>
     );
   }
 
-  if (!isSearching) {
-    return (
-      <div className="text-center text-[hsl(var(--text-secondary))] mt-20">
-        <svg className="mx-auto w-16 h-16 text-[hsl(var(--text-tertiary))] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p className="text-lg">No results found</p>
-        <p className="text-sm mt-2">Try a different search term or mode</p>
-      </div>
-    );
-  }
+  if (isSearching) return null;
 
-  return null;
+  return <p className="pt-6 text-sm text-text-muted">No results for “{query}”.</p>;
 }

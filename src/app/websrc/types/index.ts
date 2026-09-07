@@ -95,3 +95,9 @@ export * from './api';
 
 // Export model catalog types
 export type { ModelRecommendation, ModelSearchResult, CacheStats as ModelCatalogCacheStats } from './modelCatalog';
+
+// Chat starters (Track A)
+export type { ChatStarter, ChatStarters } from './api/chatStarters';
+
+// Transcription (Track E)
+export type { Transcript, TranscriptSegment, TranscriptionStatus } from './transcription';

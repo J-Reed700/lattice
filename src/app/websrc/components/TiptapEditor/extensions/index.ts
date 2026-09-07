@@ -1,4 +1,3 @@
-import type { AnyExtension } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
@@ -10,7 +9,10 @@ import { TaskList } from '@tiptap/extension-task-list';
 import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
 
+import { SlashMenu, type SlashMenuOptions } from './slashMenu';
 import { Wikilink } from './wikilink';
+
+import type { AnyExtension } from '@tiptap/core';
 
 const lowlight = createLowlight(common);
 
@@ -18,12 +20,15 @@ export interface ExtensionConfig {
   placeholder?: string;
   editable?: boolean;
   onWikilinkClick?: (title: string) => void;
+  /** Enables the `/` menu. Omitted by read-only viewers. */
+  slashMenu?: SlashMenuOptions;
 }
 
 export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       codeBlock: false, // replaced by CodeBlockLowlight
+      link: false, // registered below with custom attributes
     }),
     CodeBlockLowlight.configure({
       lowlight,
@@ -54,6 +59,7 @@ export function createExtensions(config: ExtensionConfig = {}): AnyExtension[] {
     Wikilink.configure({
       onWikilinkClick: config.onWikilinkClick,
     }),
+    ...(config.slashMenu ? [SlashMenu.configure(config.slashMenu)] : []),
     ...(config.placeholder
       ? [Placeholder.configure({ placeholder: config.placeholder })]
       : []),

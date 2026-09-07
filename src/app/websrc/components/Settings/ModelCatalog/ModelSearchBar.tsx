@@ -1,45 +1,36 @@
 /**
  * ModelSearchBar
  *
- * Search input with debounce for model catalog
+ * One field. Typing is debounced into the catalog search request.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { Search, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
-import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
-import Input from '../../ui/input/Input';
+import { cn } from '@/lib/utils';
+
+import { useModelCatalog } from '../../../hooks/useModelCatalog';
+import { settingsFieldClass } from '../../ui';
 
 export function ModelSearchBar() {
-  const searchQuery = useModelCatalogStore((state) => state.searchQuery);
-  const setSearchQuery = useModelCatalogStore((state) => state.setSearchQuery);
-  const setFilters = useModelCatalogStore((state) => state.setFilters);
-  const searchCatalog = useModelCatalogStore((state) => state.searchCatalog);
+  const { searchQuery, setSearchQuery, setFilters } = useModelCatalog({
+    autoLoadCapabilities: false,
+    autoLoadModels: false,
+  });
 
   const [localQuery, setLocalQuery] = useState(searchQuery);
 
-  // Debounce search
   const debouncedSearch = useCallback(
     (query: string) => {
       const handler = setTimeout(() => {
         setSearchQuery(query);
         setFilters({ query_text: query || null });
-
-        // If query is non-empty, trigger external search
-        if (query.trim()) {
-          searchCatalog({
-            query: query.trim(),
-            category: null,
-            max_size_gb: null,
-            limit: 20,
-          });
-        }
       }, 300);
 
       return () => clearTimeout(handler);
     },
-    [setSearchQuery, setFilters, searchCatalog]
+    [setSearchQuery, setFilters]
   );
 
   useEffect(() => {
@@ -55,23 +46,24 @@ export function ModelSearchBar() {
 
   return (
     <div className="relative">
-      <Input
+      <input
         type="text"
-        placeholder="Search models by name, capability, or description..."
         value={localQuery}
-        onChange={(e) => setLocalQuery(e.target.value)}
-        leftIcon={<Search className="w-4 h-4" />}
-        className="w-full"
+        onChange={(event) => setLocalQuery(event.target.value)}
+        placeholder="Search models"
+        aria-label="Search models"
+        className={cn(settingsFieldClass, 'h-9', localQuery && 'pr-9')}
       />
-      {localQuery && (
+      {localQuery ? (
         <button
+          type="button"
           onClick={handleClear}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors"
           aria-label="Clear search"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted transition-colors duration-fast hover:text-text-primary"
         >
-          <X className="w-4 h-4" />
+          <X className="h-4 w-4" />
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

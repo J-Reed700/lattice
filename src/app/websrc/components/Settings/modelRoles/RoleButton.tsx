@@ -1,25 +1,19 @@
 /**
  * RoleButton
  *
- * Single role button generated from a {@link RoleDescriptor}. The parent
- * card renders `<RoleButton>` once per role in the ROLES array; the button
- * decides its own enabled/active/pending visual state from the model + role.
+ * One small text toggle per role, generated from a {@link RoleDescriptor}.
+ * Active = accent text on an accent-muted ground; inactive = ghost. The
+ * button decides its own enabled/active/pending state from the model + role.
  *
- * Kept intentionally minimal — presentation only, no API calls. The
- * ModelRolesContext is the mutation layer.
+ * Presentation only — the ModelRolesContext is the mutation layer.
  */
 
 import { useState } from 'react';
 
-import { Check } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-import { Button } from '../../ui/button';
 import { useModelRoles } from './ModelRolesContext';
-import {
-  canModelFulfillRole,
-  isModelActiveForRole,
-  type RoleDescriptor,
-} from './roleConfig';
+import { canModelFulfillRole, isModelActiveForRole, type RoleDescriptor } from './roleConfig';
 
 import type { DownloadedModel } from '../../../types/downloadedModels';
 
@@ -50,24 +44,21 @@ export function RoleButton({ model, role }: RoleButtonProps) {
   };
 
   return (
-    <Button
+    <button
       type="button"
-      variant={isActive ? 'default' : 'outline'}
-      size="sm"
       onClick={handleClick}
       disabled={pending || isActive}
-      className="flex-1 min-w-0 text-xs"
-      title={isActive ? `Currently the active ${role.label} model` : role.hint}
-    >
-      {pending ? (
-        role.pendingLabel
-      ) : isActive ? (
-        <span className="flex items-center gap-1">
-          <Check className="w-3 h-3" /> {role.activeLabel}
-        </span>
-      ) : (
-        role.assignLabel
+      aria-pressed={isActive}
+      title={isActive ? `Active ${role.label.toLowerCase()} model` : role.hint}
+      className={cn(
+        'h-7 rounded-sm px-2 text-xs transition-colors duration-fast',
+        isActive
+          ? 'bg-accent-muted text-accent'
+          : 'text-text-muted hover:bg-surface-raised hover:text-text-primary',
+        pending && 'opacity-60',
       )}
-    </Button>
+    >
+      {role.label}
+    </button>
   );
 }

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
 import { Loader2, AlertCircle } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
+import { PrismSyntaxHighlighter as SyntaxHighlighter } from './prism';
 import VaultAPI from '../../../lib/api';
 
 interface TextViewerProps {
@@ -114,6 +114,8 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
           style={oneDark}
           showLineNumbers
           wrapLines
+          // Gives PassageHighlighter a block to attach to.
+          lineProps={{ className: 'lattice-line' }}
           customStyle={{
             margin: 0,
             padding: '1.5rem',

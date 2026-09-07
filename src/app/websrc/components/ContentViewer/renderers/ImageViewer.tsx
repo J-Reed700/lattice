@@ -31,20 +31,20 @@ export function ImageViewer({ filePath, title }: ImageViewerProps) {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <div className="text-center space-y-2">
-          <AlertCircle className="w-12 h-12 text-destructive mx-auto" />
-          <p className="text-destructive font-medium">Failed to load image</p>
-          <p className="text-sm text-muted-foreground">{error}</p>
+          <AlertCircle className="w-12 h-12 text-[hsl(var(--danger))] mx-auto" />
+          <p className="text-[hsl(var(--danger))] font-medium">Failed to load image</p>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-background">
+    <div className="h-full flex flex-col bg-[hsl(var(--bg))]">
       {/* Header */}
       {title && (
         <div className="px-6 py-4 border-b">
-          <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+          <h1 className="text-xl font-semibold text-[hsl(var(--text-primary))]">{title}</h1>
         </div>
       )}
 
@@ -58,7 +58,7 @@ export function ImageViewer({ filePath, title }: ImageViewerProps) {
         >
           <ZoomOut className="w-5 h-5" />
         </button>
-        <span className="text-sm text-foreground min-w-[60px] text-center">
+        <span className="text-sm text-[hsl(var(--text-primary))] min-w-[60px] text-center">
           {Math.round(scale * 100)}%
         </span>
         <button

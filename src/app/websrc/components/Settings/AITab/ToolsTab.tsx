@@ -1,19 +1,31 @@
 /**
- * Tools Tab - Built-in tools, custom tool presets, and tool management.
+ * Tools — built-in tools, preset templates, and saved custom endpoints.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { Plus, Trash2, Wrench } from 'lucide-react';
+import { X } from 'lucide-react';
 
+import {
+  CUSTOM_TOOL_PRESETS,
+  GHOST_BUTTON_CLASS,
+  INPUT_CLASS,
+  NUMBER_FIELD_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  SECONDARY_BUTTON_CLASS,
+  SWITCH_CLASS,
+  normalizeCustomTool,
+} from './shared';
 import { useLlmSettings } from './useLlmSettings';
-import { CUSTOM_TOOL_PRESETS, INPUT_CLASS, normalizeCustomTool } from './shared';
 import { VaultAPI } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
+import { PageHeader, SettingsRow, SettingsSection, Switch } from '../../ui';
 
 import type { CustomToolSettings as ApiCustomToolSettings } from '../../../types/api/settings';
+
+const BUILT_IN_TOOLS = ['web_search', 'fetch_url_content', 'wiki_search', 'wiki_summary'];
 
 export function ToolsTab() {
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
@@ -29,22 +41,11 @@ export function ToolsTab() {
   const selectedPreset =
     CUSTOM_TOOL_PRESETS.find((candidate) => candidate.id === selectedPresetId) ??
     CUSTOM_TOOL_PRESETS[0];
-  const selectedPresetIndex = Math.max(
-    0,
-    CUSTOM_TOOL_PRESETS.findIndex((candidate) => candidate.id === selectedPreset.id)
-  );
 
   useEffect(() => {
     if (!llmSettings) return;
     setCustomToolsDraft(llmSettings.customTools || []);
   }, [llmSettings]);
-
-  const cyclePreset = (direction: 1 | -1) => {
-    const total = CUSTOM_TOOL_PRESETS.length;
-    if (total === 0) return;
-    const nextIndex = (selectedPresetIndex + direction + total) % total;
-    setSelectedPresetId(CUSTOM_TOOL_PRESETS[nextIndex].id);
-  };
 
   const coerceCustomTool = (value: unknown): ApiCustomToolSettings | null => {
     if (!value || typeof value !== 'object') {
@@ -91,12 +92,14 @@ export function ToolsTab() {
       const parsed = JSON.parse(text) as unknown;
       const candidates = Array.isArray(parsed)
         ? parsed
-        : parsed && typeof parsed === 'object' && Array.isArray((parsed as { customTools?: unknown }).customTools)
+        : parsed &&
+            typeof parsed === 'object' &&
+            Array.isArray((parsed as { customTools?: unknown }).customTools)
           ? (parsed as { customTools: unknown[] }).customTools
           : null;
 
       if (!candidates) {
-        toast.error('Invalid custom tools JSON', {
+        toast.error("Couldn't read that file", {
           message: 'Expected an array or { customTools: [...] }',
         });
         return;
@@ -107,14 +110,14 @@ export function ToolsTab() {
         .filter((tool): tool is ApiCustomToolSettings => tool !== null);
 
       if (imported.length === 0) {
-        toast.error('No valid tools found in JSON');
+        toast.error('No valid tools in that file');
         return;
       }
 
       setCustomToolsDraft(imported);
-      toast.success(`Imported ${imported.length} custom tool(s)`);
+      toast.success(`Imported ${imported.length} tool(s)`);
     } catch (error) {
-      toast.error('Failed to import custom tools', {
+      toast.error("Couldn't import tools", {
         message: String(error),
       });
     } finally {
@@ -138,9 +141,9 @@ export function ToolsTab() {
         customTools: customToolsDraft.map(normalizeCustomTool),
       };
       await writeTextFile(filePath, JSON.stringify(payload, null, 2));
-      toast.success('Custom tools exported');
+      toast.success('Tools exported');
     } catch (error) {
-      toast.error('Failed to export custom tools', {
+      toast.error("Couldn't export tools", {
         message: String(error),
       });
     } finally {
@@ -168,10 +171,12 @@ export function ToolsTab() {
     if (!preset) return;
 
     const existing = new Set(
-      customToolsDraft.map((tool) => tool.name.trim().toLowerCase()).filter((name) => name.length > 0)
+      customToolsDraft
+        .map((tool) => tool.name.trim().toLowerCase())
+        .filter((name) => name.length > 0)
     );
     if (existing.has(preset.tool.name.toLowerCase())) {
-      toast.info(`Tool "${preset.tool.name}" already exists`);
+      toast.info(`"${preset.tool.name}" is already in your tools`);
       return;
     }
 
@@ -201,11 +206,11 @@ export function ToolsTab() {
   const testCustomTool = async (tool: ApiCustomToolSettings, index: number) => {
     const normalized = normalizeCustomTool(tool);
     if (!normalized.endpoint) {
-      toast.error('Endpoint is required');
+      toast.error('Add an endpoint first');
       return;
     }
     if (!normalized.queryParam) {
-      toast.error('Query param is required');
+      toast.error('Add a query param first');
       return;
     }
 
@@ -223,13 +228,13 @@ export function ToolsTab() {
     setActiveToolTestKey(null);
 
     if (!result.ok) {
-      toast.error('Custom tool test failed', {
+      toast.error("The tool didn't respond", {
         message: result.error,
       });
       return;
     }
 
-    toast.success(`Tool test succeeded (HTTP ${result.data.status})`, {
+    toast.success(`Tool responded (HTTP ${result.data.status})`, {
       message: result.data.finalUrl,
     });
   };
@@ -246,7 +251,7 @@ export function ToolsTab() {
 
     if (ok) {
       setCustomToolsDraft(normalized);
-      toast.success('Tool integrations saved');
+      toast.success('Tools saved');
     }
   };
 
@@ -262,345 +267,288 @@ export function ToolsTab() {
     );
   }, [customToolsDraft, llmSettings?.customTools]);
 
+  if (isLoading || !llmSettings) {
+    return (
+      <>
+        <PageHeader title="Tools" />
+        <p className="text-sm text-text-muted">Loading…</p>
+      </>
+    );
+  }
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
-        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
-          <Wrench className="w-5 h-5 text-[hsl(var(--accent))]" />
-        </div>
-        <div>
-          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Tool Integrations</h2>
-          <p className="text-sm text-[hsl(var(--text-secondary))]">
-            Built-in tools, custom search endpoints, and presets
-          </p>
-        </div>
-      </div>
+    <>
+      <PageHeader title="Tools" />
 
-      {isLoading || !llmSettings ? (
-        <div className="text-xs text-[hsl(var(--text-tertiary))]">Loading tools...</div>
-      ) : (
-        <div className="space-y-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-4">
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">Built-in tools</div>
-            <div className="flex flex-wrap gap-2">
-              {['web_search', 'fetch_url_content', 'wiki_search', 'wiki_summary'].map(
-                (toolName) => (
-                  <span
-                    key={toolName}
-                    className="inline-flex items-center rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-[hsl(var(--text-secondary))]"
-                  >
-                    {toolName}
-                  </span>
-                )
-              )}
-            </div>
+      <SettingsSection title="Built in">
+        {BUILT_IN_TOOLS.map((toolName) => (
+          <div
+            key={toolName}
+            className="flex items-center justify-between gap-4 border-b border-border-subtle py-2.5"
+          >
+            <span className="font-mono text-xs text-text-primary">{toolName}</span>
+            <span className="text-xs text-text-muted">Always on</span>
           </div>
+        ))}
+      </SettingsSection>
 
-          <div className="border-t border-[hsl(var(--border-subtle))] pt-3 space-y-3">
-            <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 space-y-3">
-              <div className="space-y-1">
-                <div className="text-xs font-semibold text-[hsl(var(--text-primary))]">
-                  Preset Catalog (Templates)
-                </div>
-                <p className="text-xs text-[hsl(var(--text-secondary))]">
-                  Curated starter presets for common public APIs and self-hosted search. This
-                  list is intentionally small and not exhaustive.
-                </p>
-                <p className="text-[11px] text-[hsl(var(--text-tertiary))]">
-                  Select a preset, then click <span className="font-medium">Add Preset as Tool</span>.
-                  This copies the template into your saved custom tools list below. Selecting a
-                  preset alone does not change any saved tool.
-                </p>
-              </div>
-              <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => cyclePreset(-1)}
-                    className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
-                  >
-                    Previous
-                  </button>
-                  <div className="text-[11px] text-[hsl(var(--text-secondary))]">
-                    Preset {selectedPresetIndex + 1} of {CUSTOM_TOOL_PRESETS.length}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => cyclePreset(1)}
-                    className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-              <div className="rounded-md border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] p-2.5 text-xs text-[hsl(var(--text-secondary))]">
-                <div className="font-medium text-[hsl(var(--text-primary))]">
-                  Selected preset: {selectedPreset.label}
-                </div>
-                <div className="mt-1 text-[11px]">{selectedPreset.summary}</div>
-                <div className="mt-1">Endpoint template: {selectedPreset.tool.endpoint}</div>
-                <div className="mt-1">
-                  Query param: {selectedPreset.tool.queryParam}
-                  {selectedPreset.tool.maxResultsParam
-                    ? ` | Max results param: ${selectedPreset.tool.maxResultsParam}`
-                    : ' | Max results param: none'}
-                </div>
-                {selectedPreset.docsUrl && (
-                  <a
-                    href={selectedPreset.docsUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-block text-[hsl(var(--accent))] hover:underline"
-                  >
-                    Open preset docs
-                  </a>
-                )}
-                {selectedPreset.id === 'searxng_search' && (
-                  <p className="mt-1 text-[hsl(var(--text-tertiary))]">
-                    Replace the endpoint with your deployed SearXNG URL
-                    (`https://your-domain/search?format=json`). Localhost/private-network
-                    endpoints are blocked by default security policy.
-                  </p>
-                )}
-              </div>
-            </div>
+      <SettingsSection
+        title="Presets"
+        actions={
+          <button type="button" onClick={addPresetTool} className={SECONDARY_BUTTON_CLASS}>
+            Add as tool
+          </button>
+        }
+      >
+        <SettingsRow label="Preset" htmlFor="tool-preset">
+          <select
+            id="tool-preset"
+            value={selectedPresetId}
+            onChange={(event) => setSelectedPresetId(event.target.value)}
+            className={INPUT_CLASS}
+          >
+            {CUSTOM_TOOL_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
 
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h4 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Saved Custom Tools</h4>
-                <p className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">
-                  These are the tools chat can actually use after you click Save Tools.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void importCustomToolsFromJson()}
-                  disabled={isImportingCustomTools}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isImportingCustomTools ? 'Importing...' : 'Import JSON'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void exportCustomToolsToJson()}
-                  disabled={isExportingCustomTools || customToolsDraft.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isExportingCustomTools ? 'Exporting...' : 'Export JSON'}
-                </button>
-                <button
-                  type="button"
-                  onClick={addPresetTool}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Preset as Tool
-                </button>
-                <button
-                  type="button"
-                  onClick={addCustomTool}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))]"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Tool
-                </button>
-              </div>
-            </div>
+        <SettingsRow label={selectedPreset.label} hint={selectedPreset.summary} stacked>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+            <dt className="text-text-muted">Endpoint</dt>
+            <dd className="break-all font-mono text-text-primary">
+              {selectedPreset.tool.endpoint}
+            </dd>
+            <dt className="text-text-muted">Query param</dt>
+            <dd className="font-mono text-text-primary">{selectedPreset.tool.queryParam}</dd>
+            <dt className="text-text-muted">Max results param</dt>
+            <dd className="font-mono text-text-primary">
+              {selectedPreset.tool.maxResultsParam ?? 'none'}
+            </dd>
+          </dl>
+          {selectedPreset.docsUrl ? (
+            <a
+              href={selectedPreset.docsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-block text-xs text-accent hover:underline"
+            >
+              Open docs
+            </a>
+          ) : null}
+        </SettingsRow>
+      </SettingsSection>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                Test Query
-              </label>
-              <input
-                type="text"
-                value={toolTestQuery}
-                onChange={(event) => setToolTestQuery(event.target.value)}
-                placeholder="Enter a query used when testing tools"
-                className={INPUT_CLASS}
-              />
-            </div>
+      <SettingsSection
+        title="Custom tools"
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => void importCustomToolsFromJson()}
+              disabled={isImportingCustomTools}
+              className={GHOST_BUTTON_CLASS}
+            >
+              {isImportingCustomTools ? 'Importing…' : 'Import'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportCustomToolsToJson()}
+              disabled={isExportingCustomTools || customToolsDraft.length === 0}
+              className={GHOST_BUTTON_CLASS}
+            >
+              {isExportingCustomTools ? 'Exporting…' : 'Export'}
+            </button>
+            <button type="button" onClick={addCustomTool} className={SECONDARY_BUTTON_CLASS}>
+              Add tool
+            </button>
+          </>
+        }
+      >
+        {customToolsDraft.length > 0 ? (
+          <SettingsRow
+            label="Test query"
+            hint="Sent to the endpoint when you press Test."
+            htmlFor="tool-test-query"
+          >
+            <input
+              id="tool-test-query"
+              type="text"
+              value={toolTestQuery}
+              onChange={(event) => setToolTestQuery(event.target.value)}
+              className={INPUT_CLASS}
+            />
+          </SettingsRow>
+        ) : null}
 
-            {customToolsDraft.length === 0 ? (
-              <p className="text-xs text-[hsl(var(--text-tertiary))]">
-                No custom tools configured. Add one to expose a custom search endpoint to the
-                model.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {customToolsDraft.map((tool, index) => (
-                  <div
-                    key={`${tool.name || 'custom_tool'}_${index}`}
-                    className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-3 space-y-3"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))]">
-                        <input
-                          type="checkbox"
-                          checked={tool.enabled}
-                          onChange={(event) =>
-                            updateCustomTool(index, 'enabled', event.target.checked)
-                          }
-                          className="h-4 w-4 rounded border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--accent))] focus:ring-2 focus:ring-[hsl(var(--accent))]"
-                        />
-                        Enabled
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void testCustomTool(tool, index)}
-                          disabled={activeToolTestKey === `${tool.name || 'custom_tool'}_${index}`}
-                          className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--border-subtle))] px-2 py-1 text-xs text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-default))] hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {activeToolTestKey === `${tool.name || 'custom_tool'}_${index}`
-                            ? 'Testing...'
-                            : 'Test'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeCustomTool(index)}
-                          className="inline-flex items-center gap-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--danger-fg))]"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                          Tool Name
-                        </label>
-                        <input
-                          type="text"
-                          value={tool.name}
-                          onChange={(event) =>
-                            updateCustomTool(index, 'name', event.target.value)
-                          }
-                          placeholder="pubmed_search"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                          Query Param
-                        </label>
-                        <input
-                          type="text"
-                          value={tool.queryParam}
-                          onChange={(event) =>
-                            updateCustomTool(index, 'queryParam', event.target.value)
-                          }
-                          placeholder="q"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                        Description
-                      </label>
-                      <input
-                        type="text"
-                        value={tool.description}
-                        onChange={(event) =>
-                          updateCustomTool(index, 'description', event.target.value)
-                        }
-                        placeholder="Search public medical abstracts"
-                        className={INPUT_CLASS}
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                        Endpoint
-                      </label>
-                      <input
-                        type="url"
-                        value={tool.endpoint}
-                        onChange={(event) =>
-                          updateCustomTool(index, 'endpoint', event.target.value)
-                        }
-                        placeholder="https://example.org/search"
-                        className={INPUT_CLASS}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                          Max Results Param (optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={tool.maxResultsParam || ''}
-                          onChange={(event) =>
-                            updateCustomTool(index, 'maxResultsParam', event.target.value)
-                          }
-                          placeholder="limit"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                          Default Max Results
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          max={100}
-                          value={tool.defaultMaxResults}
-                          onChange={(event) =>
-                            updateCustomTool(
-                              index,
-                              'defaultMaxResults',
-                              Number(event.target.value || 0)
-                            )
-                          }
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={resetCustomTools}
-                disabled={!customToolsDirty || isSavingCustomTools}
-                className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={persistCustomTools}
-                disabled={!customToolsDirty || isSavingCustomTools}
-                className="rounded-lg bg-[hsl(var(--accent))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--accent-fg))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isSavingCustomTools ? 'Saving...' : 'Save Tools'}
-              </button>
-            </div>
-
-            <p className="text-xs text-[hsl(var(--text-tertiary))]">
-              Tool names must use only letters, numbers, and underscores.
-            </p>
-            <p className="text-xs text-[hsl(var(--text-tertiary))]">
-              Preset = template only. Tool = saved runnable integration.
-            </p>
-            <p className="text-xs text-[hsl(var(--text-tertiary))]">
-              Presets are convenience defaults. Some providers apply rate limits or anti-bot
-              protection and may intermittently fail.
-            </p>
+        {customToolsDraft.length === 0 ? (
+          <div className="border-b border-border-subtle py-3 text-sm text-text-muted">
+            No custom tools yet.
           </div>
+        ) : (
+          customToolsDraft.map((tool, index) => {
+            const testKey = `${tool.name || 'custom_tool'}_${index}`;
+            const idPrefix = `custom-tool-${index}`;
+            return (
+              <div key={testKey} className="border-b border-border-subtle py-4">
+                <div className="flex items-center justify-between gap-3 pb-2">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Switch
+                      className={SWITCH_CLASS}
+                      checked={tool.enabled}
+                      onCheckedChange={(checked) => updateCustomTool(index, 'enabled', checked)}
+                      aria-label={`Enable ${tool.name || 'this tool'}`}
+                    />
+                    <span className="truncate font-mono text-sm text-text-primary">
+                      {tool.name || 'Untitled tool'}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void testCustomTool(tool, index)}
+                      disabled={activeToolTestKey === testKey}
+                      className={GHOST_BUTTON_CLASS}
+                    >
+                      {activeToolTestKey === testKey ? 'Testing…' : 'Test'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeCustomTool(index)}
+                      aria-label={`Remove ${tool.name || 'this tool'}`}
+                      title="Remove tool"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:bg-surface-raised hover:text-danger-fg"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
+                  <Field
+                    id={`${idPrefix}-name`}
+                    label="Name"
+                    hint="Letters, numbers and underscores only."
+                  >
+                    <input
+                      id={`${idPrefix}-name`}
+                      type="text"
+                      value={tool.name}
+                      onChange={(event) => updateCustomTool(index, 'name', event.target.value)}
+                      placeholder="pubmed_search"
+                      className={INPUT_CLASS}
+                    />
+                  </Field>
+                  <Field id={`${idPrefix}-query-param`} label="Query param">
+                    <input
+                      id={`${idPrefix}-query-param`}
+                      type="text"
+                      value={tool.queryParam}
+                      onChange={(event) =>
+                        updateCustomTool(index, 'queryParam', event.target.value)
+                      }
+                      placeholder="q"
+                      className={INPUT_CLASS}
+                    />
+                  </Field>
+                  <Field id={`${idPrefix}-description`} label="Description" wide>
+                    <input
+                      id={`${idPrefix}-description`}
+                      type="text"
+                      value={tool.description}
+                      onChange={(event) =>
+                        updateCustomTool(index, 'description', event.target.value)
+                      }
+                      placeholder="Search public medical abstracts"
+                      className={INPUT_CLASS}
+                    />
+                  </Field>
+                  <Field id={`${idPrefix}-endpoint`} label="Endpoint" wide>
+                    <input
+                      id={`${idPrefix}-endpoint`}
+                      type="url"
+                      value={tool.endpoint}
+                      onChange={(event) => updateCustomTool(index, 'endpoint', event.target.value)}
+                      placeholder="https://example.org/search"
+                      className={INPUT_CLASS}
+                    />
+                  </Field>
+                  <Field id={`${idPrefix}-max-results-param`} label="Max results param">
+                    <input
+                      id={`${idPrefix}-max-results-param`}
+                      type="text"
+                      value={tool.maxResultsParam || ''}
+                      onChange={(event) =>
+                        updateCustomTool(index, 'maxResultsParam', event.target.value)
+                      }
+                      placeholder="limit"
+                      className={INPUT_CLASS}
+                    />
+                  </Field>
+                  <Field id={`${idPrefix}-max-results`} label="Default max results">
+                    <input
+                      id={`${idPrefix}-max-results`}
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={tool.defaultMaxResults}
+                      onChange={(event) =>
+                        updateCustomTool(index, 'defaultMaxResults', Number(event.target.value || 0))
+                      }
+                      className={NUMBER_FIELD_CLASS}
+                    />
+                  </Field>
+                </div>
+              </div>
+            );
+          })
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-4">
+          <button
+            type="button"
+            onClick={resetCustomTools}
+            disabled={!customToolsDirty || isSavingCustomTools}
+            className={GHOST_BUTTON_CLASS}
+          >
+            Discard changes
+          </button>
+          <button
+            type="button"
+            onClick={persistCustomTools}
+            disabled={!customToolsDirty || isSavingCustomTools}
+            className={PRIMARY_BUTTON_CLASS}
+          >
+            {isSavingCustomTools ? 'Saving…' : 'Save tools'}
+          </button>
         </div>
-      )}
+      </SettingsSection>
+    </>
+  );
+}
+
+function Field({
+  id,
+  label,
+  hint,
+  wide,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={wide ? 'md:col-span-2' : undefined}>
+      <label htmlFor={id} className="block pb-1 text-xs text-text-muted">
+        {label}
+      </label>
+      {children}
+      {hint ? <p className="pt-1 text-xs text-text-muted">{hint}</p> : null}
     </div>
   );
 }

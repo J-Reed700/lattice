@@ -5,11 +5,11 @@
 import { useEffect, useState } from 'react';
 
 import { invoke } from '@tauri-apps/api/core';
-import { Download, Settings as SettingsIcon, Sparkles, XCircle } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 
-import { getErrorMessage } from '../../lib/errorUtils';
+import { useModelCatalog } from '../../hooks/useModelCatalog';
 import { VaultAPI } from '../../lib/api';
+import { getErrorMessage } from '../../lib/errorUtils';
+import { router } from '../../routes';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/button';
 import {
@@ -25,6 +25,12 @@ interface ModelSetupModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onComplete: () => void;
+  /**
+   * Records that the user has been offered the bundle. Owned by the gate so
+   * there is exactly one writer; it persists to the settings repository, not
+   * to localStorage.
+   */
+  onDismiss: () => void;
 }
 
 interface RecommendedModel {
@@ -52,12 +58,19 @@ function formatGb(bytes: number): string {
   return `${mb.toFixed(0)} MB`;
 }
 
-export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupModalProps) {
-  const navigate = useNavigate();
+export function ModelSetupModal({
+  open,
+  onOpenChange,
+  onComplete,
+  onDismiss,
+}: ModelSetupModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<FirstRunStatusResponse | null>(null);
-
+  const { systemCapabilities } = useModelCatalog({
+    autoLoadCapabilities: true,
+    autoLoadModels: false,
+  });
   useEffect(() => {
     if (!open) return;
     let alive = true;
@@ -80,17 +93,18 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
   }, [open]);
 
   const handleSkip = () => {
-    localStorage.setItem('lattice:first-run-skipped', 'true');
+    onDismiss();
     onOpenChange(false);
     onComplete();
   };
 
   const handleMoreOptions = () => {
-    // Skip-flag prevents re-open in Settings, but don't mark complete —
+    // Dismissing prevents a re-open in Settings, but don't mark complete —
     // user is choosing manually.
-    localStorage.setItem('lattice:first-run-skipped', 'true');
+    onDismiss();
     onOpenChange(false);
-    navigate('/settings');
+    // Mounted outside RouterProvider, so useNavigate() is unavailable here.
+    void router.navigate('/settings');
     onComplete();
   };
 
@@ -123,10 +137,10 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
     }
 
     const sizeNote = status.total_estimated_size_bytes
-      ? ` (${formatGb(status.total_estimated_size_bytes)})`
+      ? ` · ${formatGb(status.total_estimated_size_bytes)}`
       : '';
-    toast.success(`Installing recommended AI${sizeNote}`, {
-      message: 'Downloading in the background — you can start using Lattice now.',
+    toast.success(`Installing models${sizeNote}`, {
+      message: 'Downloading in the background.',
     });
 
     onOpenChange(false);
@@ -134,79 +148,71 @@ export function ModelSetupModal({ open, onOpenChange, onComplete }: ModelSetupMo
     void Promise.allSettled(tasks);
   };
 
-  if (!open || !status || !status.needs_setup) return null;
+  if (!open || !status?.needs_setup) return null;
 
   const totalSize = status.total_estimated_size_bytes ?? 0;
   const sizeLabel = totalSize > 0 ? formatGb(totalSize) : '~5 GB';
+
+  // The backend already sized this bundle to the machine's RAM, so a memory
+  // verdict here would restate its own decision. Disk is the one thing it does
+  // not check, and the one thing that makes the install fail halfway.
+  const totalGb = totalSize / 1_073_741_824;
+  const freeGb = systemCapabilities?.available_disk_gb ?? null;
+  const notEnoughDisk = freeGb != null && freeGb > 0 && totalGb > freeGb;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-[hsl(var(--accent))]" />
-            Welcome to Lattice
-          </DialogTitle>
+          <DialogTitle>Set up AI</DialogTitle>
           <DialogDescription>
-            We picked an AI bundle that fits your machine. Install it now and we&apos;ll
-            drop you into your Daily Note while it downloads.
+            Lattice picked a chat model and an embedding model that fit this Mac.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {loading && (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--accent))]" />
-            </div>
-          )}
+        <div className="space-y-3">
+          {loading && <p className="text-sm text-text-muted">Checking your hardware…</p>}
 
           {!loading && status.embedding_model && status.chat_model && (
-            <div className="rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] p-4 space-y-3">
+            <div className="border-t border-border-subtle">
               <BundleRow
-                label="Chat model"
+                label="Chat"
                 name={status.chat_model.display_name}
                 bytes={status.chat_model.estimated_size_bytes}
               />
-              <div className="border-t border-[hsl(var(--border-subtle))]" />
               <BundleRow
-                label="Embedding model"
+                label="Embedding"
                 name={status.embedding_model.display_name}
                 bytes={status.embedding_model.estimated_size_bytes}
               />
             </div>
           )}
 
+          {!loading && notEnoughDisk && freeGb != null && (
+            <p className="text-sm text-danger-fg">
+              Not enough free disk. Needs {totalGb.toFixed(1)} GB, {freeGb.toFixed(1)} GB free.
+            </p>
+          )}
+
           {error && (
-            <div className="bg-[hsl(var(--danger-muted))] p-4 rounded-lg border border-[hsl(var(--danger-fg))]">
-              <div className="flex items-start gap-3">
-                <XCircle className="w-5 h-5 text-[hsl(var(--danger-fg))] mt-0.5" />
-                <div className="flex-1">
-                  <h3 className="font-semibold text-sm text-[hsl(var(--danger-fg))] mb-1">
-                    Couldn&apos;t prepare recommendation
-                  </h3>
-                  <p className="text-xs text-[hsl(var(--danger-fg))]">{error}</p>
-                </div>
-              </div>
-            </div>
+            <p className="text-sm text-danger-fg">
+              Couldn&apos;t prepare a recommendation. {error}
+            </p>
           )}
         </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2">
+        <DialogFooter className="flex-col gap-2 sm:flex-row">
           <Button variant="ghost" onClick={handleSkip} disabled={loading}>
-            Skip for now
+            Not now
+          </Button>
+          <Button variant="ghost" onClick={handleMoreOptions} disabled={loading}>
+            Choose models
           </Button>
           <Button
-            variant="ghost"
-            onClick={handleMoreOptions}
-            disabled={loading}
-            className="text-[hsl(var(--text-secondary))]"
+            onClick={handleInstall}
+            disabled={loading || !status.embedding_model || notEnoughDisk}
           >
-            <SettingsIcon className="w-4 h-4 mr-2" />
-            More options
-          </Button>
-          <Button onClick={handleInstall} disabled={loading || !status.embedding_model}>
-            <Download className="w-4 h-4 mr-2" />
-            Install Recommended AI ({sizeLabel})
+            Install · {sizeLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -222,14 +228,10 @@ interface BundleRowProps {
 
 function BundleRow({ label, name, bytes }: BundleRowProps) {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="flex-1 min-w-0">
-        <p className="text-[10px] uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-          {label}
-        </p>
-        <p className="text-sm font-medium text-[hsl(var(--text-primary))] truncate">{name}</p>
-      </div>
-      <span className="text-xs tabular-nums text-[hsl(var(--text-secondary))] whitespace-nowrap">
+    <div className="flex items-baseline justify-between gap-3 border-b border-border-subtle py-2">
+      <span className="w-20 shrink-0 text-xs text-text-muted">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{name}</span>
+      <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-text-secondary">
         {formatGb(bytes)}
       </span>
     </div>

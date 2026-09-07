@@ -18,8 +18,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { toast } from '../../../stores/toastStore';
 
-import type { DownloadedModel } from '../../../types/downloadedModels';
 import type { RoleId } from './roleConfig';
+import type { DownloadedModel } from '../../../types/downloadedModels';
 
 interface ModelRolesContextValue {
   models: DownloadedModel[];

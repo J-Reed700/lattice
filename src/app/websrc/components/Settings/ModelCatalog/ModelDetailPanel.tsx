@@ -1,44 +1,111 @@
 /**
  * ModelDetailPanel
  *
- * Detailed view of a selected model with full information and compatibility breakdown
+ * One model in full: what it is, whether it fits this machine, and the
+ * actions available for it. Hairline sections of label/value rows; the
+ * Download button is the only accent on the page.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft, Download, HardDrive, Cpu, Zap, AlertCircle, CheckCircle2, Info, Loader2, Lock, Check } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
+
+import {
+  CATEGORY_LABELS,
+  computeModelFit,
+  embeddingBlockReason,
+  FIT_LABEL,
+  formatSize,
+} from './catalogUtils';
+import { startModelDownload } from './startModelDownload';
+import { useHuggingFaceTokenStatusQuery } from '../../../hooks/queries/useHuggingFaceTokenQuery';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { useDownloadState } from '../../../hooks/useDownloadState';
+import { useModelCatalog } from '../../../hooks/useModelCatalog';
 import { getErrorMessage } from '../../../lib/errorUtils';
 import { useToastStore } from '../../../stores/toastStore';
 import { handleAsyncEvent } from '../../../utils/promiseHandlers';
-import { Button } from '../../ui/button';
-import Card, { CardHeader, CardTitle, CardContent } from '../../ui/Card/Card';
+import {
+  GHOST_BUTTON_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  SECONDARY_BUTTON_CLASS,
+} from '../settingsStyles';
 
-import type { DownloadModelResponse } from '../../../types/download';
-import type { CompatibilityLevel, ModelRecommendation } from '../../../types/modelCatalog';
+import type { ModelRecommendation } from '../../../types/modelCatalog';
 
 interface ModelDetailPanelProps {
   model: ModelRecommendation;
   onBack: () => void;
   routerModelId?: string;
   onSetRouterModel?: (_modelId: string) => Promise<void>;
+  /** Sends the user to the Hugging Face token field on this page. */
+  onAddToken?: () => void;
 }
 
-type DownloadModelCommandResponse =
-  | DownloadModelResponse
-  | { download_id: string; status: string };
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h3 className="pb-2 text-sm font-medium text-text-secondary">{title}</h3>
+      <div className="border-t border-border-subtle">{children}</div>
+    </section>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: 'default' | 'danger';
+}) {
+  return (
+    <div className="flex items-start justify-between gap-6 border-b border-border-subtle py-2.5">
+      <span className="shrink-0 text-sm text-text-secondary">{label}</span>
+      <span
+        className={cn(
+          'text-right text-sm tabular-nums',
+          tone === 'danger' ? 'text-danger-fg' : 'text-text-primary',
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function NoteRow({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'danger' }) {
+  return (
+    <p
+      className={cn(
+        'border-b border-border-subtle py-2.5 text-sm',
+        tone === 'danger' ? 'text-danger-fg' : 'text-text-secondary',
+      )}
+    >
+      {children}
+    </p>
+  );
+}
 
 export function ModelDetailPanel({
   model,
   onBack,
   routerModelId,
   onSetRouterModel,
+  onAddToken,
 }: ModelDetailPanelProps) {
   const { model: metadata, compatibility } = model;
+  const { systemCapabilities } = useModelCatalog({
+    autoLoadCapabilities: true,
+    autoLoadModels: false,
+  });
+  const { data: hfTokenStatus } = useHuggingFaceTokenStatusQuery();
+  const fit = computeModelFit(metadata, systemCapabilities);
+  const hasHfToken = hfTokenStatus?.isSet ?? false;
   const popularityDownloads = model.popularity_downloads ?? null;
   const popularityLikes = model.popularity_likes ?? null;
   const formattedPopularityDownloads = popularityDownloads
@@ -47,7 +114,12 @@ export function ModelDetailPanel({
   const formattedPopularityLikes = popularityLikes
     ? new Intl.NumberFormat(undefined).format(popularityLikes)
     : null;
-  const { isModelDownloaded, setActiveChatModel, setActiveEmbeddingModel, warmUpActiveChatModel } = useDownloadedModels();
+  const {
+    isModelDownloaded,
+    setActiveChatModel,
+    setActiveEmbeddingModel,
+    warmUpActiveChatModel,
+  } = useDownloadedModels();
   const addToast = useToastStore((state) => state.addToast);
   const queryClient = useQueryClient();
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -72,18 +144,11 @@ export function ModelDetailPanel({
   // exists in the download use case; this is purely UX so users see the
   // "won't work" reason before clicking download instead of after a
   // multi-GB transfer.
-  const embeddingCompat = metadata.embedding_compatibility ?? null;
-  const isEmbeddingArchIncompatible =
-    isEmbeddingCategory &&
-    embeddingCompat !== null &&
-    embeddingCompat.kind !== 'compatible';
-  const incompatibilityReason =
-    embeddingCompat?.kind === 'incompatible'
-      ? embeddingCompat.reason
-      : embeddingCompat?.kind === 'unknown'
-        ? 'Architecture not recognized — only BERT-family embedders are supported today.'
-        : null;
+  const incompatibilityReason = embeddingBlockReason(metadata);
+  const isEmbeddingArchIncompatible = incompatibilityReason !== null;
   const canSetRouter = Boolean(onSetRouterModel);
+  const hasDownloadSource =
+    Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
 
   // Check if model is already downloaded
   const checkDownloadStatus = useCallback(async () => {
@@ -119,8 +184,8 @@ export function ModelDetailPanel({
     if (!isDownloaded) {
       addToast({
         type: 'warning',
-        title: 'Download required',
-        message: 'Download this model before setting it as the chat LLM.',
+        title: 'Download it first',
+        message: 'This model has to be on disk before it can be the chat model.',
       });
       return;
     }
@@ -145,7 +210,7 @@ export function ModelDetailPanel({
     } catch (error) {
       addToast({
         type: 'error',
-        title: 'Failed to update chat model',
+        title: "Couldn't set the chat model",
         message: getErrorMessage(error),
       });
     } finally {
@@ -157,8 +222,8 @@ export function ModelDetailPanel({
     if (!isDownloaded) {
       addToast({
         type: 'warning',
-        title: 'Download required',
-        message: 'Download this model before setting it as the embedding model.',
+        title: 'Download it first',
+        message: 'This model has to be on disk before it can be the embedding model.',
       });
       return;
     }
@@ -174,7 +239,7 @@ export function ModelDetailPanel({
     } catch (error) {
       addToast({
         type: 'error',
-        title: 'Failed to update embedding model',
+        title: "Couldn't set the embedding model",
         message: getErrorMessage(error),
       });
     } finally {
@@ -187,8 +252,8 @@ export function ModelDetailPanel({
     if (!isDownloaded) {
       addToast({
         type: 'warning',
-        title: 'Download required',
-        message: 'Download this model before setting it as the router.',
+        title: 'Download it first',
+        message: 'This model has to be on disk before it can route.',
       });
       return;
     }
@@ -203,7 +268,7 @@ export function ModelDetailPanel({
     } catch (error) {
       addToast({
         type: 'error',
-        title: 'Failed to update router model',
+        title: "Couldn't set the router model",
         message: getErrorMessage(error),
       });
     } finally {
@@ -211,39 +276,6 @@ export function ModelDetailPanel({
     }
   };
 
-  // Compatibility badge styling
-  const getCompatibilityStyle = (level: CompatibilityLevel) => {
-    switch (level) {
-      case 'Excellent':
-        return {
-          bg: 'bg-[hsl(var(--success-muted))]',
-          text: 'text-[hsl(var(--success-fg))]',
-          icon: <CheckCircle2 className="w-4 h-4" />,
-        };
-      case 'Good':
-        return {
-          bg: 'bg-[hsl(var(--warning-muted))]',
-          text: 'text-[hsl(var(--warning-fg))]',
-          icon: <CheckCircle2 className="w-4 h-4" />,
-        };
-      case 'Poor':
-        return {
-          bg: 'bg-[hsl(var(--warning-muted))]',
-          text: 'text-[hsl(var(--warning-fg))]',
-          icon: <AlertCircle className="w-4 h-4" />,
-        };
-      case 'Incompatible':
-        return {
-          bg: 'bg-[hsl(var(--danger-muted))]',
-          text: 'text-[hsl(var(--danger-fg))]',
-          icon: <AlertCircle className="w-4 h-4" />,
-        };
-    }
-  };
-
-  const compatStyle = getCompatibilityStyle(compatibility.compatibility_level);
-
-  // Handle model download
   const handleDownload = async () => {
     // Guard against multiple downloads, including in-flight invoke calls
     // that haven't yet registered an active download in the store.
@@ -253,473 +285,217 @@ export function ModelDetailPanel({
 
     setIsStartingDownload(true);
     try {
-      // Use plugin pattern: model domain download command
-      const response = await invoke<DownloadModelCommandResponse>('plugin:model|download_model', {
-        modelId: metadata.id
+      const { alreadyDownloaded } = await startModelDownload({
+        metadata,
+        addToast,
+        queryClient,
       });
-
-      // Handle both API shapes during migration: rich `state` payload and legacy `status` payload
-      if ('state' in response) {
-        if (response.state.type === 'DownloadStarted') {
-          addToast({
-            type: 'success',
-            title: 'Download Started',
-            message: `Downloading ${metadata.name} (${response.state.data.files_to_download} files)`,
-          });
-        } else if (response.state.type === 'AlreadyDownloaded') {
-          addToast({
-            type: 'info',
-            title: 'Already Downloaded',
-            message: `${metadata.name} is already downloaded (${response.state.data.verified_files} files verified)`,
-          });
-          // Update UI state immediately
-          setIsDownloaded(true);
-          // Invalidate query to refresh downloaded models list
-          queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
-        } else if (response.state.type === 'NetworkError') {
-          addToast({
-            type: 'error',
-            title: 'Network Error',
-            message: response.state.data.error_message,
-          });
-        } else if (response.state.type === 'OperationFailed') {
-          addToast({
-            type: 'error',
-            title: 'Download Failed',
-            message: response.state.data.error_message,
-          });
-        }
-      } else if (response.status === 'started') {
-        addToast({
-          type: 'success',
-          title: 'Download Started',
-          message: `Downloading ${metadata.name}`,
-        });
-      } else if (response.status === 'already_downloaded') {
-        addToast({
-          type: 'info',
-          title: 'Already Downloaded',
-          message: `${metadata.name} is already downloaded`,
-        });
-        setIsDownloaded(true);
-        queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
-      } else if (response.status === 'network_error') {
-        addToast({
-          type: 'error',
-          title: 'Network Error',
-          message: 'A network error occurred while starting the download.',
-        });
-      } else if (response.status === 'failed') {
-        addToast({
-          type: 'error',
-          title: 'Download Failed',
-          message: 'Failed to start the download.',
-        });
-      }
-    } catch (error) {
-      console.error('Download failed:', error);
-
-      const errorMessage = getErrorMessage(error);
-
-      // Check for rate limit error
-      if (errorMessage.includes('Rate limit')) {
-        addToast({
-          type: 'warning',
-          title: 'Rate Limit Exceeded',
-          message: 'Too many download requests. Please wait a moment and try again.',
-        });
-      } else {
-        addToast({
-          type: 'error',
-          title: 'Download Failed',
-          message: errorMessage,
-        });
-      }
+      if (alreadyDownloaded) setIsDownloaded(true);
     } finally {
       setIsStartingDownload(false);
     }
   };
 
-  // Score bar component
-  const ScoreBar = ({ score, label }: { score: number; label: string }) => {
-    const getColor = (s: number) => {
-      if (s >= 80) return 'bg-[hsl(var(--success-fg))]';
-      if (s >= 50) return 'bg-[hsl(var(--warning-fg))]';
-      return 'bg-[hsl(var(--danger-fg))]';
-    };
+  const size = formatSize(metadata.size_gb);
+  const headerMeta = [
+    CATEGORY_LABELS[metadata.category],
+    metadata.performance_tier,
+    size,
+    isRouterActive ? 'Router' : null,
+  ].filter(Boolean) as string[];
 
+  const downloadControl = () => {
+    if (!hasDownloadSource) return null;
+    if (isCheckingDownload) return <span className="text-sm text-text-muted">Checking…</span>;
+    if (isDownloaded) return <span className="text-sm text-text-muted">Downloaded</span>;
+    if (isEmbeddingArchIncompatible) {
+      return (
+        <span className="text-sm text-text-muted" title={incompatibilityReason ?? undefined}>
+          Not supported on this build
+        </span>
+      );
+    }
+    if (isStartingDownload) return <span className="text-sm text-text-muted">Starting…</span>;
+    if (isDownloading || hasActiveDownload) {
+      const percentage = activeDownload?.percentage;
+      return (
+        <span className="text-sm tabular-nums text-text-muted">
+          {percentage != null ? `Downloading ${Math.round(percentage)}%` : 'Downloading…'}
+        </span>
+      );
+    }
     return (
-      <div className="space-y-1">
-        <div className="flex justify-between text-xs">
-          <span className="text-[hsl(var(--text-secondary))]">{label}</span>
-          <span className="font-medium text-[hsl(var(--text-primary))]">{score}/100</span>
-        </div>
-        <div className="h-2 bg-[hsl(var(--surface-raised))] rounded-full overflow-hidden">
-          <div
-            className={`h-full ${getColor(score)} transition-all duration-500`}
-            style={{ width: `${score}%` }}
-          />
-        </div>
-      </div>
+      <button
+        type="button"
+        onClick={handleAsyncEvent(handleDownload)}
+        className={PRIMARY_BUTTON_CLASS}
+      >
+        Download
+      </button>
     );
   };
 
   return (
-    <div className="space-y-6">
-      {/* Back button */}
-      <Button variant="ghost" onClick={onBack} size="sm">
-        <ArrowLeft className="w-4 h-4" />
-        Back to Models
-      </Button>
+    <div className="space-y-8">
+      <div>
+        <button type="button" onClick={onBack} className={cn(GHOST_BUTTON_CLASS, 'gap-1.5 pl-1.5')}>
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+      </div>
 
-      {/* Header Card */}
-      <Card padding="lg">
-        <div className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <h2 className="text-2xl font-bold text-[hsl(var(--text-primary))] mb-2">
-                {metadata.name}
-              </h2>
-              <div className="flex items-center gap-3 text-sm text-[hsl(var(--text-secondary))]">
-                <span className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded">
-                  {metadata.category}
-                </span>
-                <span className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded">
-                  {metadata.performance_tier}
-                </span>
-                <span className="px-2 py-1 bg-[hsl(var(--surface-raised))] rounded">
-                  {metadata.license}
-                </span>
-                {metadata.requires_auth && (
-                  <span className="px-2 py-1 bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))] rounded flex items-center gap-1">
-                    <Lock className="w-3 h-3" />
-                    Requires Token
-                  </span>
-                )}
-                {metadata.format === 'safetensors' && (
-                  <span
-                    className="px-2 py-1 bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent-fg))] rounded"
-                    title="HF safetensors format (unquantized). Larger on disk + RAM than a GGUF quant of the same model. Loaded via mistralrs auto-detect."
-                  >
-                    Safetensors
-                  </span>
-                )}
-                {isEmbeddingArchIncompatible && (
-                  <span
-                    className="px-2 py-1 bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))] rounded flex items-center gap-1"
-                    title={incompatibilityReason ?? undefined}
-                  >
-                    <AlertCircle className="w-3 h-3" />
-                    Architecture not supported
-                  </span>
-                )}
-              </div>
-              {isEmbeddingArchIncompatible && incompatibilityReason && (
-                <div className="mt-2 text-xs text-[hsl(var(--text-secondary))] max-w-xl">
-                  {incompatibilityReason}
-                </div>
-              )}
-            </div>
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium ${compatStyle.bg} ${compatStyle.text}`}>
-              {compatStyle.icon}
-              <span>{compatibility.compatibility_level}</span>
-            </div>
-          </div>
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-lg font-medium text-text-primary">{metadata.name}</h2>
+          <p className="mt-0.5 break-all font-mono text-xs text-text-muted">
+            {metadata.model_id ?? metadata.id}
+          </p>
+          <p className="mt-1 text-xs text-text-muted">{headerMeta.join(' · ')}</p>
+        </div>
 
-          <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed">
+        {metadata.description ? (
+          <p className="max-w-[70ch] text-sm leading-relaxed text-text-secondary">
             {metadata.description}
           </p>
+        ) : null}
 
-          {((metadata.model_id && metadata.default_filename) || metadata.download_url) && (
+        {incompatibilityReason ? (
+          <p className="max-w-[70ch] text-sm text-danger-fg">{incompatibilityReason}</p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {downloadControl()}
+
+          {isLlmCategory ? (
             <>
-              {isCheckingDownload ? (
-                <Button variant="default" size="sm" disabled>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Checking...
-                </Button>
-              ) : isDownloaded ? (
-                <Button
-                  variant="default"
-                  size="sm"
-                  disabled
-                  className="bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))] cursor-not-allowed"
+              <button
+                type="button"
+                onClick={handleAsyncEvent(handleSetActiveChat)}
+                disabled={!isDownloaded || isSettingChatModel}
+                className={SECONDARY_BUTTON_CLASS}
+              >
+                {isSettingChatModel ? 'Setting…' : 'Use for chat'}
+              </button>
+              {canSetRouter ? (
+                <button
+                  type="button"
+                  onClick={handleAsyncEvent(handleSetRouter)}
+                  disabled={!isDownloaded || isSettingRouterModel || isRouterActive}
+                  className={SECONDARY_BUTTON_CLASS}
                 >
-                  <Check className="w-4 h-4" />
-                  Already Downloaded
-                </Button>
-              ) : isEmbeddingArchIncompatible ? (
-                <Button
-                  variant="default"
-                  size="sm"
-                  disabled
-                  title={incompatibilityReason ?? undefined}
-                  className="bg-[hsl(var(--surface-muted))] text-[hsl(var(--text-secondary))] cursor-not-allowed"
-                >
-                  <AlertCircle className="w-4 h-4" />
-                  Not Compatible
-                </Button>
-              ) : (
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={handleAsyncEvent(handleDownload)}
-                  disabled={isDownloading || hasActiveDownload || isStartingDownload}
-                >
-                  {isStartingDownload ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Starting…
-                    </>
-                  ) : isDownloading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Downloading...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4" />
-                      Download Model
-                    </>
-                  )}
-                </Button>
-              )}
+                  {isSettingRouterModel
+                    ? 'Setting…'
+                    : isRouterActive
+                      ? 'Routing'
+                      : 'Use for routing'}
+                </button>
+              ) : null}
             </>
-          )}
+          ) : null}
 
-          {(isLlmCategory || isEmbeddingCategory) && (
-            <div className="flex flex-wrap gap-2">
-              {isLlmCategory && (
-                <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleAsyncEvent(handleSetActiveChat)}
-                    disabled={!isDownloaded || isSettingChatModel}
-                  >
-                    {isSettingChatModel ? 'Setting…' : 'Set as Chat LLM'}
-                  </Button>
-                  {canSetRouter && (
-                    <Button
-                      variant={isRouterActive ? 'default' : 'secondary'}
-                      size="sm"
-                      onClick={handleAsyncEvent(handleSetRouter)}
-                      disabled={!isDownloaded || isSettingRouterModel}
-                    >
-                      {isSettingRouterModel
-                        ? 'Setting…'
-                        : isRouterActive
-                          ? 'Router (Active)'
-                          : 'Set as Router'}
-                    </Button>
-                  )}
-                </>
-              )}
-              {isEmbeddingCategory && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleAsyncEvent(handleSetActiveEmbedding)}
-                  disabled={!isDownloaded || isSettingEmbeddingModel}
-                >
-                  {isSettingEmbeddingModel ? 'Setting…' : 'Set as Embedding'}
-                </Button>
-              )}
-            </div>
-          )}
+          {isEmbeddingCategory ? (
+            <button
+              type="button"
+              onClick={handleAsyncEvent(handleSetActiveEmbedding)}
+              disabled={!isDownloaded || isSettingEmbeddingModel}
+              className={SECONDARY_BUTTON_CLASS}
+            >
+              {isSettingEmbeddingModel ? 'Setting…' : 'Use for embeddings'}
+            </button>
+          ) : null}
         </div>
-      </Card>
+      </div>
 
-      {/* Compatibility Breakdown */}
-      <Card padding="md">
-        <CardHeader>
-          <CardTitle className="text-base">Compatibility Analysis</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4 mt-4">
-            <ScoreBar score={compatibility.overall_score} label="Overall Compatibility" />
-            <ScoreBar score={compatibility.ram_score} label="RAM Compatibility" />
-            <ScoreBar score={compatibility.gpu_score} label="GPU Compatibility" />
-            <ScoreBar score={compatibility.disk_score} label="Disk Space" />
-          </div>
+      <DetailSection title="Fit on this machine">
+        <DetailRow
+          label="Overall"
+          value={`${compatibility.compatibility_level} · ${compatibility.overall_score}/100`}
+          tone={
+            compatibility.compatibility_level === 'Incompatible' ||
+            compatibility.compatibility_level === 'Poor'
+              ? 'danger'
+              : 'default'
+          }
+        />
+        <DetailRow label="Memory" value={`${compatibility.ram_score}/100`} />
+        <DetailRow label="GPU" value={`${compatibility.gpu_score}/100`} />
+        <DetailRow label="Disk" value={`${compatibility.disk_score}/100`} />
+        {compatibility.estimated_tokens_per_second ? (
+          <DetailRow
+            label="Estimated speed"
+            value={`${compatibility.estimated_tokens_per_second.toFixed(1)} tokens/sec`}
+          />
+        ) : null}
+        {compatibility.estimated_loading_time_seconds > 0 ? (
+          <DetailRow
+            label="Load time"
+            value={`~${compatibility.estimated_loading_time_seconds.toFixed(1)} s`}
+          />
+        ) : null}
+      </DetailSection>
 
-          {compatibility.estimated_tokens_per_second && (
-            <div className="mt-4 pt-4 border-t border-[hsl(var(--border-subtle))]">
-              <div className="flex items-center gap-2 text-sm">
-                <Zap className="w-4 h-4 text-[hsl(var(--accent))]" />
-                <span className="text-[hsl(var(--text-secondary))]">Estimated Speed:</span>
-                <span className="font-medium text-[hsl(var(--text-primary))]">
-                  {compatibility.estimated_tokens_per_second.toFixed(1)} tokens/sec
-                </span>
-              </div>
-            </div>
-          )}
+      {compatibility.blockers.length > 0 ? (
+        <DetailSection title="Blockers">
+          {compatibility.blockers.map((blocker) => (
+            <NoteRow key={blocker} tone="danger">
+              {blocker}
+            </NoteRow>
+          ))}
+        </DetailSection>
+      ) : null}
 
-          {compatibility.estimated_loading_time_seconds > 0 && (
-            <div className="flex items-center gap-2 text-sm mt-2">
-              <Cpu className="w-4 h-4 text-[hsl(var(--accent))]" />
-              <span className="text-[hsl(var(--text-secondary))]">Load Time:</span>
-              <span className="font-medium text-[hsl(var(--text-primary))]">
-                ~{compatibility.estimated_loading_time_seconds.toFixed(1)} seconds
-              </span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {compatibility.recommendations.length > 0 ? (
+        <DetailSection title="Notes">
+          {compatibility.recommendations.map((recommendation) => (
+            <NoteRow key={recommendation}>{recommendation}</NoteRow>
+          ))}
+        </DetailSection>
+      ) : null}
 
-      {/* Recommendations */}
-      {compatibility.recommendations.length > 0 && (
-        <Card padding="md">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Info className="w-4 h-4 text-[hsl(var(--accent))]" />
-              <CardTitle className="text-base">Recommendations</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 mt-4">
-              {compatibility.recommendations.map((rec, idx) => (
-                <li key={idx} className="flex items-start gap-2 text-sm text-[hsl(var(--text-secondary))]">
-                  <span className="text-[hsl(var(--accent))] mt-1">•</span>
-                  <span>{rec}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Blockers */}
-      {compatibility.blockers.length > 0 && (
-        <Card padding="md">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-[hsl(var(--danger-fg))]" />
-              <CardTitle className="text-base">Compatibility Issues</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 mt-4">
-              {compatibility.blockers.map((blocker, idx) => (
-                <li key={idx} className="flex items-start gap-2 text-sm text-[hsl(var(--danger-fg))]">
-                  <span className="mt-1">⚠️</span>
-                  <span>{blocker}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Technical Specifications */}
-      <Card padding="md">
-        <CardHeader>
-          <CardTitle className="text-base">Technical Specifications</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Model Size
-                </div>
-                <div className="flex items-center gap-2 text-sm text-[hsl(var(--text-primary))]">
-                  <HardDrive className="w-4 h-4" />
-                  {metadata.size_gb > 0 ? `${metadata.size_gb.toFixed(2)} GB` : 'Unknown'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Minimum RAM
-                </div>
-                <div className="text-sm text-[hsl(var(--text-primary))]">
-                  {metadata.minimum_ram_gb.toFixed(1)} GB
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Recommended RAM
-                </div>
-                <div className="text-sm text-[hsl(var(--text-primary))]">
-                  {metadata.recommended_ram_gb.toFixed(1)} GB
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Context Length
-                </div>
-                <div className="text-sm text-[hsl(var(--text-primary))]">
-                  {metadata.context_length.toLocaleString()} tokens
-                </div>
-              </div>
-              {metadata.category === 'Embedding' && metadata.embedding_dimensions && (
-                <div>
-                  <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                    Embedding Dimensions
-                  </div>
-                  <div className="text-sm text-[hsl(var(--text-primary))]">
-                    {metadata.embedding_dimensions}
-                  </div>
-                </div>
-              )}
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Downloads
-                </div>
-                <div className="text-sm text-[hsl(var(--text-primary))]">
-                  {formattedPopularityDownloads ?? 'Unavailable'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Likes
-                </div>
-                <div className="text-sm text-[hsl(var(--text-primary))]">
-                  {formattedPopularityLikes ?? 'Unavailable'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-[hsl(var(--text-secondary))] mb-1">
-                  Quantizations
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {metadata.supported_quantizations.map((quant) => (
-                    <span
-                      key={quant}
-                      className="text-xs px-2 py-0.5 bg-[hsl(var(--surface-raised))] rounded"
-                    >
-                      {quant}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Capabilities */}
-      {metadata.capabilities.length > 0 && (
-        <Card padding="md">
-          <CardHeader>
-            <CardTitle className="text-base">Capabilities</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2 mt-4">
-              {metadata.capabilities.map((capability) => (
-                <span
-                  key={capability}
-                  className="px-3 py-1.5 text-sm bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] rounded-lg font-medium"
+      <DetailSection title="Specifications">
+        <DetailRow label="Size" value={size ?? 'Unknown'} />
+        <DetailRow label="Minimum memory" value={`${metadata.minimum_ram_gb.toFixed(1)} GB`} />
+        <DetailRow label="Recommended memory" value={`${metadata.recommended_ram_gb.toFixed(1)} GB`} />
+        <DetailRow label="Context" value={`${metadata.context_length.toLocaleString()} tokens`} />
+        {isEmbeddingCategory && metadata.embedding_dimensions ? (
+          <DetailRow label="Dimensions" value={metadata.embedding_dimensions} />
+        ) : null}
+        {metadata.supported_quantizations.length > 0 ? (
+          <DetailRow label="Quantizations" value={metadata.supported_quantizations.join(', ')} />
+        ) : null}
+        <DetailRow label="Format" value={metadata.format === 'safetensors' ? 'Safetensors' : 'GGUF'} />
+        <DetailRow label="License" value={metadata.license} />
+        {fit ? <DetailRow label="Fit" value={`${FIT_LABEL[fit.verdict]} · ${fit.reason}`} /> : null}
+        {metadata.requires_auth ? (
+          <DetailRow
+            label="Access"
+            value={
+              hasHfToken ? (
+                'Gated · token set'
+              ) : onAddToken ? (
+                <button
+                  type="button"
+                  onClick={onAddToken}
+                  className="text-sm text-accent hover:underline"
                 >
-                  {capability}
-                </span>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                  Token required · Add token
+                </button>
+              ) : (
+                'Hugging Face token required'
+              )
+            }
+          />
+        ) : null}
+        {formattedPopularityDownloads ? (
+          <DetailRow label="Downloads" value={formattedPopularityDownloads} />
+        ) : null}
+        {formattedPopularityLikes ? (
+          <DetailRow label="Likes" value={formattedPopularityLikes} />
+        ) : null}
+        {metadata.capabilities.length > 0 ? (
+          <DetailRow label="Capabilities" value={metadata.capabilities.join(', ')} />
+        ) : null}
+      </DetailSection>
     </div>
   );
 }

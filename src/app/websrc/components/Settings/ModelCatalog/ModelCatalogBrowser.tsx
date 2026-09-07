@@ -1,19 +1,21 @@
 /**
  * ModelCatalogBrowser
  *
- * Main container for the model catalog feature
- * Coordinates between list view, detail view, filters, and search
+ * The catalog: this machine's specs, a search field, one row of filters, the
+ * results, and the cache. Sorting and filtering happen here so the list and
+ * the filter row stay presentational.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import { CatalogManagementSection } from './CatalogManagementSection';
+import { clearedFilters, hasActiveFilters } from './catalogUtils';
 import { ModelDetailPanel } from './ModelDetailPanel';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelListView } from './ModelListView';
 import { ModelSearchBar } from './ModelSearchBar';
 import { SystemCapabilitiesCard } from './SystemCapabilitiesCard';
-import { useModelCatalogStore } from '../../../stores/modelCatalogStore';
+import { useModelCatalog } from '../../../hooks/useModelCatalog';
 
 interface ModelCatalogBrowserProps {
   routerModelId?: string;
@@ -21,28 +23,29 @@ interface ModelCatalogBrowserProps {
 }
 
 export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCatalogBrowserProps) {
-  // Store state
-  const selectedModel = useModelCatalogStore((state) => state.selectedModel);
-  const compatibleModels = useModelCatalogStore((state) => state.compatibleModels);
-  const searchResults = useModelCatalogStore((state) => state.searchResults);
-  const compatibleModelsLoading = useModelCatalogStore((state) => state.compatibleModelsLoading);
-  const compatibleModelsError = useModelCatalogStore((state) => state.compatibleModelsError);
-  const searchLoading = useModelCatalogStore((state) => state.searchLoading);
-  const searchQuery = useModelCatalogStore((state) => state.searchQuery);
-  const filters = useModelCatalogStore((state) => state.filters);
-  const sortBy = useModelCatalogStore((state) => state.sortBy);
+  const {
+    selectedModel,
+    compatibleModels,
+    searchResults,
+    compatibleModelsLoading,
+    compatibleModelsError,
+    searchLoading,
+    searchQuery,
+    filters,
+    sortBy,
+    setFilters,
+    selectModel,
+    clearSelection,
+    loadCompatibleModels,
+  } = useModelCatalog({ loadCacheStats: true });
 
-  // Actions
-  const loadCompatibleModels = useModelCatalogStore((state) => state.loadCompatibleModels);
-  const selectModel = useModelCatalogStore((state) => state.selectModel);
-  const clearSelection = useModelCatalogStore((state) => state.clearSelection);
-  const loadCacheStats = useModelCatalogStore((state) => state.loadCacheStats);
-
-  // Load initial data
-  useEffect(() => {
-    loadCompatibleModels();
-    loadCacheStats();
-  }, [loadCompatibleModels, loadCacheStats]);
+  // The catalog and the token field share this page, so "Add token" is a scroll,
+  // not a navigation.
+  const focusTokenField = useCallback(() => {
+    const field = document.getElementById('hf-token');
+    field?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    field?.focus();
+  }, []);
 
   // Determine which models to display
   const displayedModels = useMemo(() => {
@@ -53,9 +56,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
       model: { id: string; size_gb: number; name: string };
     }>(
       models: T[]
-    ) => {
-      console.log('[ModelCatalogBrowser] Sorting', models.length, 'models by', sortBy);
-      return [...models].sort((a, b) => {
+    ) => [...models].sort((a, b) => {
         if (sortBy === 'name') {
           return a.model.name.localeCompare(b.model.name);
         }
@@ -93,11 +94,16 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         if (downloadsB !== downloadsA) return downloadsB - downloadsA;
         return b.ranking_score - a.ranking_score;
       });
-    };
 
     const applyFilters = <T extends {
       popularity_downloads?: number | null;
-      model: { category: string; size_gb: number; capabilities: string[]; embedding_dimensions?: number | null };
+      model: {
+        category: string;
+        size_gb: number;
+        capabilities: string[];
+        performance_tier: string;
+        embedding_dimensions?: number | null;
+      };
     }>(models: T[]): T[] => {
       let filtered = models;
 
@@ -115,9 +121,13 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
       }
 
       if (filters.required_capabilities.length > 0) {
+        // The speed filter writes a performance tier here, so a model matches
+        // on either its declared capabilities or its tier.
         filtered = filtered.filter((m) =>
-          filters.required_capabilities.every((cap) =>
-            m.model.capabilities.some((modelCap) => modelCap.toLowerCase().includes(cap))
+          filters.required_capabilities.every(
+            (cap) =>
+              m.model.capabilities.some((modelCap) => modelCap.toLowerCase().includes(cap)) ||
+              m.model.performance_tier.toLowerCase() === cap
           )
         );
       }
@@ -164,55 +174,39 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
   const isLoading = compatibleModelsLoading || searchLoading;
   const error = compatibleModelsError;
 
-  // Detail view
   if (selectedModel) {
     return (
-      <div className="space-y-6">
-        <ModelDetailPanel
-          model={selectedModel}
-          onBack={clearSelection}
-          routerModelId={routerModelId}
-          onSetRouterModel={onSetRouterModel}
-        />
-      </div>
+      <ModelDetailPanel
+        model={selectedModel}
+        onBack={clearSelection}
+        routerModelId={routerModelId}
+        onSetRouterModel={onSetRouterModel}
+        onAddToken={focusTokenField}
+      />
     );
   }
 
-  // List view
   return (
     <div className="space-y-5">
-      {/* System Capabilities */}
       <SystemCapabilitiesCard />
-
-      {/* Search Bar */}
       <ModelSearchBar />
-
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 xl:grid-cols-[300px_minmax(0,1fr)] gap-5 items-start">
-        {/* Left Sidebar - Filters */}
-        <div className="space-y-5 xl:sticky xl:top-0">
-          <ModelFilterPanel />
-          <CatalogManagementSection />
-        </div>
-
-        {/* Main Content - Model Grid */}
-        <div className="min-w-0">
-          {!isLoading && !error && displayedModels.length > 0 && (
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-[hsl(var(--text-tertiary))]">
-                {displayedModels.length} model{displayedModels.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-          )}
-          <ModelListView
-            models={displayedModels}
-            loading={isLoading}
-            error={error}
-            selectedModelId={null}
-            onModelSelect={selectModel}
-          />
-        </div>
-      </div>
+      <ModelFilterPanel />
+      <ModelListView
+        models={displayedModels}
+        loading={isLoading}
+        error={error}
+        onModelSelect={selectModel}
+        filtersActive={hasActiveFilters(filters)}
+        onResetFilters={() => setFilters(clearedFilters(filters))}
+        // The hook surfaces the failure in `compatibleModelsError`; catching
+        // keeps a second consecutive failure from becoming an unhandled
+        // rejection.
+        onRetry={() => {
+          loadCompatibleModels().catch(() => undefined);
+        }}
+        onAddToken={focusTokenField}
+      />
+      <CatalogManagementSection />
     </div>
   );
 }

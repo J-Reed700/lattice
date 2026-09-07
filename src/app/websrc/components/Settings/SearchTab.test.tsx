@@ -1,126 +1,26 @@
+import type { ReactNode } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SearchTab } from './SearchTab';
 import { VaultAPI } from '../../lib/api';
+import { makeAppSettings } from '../../tests/fixtures/appSettings';
 
-import type { AppSettings } from '../../types/api/settings';
+const baseSettings = makeAppSettings();
 
-const baseSettings: AppSettings = {
-  indexing: {
-    chunkSize: 1000,
-    chunkOverlap: 200,
-    batchSize: 32,
-    autoIndexNewFiles: true,
-    fileTypes: ['pdf'],
-    excludedPaths: [],
-  },
-  search: {
-    maxResults: 10,
-    similarityThreshold: 0.7,
-    enableReranking: true,
-    hybridSearchAlpha: 0.5,
-    retrievalTuning: {
-      kbSearchMinLimit: 8,
-      kbSearchMaxLimit: 48,
-      docShortlistCandidateMin: 16,
-      docShortlistCandidateMax: 192,
-      docShortlistDocMin: 4,
-      docShortlistDocMax: 24,
-      shortlistGateMinCandidates: 6,
-      shortlistGateMinDocs: 2,
-      wikiSearchMaxResults: 5,
-      wikiSnippetMaxChars: 360,
-      wikiContextLimit: 5,
-      webSearchMaxResults: 5,
-      webSnippetMaxChars: 500,
-      deepResearchDepth: 3,
-      deepResearchBranchQueries: 3,
-      externalSearchMaxWikiTerms: 8,
-      externalSearchMaxWebTerms: 12,
-      externalSearchQueryMaxChars: 220,
-      rerankMaxCandidates: 12,
-      rerankQueryMaxChars: 1000,
-      overlapMinHitsForMultiTerm: 2,
-      docSupportMultiHitRatioFactor: 0.35,
-      docSupportSingleHitRatioFactor: 0.65,
-      docSupportMultiHitRatioMin: 0.18,
-      docSupportMultiHitRatioMax: 0.4,
-      docSupportSingleHitRatioMin: 0.3,
-      docSupportSingleHitRatioMax: 0.55,
-    },
-  },
-  llm: {
-    provider: 'auto',
-    model: 'gpt-oss:20b',
-    temperature: 0.7,
-    topP: 0.9,
-    topK: 40,
-    repeatPenalty: 1.1,
-    maxTokens: 2048,
-    contextWindow: 8192,
-    ollamaUrl: 'http://localhost:11434',
-    ollamaUtilityModel: '',
-    ollamaAuthHeaderName: '',
-    ollamaAuthHeaderValue: '',
-    timeoutSeconds: 30,
-    streamResponses: true,
-    prompts: {
-      systemPrompt: '',
-      greetingPromptTemplate: '',
-      ragPromptTemplate: '',
-      noContextPromptTemplate: '',
-      toolFollowupPromptTemplate: '',
-    },
-    verification: { enabled: false },
-    toolOutput: {
-      maxChars: 2000,
-      excerptChars: 220,
-      maxResults: 5,
-      highlightTermsMax: 6,
-      templates: {
-        defaultTemplate: '',
-        getDocumentTemplate: '',
-        semanticSearchTemplate: '',
-      },
-    },
-    router: {
-      enabled: false,
-      model: 'phi',
-      timeoutMs: 7000,
-      maxTokens: 256,
-      temperature: 0.1,
-      ambiguityThreshold: 0.5,
-      preferLastDocument: false,
-      promptTemplate: '',
-      clarifyPromptTemplate: '',
-    },
-    externalModelDirectories: [],
-    customTools: [],
-  },
-  ui: {
-    theme: 'system',
-    fontSize: 14,
-    showPreview: true,
-    resultsPerPage: 20,
-    enableAnimations: true,
-  },
-  sync: {
-    syncEnabled: false,
-    syncUrl: '',
-    syncIntervalMinutes: 5,
-    autoSync: false,
-    syncOnStartup: false,
-  },
-  backup: {
-    autoBackupEnabled: false,
-    backupFrequency: 'daily',
-    backupRetentionDays: 7,
-    backupPath: '',
-    compressBackups: true,
-  },
-};
+function renderSearchTab() {
+  // A fresh client per test so nothing leaks between them.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return render(<SearchTab />, { wrapper });
+}
 
 describe('SearchTab', () => {
   beforeEach(() => {
@@ -136,18 +36,18 @@ describe('SearchTab', () => {
   });
 
   it('loads and renders backend search settings', async () => {
-    render(<SearchTab />);
+    renderSearchTab();
 
-    expect(await screen.findByText('Search Settings')).toBeInTheDocument();
-    expect(screen.getByText('Core Retrieval')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument();
+    expect(await screen.findByText('Retrieval')).toBeInTheDocument();
     expect(screen.getByDisplayValue('10')).toBeInTheDocument();
   });
 
   it('persists reranking toggle', async () => {
     const user = userEvent.setup();
-    render(<SearchTab />);
+    renderSearchTab();
 
-    const checkbox = (await screen.findByLabelText(/Enable reranking/i)) as HTMLInputElement;
+    const checkbox = (await screen.findByLabelText(/Rerank results/i)) as HTMLInputElement;
     expect(checkbox).toBeChecked();
 
     await user.click(checkbox);
@@ -161,14 +61,14 @@ describe('SearchTab', () => {
   });
 
   it('shows advanced tuning and persists tuning fields', async () => {
-    render(<SearchTab />);
+    renderSearchTab();
 
     const advancedToggle = await screen.findByRole('button', {
-      name: /Advanced Retrieval Tuning/i,
+      name: /Advanced retrieval tuning/i,
     });
     fireEvent.click(advancedToggle);
 
-    const field = await screen.findByLabelText(/KB Search Min Limit/i);
+    const field = await screen.findByLabelText(/KB search min limit/i);
     fireEvent.change(field, { target: { value: '12' } });
     fireEvent.blur(field);
 
@@ -186,15 +86,44 @@ describe('SearchTab', () => {
     });
   });
 
+  it('re-reads the repository after a write instead of trusting its own copy', async () => {
+    const user = userEvent.setup();
+
+    const stored = makeAppSettings({
+      search: { ...baseSettings.search, enableReranking: false, maxResults: 42 },
+    });
+    const getSettings = vi.spyOn(VaultAPI, 'getSettings');
+    getSettings.mockResolvedValueOnce({ ok: true, data: structuredClone(baseSettings) });
+    getSettings.mockResolvedValue({ ok: true, data: structuredClone(stored) });
+    // The command answers with only what it wrote; the canonical document
+    // comes back on the refetch the invalidation triggers.
+    vi.spyOn(VaultAPI, 'updateSettings').mockResolvedValue({
+      ok: true,
+      data: structuredClone(baseSettings),
+    });
+
+    renderSearchTab();
+
+    const checkbox = (await screen.findByLabelText(/Rerank results/i)) as HTMLInputElement;
+    expect(getSettings).toHaveBeenCalledTimes(1);
+
+    await user.click(checkbox);
+
+    await waitFor(() => {
+      expect(getSettings).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByDisplayValue('42')).toBeInTheDocument();
+  });
+
   it('normalizes paired bounds before persisting tuning', async () => {
-    render(<SearchTab />);
+    renderSearchTab();
 
     const advancedToggle = await screen.findByRole('button', {
-      name: /Advanced Retrieval Tuning/i,
+      name: /Advanced retrieval tuning/i,
     });
     fireEvent.click(advancedToggle);
 
-    const minField = await screen.findByLabelText(/KB Search Min Limit/i);
+    const minField = await screen.findByLabelText(/KB search min limit/i);
     fireEvent.change(minField, { target: { value: '120' } });
     fireEvent.blur(minField);
 

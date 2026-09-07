@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import type { ConversationMessageBookmarkDto } from '@/types';
-
 type FieldState = 'idle' | 'saving' | 'error';
 
 interface ReferenceAnnotationStripProps {
-  bookmark: ConversationMessageBookmarkDto;
+  /** Identity of the annotated thing — drafts reset when it changes. */
+  id: string;
+  title: string | null;
+  note: string | null;
   onSave: (next: {
     title: string | null;
     note: string | null;
@@ -13,17 +14,20 @@ interface ReferenceAnnotationStripProps {
 }
 
 /**
- * Quiet inline-edit strip for reference title + note. Blur-to-save;
+ * Quiet inline-edit strip for a reference title + note. Kind-agnostic: it
+ * annotates a message bookmark or a saved passage identically. Blur-to-save;
  * Enter commits title, ⌘Enter commits note. No Save button — save state
  * is a single quiet word per row.
  * Spec §5.5.
  */
 export function ReferenceAnnotationStrip({
-  bookmark,
+  id,
+  title,
+  note,
   onSave,
 }: ReferenceAnnotationStripProps) {
-  const [titleDraft, setTitleDraft] = useState(bookmark.title ?? '');
-  const [noteDraft, setNoteDraft] = useState(bookmark.note ?? '');
+  const [titleDraft, setTitleDraft] = useState(title ?? '');
+  const [noteDraft, setNoteDraft] = useState(note ?? '');
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingNote, setEditingNote] = useState(false);
   const [titleState, setTitleState] = useState<FieldState>('idle');
@@ -31,37 +35,37 @@ export function ReferenceAnnotationStrip({
 
   // Reset drafts when switching references or when server values change.
   useEffect(() => {
-    setTitleDraft(bookmark.title ?? '');
-    setNoteDraft(bookmark.note ?? '');
+    setTitleDraft(title ?? '');
+    setNoteDraft(note ?? '');
     setEditingTitle(false);
     setEditingNote(false);
     setTitleState('idle');
     setNoteState('idle');
-  }, [bookmark.id, bookmark.title, bookmark.note]);
+  }, [id, title, note]);
 
   const commitTitle = async () => {
     setEditingTitle(false);
     const next = titleDraft.trim() ? titleDraft.trim() : null;
-    const current = bookmark.title ?? null;
+    const current = title ?? null;
     if (next === current) {
       setTitleState('idle');
       return;
     }
     setTitleState('saving');
-    const ok = await onSave({ title: next, note: bookmark.note ?? null });
+    const ok = await onSave({ title: next, note: note ?? null });
     setTitleState(ok ? 'idle' : 'error');
   };
 
   const commitNote = async () => {
     setEditingNote(false);
     const next = noteDraft.trim() ? noteDraft.trim() : null;
-    const current = bookmark.note ?? null;
+    const current = note ?? null;
     if (next === current) {
       setNoteState('idle');
       return;
     }
     setNoteState('saving');
-    const ok = await onSave({ title: bookmark.title ?? null, note: next });
+    const ok = await onSave({ title: title ?? null, note: next });
     setNoteState(ok ? 'idle' : 'error');
   };
 
@@ -77,13 +81,16 @@ export function ReferenceAnnotationStrip({
     <div className="mt-8 border-t border-[hsl(var(--border-subtle))] pt-6">
       {/* Title row */}
       <div className="flex items-start gap-4">
-        <label className="mt-1 w-12 shrink-0 text-xxs font-medium uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+        {/* A span, not a label: the control it would name only exists in edit
+            mode, and a label with no control is a lie to a screen reader. */}
+        <span className="mt-1 w-12 shrink-0 text-xs text-[hsl(var(--text-muted))]">
           Title
-        </label>
+        </span>
         <div className="min-w-0 flex-1">
           {editingTitle ? (
             <input
               autoFocus
+              aria-label="Reference title"
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               onBlur={() => void commitTitle()}
@@ -93,7 +100,7 @@ export function ReferenceAnnotationStrip({
                   void commitTitle();
                 } else if (e.key === 'Escape') {
                   e.preventDefault();
-                  setTitleDraft(bookmark.title ?? '');
+                  setTitleDraft(title ?? '');
                   setEditingTitle(false);
                 }
               }}
@@ -104,13 +111,13 @@ export function ReferenceAnnotationStrip({
             <button
               type="button"
               onClick={() => {
-                setTitleDraft(bookmark.title ?? '');
+                setTitleDraft(title ?? '');
                 setEditingTitle(true);
               }}
               className="block w-full cursor-text text-left text-base text-[hsl(var(--text-primary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
             >
-              {bookmark.title?.trim() ? (
-                bookmark.title
+              {title?.trim() ? (
+                title
               ) : (
                 <span className="italic text-[hsl(var(--text-muted))]">
                   Add a title…
@@ -124,13 +131,14 @@ export function ReferenceAnnotationStrip({
 
       {/* Note row */}
       <div className="mt-4 flex items-start gap-4">
-        <label className="mt-1 w-12 shrink-0 text-xxs font-medium uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+        <span className="mt-1 w-12 shrink-0 text-xs text-[hsl(var(--text-muted))]">
           Note
-        </label>
+        </span>
         <div className="min-w-0 flex-1">
           {editingNote ? (
             <textarea
               autoFocus
+              aria-label="Reference note"
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               onBlur={() => void commitNote()}
@@ -140,7 +148,7 @@ export function ReferenceAnnotationStrip({
                   void commitNote();
                 } else if (e.key === 'Escape') {
                   e.preventDefault();
-                  setNoteDraft(bookmark.note ?? '');
+                  setNoteDraft(note ?? '');
                   setEditingNote(false);
                 }
               }}
@@ -152,13 +160,13 @@ export function ReferenceAnnotationStrip({
             <button
               type="button"
               onClick={() => {
-                setNoteDraft(bookmark.note ?? '');
+                setNoteDraft(note ?? '');
                 setEditingNote(true);
               }}
               className="block w-full cursor-text whitespace-pre-wrap text-left text-sm text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast"
             >
-              {bookmark.note?.trim() ? (
-                bookmark.note
+              {note?.trim() ? (
+                note
               ) : (
                 <span className="italic text-[hsl(var(--text-muted))]">
                   Add context or a takeaway…

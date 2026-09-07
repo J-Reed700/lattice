@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 
 import { ErrorBoundary, type ErrorFallbackProps } from './ErrorBoundary';
 
@@ -11,24 +11,18 @@ interface FeatureErrorFallbackProps {
   icon?: React.ReactNode;
 }
 
-function FeatureErrorFallback({ error, reset, featureName, icon }: FeatureErrorFallbackProps) {
+function FeatureErrorFallback({ error, reset, featureName }: FeatureErrorFallbackProps) {
   return (
-    <div className="flex items-center justify-center min-h-[400px] p-8">
-      <div className="text-center max-w-md">
-        <div className="mx-auto w-16 h-16 bg-[hsl(var(--danger-muted))] rounded-full flex items-center justify-center mb-4">
-          {icon || <AlertCircle className="w-8 h-8 text-[hsl(var(--danger-fg))]" strokeWidth={1.75} />}
-        </div>
-        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
-          {featureName} Error
-        </h3>
-        <p className="text-sm text-[hsl(var(--text-secondary))] mb-4">
-          {error.message || `Something went wrong with ${featureName.toLowerCase()}`}
-        </p>
+    <div className="flex min-h-[320px] items-center justify-center p-8">
+      <div className="max-w-sm text-center">
+        <p className="text-sm text-text-secondary">Couldn't load {featureName}.</p>
+        {error.message ? <p className="mt-1 text-xs text-text-muted break-words">{error.message}</p> : null}
         <button
+          type="button"
           onClick={reset}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-hover))] text-[hsl(var(--accent-fg))] rounded-md font-medium transition-colors duration-fast"
+          className="mt-4 inline-flex h-8 items-center gap-2 rounded-md border border-border-default bg-surface px-3 text-sm font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised"
         >
-          <RefreshCw className="w-4 h-4" strokeWidth={1.75} />
+          <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
           Try again
         </button>
       </div>

@@ -1,22 +1,29 @@
 /**
- * Chat Tab - Chat provider selection, Ollama config, active models, and runtime options.
+ * Chat settings — provider connection, Ollama config, and the models
+ * currently doing the work.
  */
 
 import { useEffect, useState } from 'react';
 
-import { Brain, MessageSquare, Server } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
+import { GHOST_BUTTON_CLASS, INPUT_CLASS, SECONDARY_BUTTON_CLASS } from './shared';
 import { useLlmSettings } from './useLlmSettings';
-import { INPUT_CLASS } from './shared';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../../lib/api';
-import { useDownloadedModelsStore } from '../../../stores/downloadedModelsStore';
 import { toast } from '../../../stores/toastStore';
+import { PageHeader, SettingsRow, SettingsSection } from '../../ui';
 
 import type { LLMSettings as ApiLLMSettings } from '../../../types/api/settings';
 
+const PROVIDERS: Array<{ value: ApiLLMSettings['provider']; label: string }> = [
+  { value: 'auto', label: 'Auto — local, then Ollama' },
+  { value: 'local', label: 'Local only' },
+  { value: 'ollama', label: 'Ollama' },
+];
+
 export function ChatTab() {
-  const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
+  const { llmSettings, isLoading, saveLlmUpdates, reload } = useLlmSettings();
 
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState('');
   const [ollamaModelDraft, setOllamaModelDraft] = useState('');
@@ -30,9 +37,12 @@ export function ChatTab() {
   const [isTestingOllamaConnection, setIsTestingOllamaConnection] = useState(false);
   const [showOllamaAuth, setShowOllamaAuth] = useState(false);
 
-  const { getActiveModel, getActiveEmbeddingModel } = useDownloadedModels();
-  const activeChatModel = useDownloadedModelsStore((state) => state.activeModel);
-  const activeEmbeddingModel = useDownloadedModelsStore((state) => state.activeEmbeddingModel);
+  const {
+    getActiveModel,
+    getActiveEmbeddingModel,
+    activeModel: activeChatModel,
+    activeEmbeddingModel,
+  } = useDownloadedModels();
 
   useEffect(() => {
     if (!llmSettings) return;
@@ -73,7 +83,7 @@ export function ChatTab() {
 
   const handleApplyBasicAuth = () => {
     if (!ollamaBasicUserDraft.trim()) {
-      toast.error('Basic auth username is required');
+      toast.error('Enter a username for basic auth');
       return;
     }
     const token = btoa(`${ollamaBasicUserDraft}:${ollamaBasicPassDraft}`);
@@ -89,12 +99,12 @@ export function ChatTab() {
     const authHeaderValue = ollamaHeaderValueDraft.trim();
 
     if (!ollamaUrl) {
-      toast.error('Ollama URL is required');
+      toast.error('Enter an Ollama server URL first');
       return;
     }
 
     if ((authHeaderName && !authHeaderValue) || (!authHeaderName && authHeaderValue)) {
-      toast.error('Header name and value must both be set');
+      toast.error('Set both the header name and value, or clear both');
       return;
     }
 
@@ -109,7 +119,7 @@ export function ChatTab() {
     if (!result.ok) {
       setOllamaAvailableModels([]);
       setOllamaModelsEndpoint('');
-      toast.error('Connection test failed', {
+      toast.error("Couldn't reach the Ollama server", {
         message: result.error,
       });
       return;
@@ -127,304 +137,248 @@ export function ChatTab() {
     );
   };
 
+  const routerModel = llmSettings?.router?.model?.trim();
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center gap-3 pb-4 border-b border-[hsl(var(--border-subtle))]">
-        <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
-          <MessageSquare className="w-5 h-5 text-[hsl(var(--accent))]" />
-        </div>
-        <div>
-          <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">Chat</h2>
-          <p className="text-sm text-[hsl(var(--text-secondary))]">
-            Provider connection, active models, and runtime options
-          </p>
-        </div>
-      </div>
+    <>
+      <PageHeader title="Chat" />
 
-      {/* Chat Provider */}
-      <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-[hsl(var(--accent))]" />
-          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Chat Provider</h3>
-        </div>
-
+      <SettingsSection title="Provider">
         {isLoading ? (
-          <div className="text-xs text-[hsl(var(--text-tertiary))]">Loading chat settings...</div>
+          <div className="border-b border-border-subtle py-3 text-sm text-text-muted">Loading…</div>
         ) : !llmSettings ? (
-          <div className="text-xs text-[hsl(var(--text-tertiary))]">
-            Unable to load chat settings right now.
+          <div className="flex items-center gap-2 border-b border-border-subtle py-3">
+            <p className="text-sm text-text-muted">Couldn&apos;t read chat settings.</p>
+            <button
+              type="button"
+              onClick={reload}
+              className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
+            >
+              Retry
+            </button>
           </div>
         ) : (
-          <div className="space-y-4">
-            {/* Provider radio cards */}
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { value: 'auto', label: 'Auto', desc: 'Local + Ollama fallback' },
-                { value: 'local', label: 'Local Only', desc: 'Downloaded models' },
-                { value: 'ollama', label: 'Ollama', desc: 'Remote server' },
-              ].map((option) => (
-                <label
-                  key={option.value}
-                  className={`p-3 rounded-lg border-2 transition-colors duration-fast text-center cursor-pointer ${
-                    provider === option.value
-                      ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent-muted))]'
-                      : 'border-[hsl(var(--border-subtle))] hover:border-[hsl(var(--border-default))] bg-[hsl(var(--surface-raised))]'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="chatProvider"
-                    value={option.value}
-                    checked={provider === option.value}
-                    onChange={() =>
-                      saveLlmUpdates({ provider: option.value as ApiLLMSettings['provider'] })
-                    }
-                    className="sr-only"
-                  />
-                  <div className="font-medium text-sm text-[hsl(var(--text-primary))]">
-                    {option.label}
-                  </div>
-                  <div className="text-xs text-[hsl(var(--text-secondary))] mt-0.5">{option.desc}</div>
-                </label>
+          <SettingsRow label="Chat provider" htmlFor="chatProvider">
+            <select
+              id="chatProvider"
+              value={provider}
+              onChange={(event) =>
+                saveLlmUpdates({ provider: event.target.value as ApiLLMSettings['provider'] })
+              }
+              className={INPUT_CLASS}
+            >
+              {PROVIDERS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
               ))}
-            </div>
-
-            {/* Ollama configuration */}
-            {showOllamaSettings && (
-              <div className="p-4 bg-[hsl(var(--surface))] rounded-lg space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label
-                      htmlFor="ollamaUrl"
-                      className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
-                    >
-                      Server URL
-                    </label>
-                    <input
-                      id="ollamaUrl"
-                      type="text"
-                      value={ollamaUrlDraft}
-                      onChange={(e) => setOllamaUrlDraft(e.target.value)}
-                      onBlur={() => {
-                        if (ollamaUrlDraft !== llmSettings.ollamaUrl) {
-                          saveLlmUpdates({ ollamaUrl: ollamaUrlDraft.trim() });
-                        }
-                      }}
-                      placeholder="http://localhost:11434"
-                      className={INPUT_CLASS}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label
-                      htmlFor="ollamaModel"
-                      className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
-                    >
-                      Model
-                    </label>
-                    <select
-                      id="ollamaModel"
-                      value={ollamaModelDraft}
-                      onChange={(e) => {
-                        const selectedModel = e.target.value;
-                        setOllamaModelDraft(selectedModel);
-                        if (selectedModel && selectedModel !== llmSettings.model) {
-                          saveLlmUpdates({ model: selectedModel });
-                        }
-                      }}
-                      disabled={ollamaAvailableModels.length === 0}
-                      className={INPUT_CLASS}
-                    >
-                      <option value="">
-                        {ollamaAvailableModels.length === 0
-                          ? 'Test connection first'
-                          : 'Select a model'}
-                      </option>
-                      {ollamaAvailableModels.map((modelName) => (
-                        <option key={modelName} value={modelName}>
-                          {modelName}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="ollamaUtilityModel"
-                    className="block text-xs font-medium text-[hsl(var(--text-secondary))]"
-                  >
-                    Utility model (optional)
-                  </label>
-                  <select
-                    id="ollamaUtilityModel"
-                    value={ollamaUtilityModelDraft}
-                    onChange={(e) => {
-                      const selected = e.target.value;
-                      setOllamaUtilityModelDraft(selected);
-                      if (selected !== (llmSettings.ollamaUtilityModel || '')) {
-                        saveLlmUpdates({ ollamaUtilityModel: selected });
-                      }
-                    }}
-                    disabled={ollamaAvailableModels.length === 0}
-                    className={INPUT_CLASS}
-                  >
-                    <option value="">
-                      {ollamaAvailableModels.length === 0
-                        ? 'Test connection first'
-                        : 'Falls back to chat model'}
-                    </option>
-                    {ollamaAvailableModels.map((modelName) => (
-                      <option key={modelName} value={modelName}>
-                        {modelName}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-[hsl(var(--text-tertiary))] leading-snug">
-                    Used for routing and short utility calls. Leave blank to reuse the chat model.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleTestOllamaConnection}
-                    disabled={isTestingOllamaConnection}
-                    className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
-                  >
-                    {isTestingOllamaConnection ? 'Testing...' : 'Test Connection'}
-                  </button>
-                  {ollamaModelsEndpoint && (
-                    <span className="text-xs text-[hsl(var(--text-tertiary))]">
-                      {ollamaAvailableModels.length} model(s) from {ollamaModelsEndpoint}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setShowOllamaAuth(!showOllamaAuth)}
-                    className="ml-auto text-xs text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] transition-colors"
-                  >
-                    {showOllamaAuth ? 'Hide auth' : 'Authentication...'}
-                  </button>
-                </div>
-
-                {showOllamaAuth && (
-                  <div className="pt-3 border-t border-[hsl(var(--border-subtle))] space-y-3">
-                    <div className="text-xs font-medium text-[hsl(var(--text-secondary))]">
-                      Security Header
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input
-                        type="text"
-                        value={ollamaHeaderNameDraft}
-                        onChange={(e) => setOllamaHeaderNameDraft(e.target.value)}
-                        onBlur={handleHeaderBlur}
-                        placeholder="Header name (e.g. Authorization)"
-                        className={INPUT_CLASS}
-                      />
-                      <input
-                        type="text"
-                        value={ollamaHeaderValueDraft}
-                        onChange={(e) => setOllamaHeaderValueDraft(e.target.value)}
-                        onBlur={handleHeaderBlur}
-                        placeholder="Header value (e.g. Bearer ...)"
-                        className={INPUT_CLASS}
-                      />
-                    </div>
-                    {isHeaderPartialPair && (
-                      <p className="text-[10px] text-[hsl(var(--warning))] leading-snug">
-                        Fill in both name and value (or clear both) to save.
-                      </p>
-                    )}
-
-                    <div className="text-xs font-medium text-[hsl(var(--text-secondary))] pt-1">
-                      Basic Auth Helper
-                    </div>
-                    <div className="flex items-end gap-3">
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          value={ollamaBasicUserDraft}
-                          onChange={(e) => setOllamaBasicUserDraft(e.target.value)}
-                          placeholder="Username"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <input
-                          type="password"
-                          value={ollamaBasicPassDraft}
-                          onChange={(e) => setOllamaBasicPassDraft(e.target.value)}
-                          placeholder="Password"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleApplyBasicAuth}
-                        className="px-3 py-2 text-xs font-medium rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] hover:border-[hsl(var(--border-default))] whitespace-nowrap"
-                      >
-                        Set Header
-                      </button>
-                    </div>
-                    <p className="text-xs text-[hsl(var(--text-tertiary))]">
-                      Generates an Authorization header from your credentials. Your password is not
-                      stored separately.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+            </select>
+          </SettingsRow>
         )}
-      </section>
+      </SettingsSection>
 
-      {/* Active Models */}
-      <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Brain className="w-4 h-4 text-[hsl(var(--accent))]" />
-          <h3 className="text-sm font-semibold text-[hsl(var(--text-primary))]">Active Models</h3>
-        </div>
+      {llmSettings && showOllamaSettings ? (
+        <SettingsSection title="Ollama server">
+          <SettingsRow label="Server URL" htmlFor="ollamaUrl">
+            <input
+              id="ollamaUrl"
+              type="text"
+              value={ollamaUrlDraft}
+              onChange={(e) => setOllamaUrlDraft(e.target.value)}
+              onBlur={() => {
+                if (ollamaUrlDraft !== llmSettings.ollamaUrl) {
+                  saveLlmUpdates({ ollamaUrl: ollamaUrlDraft.trim() });
+                }
+              }}
+              placeholder="http://localhost:11434"
+              className={INPUT_CLASS}
+            />
+          </SettingsRow>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="p-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
-            <div className="text-xs font-medium text-[hsl(var(--text-tertiary))]">Chat LLM</div>
-            <div className="text-sm text-[hsl(var(--text-primary))] mt-1">
-              {provider === 'ollama'
-                ? (llmSettings?.model ? `${llmSettings.model} (Ollama)` : 'Not set')
-                : (activeChatModel?.model_name ?? 'Not set')}
+          <SettingsRow label="Model" htmlFor="ollamaModel">
+            <select
+              id="ollamaModel"
+              value={ollamaModelDraft}
+              onChange={(e) => {
+                const selectedModel = e.target.value;
+                setOllamaModelDraft(selectedModel);
+                if (selectedModel && selectedModel !== llmSettings.model) {
+                  saveLlmUpdates({ model: selectedModel });
+                }
+              }}
+              disabled={ollamaAvailableModels.length === 0}
+              className={INPUT_CLASS}
+            >
+              <option value="">
+                {ollamaAvailableModels.length === 0 ? 'Test the connection first' : 'Select a model'}
+              </option>
+              {ollamaAvailableModels.map((modelName) => (
+                <option key={modelName} value={modelName}>
+                  {modelName}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
+
+          <SettingsRow
+            label="Utility model"
+            hint="Used for routing and short calls. Blank reuses the chat model."
+            htmlFor="ollamaUtilityModel"
+          >
+            <select
+              id="ollamaUtilityModel"
+              value={ollamaUtilityModelDraft}
+              onChange={(e) => {
+                const selected = e.target.value;
+                setOllamaUtilityModelDraft(selected);
+                if (selected !== (llmSettings.ollamaUtilityModel || '')) {
+                  saveLlmUpdates({ ollamaUtilityModel: selected });
+                }
+              }}
+              disabled={ollamaAvailableModels.length === 0}
+              className={INPUT_CLASS}
+            >
+              <option value="">
+                {ollamaAvailableModels.length === 0
+                  ? 'Test the connection first'
+                  : 'Falls back to the chat model'}
+              </option>
+              {ollamaAvailableModels.map((modelName) => (
+                <option key={modelName} value={modelName}>
+                  {modelName}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
+
+          <SettingsRow
+            label="Connection"
+            hint={
+              ollamaModelsEndpoint
+                ? `${ollamaAvailableModels.length} model(s) from ${ollamaModelsEndpoint}`
+                : undefined
+            }
+          >
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleTestOllamaConnection}
+                disabled={isTestingOllamaConnection}
+                className={SECONDARY_BUTTON_CLASS}
+              >
+                {isTestingOllamaConnection ? 'Testing…' : 'Test connection'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowOllamaAuth(!showOllamaAuth)}
+                aria-expanded={showOllamaAuth}
+                className={GHOST_BUTTON_CLASS}
+              >
+                {showOllamaAuth ? 'Hide auth' : 'Auth'}
+              </button>
             </div>
-            {provider !== 'ollama' && activeChatModel?.model_id && (
-              <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
-                {activeChatModel.model_id}
-              </div>
-            )}
-          </div>
+          </SettingsRow>
 
-          <div className="p-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
-            <div className="text-xs font-medium text-[hsl(var(--text-tertiary))]">Router Model</div>
-            <div className="text-sm text-[hsl(var(--text-primary))] mt-1">
-              {llmSettings?.router?.model ?? 'Not set'}
-            </div>
-            <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
-              Required for follow-up routing
-            </div>
-          </div>
+          {showOllamaAuth ? (
+            <>
+              <SettingsRow
+                label="Auth header"
+                hint={isHeaderPartialPair ? 'Fill in both name and value, or clear both.' : undefined}
+                stacked
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ollamaHeaderNameDraft}
+                    onChange={(e) => setOllamaHeaderNameDraft(e.target.value)}
+                    onBlur={handleHeaderBlur}
+                    placeholder="Header name (e.g. Authorization)"
+                    aria-label="Auth header name"
+                    className={INPUT_CLASS}
+                  />
+                  <input
+                    type="text"
+                    value={ollamaHeaderValueDraft}
+                    onChange={(e) => setOllamaHeaderValueDraft(e.target.value)}
+                    onBlur={handleHeaderBlur}
+                    placeholder="Header value (e.g. Bearer …)"
+                    aria-label="Auth header value"
+                    className={INPUT_CLASS}
+                  />
+                </div>
+              </SettingsRow>
 
-          <div className="p-3 rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))]">
-            <div className="text-xs font-medium text-[hsl(var(--text-tertiary))]">Embedding Model</div>
-            <div className="text-sm text-[hsl(var(--text-primary))] mt-1">
-              {activeEmbeddingModel?.model_name ?? 'Not set'}
-            </div>
-            {activeEmbeddingModel?.model_id && (
-              <div className="text-xs text-[hsl(var(--text-tertiary))] mt-1">
-                {activeEmbeddingModel.model_id}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
+              <SettingsRow
+                label="Basic auth"
+                hint="Builds an Authorization header. The password itself is not stored."
+                stacked
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ollamaBasicUserDraft}
+                    onChange={(e) => setOllamaBasicUserDraft(e.target.value)}
+                    placeholder="Username"
+                    aria-label="Basic auth username"
+                    className={INPUT_CLASS}
+                  />
+                  <input
+                    type="password"
+                    value={ollamaBasicPassDraft}
+                    onChange={(e) => setOllamaBasicPassDraft(e.target.value)}
+                    placeholder="Password"
+                    aria-label="Basic auth password"
+                    className={INPUT_CLASS}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyBasicAuth}
+                    className={SECONDARY_BUTTON_CLASS}
+                  >
+                    Set header
+                  </button>
+                </div>
+              </SettingsRow>
+            </>
+          ) : null}
+        </SettingsSection>
+      ) : null}
 
+      <SettingsSection title="Active models">
+        <SettingsRow label="Chat">
+          <ModelValue
+            name={
+              provider === 'ollama'
+                ? llmSettings?.model || null
+                : activeChatModel?.model_name ?? null
+            }
+            id={provider === 'ollama' ? 'Ollama' : activeChatModel?.model_id ?? null}
+          />
+        </SettingsRow>
+        <SettingsRow label="Router">
+          <ModelValue name={routerModel || null} id={null} />
+        </SettingsRow>
+        <SettingsRow label="Embedding">
+          <ModelValue
+            name={activeEmbeddingModel?.model_name ?? null}
+            id={activeEmbeddingModel?.model_id ?? null}
+          />
+        </SettingsRow>
+      </SettingsSection>
+    </>
+  );
+}
+
+function ModelValue({ name, id }: { name: string | null; id: string | null }) {
+  if (!name) {
+    return <span className="text-sm text-text-muted">Not set</span>;
+  }
+  return (
+    <div className="min-w-0 text-right">
+      <div className="truncate text-sm text-text-primary">{name}</div>
+      {id ? (
+        <div className={cn('truncate font-mono text-xs text-text-muted')}>{id}</div>
+      ) : null}
     </div>
   );
 }

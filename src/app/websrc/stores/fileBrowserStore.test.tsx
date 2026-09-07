@@ -5,83 +5,51 @@
  * Ensures Zustand store works correctly without infinite re-renders
  */
 
-import { renderHook, waitFor, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { selectFilteredDocuments, useFileBrowserStore } from './fileBrowserStore';
-import _VaultAPI from '../lib/api';
+import {
+  filterLibraryDocuments,
+  sortLibraryDocuments,
+  useFileBrowserStore,
+} from './fileBrowserStore';
 
-// Mock API
-vi.mock('../lib/api', () => ({
-  default: {
-    getRecentDocuments: vi.fn().mockResolvedValue({
-      ok: true,
-      data: [
-        {
-          id: '1',
-          fileName: 'test.txt',
-          filePath: '/test.txt',
-          fileType: 'txt',
-          category: 'document',
-          language: 'en',
-          modifiedAt: '2024-01-01',
-          indexedAt: '2024-01-03',
-          wordCount: 100,
-        },
-        {
-          id: '2',
-          fileName: 'document.pdf',
-          filePath: '/document.pdf',
-          fileType: 'pdf',
-          category: 'document',
-          language: 'en',
-          modifiedAt: '2024-01-02',
-          indexedAt: '2024-01-03',
-          wordCount: 2000,
-        },
-      ],
-    }),
-    listAllDocuments: vi.fn().mockResolvedValue({
-      ok: true,
-      data: [
-        {
-          id: '1',
-          fileName: 'test.txt',
-          filePath: '/test.txt',
-          fileType: 'txt',
-          category: 'document',
-          language: 'en',
-          modifiedAt: '2024-01-01',
-          indexedAt: '2024-01-03',
-          wordCount: 100,
-        },
-        {
-          id: '2',
-          fileName: 'document.pdf',
-          filePath: '/document.pdf',
-          fileType: 'pdf',
-          category: 'document',
-          language: 'en',
-          modifiedAt: '2024-01-02',
-          indexedAt: '2024-01-03',
-          wordCount: 2000,
-        },
-      ],
-    }),
+import type { DocumentMetadata } from '../types/fileBrowser';
+
+const sampleDocuments: DocumentMetadata[] = [
+  {
+    id: '1',
+    fileName: 'test.txt',
+    filePath: '/test.txt',
+    fileType: 'txt',
+    category: 'document',
+    language: 'en',
+    modifiedAt: '2024-01-01',
+    indexedAt: '2024-01-03',
+    wordCount: 100,
   },
-}));
+  {
+    id: '2',
+    fileName: 'document.pdf',
+    filePath: '/document.pdf',
+    fileType: 'pdf',
+    category: 'document',
+    language: 'en',
+    modifiedAt: '2024-01-02',
+    indexedAt: '2024-01-03',
+    wordCount: 2000,
+  },
+];
 
 describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
   let renderCount = 0;
 
   beforeEach(() => {
-    vi.clearAllMocks();
     renderCount = 0;
     window.localStorage.clear();
     // Reset store state between tests
     useFileBrowserStore.setState({
       viewMode: 'list',
-      density: 'comfortable',
       groupByDate: true,
       selectedDocumentIds: new Set(),
       sortField: 'name',
@@ -91,20 +59,11 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       filterBySource: 'all',
       contentSearchMatches: new Set(),
       isContentSearchLoading: false,
-      documents: [],
       customCollections: [],
-      savedViews: [],
-      activeSavedViewId: null,
       savedSearches: [],
       activeSavedSearchId: null,
       sourceConnections: [],
-      isLoading: false,
-      error: null,
-      listColumns: {
-        words: true,
-        modified: true,
-        type: true,
-      },
+      scope: { kind: 'all' },
       contextMenuPosition: null,
       contextMenuDocument: null,
     });
@@ -119,15 +78,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     const { result } = renderHook(() => {
       renderCount++;
       return useFileBrowserStore();
-    });
-
-    // Load files initially
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    await waitFor(() => {
-      expect(result.current.documents.length).toBe(2);
     });
 
     const initialRenderCount = renderCount;
@@ -153,14 +103,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       return useFileBrowserStore();
     });
 
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    await waitFor(() => {
-      expect(result.current.documents.length).toBe(2);
-    });
-
     const initialRenderCount = renderCount;
 
     // Change sort order
@@ -175,136 +117,19 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     expect(finalRenderCount - initialRenderCount).toBeLessThan(10);
   });
 
-  it('should refresh files when calling refreshFiles()', async () => {
-    const { result } = renderHook(() => useFileBrowserStore());
-    const { default: VaultAPI } = await import('../lib/api');
+  it('sorts query-owned documents without mutating the canonical array', () => {
+    const byName = sortLibraryDocuments(sampleDocuments, 'name', 'asc');
+    const bySize = sortLibraryDocuments(sampleDocuments, 'size', 'asc');
 
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    await waitFor(() => {
-      expect(result.current.documents.length).toBe(2);
-    });
-
-    const initialCallCount = (VaultAPI.listAllDocuments as any).mock.calls.length;
-
-    // Call refreshFiles
-    await act(async () => {
-      await result.current.refreshFiles();
-    });
-
-    // Should have made another API call
-    expect((VaultAPI.listAllDocuments as any).mock.calls.length).toBe(initialCallCount + 1);
+    expect(byName.map(document => document.fileName)).toEqual(['document.pdf', 'test.txt']);
+    expect(bySize.map(document => document.fileName)).toEqual(['test.txt', 'document.pdf']);
+    expect(sampleDocuments.map(document => document.fileName)).toEqual(['test.txt', 'document.pdf']);
   });
 
-  it('should not re-create refreshFiles when unrelated state changes', async () => {
+  it('selects only the document ids supplied by the query-derived view', () => {
     const { result } = renderHook(() => useFileBrowserStore());
-
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    const initialRefresh = result.current.refreshFiles;
-
-    // Change view mode (unrelated to sorting)
-    act(() => {
-      result.current.setViewMode('grid');
-    });
-
-    // refreshFiles reference should remain stable
-    expect(result.current.refreshFiles).toBe(initialRefresh);
-  });
-
-  it('should keep refreshFiles stable across state changes', async () => {
-    const { result } = renderHook(() => useFileBrowserStore());
-
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    const initialRefresh = result.current.refreshFiles;
-
-    // Change sort field
-    act(() => {
-      result.current.setSortField('modified');
-    });
-
-    // refreshFiles should remain stable (no hooks, no dependencies)
-    expect(result.current.refreshFiles).toBe(initialRefresh);
-  });
-
-  it('should sort files correctly when loadFiles is called with different sort params', async () => {
-    const { result } = renderHook(() => useFileBrowserStore());
-
-    // Load with default sort (name, asc)
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    await waitFor(() => {
-      expect(result.current.documents.length).toBe(2);
-    });
-
-    // First file should be 'document.pdf' (alphabetically first)
-    expect(result.current.documents[0].fileName).toBe('document.pdf');
-
-    // Change to sort by size
-    act(() => {
-      result.current.setSortField('size');
-    });
-
-    await waitFor(() => {
-      // Smaller file should be first
-      expect(result.current.documents[0].fileName).toBe('test.txt');
-      expect(result.current.documents[1].fileName).toBe('document.pdf');
-    });
-  });
-
-  it('should not call loadFiles multiple times when dependencies change rapidly', async () => {
-    const { result } = renderHook(() => useFileBrowserStore());
-    const { default: VaultAPI } = await import('../lib/api');
-
-    await act(async () => {
-      await result.current.loadFiles();
-    });
-
-    const initialCallCount = (VaultAPI.listAllDocuments as any).mock.calls.length;
-
-    // Rapidly change sort params
-    act(() => {
-      result.current.setSortField('size');
-      result.current.setSortOrder('desc');
-      result.current.setSortField('modified');
-    });
-
-    // Wait for any pending updates
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Should NOT have triggered loadFiles automatically
-    // (loadFiles should only be called manually, not as an effect)
-    expect((VaultAPI.listAllDocuments as any).mock.calls.length).toBe(initialCallCount);
-  });
-
-  it('should handle concurrent loadFiles calls gracefully', async () => {
-    const { result } = renderHook(() => useFileBrowserStore());
-
-    // Call loadFiles multiple times concurrently
-    await act(async () => {
-      const promises = [
-        result.current.loadFiles(),
-        result.current.loadFiles(),
-        result.current.loadFiles(),
-      ];
-      await Promise.all(promises);
-    });
-
-    // Should have loaded files successfully
-    await waitFor(() => {
-      expect(result.current.documents.length).toBe(2);
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.error).toBeNull();
-    });
+    act(() => result.current.selectAll(['2']));
+    expect([...result.current.selectedDocumentIds]).toEqual(['2']);
   });
 
   it('should create custom collection, dedupe names, and add/remove documents', () => {
@@ -430,7 +255,7 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     expect(unchangedRootB?.parentId).toBeNull();
   });
 
-  it('should reconcile local sources while preserving cloud sources', () => {
+  it('should keep backend-owned local folders out of client source state', () => {
     renderHook(() => useFileBrowserStore());
 
     let cloudId = '';
@@ -445,27 +270,17 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       });
     });
 
-    act(() => {
-      useFileBrowserStore.getState().reconcileLocalSources([
-        {
-          id: 'local:/Users/me/Documents',
-          name: 'Documents',
-          provider: 'local_folder',
-          mode: 'referenced',
-          health: 'healthy',
-          enabled: true,
-          path: '/Users/me/Documents',
-          lastSyncedAt: '2026-02-07T00:00:00.000Z',
-          createdAt: '2026-02-07T00:00:00.000Z',
-          updatedAt: '2026-02-07T00:00:00.000Z',
-        },
-      ]);
-    });
-
     expect(useFileBrowserStore.getState().sourceConnections.some(connection => connection.id === cloudId)).toBe(true);
-    const local = useFileBrowserStore.getState().sourceConnections.find(connection => connection.id === 'local:/Users/me/Documents');
-    expect(local).toBeTruthy();
-    expect(local?.provider).toBe('local_folder');
+    expect(() => useFileBrowserStore.getState().createSourceConnection({
+      name: 'Documents',
+      provider: 'local_folder',
+      mode: 'referenced',
+      health: 'healthy',
+      enabled: true,
+      path: '/Users/me/Documents',
+      lastSyncedAt: '2026-02-07T00:00:00.000Z',
+    })).toThrow('Local folders are backend-owned');
+    expect(useFileBrowserStore.getState().sourceConnections).toHaveLength(1);
 
     act(() => {
       useFileBrowserStore.getState().updateSourceConnection(cloudId, { enabled: true, health: 'healthy' });
@@ -479,21 +294,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     renderHook(() => useFileBrowserStore());
 
     act(() => {
-      useFileBrowserStore.setState({
-        documents: [
-          {
-            id: '1',
-            fileName: 'alpha.txt',
-            filePath: '/alpha.txt',
-            fileType: 'txt',
-            category: 'document',
-            language: 'en',
-            modifiedAt: '2026-01-01',
-            indexedAt: '2026-01-01',
-            wordCount: 10,
-          },
-        ],
-      });
       useFileBrowserStore.getState().setContentSearchMatches(['1']);
       useFileBrowserStore.getState().setSearchQuery('beta');
     });
@@ -501,130 +301,66 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     expect(useFileBrowserStore.getState().contentSearchMatches.size).toBe(0);
   });
 
-  it('should apply saved view search without leaking stale content-match state', () => {
+  it('should scope results to a collection and its descendants', () => {
     renderHook(() => useFileBrowserStore());
+    const documents: DocumentMetadata[] = [
+      {
+        id: '1', fileName: 'alpha.txt', filePath: '/alpha.txt', fileType: 'txt',
+        category: 'document', language: 'en', modifiedAt: '2026-01-01',
+        indexedAt: '2026-01-01', wordCount: 10,
+      },
+      {
+        id: '2', fileName: 'beta.txt', filePath: '/beta.txt', fileType: 'txt',
+        category: 'document', language: 'en', modifiedAt: '2026-01-01',
+        indexedAt: '2026-01-01', wordCount: 10,
+      },
+    ];
 
+    let parentId = '';
     act(() => {
-      useFileBrowserStore.setState({
-        documents: [
-          {
-            id: '1',
-            fileName: 'alpha.txt',
-            filePath: '/alpha.txt',
-            fileType: 'txt',
-            category: 'document',
-            language: 'en',
-            modifiedAt: '2026-01-01',
-            indexedAt: '2026-01-01',
-            wordCount: 10,
-          },
-          {
-            id: '2',
-            fileName: 'gamma.txt',
-            filePath: '/gamma.txt',
-            fileType: 'txt',
-            category: 'document',
-            language: 'en',
-            modifiedAt: '2026-01-01',
-            indexedAt: '2026-01-01',
-            wordCount: 10,
-          },
-        ],
-      });
-      useFileBrowserStore.getState().setSearchQuery('beta');
-    });
-
-    let savedViewId = '';
-    act(() => {
-      savedViewId = useFileBrowserStore.getState().createSavedView('Beta View') ?? '';
-    });
-    expect(savedViewId).not.toBe('');
-
-    act(() => {
-      useFileBrowserStore.getState().setContentSearchMatches(['1', '2']);
-      useFileBrowserStore.getState().applySavedView(savedViewId);
+      parentId = useFileBrowserStore.getState().createSnapshotCollection('Only Alpha', ['1']) ?? '';
+      useFileBrowserStore.getState().setScope({ kind: 'collection', id: parentId });
     });
 
     const state = useFileBrowserStore.getState();
-    expect(state.searchQuery).toBe('beta');
-    expect(state.contentSearchMatches.size).toBe(0);
-    expect(selectFilteredDocuments(state)).toHaveLength(0);
-  });
-
-  it('should scope saved view results to its base collection', () => {
-    renderHook(() => useFileBrowserStore());
-
-    act(() => {
-      useFileBrowserStore.setState({
-        documents: [
-          {
-            id: '1',
-            fileName: 'alpha.txt',
-            filePath: '/alpha.txt',
-            fileType: 'txt',
-            category: 'document',
-            language: 'en',
-            modifiedAt: '2026-01-01',
-            indexedAt: '2026-01-01',
-            wordCount: 10,
-          },
-          {
-            id: '2',
-            fileName: 'beta.txt',
-            filePath: '/beta.txt',
-            fileType: 'txt',
-            category: 'document',
-            language: 'en',
-            modifiedAt: '2026-01-01',
-            indexedAt: '2026-01-01',
-            wordCount: 10,
-          },
-        ],
-      });
-    });
-
-    let collectionId = '';
-    let viewId = '';
-    act(() => {
-      collectionId =
-        useFileBrowserStore.getState().createSnapshotCollection('Only Alpha', ['1']) ?? '';
-      viewId = useFileBrowserStore.getState().createSavedView('Scoped View') ?? '';
-      useFileBrowserStore.getState().updateSavedView(viewId, { baseCollectionId: collectionId });
-      useFileBrowserStore.getState().applySavedView(viewId);
-    });
-
-    const state = useFileBrowserStore.getState();
-    const filtered = selectFilteredDocuments(state);
+    const filtered = filterLibraryDocuments(documents, state);
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.id).toBe('1');
   });
 
-  it('should persist list column visibility in saved views', () => {
+  it('should scope results to a folder path', () => {
+    renderHook(() => useFileBrowserStore());
+    const documents: DocumentMetadata[] = [
+      {
+        id: '1', fileName: 'alpha.txt', filePath: '/Users/josh/Notes/alpha.txt', fileType: 'txt',
+        category: 'document', language: 'en', modifiedAt: '2026-01-01',
+        indexedAt: '2026-01-01', wordCount: 10,
+      },
+      {
+        id: '2', fileName: 'beta.txt', filePath: '/Users/josh/Research/beta.txt', fileType: 'txt',
+        category: 'document', language: 'en', modifiedAt: '2026-01-01',
+        indexedAt: '2026-01-01', wordCount: 10,
+      },
+    ];
+
+    act(() => {
+      useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/josh/Notes' });
+    });
+
+    const filtered = filterLibraryDocuments(documents, useFileBrowserStore.getState());
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.id).toBe('1');
+  });
+
+  it('should clear the selection when the scope changes', () => {
     renderHook(() => useFileBrowserStore());
 
-    let viewId = '';
     act(() => {
-      useFileBrowserStore.getState().setListColumnVisibility({
-        words: false,
-        modified: true,
-        type: false,
-      });
-      viewId = useFileBrowserStore.getState().createSavedView('List Columns View') ?? '';
-      useFileBrowserStore.getState().setListColumnVisibility({
-        words: true,
-        modified: false,
-        type: true,
-      });
-      useFileBrowserStore.getState().applySavedView(viewId);
+      useFileBrowserStore.getState().selectAll(['1', '2']);
+      useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/josh/Notes' });
     });
 
-    const state = useFileBrowserStore.getState();
-    expect(viewId).not.toBe('');
-    expect(state.listColumns).toEqual({
-      words: false,
-      modified: true,
-      type: false,
-    });
+    expect(useFileBrowserStore.getState().selectedDocumentIds.size).toBe(0);
   });
 
   it('should create and apply saved searches', () => {
@@ -683,5 +419,17 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     expect(duplicate).toBeTruthy();
     expect(duplicate?.name).toBe('Compound Search Copy');
     expect(duplicate?.query).toBe('glucosinolate');
+  });
+});
+
+
+describe('focus vs selection', () => {
+  it('clearSelection keeps the focused document', () => {
+    const store = useFileBrowserStore.getState();
+    store.setFocusedDocument('doc-focus');
+    store.selectFile('doc-focus');
+    store.clearSelection();
+    expect(useFileBrowserStore.getState().selectedDocumentIds.size).toBe(0);
+    expect(useFileBrowserStore.getState().focusedDocumentId).toBe('doc-focus');
   });
 });

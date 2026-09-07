@@ -5,10 +5,11 @@
 
 import { useEffect } from 'react';
 
-import type { UnlistenFn } from '@tauri-apps/api/event';
 
 import { useModelWarmupStore } from '../stores/modelWarmupStore';
 import { TauriEventNames, EventSchemas, listenValidated } from '../types/events';
+
+import type { UnlistenFn } from '@tauri-apps/api/event';
 
 export function useModelWarmupListener(): void {
   useEffect(() => {

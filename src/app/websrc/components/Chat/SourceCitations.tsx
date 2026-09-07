@@ -3,6 +3,9 @@ import { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { renderHighlightedText } from '../../utils/sourcePreview';
+import { formatSourceLocation } from '../Reading/passageLocator';
+
 import type { SourceWithMetadata } from '../../types/conversation';
 
 interface GroupedSourceChunk {
@@ -24,7 +27,11 @@ interface GroupedSourceEntry {
 
 interface SourceCitationsProps {
   sources: SourceWithMetadata[];
-  onViewSource: (source: SourceWithMetadata) => void;
+  /** "from your journal" / "from your references", keyed by chunk id. */
+  provenanceBySource?: Map<string, string>;
+  /** Locations a viewer has already resolved, keyed by chunk id. */
+  resolvedLocations?: Map<string, string>;
+  onViewSource: (_source: SourceWithMetadata) => void;
 }
 
 const isWebSource = (source: SourceWithMetadata): boolean => {
@@ -32,93 +39,14 @@ const isWebSource = (source: SourceWithMetadata): boolean => {
   return source.documentId.startsWith('web:') || category.includes('web article');
 };
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const termEntropy = (term: string) => {
-  if (!term) return 0;
-  const counts = new Map<string, number>();
-  for (const ch of term) {
-    counts.set(ch, (counts.get(ch) || 0) + 1);
-  }
-  let entropy = 0;
-  for (const count of counts.values()) {
-    const p = count / term.length;
-    entropy -= p * Math.log2(p);
-  }
-  return entropy;
-};
-
-const termSalience = (term: string) => {
-  const entropy = termEntropy(term);
-  const lengthFactor = Math.log(term.length + 1);
-  return entropy * (0.65 + 0.35 * lengthFactor);
-};
-
-const selectInformativeTerms = (terms: string[], maxTerms: number) => {
-  const normalized = Array.from(
-    new Set(
-      terms
-        .map((term) => term.trim().toLowerCase())
-        .filter((term) => term.length >= 3 && /[a-z]/i.test(term))
-    )
-  );
-  if (normalized.length === 0) return [];
-
-  const ranked = normalized
-    .map((term) => ({ term, score: termSalience(term) }))
-    .sort((a, b) => b.score - a.score || a.term.localeCompare(b.term));
-
-  const bestScore = ranked[0]?.score ?? 0;
-  if (bestScore <= Number.EPSILON) {
-    return ranked.slice(0, maxTerms).map((entry) => entry.term);
-  }
-
-  const selected = ranked
-    .filter((entry) => entry.score >= bestScore * 0.45)
-    .slice(0, maxTerms)
-    .map((entry) => entry.term);
-
-  if (selected.length > 0) return selected;
-  return ranked.slice(0, maxTerms).map((entry) => entry.term);
-};
-
-const renderHighlightedText = (text: string, highlights?: string[]) => {
-  if (!highlights || highlights.length === 0) return text;
-
-  const selected = selectInformativeTerms(highlights, 10);
-  if (selected.length === 0) return text;
-
-  const ordered = [...selected].sort((a, b) => b.length - a.length);
-  const pattern = new RegExp(`\\b(${ordered.map(escapeRegExp).join('|')})\\b`, 'gi');
-  const parts = text.split(pattern);
-  const lookup = new Set(selected.map((term) => term.toLowerCase()));
-
-  return parts.map((part, idx) =>
-    lookup.has(part.toLowerCase()) ? (
-      <mark
-        key={`hl-${idx}`}
-        className="rounded-sm bg-[hsl(var(--accent-muted))] px-0.5 text-[hsl(var(--text-primary))]"
-      >
-        {part}
-      </mark>
-    ) : (
-      <span key={`hl-${idx}`}>{part}</span>
-    )
-  );
-};
-
-export function SourceCitations({ sources, onViewSource }: SourceCitationsProps) {
+export function SourceCitations({
+  sources,
+  provenanceBySource,
+  resolvedLocations,
+  onViewSource,
+}: SourceCitationsProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const prefersReducedMotion = useReducedMotion();
-
-  const maxKbScore = useMemo(() => {
-    const kbScores = sources
-      .filter((source) => !isWebSource(source))
-      .map((source) => source.score)
-      .filter((score) => Number.isFinite(score) && score > 0);
-    if (kbScores.length === 0) return 0;
-    return Math.max(...kbScores);
-  }, [sources]);
 
   const groupedSources = useMemo<GroupedSourceEntry[]>(() => {
     const normalizeExcerpt = (value?: string): string | null => {
@@ -219,16 +147,17 @@ export function SourceCitations({ sources, onViewSource }: SourceCitationsProps)
     [groupedSources]
   );
 
-  const formatSourceMetric = (source: SourceWithMetadata, fallbackRank: number): string => {
-    if (isWebSource(source)) {
-      const rank = source.chunkIndex !== undefined ? source.chunkIndex : fallbackRank;
-      return `Rank #${rank}`;
-    }
-    if (maxKbScore <= 0) {
-      return 'No score';
-    }
-    const normalized = Math.min(1, Math.max(0, source.score / maxKbScore));
-    return `${(normalized * 100).toFixed(1)}% relevance`;
+  // Web results carry a real ordinal from the search engine, so say it — 1-based,
+  // the way the list is numbered. Retrieval scores are not a percentage of
+  // anything a reader can name (normalising them made the best hit "100%
+  // relevance" every time), so nothing is said about them at all.
+  const formatSourceMetric = (
+    source: SourceWithMetadata,
+    fallbackRank: number
+  ): string | undefined => {
+    if (!isWebSource(source)) return undefined;
+    const rank = source.chunkIndex !== undefined ? source.chunkIndex + 1 : fallbackRank;
+    return `Rank ${rank}`;
   };
 
   if (sources.length === 0) return null;
@@ -260,14 +189,17 @@ export function SourceCitations({ sources, onViewSource }: SourceCitationsProps)
           key="source-citations-expand"
           initial={prefersReducedMotion ? false : { height: 0, opacity: 0 }}
           animate={{ height: 'auto', opacity: 1 }}
-          exit={prefersReducedMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
-          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          exit={prefersReducedMotion ? undefined : { height: 0, opacity: 0 }}
+          transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           style={{ overflow: 'hidden' }}
         >
         <ul className="mt-3 space-y-4">
           {groupedSources.map((group, idx) => {
             const source = group.primarySource;
+            // Provenance leads: "from your journal" is the most useful thing
+            // a reader can learn about a citation at a glance.
             const metaParts = [
+              provenanceBySource?.get(source.chunkId),
               source.category,
               formatSourceMetric(source, idx + 1),
               group.chunks.length > 0
@@ -306,8 +238,15 @@ export function SourceCitations({ sources, onViewSource }: SourceCitationsProps)
                 {group.chunks.length > 0 && (
                   <div className="space-y-1.5">
                     {group.chunks.map((chunk) => {
+                      // Where the passage lives, when that is actually known.
+                      // A chunk ordinal is not a location, so nothing shows
+                      // rather than "Chunk 7".
                       const chunkMetaParts = [
-                        chunk.section,
+                        resolvedLocations?.get(chunk.chunkId) ??
+                          formatSourceLocation({
+                            section: chunk.section,
+                            chunkId: chunk.chunkId,
+                          }),
                       ].filter(Boolean);
 
                       return (

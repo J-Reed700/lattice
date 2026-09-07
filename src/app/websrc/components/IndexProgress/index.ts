@@ -1,1 +1,0 @@
-export { IndexProgress } from './IndexProgress';

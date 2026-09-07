@@ -132,6 +132,7 @@ export function createVaultAPIMock() {
   const api = {
     // File operations
     indexFile: vi.fn().mockResolvedValue({ success: true }),
+    clearIndexingFailure: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     indexDirectory: vi.fn().mockResolvedValue({ success: true }),
     deleteDocument: vi.fn().mockResolvedValue({ success: true }),
     getFileContent: vi.fn().mockResolvedValue({ content: 'mock content' }),
@@ -157,16 +158,46 @@ export function createVaultAPIMock() {
       status: 'ready'
     }),
     listModels: vi.fn().mockResolvedValue([]),
+    getModelDownloadPath: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: '/tmp/lattice/models' }),
 
     // Q&A operations
     askQuestion: vi.fn().mockResolvedValue({
       answer: 'mock answer',
       sources: []
     }),
+    askQuestionStream: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        answer: 'mock answer',
+        sources: [],
+      },
+    }),
 
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
+    testOllamaConnection: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        endpoint: 'http://localhost:11434',
+        models: [],
+      },
+    }),
+
+    // Tag operations
+    getDocumentTags: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { documentId: 'test-document', tags: [] },
+    }),
+    listAllTags: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { tags: [] },
+    }),
+    generateTagsForDocument: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    applyTags: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    removeTagFromDocument: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
 
     // Stats operations
     getStats: vi.fn().mockResolvedValue({
@@ -192,6 +223,96 @@ export function createVaultAPIMock() {
       response: 'mock response',
       sources: []
     }),
+    getConversationMessages: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { messages: [], total: 0 },
+    }),
+
+    // Workspace note operations
+    listWorkspaceNotes: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { notes: [] },
+    }),
+    createWorkspaceNote: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        id: 'test-note',
+        title: 'Test note',
+        content: '',
+        linkedDocumentIds: [],
+        linkedConversationIds: [],
+        highlights: [],
+        stickyNotes: [],
+        conversationSnapshots: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    }),
+    updateWorkspaceNote: vi.fn().mockImplementation(async (note) => ({
+      ok: true,
+      data: note,
+    })),
+
+    // Track A: branching, starters, passage references
+    truncateConversationAfter: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { conversationId: 'test-conversation', deletedCount: 0, messages: [] },
+    }),
+    forkConversation: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        conversation: {
+          id: 'test-branch',
+          title: 'Test · branch',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+        copiedMessageCount: 0,
+      },
+    }),
+    regenerateResponse: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { conversationId: 'test-conversation', messages: [], contextUsed: 0 },
+    }),
+    generateChatStarters: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        fingerprint: 'test',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        starters: [],
+        documentCount: 0,
+      },
+    }),
+    createPassageReference: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        id: 'test-reference',
+        documentId: 'test-document',
+        chunkId: null,
+        filePath: '/vault/test.md',
+        fileName: 'test.md',
+        locator: null,
+        text: 'excerpt',
+        title: null,
+        note: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    }),
+    listPassageReferences: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+
+    // Transcription (Track E)
+    transcribeFile: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        filePath: '/vault/voice-memo.m4a',
+        language: 'en',
+        durationMs: 0,
+        segments: [],
+        text: '',
+      },
+    }),
+    getTranscriptionStatus: vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { modelReady: false } }),
 
     // Mock utilities
     __reset: vi.fn(() => {

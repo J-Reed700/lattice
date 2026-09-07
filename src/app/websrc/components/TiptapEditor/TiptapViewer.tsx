@@ -1,5 +1,6 @@
-import { useEditor, EditorContent } from '@tiptap/react';
 import { useEffect } from 'react';
+
+import { useEditor, EditorContent } from '@tiptap/react';
 import { Markdown } from 'tiptap-markdown';
 
 import { createExtensions } from './extensions';

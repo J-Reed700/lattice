@@ -60,18 +60,19 @@ function selectInformativeTerms(terms: string[], maxTerms: number): string[] {
   return ranked.slice(0, maxTerms).map((entry) => entry.term);
 }
 
+/**
+ * Fused retrieval score, shown as the 0–1 number it actually is.
+ * BM25 is an unbounded relevance score, not a percentage — it is printed raw
+ * on the component line below.
+ */
+function formatScore(score: number): string {
+  return score.toFixed(2);
+}
+
 function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
   const handleClick = useCallback(() => {
     onOpen?.(result);
   }, [onOpen, result]);
-
-  const formatScore = useCallback((score: number) => (score * 100).toFixed(1), []);
-
-  const scoreColor = useMemo(() => {
-    if (result.score >= 0.8) return 'text-[hsl(var(--success-fg))]';
-    if (result.score >= 0.6) return 'text-[hsl(var(--warning-fg))]';
-    return 'text-[hsl(var(--text-secondary))]';
-  }, [result.score]);
 
   const highlightedExcerpts = useMemo(() => {
     const baseExcerpts = (result.highlights && result.highlights.length > 0)
@@ -114,7 +115,7 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
     return parts.map((part, idx) => {
       if (matchRegex.test(part)) {
         return (
-          <mark key={`${part}-${idx}`} className="bg-[hsl(var(--warning-fg))]/30 text-[hsl(var(--text-primary))] rounded px-0.5">
+          <mark key={`${part}-${idx}`} className="bg-transparent font-medium text-text-primary">
             {part}
           </mark>
         );
@@ -128,92 +129,47 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
     : (result.metadata.filename as string || result.id);
   const displayPath = result.path || (result.metadata.path as string | undefined);
 
+  const components: string[] = [];
+  if (result.vectorScore != null) {
+    components.push(`vec ${result.vectorScore.toFixed(2)}`);
+  }
+  if (result.bm25Score != null) {
+    components.push(`bm25 ${result.bm25Score.toFixed(1)}`);
+  }
+
   return (
     <button
       type="button"
-      className="w-full text-left bg-[hsl(var(--surface-raised))] p-5 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer border border-[hsl(var(--border-subtle))]"
+      className="w-full border-b border-border-subtle px-2 py-3 text-left transition-colors duration-fast hover:bg-surface"
       onClick={handleClick}
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex-1">
-          <h3 className="font-semibold text-lg text-[hsl(var(--text-primary))] mb-1">
-            {displayTitle}
-          </h3>
+      <div className="flex items-baseline gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-text-primary">{displayTitle}</div>
           {displayPath && (
-            <p className="text-xs text-[hsl(var(--text-secondary))] truncate">
-              {displayPath}
-            </p>
+            <div className="truncate text-xs text-text-muted">{displayPath}</div>
           )}
         </div>
-        <div className="ml-4 flex flex-col items-end">
-          <div className={`text-sm font-medium ${scoreColor}`}>
-            {formatScore(result.score)}%
-          </div>
-          {result.metadata.file_type && (
-            <span className="text-xs text-[hsl(var(--text-secondary))] mt-1 uppercase">
-              {result.metadata.file_type as string}
-            </span>
+        <div className="shrink-0 text-right">
+          <div className="text-xs tabular-nums text-text-muted">{formatScore(result.score)}</div>
+          {components.length > 0 && (
+            <div className="font-mono text-xxs text-text-muted">{components.join(' · ')}</div>
           )}
         </div>
       </div>
 
       {highlightedExcerpts.length > 0 && (
-        <div className="mb-3">
+        <div className="mt-1.5 space-y-1">
           {highlightedExcerpts.map((excerpt, index) => (
-            <p className="text-sm text-[hsl(var(--text-secondary))] line-clamp-3" key={`${result.id}-excerpt-${index}`}>
+            <p
+              className="line-clamp-2 text-sm text-text-secondary"
+              key={`${result.id}-excerpt-${index}`}
+            >
               {renderHighlightedText(excerpt)}
             </p>
           ))}
         </div>
       )}
-
-      <div className="flex flex-wrap gap-2 items-center text-xs text-[hsl(var(--text-secondary))]">
-        {result.vectorScore != null && (
-          <div className="flex items-center gap-1 bg-[hsl(var(--accent-muted))]/30 text-[hsl(var(--accent))] px-2 py-1 rounded">
-            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-              <path
-                fillRule="evenodd"
-                d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span>Vector: {formatScore(result.vectorScore)}%</span>
-            {result.vectorRank != null && (
-              <span className="text-[hsl(var(--text-tertiary))]">#{result.vectorRank + 1}</span>
-            )}
-          </div>
-        )}
-        {result.bm25Score != null && (
-          <div className="flex items-center gap-1 bg-[hsl(var(--success-muted))]/30 text-[hsl(var(--success-fg))] px-2 py-1 rounded">
-            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span>BM25: {formatScore(result.bm25Score)}%</span>
-            {result.bm25Rank != null && (
-              <span className="text-[hsl(var(--text-tertiary))]">#{result.bm25Rank + 1}</span>
-            )}
-          </div>
-        )}
-        {(result.metadata.updated_at ? (
-          <div className="flex items-center gap-1 text-[hsl(var(--text-secondary))]" key="modified-at">
-            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span>
-              {new Date(result.metadata.updated_at as string).toLocaleDateString()}
-            </span>
-          </div>
-        ) : null) as React.ReactNode}
-      </div>
     </button>
   );
 }

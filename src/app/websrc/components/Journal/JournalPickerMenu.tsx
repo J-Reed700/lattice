@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
 import { BookOpen, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 
+import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -79,14 +80,17 @@ export function JournalPickerMenu({
   };
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       <div className="min-w-0 flex-1">
         <Select
           value={currentJournal?.id ?? ''}
           onValueChange={handleValueChange}
           disabled={journals.length === 0 && !currentJournal}
         >
-          <SelectTrigger className="h-9 text-sm" aria-label="Switch journal">
+          <SelectTrigger
+            className="h-7 rounded-sm border-0 px-1 py-0.5 text-sm transition-colors duration-fast hover:bg-surface-raised"
+            aria-label="Switch journal"
+          >
             <SelectValue placeholder="Select journal">
               {currentJournal && (
                 <span className="flex items-center gap-2 truncate">
@@ -117,15 +121,9 @@ export function JournalPickerMenu({
 
       <Popover open={isMoreOpen} onOpenChange={(open) => { setIsMoreOpen(open); if (!open) setIsRenaming(false); }}>
         <PopoverTrigger asChild>
-          <button
-            type="button"
-            className="shrink-0 rounded-sm p-1.5 text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast disabled:opacity-40"
-            aria-label="Journal actions"
-            title="Journal actions"
-            disabled={!currentJournal}
-          >
-            <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} />
-          </button>
+          <IconButton label="Journal actions" disabled={!currentJournal}>
+            <MoreHorizontal />
+          </IconButton>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-56 p-2">
           {isRenaming ? (

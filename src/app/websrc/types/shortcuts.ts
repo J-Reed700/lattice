@@ -4,7 +4,6 @@
  * Purpose: Type definitions for the keyboard shortcuts system
  */
 
-export type ModifierKey = 'Mod' | 'Ctrl' | 'Shift' | 'Alt' | 'Meta';
 export type KeyCombination = string; // e.g., "Mod+K", "Shift+Alt+N"
 
 export interface KeyboardShortcut {
@@ -33,44 +32,6 @@ export type ShortcutContext =
   | 'settings'
   | 'daily'
   | 'qa';
-
-export interface ShortcutsConfig {
-  global: {
-    search: KeyCombination;
-    quickCapture: KeyCombination;
-    newNote: KeyCombination;
-    settings: KeyCombination;
-    commandPalette: KeyCombination;
-    toggleSidebar: KeyCombination;
-    toggleFavorite?: KeyCombination;
-    openFavorites?: KeyCombination;
-  };
-  editor: {
-    toggleEdit: KeyCombination;
-    save: KeyCombination;
-    bold: KeyCombination;
-    italic: KeyCombination;
-    link: KeyCombination;
-    codeBlock: KeyCombination;
-  };
-  navigation: {
-    nextNote: KeyCombination;
-    prevNote: KeyCombination;
-    closeNote: KeyCombination;
-    focusSearch: KeyCombination;
-    goToFiles: KeyCombination;
-    goToSearch: KeyCombination;
-    goToDaily: KeyCombination;
-  };
-  search: {
-    selectResult1: KeyCombination;
-    selectResult2: KeyCombination;
-    selectResult3: KeyCombination;
-    nextResult: KeyCombination;
-    prevResult: KeyCombination;
-    closeSearch: KeyCombination;
-  };
-}
 
 export interface ShortcutConflict {
   shortcut1: string;

@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 
+import { PageHeader, SidebarTabs } from '@/components/ui';
 import { useSearchQuery } from '@/hooks/queries';
 import { useDebounce } from '@/hooks/useDebounce';
 import VaultAPI from '@/lib/api';
@@ -7,36 +8,30 @@ import type { SearchResult } from '@/types';
 
 import { SearchEmptyState } from './SearchEmptyState';
 import { SearchInput } from './SearchInput';
-import { SearchModeButtons } from './SearchModeButtons';
 import { ContentViewer } from '../ContentViewer';
 import { VirtualizedSearchResults } from '../VirtualList/VirtualList';
+
+type SearchMode = 'hybrid' | 'semantic' | 'keyword';
+
+const SEARCH_MODES: ReadonlyArray<{ id: SearchMode; label: string }> = [
+  { id: 'hybrid', label: 'Hybrid' },
+  { id: 'semantic', label: 'Semantic' },
+  { id: 'keyword', label: 'Keyword' },
+];
 
 /**
  * SearchInterface
  *
- * Purpose: Unified search interface with semantic, keyword, and hybrid modes
+ * The "I know the file exists, find it" escape hatch. Reading-column
+ * anatomy A: one PageHeader, one input, one row of mode tabs, then
+ * hairline result rows. See `.design/UX-OVERHAUL-BRIEF.md` §2A.
  *
- * Features:
- * - Real-time debounced search with TanStack Query
- * - Three search modes (semantic, keyword, hybrid)
- * - Virtualized results for performance
- * - Loading and empty states
- * - Error handling with automatic retry
- * - Automatic caching (5 minutes)
- * - Query deduplication
- *
- * Architecture: Composition pattern with extracted sub-components
- * - SearchInput: Search input with loading indicator
- * - SearchModeButtons: Mode selection buttons
- * - SearchEmptyState: Empty/no results states
- * - VirtualizedSearchResults: Virtualized results list
- *
- * Data: Managed by TanStack Query (useSearchQuery hook with 300ms debounce)
+ * Data: TanStack Query (useSearchQuery, 300ms debounce).
  */
 
 export function SearchInterface() {
   const [query, setQuery] = useState('');
-  const [searchMode, setSearchMode] = useState<'semantic' | 'keyword' | 'hybrid'>('hybrid');
+  const [searchMode, setSearchMode] = useState<SearchMode>('hybrid');
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -184,41 +179,50 @@ export function SearchInterface() {
   }, []);
 
   return (
-    <div className="h-full min-h-0 flex flex-col p-6 bg-[hsl(var(--bg))]">
-      <div className="mb-6">
+    <main className="h-full overflow-y-auto bg-bg">
+      <div className="mx-auto w-full max-w-[760px] px-6 pt-10 pb-16">
+        <PageHeader
+          title="Search"
+          meta={
+            groupedResults.length > 0
+              ? `${groupedResults.length} ${groupedResults.length === 1 ? 'result' : 'results'}`
+              : undefined
+          }
+        />
+
         <SearchInput value={query} onChange={handleQueryChange} isSearching={isSearching} />
-        <SearchModeButtons mode={searchMode} onModeChange={setSearchMode} />
-      </div>
+        <SidebarTabs
+          value={searchMode}
+          onChange={setSearchMode}
+          options={SEARCH_MODES}
+          className="mt-3 text-sm"
+        />
 
-      {error && (
-        <div className="mb-4 p-4 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg">
-          <p className="text-[hsl(var(--danger-fg))] text-sm">{error.message}</p>
-        </div>
-      )}
-      {openError && (
-        <div className="mb-4 p-4 bg-[hsl(var(--danger-muted))]/20 border border-[hsl(var(--danger-muted))] rounded-lg">
-          <p className="text-[hsl(var(--danger-fg))] text-sm">{openError}</p>
-        </div>
-      )}
-
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {groupedResults.length === 0 ? (
-          <SearchEmptyState
-            hasSearched={hasSearched}
-            searchMode={searchMode}
-            isSearching={isSearching}
-          />
-        ) : (
-          <VirtualizedSearchResults
-            results={groupedResults}
-            query={debouncedQuery}
-            onResultOpen={handleResultOpen}
-          />
+        {error && (
+          <p className="mt-4 text-sm text-danger-fg">Couldn&apos;t search. {error.message}</p>
         )}
+        {openError && <p className="mt-4 text-sm text-danger-fg">{openError}</p>}
+
+        <div className="mt-6">
+          {groupedResults.length === 0 ? (
+            <SearchEmptyState
+              hasSearched={hasSearched}
+              query={debouncedQuery}
+              isSearching={isSearching}
+              onPickRecent={setQuery}
+            />
+          ) : (
+            <VirtualizedSearchResults
+              results={groupedResults}
+              query={debouncedQuery}
+              onResultOpen={handleResultOpen}
+            />
+          )}
+        </div>
       </div>
 
       <ContentViewer filePath={viewerFilePath} onClose={() => setViewerFilePath(null)} />
-    </div>
+    </main>
   );
 }
 

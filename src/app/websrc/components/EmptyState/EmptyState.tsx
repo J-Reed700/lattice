@@ -1,12 +1,18 @@
 import { type ReactNode } from 'react';
 
-import Button from '@/components/ui/Button/Button';
 import { cn } from '@/lib/utils';
 
+/**
+ * EmptyState
+ *
+ * One sentence, optionally one action. No icon parade, no accent circle.
+ * `icon` is accepted for backwards compatibility and rendered small and
+ * muted; prefer omitting it. See `.design/UX-OVERHAUL-BRIEF.md` §4.
+ */
 export interface EmptyStateProps {
-  icon: ReactNode;
+  icon?: ReactNode;
   title: string;
-  description: string;
+  description?: string;
   action?: {
     label: string;
     onClick: () => void;
@@ -14,41 +20,23 @@ export interface EmptyStateProps {
   className?: string;
 }
 
-export const EmptyState = ({
-  icon,
-  title,
-  description,
-  action,
-  className,
-}: EmptyStateProps) => (
-    <div
-      className={cn(
-        'flex flex-col items-center justify-center py-16 px-4 text-center',
-        className
-      )}
-    >
-      {/* Icon Container */}
-      <div className="mb-6 p-6 rounded-full bg-[hsl(var(--accent-muted))]">
-        <div className="text-[hsl(var(--accent))] w-12 h-12 flex items-center justify-center">
-          {icon}
-        </div>
+export const EmptyState = ({ icon, title, description, action, className }: EmptyStateProps) => (
+  <div className={cn('flex flex-col items-center justify-center px-6 py-16 text-center', className)}>
+    {icon ? (
+      <div className="mb-3 flex h-5 w-5 items-center justify-center text-text-muted [&>svg]:h-5 [&>svg]:w-5">
+        {icon}
       </div>
-
-      {/* Title */}
-      <h3 className="text-2xl font-semibold text-[hsl(var(--text-primary))] mb-2">
-        {title}
-      </h3>
-
-      {/* Description */}
-      <p className="text-[hsl(var(--text-secondary))] max-w-md mb-6">
-        {description}
-      </p>
-
-      {/* Action Button */}
-      {action && (
-        <Button onClick={action.onClick} size="lg" variant="primary">
-          {action.label}
-        </Button>
-      )}
-    </div>
-  );
+    ) : null}
+    <p className="text-sm text-text-secondary">{title}</p>
+    {description ? <p className="mt-1 max-w-sm text-xs text-text-muted">{description}</p> : null}
+    {action ? (
+      <button
+        type="button"
+        onClick={action.onClick}
+        className="mt-4 inline-flex h-8 items-center rounded-md border border-border-default bg-surface px-3 text-sm font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        {action.label}
+      </button>
+    ) : null}
+  </div>
+);

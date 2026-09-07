@@ -1,151 +1,134 @@
-import { X } from 'lucide-react'
+import { useEffect } from 'react';
+
+import { X } from 'lucide-react';
 
 interface KeyboardShortcutsModalProps {
-  isOpen: boolean
-  onClose: () => void
+  isOpen: boolean;
+  onClose: () => void;
 }
 
 interface Shortcut {
-  keys: string[]
-  description: string
+  keys: string[];
+  description: string;
 }
 
 interface ShortcutGroup {
-  title: string
-  shortcuts: Shortcut[]
+  title: string;
+  shortcuts: Shortcut[];
 }
 
 /**
- * KeyboardShortcutsModal
- *
- * Purpose: Display all available keyboard shortcuts in a modal
- *
- * Features:
- * - Organized by category
- * - Platform-aware (Mac vs Windows/Linux)
- * - Escape to close
- * - Print-friendly layout
+ * KeyboardShortcutsModal — the reference sheet for every shortcut the app
+ * actually binds. Keep this in sync with RootLayout, ChatView, and the
+ * sidebars; a shortcut listed here that does nothing is a bug.
  */
 export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsModalProps) {
-  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
-  const cmd = isMac ? '⌘' : 'Ctrl'
-  const shift = isMac ? '⇧' : 'Shift'
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
+  const cmd = isMac ? '⌘' : 'Ctrl';
+  const shift = isMac ? '⇧' : 'Shift';
 
-  const shortcutGroups: ShortcutGroup[] = [
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  const groups: ShortcutGroup[] = [
     {
-      title: 'General',
+      title: 'Everywhere',
       shortcuts: [
-        { keys: [cmd, 'K'], description: 'Open command palette' },
-        { keys: ['Esc'], description: 'Close command palette' },
-        { keys: ['?'], description: 'Show keyboard shortcuts' },
-        { keys: [cmd, ','], description: 'Open preferences' },
+        { keys: [cmd, 'K'], description: 'Command palette' },
+        { keys: [cmd, 'N'], description: 'New conversation or entry' },
+        { keys: [cmd, shift, 'N'], description: 'Quick capture' },
+        { keys: [cmd, ','], description: 'Settings' },
+        { keys: ['Esc'], description: 'Close' },
       ],
     },
     {
-      title: 'Search',
+      title: 'Go to',
       shortcuts: [
-        { keys: [cmd, 'F'], description: 'Search documents' },
-        { keys: [cmd, shift, 'F'], description: 'Search by filename' },
-        { keys: ['↑', '↓'], description: 'Navigate results' },
-        { keys: ['Enter'], description: 'Open selected result' },
+        { keys: [cmd, '0'], description: 'Home' },
+        { keys: [cmd, '1'], description: 'Search' },
+        { keys: [cmd, '2'], description: 'Library' },
+        { keys: [cmd, '3'], description: 'Journal' },
+        { keys: [cmd, '4'], description: 'Chat' },
+        { keys: [cmd, '5'], description: 'References' },
+        { keys: [cmd, 'I'], description: 'Import' },
       ],
     },
     {
-      title: 'Upload',
+      title: 'Chat',
       shortcuts: [
-        { keys: [cmd, 'U'], description: 'Upload document' },
-        { keys: [cmd, shift, 'U'], description: 'Upload folder' },
+        { keys: ['Enter'], description: 'Send' },
+        { keys: [shift, 'Enter'], description: 'New line' },
+        { keys: [cmd, shift, 'K'], description: 'Find in conversations and references' },
+        { keys: [cmd, '\\'], description: 'Hide or show the sidebar' },
       ],
     },
-    {
-      title: 'Navigation',
-      shortcuts: [
-        { keys: [cmd, '1'], description: 'View all documents' },
-        { keys: [cmd, '2'], description: 'Recent documents' },
-        { keys: [cmd, '3'], description: 'Settings' },
-      ],
-    },
-    {
-      title: 'Command Palette',
-      shortcuts: [
-        { keys: ['↑', '↓'], description: 'Navigate commands' },
-        { keys: ['Enter'], description: 'Execute command' },
-        { keys: ['Esc'], description: 'Close palette' },
-        { keys: ['Type'], description: 'Filter commands' },
-      ],
-    },
-  ]
+  ];
 
   return (
     <>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-[hsl(var(--overlay))] z-[9998] animate-in fade-in duration-150"
-            onClick={onClose}
-          />
-
-          {/* Modal */}
-          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl z-[9999] max-h-[80vh] overflow-y-auto animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-150">
-            <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md">
-              {/* Header */}
-              <div className="flex items-center justify-between p-6 border-b border-[hsl(var(--border-subtle))]">
-                <h2 className="text-2xl font-semibold text-[hsl(var(--text-primary))]">
-                  Keyboard shortcuts
-                </h2>
-                <button
-                  onClick={onClose}
-                  className="p-2 rounded-lg hover:bg-[hsl(var(--surface-raised))] transition-colors"
-                  aria-label="Close"
-                >
-                  <X className="w-4 h-4 text-[hsl(var(--text-tertiary))]" strokeWidth={1.75} />
-                </button>
-              </div>
-
-              {/* Content */}
-              <div className="p-6 space-y-8">
-                {shortcutGroups.map((group) => (
-                  <div key={group.title}>
-                    <h3 className="text-sm font-semibold text-[hsl(var(--text-secondary))] uppercase tracking-wide mb-3">
-                      {group.title}
-                    </h3>
-                    <div className="space-y-2">
-                      {group.shortcuts.map((shortcut, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-[hsl(var(--surface-raised))]/50 transition-colors"
-                        >
-                          <span className="text-sm text-[hsl(var(--text-secondary))]">
-                            {shortcut.description}
-                          </span>
-                          <div className="flex gap-1">
-                            {shortcut.keys.map((key, keyIndex) => (
-                              <kbd
-                                key={keyIndex}
-                                className="inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold text-[hsl(var(--text-secondary))] bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-md min-w-[32px]"
-                              >
-                                {key}
-                              </kbd>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Footer */}
-              <div className="px-6 py-4 border-t border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))]/50 rounded-b-lg">
-                <p className="text-xs text-[hsl(var(--text-secondary))] text-center">
-                  Press <kbd className="px-2 py-1 text-xs font-semibold bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded">Esc</kbd> to close
-                </p>
-              </div>
-            </div>
+      <div
+        className="fixed inset-0 z-[9998] bg-overlay animate-in fade-in duration-fast"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-title"
+        className="fixed left-1/2 top-1/2 z-[9999] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 animate-in fade-in zoom-in-95 duration-fast"
+      >
+        <div className="max-h-[80vh] overflow-y-auto rounded-lg border border-border-subtle bg-surface-raised shadow-md">
+          <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">
+            <h2 id="shortcuts-title" className="font-serif text-base font-semibold text-text-primary">
+              Keyboard shortcuts
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:bg-surface hover:text-text-primary"
+            >
+              <X className="h-4 w-4" strokeWidth={1.75} />
+            </button>
           </div>
-        </>
-      )}
+
+          <div className="space-y-6 px-5 py-4">
+            {groups.map((group) => (
+              <section key={group.title}>
+                <h3 className="pb-1 text-xxs uppercase tracking-[0.08em] text-text-muted">{group.title}</h3>
+                <div className="border-t border-border-subtle">
+                  {group.shortcuts.map((shortcut) => (
+                    <div
+                      key={shortcut.description}
+                      className="flex items-center justify-between border-b border-border-subtle py-2"
+                    >
+                      <span className="text-sm text-text-secondary">{shortcut.description}</span>
+                      <span className="flex gap-1">
+                        {shortcut.keys.map((key) => (
+                          <kbd
+                            key={key}
+                            className="inline-flex min-w-[24px] items-center justify-center rounded-sm border border-border-default bg-surface px-1.5 py-0.5 font-mono text-xs text-text-secondary"
+                          >
+                            {key}
+                          </kbd>
+                        ))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+      </div>
     </>
-  )
+  );
 }

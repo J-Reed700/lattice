@@ -1,15 +1,23 @@
-import { type FC, useEffect, useMemo, useState } from 'react';
+import { type FC, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as Dialog from '@radix-ui/react-dialog';
+import { useQueryClient } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { X, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 
 import { HTMLViewer } from '@/components/ContentViewer/renderers/HTMLViewer';
+import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/components/Reading';
+import { PASSAGE_REFERENCES_QUERY_KEY } from '@/hooks/queries/usePassageReferencesQuery';
 import { useFileContent } from '@/hooks/useFileContent';
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import { toast } from '@/stores/toastStore';
-import type { SourceWithMetadata } from '@/types/conversation';
+import type {
+  PassageLocator,
+  PassageMatchTier,
+  SourceWithMetadata,
+} from '@/types/conversation';
 import { formatFileSize, getLanguageFromFileName } from '@/utils/files';
 import { sanitizeFileName } from '@/utils/sanitize';
 import {
@@ -18,10 +26,14 @@ import {
   getWebArchiveHtmlPath,
 } from '@/utils/sourcePreview';
 
+import { CitationRail } from './CitationRail';
+import { passageMatchNotice, sourceHeaderMeta } from './filePreviewMeta';
+import { AudioViewer, audioViewerPropsFromSource } from './viewers/AudioViewer';
 import { ImageViewer } from './viewers/ImageViewer';
 import { MarkdownViewer } from './viewers/MarkdownViewer';
 import { PDFViewer } from './viewers/PDFViewer';
 import { TextViewer } from './viewers/TextViewer';
+import { formatSourceLocation } from '../Reading/passageLocator';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -36,17 +48,40 @@ interface FilePreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
   source: SourceWithMetadata | null;
+  /** Where in the file to land. Omit for "open the whole file". */
+  initialLocator?: PassageLocator | null;
+  /** Every citation on the message, for `[` / `]` travel. */
+  citations?: SourceWithMetadata[];
+  /** Index of `source` within `citations`. */
+  citationIndex?: number;
+  onCitationIndexChange?: (_index: number) => void;
+  /** Called when a viewer resolves a real location (e.g. a PDF page). */
+  onLocationResolved?: (_chunkId: string, _label: string) => void;
 }
 
 export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   isOpen,
   onClose,
   source,
+  initialLocator = null,
+  citations,
+  citationIndex,
+  onCitationIndexChange,
+  onLocationResolved,
 }) => {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const viewerColumnRef = useRef<HTMLDivElement | null>(null);
+  const selection = useTextSelection(viewerColumnRef);
+  const [matchTier, setMatchTier] = useState<PassageMatchTier>('exact');
+  const [resolvedLabel, setResolvedLabel] = useState<string | undefined>(undefined);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
   const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const loadConversationLinkedDocuments = useConversationsStore(
+    (state) => state.loadConversationLinkedDocuments
+  );
 
   // File size limits (10MB backend limit)
   const MAX_PREVIEW_SIZE = 10 * 1024 * 1024; // 10MB
@@ -73,7 +108,13 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   const shouldUseUrlActions = isExternalWebSource || (isWebCategory && !!externalSourceUrl);
   const importableUrl = externalSourceUrl ?? (source && isHttpUrl(source.filePath) ? source.filePath : null);
   const openableUrl = importableUrl;
-  const isBinaryPreview = mimeType === 'application/pdf' || mimeType.startsWith('image/');
+  // Audio is binary: without this, useFileContent reads the mp3 as UTF-8,
+  // errors, and the generic error branch short-circuits before the audio
+  // branch in renderViewer.
+  const isBinaryPreview =
+    mimeType === 'application/pdf' ||
+    mimeType.startsWith('image/') ||
+    mimeType.startsWith('audio/');
   const webArchiveHtmlPath = source ? getWebArchiveHtmlPath(source.filePath) : null;
   const usesEmbeddedViewer = isWebArchiveArticle || isBinaryPreview || isExternalWebSource;
   const canShowInFolder = hasDocumentId || (!shouldUseUrlActions && !isHttpUrl(source?.filePath ?? ''));
@@ -103,13 +144,13 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
 
   const renderImportScopeSelect = (extraClassName = '') => (
     <label
-      className={`inline-flex items-center gap-2 rounded-md border border-subtle bg-surface px-3 py-2 text-xs text-[hsl(var(--text-secondary))] ${extraClassName}`.trim()}
+      className={`inline-flex items-center gap-2 text-xs text-[hsl(var(--text-secondary))] ${extraClassName}`.trim()}
     >
-      <span className="uppercase tracking-[0.04em] text-[hsl(var(--text-muted))]">Scope</span>
+      <span className="text-[hsl(var(--text-muted))]">Scope</span>
       <select
         value={targetImportSpaceId}
         onChange={(event) => setTargetImportSpaceId(event.target.value)}
-        className="min-w-[12rem] rounded-sm border border-default bg-surface-raised px-2 py-1 text-sm text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+        className="min-w-[12rem] rounded-sm border border-border-default bg-surface-raised px-2 py-1 text-sm text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
       >
         {allowUnscopedImport && <option value="">Unscoped</option>}
         {spaces.map((space) => (
@@ -170,9 +211,128 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
     shouldFetchContent
   );
 
+  const locatorChunkId = initialLocator?.chunkId;
+  const locatorText = initialLocator?.text;
+
+  // A new citation is a new locate attempt; carrying the old tier or page
+  // label over would describe the previous passage.
+  useEffect(() => {
+    setMatchTier('exact');
+    setResolvedLabel(undefined);
+  }, [locatorChunkId, locatorText]);
+
+  const handleLocationResolved = useCallback(
+    (label: string) => {
+      setResolvedLabel(label);
+      if (locatorChunkId) onLocationResolved?.(locatorChunkId, label);
+    },
+    [locatorChunkId, onLocationResolved]
+  );
+
+  const total = citations?.length ?? 0;
+  const canTravel = Boolean(onCitationIndexChange) && total > 1 && typeof citationIndex === 'number';
+
+  const goToCitation = useCallback(
+    (next: number) => {
+      if (!onCitationIndexChange || total === 0) return;
+      onCitationIndexChange(Math.min(total - 1, Math.max(0, next)));
+    },
+    [onCitationIndexChange, total]
+  );
+
+  useEffect(() => {
+    if (!isOpen || !canTravel) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '[' && event.key !== ']') return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest('input, textarea, select, [contenteditable="true"]')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      goToCitation((citationIndex ?? 0) + (event.key === ']' ? 1 : -1));
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, canTravel, citationIndex, goToCitation]);
+
+  const captureLocator = useCallback(
+    (text: string) => text.trim().slice(0, 4000),
+    []
+  );
+
+  const handleReference = useCallback(
+    async (text: string) => {
+      if (!source) return;
+      const trimmed = captureLocator(text);
+      if (!trimmed) return;
+      const result = await VaultAPI.createPassageReference({
+        documentId: source.documentId,
+        chunkId: initialLocator?.chunkId ?? source.chunkId,
+        filePath: source.filePath,
+        fileName: source.fileName,
+        locator: resolvedLabel ?? formatSourceLocation(source) ?? undefined,
+        text: trimmed,
+      });
+      if (!result.ok) {
+        // Say what actually went wrong. "Not available yet" was true while the
+        // slice was unbuilt and is a lie now that it ships.
+        toast.error("Couldn't save this reference", { message: result.error });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: PASSAGE_REFERENCES_QUERY_KEY });
+      toast.success('Saved to references', {
+        message: 'Lattice will use this in future answers.',
+      });
+    },
+    [source, captureLocator, initialLocator?.chunkId, resolvedLabel, queryClient]
+  );
+
+  const handleAddToJournal = useCallback(
+    async (text: string) => {
+      if (!source) return;
+      const trimmed = captureLocator(text);
+      if (!trimmed) return;
+      const location = resolvedLabel ?? formatSourceLocation(source);
+      const attribution = location
+        ? `— ${source.fileName}, ${location}`
+        : `— ${source.fileName}`;
+      const quoted = trimmed
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n');
+      const result = await VaultAPI.quickCapture(`${quoted}\n${attribution}`);
+      if (!result.ok) {
+        toast.error("Couldn't add to your journal", { message: result.error });
+        return;
+      }
+      toast.success(
+        result.data.noteTitle ? `Added to ${result.data.noteTitle}` : 'Added to your journal'
+      );
+    },
+    [source, captureLocator, resolvedLabel]
+  );
+
+  const handleAskAbout = useCallback(
+    (text: string) => {
+      if (!source) return;
+      const trimmed = captureLocator(text);
+      if (!trimmed) return;
+      onClose();
+      navigate(
+        `/chat?new=1&documentId=${encodeURIComponent(source.documentId)}` +
+          `&quote=${encodeURIComponent(trimmed)}`
+      );
+    },
+    [source, captureLocator, navigate, onClose]
+  );
+
   if (!source) return null;
 
   const sanitizedFileName = sanitizeFileName(source.fileName);
+  const headerMeta = sourceHeaderMeta(source);
+  const matchNotice = passageMatchNotice(matchTier, Boolean(initialLocator));
   const primaryActionLabel = shouldUseUrlActions ? 'Open URL' : 'Open file';
   const platformRevealLabel =
     typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
@@ -294,9 +454,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
         },
       });
       if (conversationId) {
-        void useConversationsStore
-          .getState()
-          .loadConversationLinkedDocuments(conversationId);
+        void loadConversationLinkedDocuments(conversationId);
       }
     } finally {
       setIsImportingUrl(false);
@@ -345,12 +503,10 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
     if (isWebSourceLike && !isWebArchiveArticle) {
       const sourceUrl = externalSourceUrl ?? source.filePath;
       return (
-        <div className="h-full min-h-0 flex flex-col rounded-md border border-subtle bg-surface">
-          <div className="flex items-center justify-between gap-4 border-b border-subtle px-5 py-4">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex items-center justify-between gap-4 border-b border-subtle pb-4">
             <div className="min-w-0">
-              <p className="text-xs uppercase tracking-[0.04em] text-[hsl(var(--text-muted))]">
-                Web source
-              </p>
+              <p className="text-xs text-[hsl(var(--text-muted))]">Web source</p>
               <p className="mt-1 truncate text-sm text-[hsl(var(--text-secondary))]">{sourceUrl}</p>
             </div>
             {openableUrl && (
@@ -361,7 +517,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
                     type="button"
                     onClick={handleImportSourceUrl}
                     disabled={isImportingUrl}
-                    className="inline-flex items-center gap-2 rounded-md border border-default bg-surface-raised px-3 py-2 text-sm font-medium text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm font-medium text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isImportingUrl ? (
                       <Loader2 size={14} className="animate-spin" />
@@ -382,7 +538,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               </div>
             )}
           </div>
-          <div className="p-6">
+          <div className="py-6">
             <p className="text-sm leading-7 text-[hsl(var(--text-primary))]">
               {(source.excerpt || source.content || content || 'No preview available.')}
             </p>
@@ -399,12 +555,10 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
     if (error && isWebSourceLike) {
       const sourceUrl = externalSourceUrl ?? source.filePath;
       return (
-        <div className="h-full min-h-0 flex flex-col rounded-md border border-subtle bg-surface">
-          <div className="flex items-center justify-between gap-4 border-b border-subtle px-5 py-4">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex items-center justify-between gap-4 border-b border-subtle pb-4">
             <div className="min-w-0">
-              <p className="text-xs uppercase tracking-[0.04em] text-[hsl(var(--text-muted))]">
-                Web source
-              </p>
+              <p className="text-xs text-[hsl(var(--text-muted))]">Web source</p>
               <p className="mt-1 truncate text-sm text-[hsl(var(--text-secondary))]">{sourceUrl}</p>
             </div>
             {openableUrl && (
@@ -415,7 +569,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
                     type="button"
                     onClick={handleImportSourceUrl}
                     disabled={isImportingUrl}
-                    className="inline-flex items-center gap-2 rounded-md border border-default bg-surface-raised px-3 py-2 text-sm font-medium text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm font-medium text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isImportingUrl ? (
                       <Loader2 size={14} className="animate-spin" />
@@ -436,7 +590,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               </div>
             )}
           </div>
-          <div className="p-6">
+          <div className="py-6">
             <p className="text-sm leading-7 text-[hsl(var(--text-primary))]">
               {(source.excerpt || source.content || 'Preview unavailable. Open the source URL.')}
             </p>
@@ -461,7 +615,14 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
 
     // Route to appropriate viewer based on MIME type
     if (mimeType === 'application/pdf') {
-      return <PDFViewer filePath={source.filePath} />;
+      return (
+        <PDFViewer
+          filePath={source.filePath}
+          highlight={initialLocator}
+          onLocationResolved={handleLocationResolved}
+          onMatch={setMatchTier}
+        />
+      );
     }
 
     if (mimeType.startsWith('text/x-') || mimeType === 'application/javascript') {
@@ -471,6 +632,10 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
 
     if (mimeType === 'text/markdown' || source.fileName.endsWith('.md')) {
       return <MarkdownViewer content={content} />;
+    }
+
+    if (mimeType.startsWith('audio/')) {
+      return <AudioViewer filePath={source.filePath} {...audioViewerPropsFromSource(source)} />;
     }
 
     if (mimeType.startsWith('image/')) {
@@ -493,14 +658,11 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               <Dialog.Title className="text-2xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]">
                 {sanitizedFileName}
               </Dialog.Title>
-              <div className="mt-2 flex items-center gap-3">
-                <span className="inline-flex items-center rounded-sm border border-subtle bg-surface px-2 py-0.5 text-xxs font-medium uppercase tracking-[0.04em] text-[hsl(var(--text-muted))]">
-                  {source.category}
-                </span>
-                <span className="text-sm text-[hsl(var(--text-muted))]">
-                  {formatFileSize(source.fileSizeBytes)}
-                </span>
-              </div>
+              {headerMeta.length > 0 && (
+                <p className="mt-2 text-sm text-[hsl(var(--text-muted))]">
+                  {headerMeta.join(' · ')}
+                </p>
+              )}
             </div>
 
             <Dialog.Close
@@ -513,16 +675,69 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
           </div>
 
           {/* Content */}
-          <div className={usesEmbeddedViewer ? 'flex-1 min-h-0 overflow-hidden p-5' : 'flex-1 min-h-0 overflow-auto p-7'}>
-            {renderViewer()}
+          <div className="flex min-h-0 flex-1">
+            <div ref={viewerColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {/*
+                How well we found the passage belongs beside the passage, not in
+                the rail: the rail is `lg:flex` and this admission has to survive
+                below 1024px.
+              */}
+              {matchNotice && (
+                <p className="shrink-0 border-b border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
+                  {matchNotice}
+                </p>
+              )}
+              <div
+                className={
+                  usesEmbeddedViewer
+                    ? 'min-h-0 flex-1 overflow-hidden p-5'
+                    : 'min-h-0 flex-1 overflow-auto p-7'
+                }
+              >
+                {/*
+                  Only the text-ish viewers are wrapped: the PDF resolves its own
+                  page and marks its own text layer, and an image has no text to
+                  locate.
+                */}
+                {initialLocator && !usesEmbeddedViewer ? (
+                  <PassageHighlighter locator={initialLocator} onMatch={setMatchTier}>
+                    {renderViewer()}
+                  </PassageHighlighter>
+                ) : (
+                  renderViewer()
+                )}
+              </div>
+            </div>
+
+            {initialLocator && (
+              <CitationRail
+                source={source}
+                locator={initialLocator}
+                resolvedLabel={resolvedLabel}
+                index={citationIndex}
+                total={citations?.length}
+                onPrevious={canTravel ? () => goToCitation((citationIndex ?? 0) - 1) : undefined}
+                onNext={canTravel ? () => goToCitation((citationIndex ?? 0) + 1) : undefined}
+                onReference={() => handleReference(initialLocator.text)}
+                onAddToJournal={() => handleAddToJournal(initialLocator.text)}
+                onAskAbout={() => handleAskAbout(initialLocator.text)}
+              />
+            )}
           </div>
+
+          <SelectionToolbar
+            selection={selection}
+            onReference={handleReference}
+            onAddToJournal={handleAddToJournal}
+            onAskAbout={handleAskAbout}
+          />
 
           {/* Footer */}
           <div className="flex items-center justify-end gap-3 border-t border-subtle px-8 py-4">
             {canShowInFolder && (
               <button
                 onClick={handleShowInFolder}
-                className="flex items-center gap-2 rounded-md border border-default bg-surface px-4 py-2 text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised"
+                className="flex items-center gap-2 rounded-md border border-border-default bg-surface px-4 py-2 text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised"
               >
                 <ExternalLink size={16} />
                 <span>{platformRevealLabel}</span>
@@ -537,7 +752,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               <button
                 onClick={handleImportSourceUrl}
                 disabled={isImportingUrl}
-                className="flex items-center gap-2 rounded-md border border-default bg-surface px-4 py-2 text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex items-center gap-2 rounded-md border border-border-default bg-surface px-4 py-2 text-sm text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isImportingUrl ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 <span>Import</span>

@@ -8,30 +8,14 @@ export type ViewMode = 'tree' | 'list' | 'grid';
 export type SortField = 'name' | 'size' | 'modified' | 'type';
 export type SortOrder = 'asc' | 'desc';
 export type SourceFilter = 'all' | 'local' | 'web';
-export type ListColumnKey = 'words' | 'modified' | 'type';
 
-export interface ListColumnVisibility {
-  words: boolean;
-  modified: boolean;
-  type: boolean;
-}
-
-export interface SavedLibraryView {
-  id: string;
-  name: string;
-  baseCollectionId: string | null;
-  viewMode: ViewMode;
-  density: Density;
-  sortField: SortField;
-  sortOrder: SortOrder;
-  filterByType: string | null;
-  filterBySource: SourceFilter;
-  groupByDate: boolean;
-  searchQuery: string;
-  listColumns: ListColumnVisibility;
-  createdAt: string;
-  updatedAt: string;
-}
+/** What the document list is currently scoped to. */
+export type LibraryScope =
+  | { kind: 'all' }
+  | { kind: 'folder'; path: string }
+  | { kind: 'collection'; id: string }
+  /** One automatic theme from the most recent clustering run. */
+  | { kind: 'theme'; id: string };
 
 export interface SavedSearchPreset {
   id: string;
@@ -90,7 +74,7 @@ export interface SourceConnection {
   updatedAt: string;
 }
 
-// Legacy FileNode for backward compatibility with FileIcon/FileTypeBadge
+// Legacy FileNode for backward compatibility with FileIcon
 export interface FileNode {
   id: string;
   name: string;
@@ -122,39 +106,43 @@ export interface FileBrowserState {
   isContentSearchLoading: boolean;
 
   // Data
-  documents: DocumentMetadata[];
   customCollections: CustomCollection[];
-  savedViews: SavedLibraryView[];
-  activeSavedViewId: string | null;
   savedSearches: SavedSearchPreset[];
   activeSavedSearchId: string | null;
   sourceConnections: SourceConnection[];
-  isLoading: boolean;
-  error: string | null;
-  listColumns: ListColumnVisibility;
+
+  // Scope
+  scope: LibraryScope;
 
   // Selection
   selectedDocumentIds: Set<string>;
+
+  /** The row the neighborhood panel is about — last clicked or opened. */
+  focusedDocumentId: string | null;
+  /** Whether the right rail is showing. A display preference, not backend state. */
+  isNeighborhoodOpen: boolean;
 
   // Context menu
   contextMenuPosition: { x: number; y: number } | null;
   contextMenuDocument: DocumentMetadata | null;
 }
 
-export type Density = 'compact' | 'comfortable' | 'spacious';
-
 export interface FileBrowserActions {
   // View management
   setViewMode: (_mode: ViewMode) => void;
-  setDensity: (_density: Density) => void;
   toggleGroupByDate: () => void;
+  setScope: (_scope: LibraryScope) => void;
 
   // Selection
   selectFile: (_fileId: string) => void;
   deselectFile: (_fileId: string) => void;
   toggleSelection: (_fileId: string) => void;
-  selectAll: () => void;
+  selectAll: (_fileIds: Iterable<string>) => void;
   clearSelection: () => void;
+
+  // Neighborhood panel (pure UI preference)
+  setFocusedDocument: (_documentId: string | null) => void;
+  toggleNeighborhood: () => void;
 
   // Sorting and filtering
   setSortField: (_field: SortField) => void;
@@ -166,17 +154,6 @@ export interface FileBrowserActions {
   setContentSearchMatches: (_matches: Iterable<string>) => void;
   setContentSearchLoading: (_isLoading: boolean) => void;
   clearContentSearch: () => void;
-  setListColumnVisibility: (_updates: Partial<ListColumnVisibility>) => void;
-  toggleListColumnVisibility: (_column: ListColumnKey) => void;
-  createSavedView: (_name: string) => string | null;
-  applySavedView: (_viewId: string) => void;
-  updateSavedView: (
-    _viewId: string,
-    _updates: Partial<Omit<SavedLibraryView, 'id' | 'createdAt' | 'updatedAt'>>
-  ) => void;
-  captureSavedViewState: (_viewId: string) => void;
-  deleteSavedView: (_viewId: string) => void;
-  clearActiveSavedView: () => void;
   createSavedSearch: (_name: string, _options?: { pinned?: boolean }) => string | null;
   applySavedSearch: (_searchId: string) => void;
   updateSavedSearch: (
@@ -202,17 +179,11 @@ export interface FileBrowserActions {
   addDocumentsToCustomCollection: (_collectionId: string, _documentIds: string[]) => void;
   removeDocumentsFromCustomCollection: (_collectionId: string, _documentIds: string[]) => void;
   createSourceConnection: (_connection: Omit<SourceConnection, 'id' | 'createdAt' | 'updatedAt'>) => string;
-  reconcileLocalSources: (_connections: SourceConnection[]) => void;
-  upsertSourceConnections: (_connections: SourceConnection[]) => void;
   updateSourceConnection: (_sourceId: string, _updates: Partial<SourceConnection>) => void;
   deleteSourceConnection: (_sourceId: string) => void;
 
-  // Data operations
-  loadFiles: () => Promise<void>;
-  refreshFiles: () => Promise<void>;
-
   // Context menu
-  openContextMenu: (_position: { x: number; y: number }, _file: FileNode) => void;
+  openContextMenu: (_position: { x: number; y: number }, _document: DocumentMetadata) => void;
   closeContextMenu: () => void;
 }
 

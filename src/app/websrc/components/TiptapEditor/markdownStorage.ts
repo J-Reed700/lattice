@@ -6,7 +6,6 @@ interface MarkdownStorage {
 
 export function getMarkdownFromEditor(editor: Editor): string {
   // tiptap-markdown stores its API under editor.storage.markdown
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mdExt = (editor.storage as any).markdown as MarkdownStorage | undefined;
+  const mdExt = (editor.storage as { markdown?: MarkdownStorage }).markdown;
   return mdExt?.getMarkdown?.() ?? '';
 }

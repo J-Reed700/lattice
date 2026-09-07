@@ -38,7 +38,7 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
 
     // Cleanup blob URL on unmount
     return () => {
-      if (safeSrc && safeSrc.startsWith('blob:')) {
+      if (safeSrc?.startsWith('blob:')) {
         URL.revokeObjectURL(safeSrc);
       }
     };
@@ -65,8 +65,8 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--text-primary)] dark:border-[var(--text-primary)]" />
-        <span className="ml-2 text-[var(--text-secondary)] dark:text-[var(--text-tertiary)]">Loading image...</span>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--text-primary)]" />
+        <span className="ml-2 text-[var(--text-secondary)]">Loading image...</span>
       </div>
     );
   }
@@ -74,7 +74,7 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
   if (error) {
     return (
       <div className="flex items-center justify-center p-8">
-        <p className="text-[hsl(var(--danger-fg))] dark:text-[hsl(var(--danger-muted))]">{error}</p>
+        <p className="text-[hsl(var(--danger-fg))]">{error}</p>
       </div>
     );
   }

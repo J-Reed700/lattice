@@ -4,7 +4,7 @@ export default {
     "./index.html",
     "./websrc/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: ['selector', "class"],
+  darkMode: 'selector', // matches the `.dark` class set by useApplyTheme
   theme: {
     extend: {
       fontFamily: {

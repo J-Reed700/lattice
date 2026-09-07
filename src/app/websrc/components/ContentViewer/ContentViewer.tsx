@@ -107,7 +107,7 @@ export function ContentViewer({ filePath, onClose }: ContentViewerProps) {
     if (isLoading) {
       return (
         <div className="flex items-center justify-center h-full">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <Loader2 className="h-8 w-8 animate-spin text-[hsl(var(--text-secondary))]" />
         </div>
       );
     }
@@ -116,8 +116,8 @@ export function ContentViewer({ filePath, onClose }: ContentViewerProps) {
       return (
         <div className="flex items-center justify-center h-full p-6 text-center">
           <div>
-            <p className="text-destructive font-semibold mb-2">Failed to load file</p>
-            <p className="text-sm text-muted-foreground">{error}</p>
+            <p className="text-[hsl(var(--danger))] font-semibold mb-2">Failed to load file</p>
+            <p className="text-sm text-[hsl(var(--text-secondary))]">{error}</p>
           </div>
         </div>
       );

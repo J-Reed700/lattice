@@ -333,11 +333,10 @@ describe('SectionLoading', () => {
     expect(overlay).toBeInTheDocument();
   });
 
-  it('overlay has backdrop blur', () => {
+  it('overlay has a background scrim', () => {
     const { container } = render(<SectionLoading overlay />);
 
-    const overlay = container.querySelector('.backdrop-blur-sm');
-    expect(overlay).toBeInTheDocument();
+    expect(container.firstChild).toHaveClass('bg-[hsl(var(--overlay))]');
   });
 
   it('overlay has proper z-index', () => {

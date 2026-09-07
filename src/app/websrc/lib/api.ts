@@ -14,7 +14,6 @@ import { parseApiError } from './errorHandling';
 import type {
   SearchOptions,
   SearchResult,
-  IndexProgress,
   IndexStatus,
   IndexingStats,
   IndexedFolder,
@@ -24,7 +23,6 @@ import type {
   DocumentMetadata,
   ApiResult,
   WebIngestResponse,
-  BatchIngestSummary,
   UrlPreview,
   CleanArticle,
   // API types
@@ -40,45 +38,28 @@ import type {
   TagWithCount,
   FavoriteDocument,
   // Tag Request/Response types
-  CreateTagRequest,
-  CreateTagResponse,
   ListTagsResponse,
-  RenameTagRequest,
-  RenameTagResponse,
-  SetTagColorRequest,
-  SetTagColorResponse,
-  DeleteTagRequest,
-  AddTagToDocumentRequest,
   RemoveTagFromDocumentRequest,
   GetDocumentTagsRequest,
   DocumentTagsResponse,
-  SearchTagsRequest,
-  SearchTagsResponse,
-  GetTagStatsRequest,
-  TagStatsResponse,
-  FindDocumentsByTagRequest,
-  TaggedDocumentsResponse,
   QAResponse,
   LLMHealthStatus,
   CacheStats,
   CacheMetrics,
-  LLMCacheStats,
   HealthStatus,
   SystemStats,
   Mention,
-  MentionWithContext,
   ExtractMentionsResponse,
   SearchMentionsResponse,
   BacklinksResponse,
   FileMetadata,
   UpdateInfo,
-  MetricsSnapshot,
   EmbeddingModelInfo,
   ParsedLinksResponse,
-  GenerateTagsBatchResponse,
   ExtractAndResolveLinksResponse,
   OpenFileResponseDto,
   // Conversation types (Wave 2B)
+  Conversation,
   ConversationMessage,
   ToolPreferences,
   GetConversationMessagesResponse,
@@ -107,13 +88,6 @@ import type {
   ListJournalConversationsQuery,
   SynthesizeJournalEntriesRequest,
   SynthesizeJournalEntriesResponse,
-  ConversationThreadDto,
-  CreateConversationThreadRequest,
-  UpdateConversationThreadRequest,
-  DeleteConversationThreadRequest,
-  ArchiveConversationThreadRequest,
-  MoveConversationToThreadRequest,
-  ListConversationThreadsRequest,
   DeleteConversationMessageRequest,
   BookmarkConversationMessageRequest,
   UnbookmarkConversationMessageRequest,
@@ -126,7 +100,6 @@ import type {
   FunctionDefinition,
   FunctionResult,
   // Backup and export types (Wave 2D)
-  BackupInfo,
   // Web content types (Wave 2D)
   // Batch and credentials types (Wave 3)
   BatchJobSummary,
@@ -134,19 +107,44 @@ import type {
   CancelBatchJobResponse,
   DeleteBatchJobResponse,
   HfTokenStatus,
+  IndexingSnapshot,
+  IndexingFailure,
+  BackupInfo,
+  CreateBackupResult,
+  RestoreBackupResult,
+  ExportSummary,
+  VersionInfo,
   ListBatchJobsResponse,
   RetryFailedItemsResponse,
   // Model management types (Wave 4B)
   SystemCapabilities,
-  ModelInfo,
   ModelSearchResult,
   ModelRecommendation,
   ModelCatalogCacheStats,
+  // Corpus shape types (Track B)
+  CorpusShapeDto,
+  CitingConversationDto,
+  SimilarDocumentDto,
+  ClusterDto,
+  ClusterRunDto,
+  QuickCaptureResultDto,
+  GetMentionsForDocumentResult,
 } from '../types';
+import type { ChatStarters } from '../types/api/chatStarters';
+import type {
+  CompareDocumentsRequest,
+  CompareTableDto,
+} from '../types/api/compare';
+import type {
+  CreatePassageReferenceRequest,
+  PassageReferenceDto,
+} from '../types/api/passageReferences';
+import type { UpdatePassageReferenceRequest } from '../types/api/references';
 import type { DownloadModelResponse } from '../types/download';
 import type { DownloadedModel } from '../types/downloadedModels';
 import type { StartDownloadRequest, DownloadStatus } from '../types/downloads';
 import type { SearchModelCatalogRequest } from '../types/modelCatalog';
+import type { Transcript, TranscriptionStatus } from '../types/transcription';
 
 /**
  * Gateway Pattern - Command to Domain mapping
@@ -164,10 +162,10 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   delete_downloaded_model_and_file: { domain: 'model', command: 'delete_model' },
   get_active_embedding_model: { domain: 'model', command: 'get_active_embedding_model' },
   set_active_embedding_model: { domain: 'model', command: 'set_active_embedding_model' },
-  download_model_command: { domain: 'model', command: 'download_model_command' },
   detect_system_capabilities: { domain: 'model', command: 'detect_system_capabilities' },
   get_all_recommended_models: { domain: 'model', command: 'get_all_recommended_models' },
   get_model_catalog_stats: { domain: 'model', command: 'get_model_catalog_stats' },
+  get_model_download_path: { domain: 'model', command: 'get_model_download_path' },
 
   // Search domain
   search_documents: { domain: 'search', command: 'search_documents' },
@@ -208,21 +206,18 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   delete_document: { domain: 'file', command: 'delete_document' },
   get_index_progress: { domain: 'file', command: 'get_index_progress' },
   cancel_indexing: { domain: 'file', command: 'cancel_indexing' },
+  pause_indexing: { domain: 'file', command: 'pause_indexing' },
+  resume_indexing: { domain: 'file', command: 'resume_indexing' },
+  clear_indexing_failure: { domain: 'file', command: 'clear_indexing_failure' },
+  get_indexing_status: { domain: 'file', command: 'get_indexing_status' },
+  list_indexed_files: { domain: 'file', command: 'list_indexed_files' },
   get_recent_documents: { domain: 'file', command: 'get_recent_documents' },
   get_document: { domain: 'file', command: 'get_document' },
 
   // Tag domain
-  create_tag: { domain: 'tags', command: 'create_tag' },
   get_all_tags_with_counts: { domain: 'tags', command: 'get_all_tags_with_counts' },
-  rename_tag: { domain: 'tags', command: 'rename_tag' },
-  set_tag_color: { domain: 'tags', command: 'set_tag_color' },
-  delete_tag: { domain: 'tags', command: 'delete_tag' },
-  add_tag_to_document: { domain: 'tags', command: 'add_tag_to_document' },
   remove_tag_from_document: { domain: 'tags', command: 'remove_tag_from_document' },
   get_document_tags: { domain: 'tags', command: 'get_document_tags' },
-  search_tags: { domain: 'tags', command: 'search_tags' },
-  get_tag_stats: { domain: 'tags', command: 'get_tag_stats' },
-  find_documents_by_tag: { domain: 'tags', command: 'find_documents_by_tag' },
   apply_tags: { domain: 'tags', command: 'apply_tags' },
   generate_tags_for_document: { domain: 'tags', command: 'generate_tags_for_document' },
 
@@ -230,6 +225,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   ask_question: { domain: 'qa', command: 'ask_question_wrapper' },
   ask_question_stream: { domain: 'qa', command: 'ask_question_stream_wrapper' },
   check_llm_health: { domain: 'qa', command: 'check_llm_health_wrapper' },
+  generate_chat_starters: { domain: 'qa', command: 'generate_chat_starters_wrapper' },
 
   // Conversation domain
   create_conversation: { domain: 'conversation', command: 'create_conversation' },
@@ -265,7 +261,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   list_conversations_explorer: { domain: 'conversation', command: 'list_conversations_explorer' },
   list_journal_conversations: { domain: 'conversation', command: 'list_journal_conversations' },
   list_conversation_linked_documents: { domain: 'conversation', command: 'list_conversation_linked_documents' },
-  add_conversation_linked_document: { domain: 'conversation', command: 'add_conversation_linked_document' },
   remove_conversation_linked_document: { domain: 'conversation', command: 'remove_conversation_linked_document' },
   add_conversation_web_source: { domain: 'conversation', command: 'add_conversation_web_source' },
   list_conversation_web_sources: { domain: 'conversation', command: 'list_conversation_web_sources' },
@@ -274,21 +269,20 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   set_document_space_membership: { domain: 'conversation', command: 'set_document_space_membership' },
   set_documents_space_membership: { domain: 'conversation', command: 'set_documents_space_membership' },
   synthesize_journal_entries: { domain: 'conversation', command: 'synthesize_journal_entries' },
-  create_conversation_thread: { domain: 'conversation', command: 'create_conversation_thread' },
-  list_conversation_threads: { domain: 'conversation', command: 'list_conversation_threads' },
-  update_conversation_thread: { domain: 'conversation', command: 'update_conversation_thread' },
-  archive_conversation_thread: { domain: 'conversation', command: 'archive_conversation_thread' },
-  delete_conversation_thread: { domain: 'conversation', command: 'delete_conversation_thread' },
-  move_conversation_to_thread: { domain: 'conversation', command: 'move_conversation_to_thread' },
+  truncate_conversation_after: { domain: 'conversation', command: 'truncate_conversation_after' },
+  fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
+  regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
+
+  // References domain (passage references, contract §4.3)
+  create_passage_reference: { domain: 'references', command: 'create_passage_reference' },
+  list_passage_references: { domain: 'references', command: 'list_passage_references' },
+  update_passage_reference: { domain: 'references', command: 'update_passage_reference' },
+  delete_passage_reference: { domain: 'references', command: 'delete_passage_reference' },
+
+  // Compare domain
+  compare_documents: { domain: 'compare', command: 'compare_documents' },
 
   // Credentials domain
-  set_api_key: { domain: 'credentials', command: 'set_api_key' },
-  get_api_key: { domain: 'credentials', command: 'get_api_key' },
-  delete_api_key: { domain: 'credentials', command: 'delete_api_key' },
-  has_api_key: { domain: 'credentials', command: 'has_api_key' },
-  clear_all_credentials: { domain: 'credentials', command: 'clear_all_credentials' },
-  set_custom_endpoint: { domain: 'credentials', command: 'set_custom_endpoint' },
-  get_custom_endpoint: { domain: 'credentials', command: 'get_custom_endpoint' },
   set_huggingface_token: { domain: 'huggingface', command: 'set_huggingface_token' },
   get_huggingface_token_status: { domain: 'huggingface', command: 'get_huggingface_token_status' },
   get_huggingface_token: { domain: 'huggingface', command: 'get_huggingface_token' },
@@ -324,14 +318,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   clear_active_embedding_model: { domain: 'model', command: 'clear_active_embedding_model' },
   set_active_utility_model: { domain: 'model', command: 'set_active_utility_model' },
   clear_active_utility_model: { domain: 'model', command: 'clear_active_utility_model' },
-  get_available_models: { domain: 'model', command: 'get_available_models' },
-  get_recommended_models: { domain: 'model', command: 'get_recommended_models' },
-  get_best_model: { domain: 'model', command: 'get_best_model' },
-  is_model_downloaded: { domain: 'model', command: 'is_model_downloaded' },
-  get_model_path: { domain: 'model', command: 'get_model_path' },
   delete_model: { domain: 'model', command: 'delete_model' },
-  list_models: { domain: 'model', command: 'list_models' },
-  get_model_download_path: { domain: 'model', command: 'get_model_download_path' },
 
   // File operations - additional
   rename_document: { domain: 'file', command: 'rename_document' },
@@ -341,15 +328,12 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   clear_cache: { domain: 'cache', command: 'clear_cache' },
   get_cache_stats: { domain: 'cache', command: 'get_cache_stats' },
   get_cache_metrics: { domain: 'cache', command: 'get_cache_metrics' },
-  get_llm_cache_stats: { domain: 'cache', command: 'get_llm_cache_stats' },
 
   // Additional commands for remaining APIs
   add_favorite: { domain: 'favorites', command: 'add_favorite' },
   remove_favorite: { domain: 'favorites', command: 'remove_favorite' },
   get_favorites: { domain: 'favorites', command: 'get_favorites' },
   is_favorite: { domain: 'favorites', command: 'is_favorite' },
-  track_document_access: { domain: 'recent', command: 'track_document_access' },
-  clear_recent_documents: { domain: 'recent', command: 'clear_recent_documents' },
   extract_mentions: { domain: 'mention', command: 'extract_mentions' },
   search_mentions: { domain: 'mention', command: 'search_mentions' },
   get_mentions_for_document: { domain: 'mention', command: 'get_mentions_for_document' },
@@ -365,8 +349,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   extract_document_title: { domain: 'extraction', command: 'extract_document_title' },
   resolve_wikilink: { domain: 'extraction', command: 'resolve_wikilink' },
   extract_and_resolve_links: { domain: 'extraction', command: 'extract_and_resolve_links' },
-  generate_tags_llm: { domain: 'text', command: 'generate_tags_llm' },
-  generate_tags_batch: { domain: 'text', command: 'generate_tags_batch' },
   get_settings: { domain: 'settings', command: 'get_settings' },
   get_settings_category: { domain: 'settings', command: 'get_settings_category' },
   update_settings: { domain: 'settings', command: 'update_settings' },
@@ -393,28 +375,33 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   fetch_url_preview: { domain: 'web', command: 'fetch_url_preview' },
   extract_article: { domain: 'web', command: 'extract_article' },
   reindex_web_archive: { domain: 'web', command: 'reindex_web_archive' },
-  migrate_web_archive: { domain: 'web', command: 'migrate_web_archive' },
-  ingest_web_urls_batch: { domain: 'web', command: 'ingest_web_urls_batch' },
-  cancel_batch_ingest: { domain: 'web', command: 'cancel_batch_ingest' },
   check_for_updates: { domain: 'updates', command: 'check_for_updates' },
   execute_function: { domain: 'functions', command: 'execute_function' },
   list_available_functions: { domain: 'functions', command: 'list_available_functions' },
   get_function_stats: { domain: 'functions', command: 'get_function_stats' },
-  create_backup: { domain: 'backup', command: 'create_backup' },
-  list_backups: { domain: 'backup', command: 'list_backups' },
-  restore_backup: { domain: 'backup', command: 'restore_backup' },
-  export_markdown: { domain: 'backup', command: 'export_markdown' },
-  export_json: { domain: 'backup', command: 'export_json' },
-  export_csv: { domain: 'backup', command: 'export_csv' },
-  export_html: { domain: 'backup', command: 'export_html' },
-  import_obsidian_vault: { domain: 'backup', command: 'import_obsidian_vault' },
-  import_notion_export: { domain: 'backup', command: 'import_notion_export' },
-  import_roam_json: { domain: 'backup', command: 'import_roam_json' },
-  start_auto_backup: { domain: 'backup', command: 'start_auto_backup' },
-  stop_auto_backup: { domain: 'backup', command: 'stop_auto_backup' },
-  get_metrics: { domain: 'metrics', command: 'get_metrics' },
   get_version_info: { domain: 'updates', command: 'get_version_info' },
   rescan_vault: { domain: 'vault', command: 'rescan_vault' },
+
+  // Transcription (Track E)
+  transcribe_file: { domain: 'transcription', command: 'transcribe_file' },
+  get_transcription_status: { domain: 'transcription', command: 'get_transcription_status' },
+
+  // Corpus shape (Track B)
+  get_corpus_shape: { domain: 'file', command: 'get_corpus_shape' },
+  list_conversations_citing_document: { domain: 'file', command: 'list_conversations_citing_document' },
+  find_similar_documents: { domain: 'search', command: 'find_similar_documents' },
+  cluster_vault_run: { domain: 'corpus-shape', command: 'cluster_vault_run' },
+  cluster_vault_debug: { domain: 'corpus-shape', command: 'cluster_vault_debug' },
+  list_clusters: { domain: 'corpus-shape', command: 'list_clusters' },
+
+  // Backup and export domain
+  plugin_create_backup: { domain: 'backup', command: 'plugin_create_backup' },
+  plugin_restore_backup: { domain: 'backup', command: 'plugin_restore_backup' },
+  plugin_list_backups: { domain: 'backup', command: 'plugin_list_backups' },
+  plugin_export_markdown: { domain: 'backup', command: 'plugin_export_markdown' },
+  plugin_export_json: { domain: 'backup', command: 'plugin_export_json' },
+  plugin_export_csv: { domain: 'backup', command: 'plugin_export_csv' },
+  plugin_export_html: { domain: 'backup', command: 'plugin_export_html' },
 };
 
 /**
@@ -447,7 +434,6 @@ async function invokeCommandWithFallback<T>(
   for (let idx = 0; idx < attempts.length; idx += 1) {
     const signature = attempts[idx];
     try {
-      console.log(`[API] Invoke attempt ${idx + 1}/${attempts.length}: ${signature}`, args);
       return await invoke<T>(signature, args || {});
     } catch (error) {
       lastError = error;
@@ -475,7 +461,6 @@ async function apiCall<T>(command: string, args?: Record<string, unknown>): Prom
         pluginRoute.domain,
         pluginRoute.command
       );
-      console.log(`[API] Plugin result for ${command}:`, typeof rawResult, rawResult);
       data = rawResult;
     } else {
       // Legacy direct command (for unmapped commands)
@@ -573,10 +558,16 @@ function unwrapNestedApiResult<T>(
     }
 
     const nestedError = (payload.error ?? {}) as Record<string, unknown>;
+    const nestedMessage =
+      typeof nestedError.message === 'string' ? nestedError.message : fallbackError;
     return {
       ok: false,
-      error: typeof nestedError.message === 'string' ? nestedError.message : fallbackError,
-      details: nestedError as any,
+      error: nestedMessage,
+      details: {
+        code: typeof nestedError.code === 'string' ? nestedError.code : 'UNKNOWN',
+        message: nestedMessage,
+        details: nestedError,
+      },
     };
   }
 
@@ -675,28 +666,38 @@ interface BackendIndexProgress {
   files_processed: number;
   total_files?: number | null;
   percent_complete?: number | null;
+  failed?: number | null;
+  status?: IndexStatus | null;
+  paused?: boolean | null;
+  failures?: IndexingFailure[] | null;
 }
 
-function normalizeIndexProgress(raw: BackendIndexProgress): IndexProgress {
+function normalizeIndexProgress(raw: BackendIndexProgress): IndexingSnapshot {
   const totalFiles = raw.total_files ?? 0;
   const processed = raw.files_processed ?? 0;
+  const failed = raw.failed ?? 0;
   const percentage =
     raw.percent_complete ?? (totalFiles > 0 ? (processed / totalFiles) * 100 : 0);
 
+  // The backend reports its own status word; the derived fallback stays for
+  // older builds that predate the field.
   const status: IndexStatus =
-    raw.is_indexing
+    raw.status ??
+    (raw.is_indexing
       ? 'processing'
       : percentage >= 100 && totalFiles > 0
         ? 'complete'
-        : 'idle';
+        : 'idle');
 
   return {
     totalFiles,
     processed,
-    failed: 0,
+    failed,
     currentFile: raw.current_file ?? undefined,
     status,
     percentage,
+    paused: raw.paused ?? false,
+    failures: raw.failures ?? [],
   };
 }
 
@@ -894,6 +895,22 @@ const VaultAPI = {
    */
   findSimilar: async (chunkId: string, limit?: number): Promise<ApiResult<SearchResult[]>> => apiCall<SearchResult[]>('find_similar', { chunkId, limit }),
 
+  /**
+   * Finds documents whose content is closest to a given document.
+   *
+   * Document-shaped where `findSimilar` is chunk-shaped: the backend picks a
+   * representative chunk, searches, and collapses the hits to one row per
+   * document, so the caller never has to know a document's chunk ids.
+   *
+   * @param documentId - The document to find neighbours for
+   * @param limit - Maximum number of documents to return (default 6)
+   */
+  findSimilarDocuments: async (
+    documentId: string,
+    limit?: number,
+  ): Promise<ApiResult<SimilarDocumentDto[]>> =>
+    apiCall<SimilarDocumentDto[]>('find_similar_documents', { documentId, limit }),
+
 
   // ============================================================
   // Indexing
@@ -989,7 +1006,7 @@ const VaultAPI = {
    *
    * @returns IndexProgress object with current state
    */
-  getIndexProgress: async (): Promise<ApiResult<IndexProgress>> => {
+  getIndexProgress: async (): Promise<ApiResult<IndexingSnapshot>> => {
     const result = await apiCall<BackendIndexProgress>('get_index_progress');
     if (!result.ok) {
       return result;
@@ -1004,6 +1021,69 @@ const VaultAPI = {
    * @returns Void on success
    */
   cancelIndexing: async (): Promise<ApiResult<void>> => apiCall<void>('cancel_indexing'),
+
+  /** Pauses the running index. Both the directory run and the watcher queue stop. */
+  pauseIndexing: async (): Promise<ApiResult<void>> => apiCall<void>('pause_indexing'),
+
+  /** Resumes a paused index. */
+  resumeIndexing: async (): Promise<ApiResult<void>> => apiCall<void>('resume_indexing'),
+
+  /**
+   * Drops one path from the run's failure list.
+   *
+   * The list lives in the indexing engine's state, which is what every view
+   * reads through `getIndexProgress` — dismissing a row locally would let it
+   * reappear the moment another surface reads the snapshot. Unknown paths are
+   * a no-op on the backend.
+   */
+  clearIndexingFailure: async (path: string): Promise<ApiResult<void>> =>
+    apiCall<void>('clear_indexing_failure', { path }),
+
+  /**
+   * Thin `{ active, progress }` view of the index.
+   * Prefer `getIndexProgress`, which carries the counts, the status word, the
+   * pause flag and the failure list.
+   */
+  getIndexingStatus: async (): Promise<ApiResult<{ active: boolean; progress: number }>> =>
+    apiCall<{ active: boolean; progress: number }>('get_indexing_status'),
+
+  /** Absolute paths of indexed files, newest first. */
+  listIndexedFiles: async (limit?: number): Promise<ApiResult<string[]>> =>
+    apiCall<string[]>('list_indexed_files', { limit }),
+
+  // ============================================================
+  // Backup and export
+  // ============================================================
+
+  /**
+   * Writes a database backup into the app's backups folder and returns its path.
+   * The destination is fixed by the backend (CWE-22 confinement); there is no
+   * folder argument to pass.
+   */
+  createBackup: async (): Promise<ApiResult<CreateBackupResult>> =>
+    apiCall<CreateBackupResult>('plugin_create_backup', { request: { backupPath: null } }),
+
+  /** Backups on disk, newest first. */
+  listBackups: async (): Promise<ApiResult<BackupInfo[]>> => {
+    const result = await apiCall<{ backups: BackupInfo[] }>('plugin_list_backups');
+    if (!result.ok) return result;
+    return { ok: true, data: result.data.backups ?? [] };
+  },
+
+  /**
+   * Replaces the live database with a backup. The backend closes the connection
+   * pool and does not reopen it — the app must be quit and reopened afterwards.
+   */
+  restoreBackup: async (backupPath: string): Promise<ApiResult<RestoreBackupResult>> =>
+    apiCall<RestoreBackupResult>('plugin_restore_backup', { request: { backupPath } }),
+
+  /** Exports conversations and journal pages as Markdown into the app's exports folder. */
+  exportMarkdown: async (): Promise<ApiResult<ExportSummary>> =>
+    apiCall<ExportSummary>('plugin_export_markdown', { request: { outputDir: null } }),
+
+  /** Exports conversations and journal pages as one JSON file in the app's exports folder. */
+  exportJson: async (): Promise<ApiResult<ExportSummary>> =>
+    apiCall<ExportSummary>('plugin_export_json', { request: { outputPath: null, pretty: true } }),
 
   /**
    * Gets comprehensive statistics about indexed content.
@@ -1315,45 +1395,10 @@ const VaultAPI = {
       conversationId: options?.conversationId,
     }),
 
-  /**
-   * Ingest a batch of URLs in one Tauri call.
-   *
-   * Counts as ONE request against the `web_ingest` rate limiter (per-URL
-   * pacing is internal — currently 250ms between URLs). Capped at 50 URLs
-   * per call. Continues on per-URL failure and reports it in the summary.
-   *
-   * Subscribe to the `web-ingest:progress` Tauri event to update UI as
-   * each URL completes; a `web-ingest:complete` event fires once at the
-   * end (whether the batch finished or was cancelled).
-   *
-   * Refuses to start if another batch is already running for the same
-   * `conversationId` (returns INVALID_STATE in that case).
-   */
-  ingestWebUrlsBatch: async (
-    urls: string[],
-    options?: { spaceId?: string; conversationId?: string }
-  ): Promise<ApiResult<BatchIngestSummary>> =>
-    apiCall<BatchIngestSummary>('ingest_web_urls_batch', {
-      urls,
-      space_id: options?.spaceId,
-      spaceId: options?.spaceId,
-      conversation_id: options?.conversationId,
-      conversationId: options?.conversationId,
-    }),
-
-  /**
-   * Cancel an in-flight web-ingest batch by `batchId`.
-   *
-   * Cancellation is cooperative — the in-flight URL completes, then the
-   * loop exits and a `web-ingest:complete` event with `cancelled=true`
-   * is emitted. Returns `true` if the batch existed and was flagged,
-   * `false` if it had already finished.
-   */
-  cancelBatchIngest: async (batchId: string): Promise<ApiResult<boolean>> =>
-    apiCall<boolean>('cancel_batch_ingest', {
-      batch_id: batchId,
-      batchId,
-    }),
+  // `ingestWebUrlsBatch` was removed: `ingest_web_urls_batch` is not a
+  // registered Tauri command and its `BatchIngestSummary` type was never
+  // defined, so every call would have failed at runtime. Nothing referenced
+  // it. Re-add it together with the backend command if batch ingest is built.
 
   /**
    * Reindexes all web archive files for searchability.
@@ -1376,14 +1421,6 @@ const VaultAPI = {
    */
   reindexWebArchive: async (): Promise<ApiResult<number>> => apiCall<number>('reindex_web_archive'),
 
-  /**
-   * Migrates legacy web archive files to new format.
-   * Updates web archive storage structure for compatibility with latest version.
-   *
-   * @returns Number of files successfully migrated
-   */
-  migrateWebArchive: async (): Promise<ApiResult<number>> => apiCall<number>('migrate_web_archive'),
-
   // ============================================================
   // Daily Notes
   // ============================================================
@@ -1402,9 +1439,9 @@ const VaultAPI = {
    * Ideal for inbox-style quick capture workflows.
    *
    * @param content - Text content to append to today's note
-   * @returns Void on success
+   * @returns Which page the capture landed on, so the UI can name it
    */
-  quickCapture: async (content: string): Promise<ApiResult<void>> => apiCall<void>('quick_capture', { content }),
+  quickCapture: async (content: string): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<QuickCaptureResultDto>('quick_capture', { content }),
 
   /**
    * Retrieves all daily notes within a date range.
@@ -1581,25 +1618,6 @@ const VaultAPI = {
   // ============================================================
 
   /**
-   * Creates a new tag with name and optional color.
-   * Tags are used to categorize and organize documents.
-   *
-   * @param request - Tag creation request with name (required) and color (optional)
-   * @returns Created tag with ID and metadata
-   *
-   * @example
-   * const result = await VaultAPI.createTag({
-   *   name: 'Research',
-   *   color: '#FF5733'
-   * });
-   * if (result.ok) {
-   *   console.log(`Created: ${result.data.tag.name}`);
-   * }
-   */
-  createTag: async (request: CreateTagRequest): Promise<ApiResult<CreateTagResponse>> =>
-    apiCall<CreateTagResponse>('create_tag', { request }),
-
-  /**
    * Retrieves all tags in the system.
    * Returns tags with document counts and metadata.
    *
@@ -1613,65 +1631,6 @@ const VaultAPI = {
    */
   listAllTags: async (): Promise<ApiResult<ListTagsResponse>> =>
     apiCall<ListTagsResponse>('get_all_tags_with_counts'),
-
-  /**
-   * Renames an existing tag while preserving all document associations.
-   *
-   * @param request - Rename request with tag ID and new name
-   * @returns Updated tag object
-   *
-   * @example
-   * const result = await VaultAPI.renameTag({
-   *   tagId: 'tag_123',
-   *   newName: 'New Research'
-   * });
-   */
-  renameTag: async (request: RenameTagRequest): Promise<ApiResult<RenameTagResponse>> =>
-    apiCall<RenameTagResponse>('rename_tag', { request }),
-
-  /**
-   * Sets the color of an existing tag.
-   *
-   * @param request - Set color request with tag ID and color hex code
-   * @returns Updated tag object
-   *
-   * @example
-   * const result = await VaultAPI.setTagColor({
-   *   tagId: 'tag_123',
-   *   color: '#00FF00'
-   * });
-   */
-  setTagColor: async (request: SetTagColorRequest): Promise<ApiResult<SetTagColorResponse>> =>
-    apiCall<SetTagColorResponse>('set_tag_color', { request }),
-
-  /**
-   * Deletes a tag and removes all document associations.
-   * Irreversible operation.
-   *
-   * @param request - Delete request with tag ID
-   * @returns Void on success
-   *
-   * @example
-   * const result = await VaultAPI.deleteTag({ tagId: 'tag_123' });
-   */
-  deleteTag: async (request: DeleteTagRequest): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_tag', { request }),
-
-  /**
-   * Adds a tag to a document.
-   * Creates the association between tag and document.
-   *
-   * @param request - Request with document ID and tag ID
-   * @returns Void on success
-   *
-   * @example
-   * const result = await VaultAPI.addTagToDocument({
-   *   documentId: 'doc_123',
-   *   tagId: 'tag_456'
-   * });
-   */
-  addTagToDocument: async (request: AddTagToDocumentRequest): Promise<ApiResult<void>> =>
-    apiCall<void>('add_tag_to_document', { request }),
 
   /**
    * Removes a tag assignment from a document.
@@ -1704,54 +1663,6 @@ const VaultAPI = {
    */
   getDocumentTags: async (request: GetDocumentTagsRequest): Promise<ApiResult<DocumentTagsResponse>> =>
     apiCall<DocumentTagsResponse>('get_document_tags', { documentId: request.documentId }),
-
-  /**
-   * Searches for tags by query string.
-   * Performs fuzzy search on tag names.
-   *
-   * @param request - Search request with query string
-   * @returns Matching tags with count
-   *
-   * @example
-   * const result = await VaultAPI.searchTags({ query: 'research' });
-   * if (result.ok) {
-   *   console.log(`Found ${result.data.count} matching tags`);
-   * }
-   */
-  searchTags: async (request: SearchTagsRequest): Promise<ApiResult<SearchTagsResponse>> =>
-    apiCall<SearchTagsResponse>('search_tags', { request }),
-
-  /**
-   * Gets statistics for a tag including document count and recent documents.
-   * Returns usage metrics and recent documents.
-   *
-   * @param request - Request with tag ID
-   * @returns Tag statistics with document count and recent docs
-   *
-   * @example
-   * const result = await VaultAPI.getTagStats({ tagId: 'tag_123' });
-   * if (result.ok) {
-   *   console.log(`Tag has ${result.data.documentCount} documents`);
-   * }
-   */
-  getTagStats: async (request: GetTagStatsRequest): Promise<ApiResult<TagStatsResponse>> =>
-    apiCall<TagStatsResponse>('get_tag_stats', { request }),
-
-  /**
-   * Finds all documents that have a specific tag.
-   * Returns document IDs for all documents with this tag.
-   *
-   * @param request - Request with tag name
-   * @returns Response with document IDs and count
-   *
-   * @example
-   * const result = await VaultAPI.findDocumentsByTag({ tagName: 'Research' });
-   * if (result.ok) {
-   *   console.log(`Found ${result.data.count} documents`);
-   * }
-   */
-  findDocumentsByTag: async (request: FindDocumentsByTagRequest): Promise<ApiResult<TaggedDocumentsResponse>> =>
-    apiCall<TaggedDocumentsResponse>('find_documents_by_tag', { request }),
 
   /**
    * Retrieves all tags with document counts.
@@ -1865,6 +1776,45 @@ const VaultAPI = {
    */
   checkLLMHealth: async (): Promise<ApiResult<LLMHealthStatus>> => apiCall<LLMHealthStatus>('check_llm_health'),
 
+  /**
+   * Three corpus-derived questions for the Chat empty state.
+   * Returns an empty `starters` array when no model could produce them —
+   * the empty state renders no questions rather than inventing any.
+   */
+  generateChatStarters: async (): Promise<ApiResult<ChatStarters>> =>
+    apiCall<ChatStarters>('generate_chat_starters', {}),
+
+  /**
+   * Saves an excerpt from a document as a reference (contract §4.3).
+   * Backend slice and inbox belong to Track C.
+   */
+  createPassageReference: async (
+    request: CreatePassageReferenceRequest
+  ): Promise<ApiResult<PassageReferenceDto>> =>
+    apiCall<PassageReferenceDto>('create_passage_reference', { request }),
+
+  /** Saved passage references, newest first. */
+  listPassageReferences: async (
+    limit?: number
+  ): Promise<ApiResult<PassageReferenceDto[]>> =>
+    apiCall<PassageReferenceDto[]>('list_passage_references', { limit }),
+
+  /** Updates a passage reference's title and note. `null` clears a field. */
+  updatePassageReference: async (
+    request: UpdatePassageReferenceRequest
+  ): Promise<ApiResult<PassageReferenceDto>> =>
+    apiCall<PassageReferenceDto>('update_passage_reference', { request }),
+
+  /** Deletes a saved passage reference. */
+  deletePassageReference: async (id: string): Promise<ApiResult<void>> =>
+    apiCall<void>('delete_passage_reference', { id }),
+
+  /** Builds a comparison table across documents. See GROUND-RULES §4.10. */
+  compareDocuments: async (
+    request: CompareDocumentsRequest
+  ): Promise<ApiResult<CompareTableDto>> =>
+    apiCall<CompareTableDto>('compare_documents', { request }),
+
   // ============================================================
   // Favorites
   // ============================================================
@@ -1907,86 +1857,9 @@ const VaultAPI = {
   // Recent Documents
   // ============================================================
 
-  /**
-   * Records a document access for recency tracking.
-   * Updates the document's last accessed timestamp.
-   *
-   * @param documentId - Internal document identifier
-   * @returns Void on success
-   */
-  trackDocumentAccess: async (documentId: string): Promise<ApiResult<void>> => apiCall<void>('track_document_access', { documentId }),
-
-  /**
-   * Clears the recent documents history.
-   * Removes all access timestamps but keeps documents indexed.
-   *
-   * @returns Void on success
-   */
-  clearRecentDocuments: async (): Promise<ApiResult<void>> => apiCall<void>('clear_recent_documents'),
-
   // ============================================================
   // Credentials
   // ============================================================
-
-  /**
-   * Stores an API key securely for a service.
-   * Uses platform keychain/credential manager for secure storage.
-   *
-   * @param service - Service identifier (e.g., 'openai', 'anthropic')
-   * @param apiKey - API key to store securely
-   * @returns Void on success
-   */
-  setApiKey: async (service: string, apiKey: string): Promise<ApiResult<void>> => apiCall<void>('set_api_key', { service, apiKey }),
-
-  /**
-   * Retrieves a stored API key for a service.
-   * Reads from secure platform credential storage.
-   *
-   * @param service - Service identifier
-   * @returns API key string
-   */
-  getApiKey: async (service: string): Promise<ApiResult<string>> => apiCall<string>('get_api_key', { service }),
-
-  /**
-   * Deletes a stored API key for a service.
-   * Removes credential from secure storage.
-   *
-   * @param service - Service identifier
-   * @returns Void on success
-   */
-  deleteApiKey: async (service: string): Promise<ApiResult<void>> => apiCall<void>('delete_api_key', { service }),
-
-  /**
-   * Checks if an API key is stored for a service.
-   *
-   * @param service - Service identifier
-   * @returns True if API key exists, false otherwise
-   */
-  hasApiKey: async (service: string): Promise<ApiResult<boolean>> => apiCall<boolean>('has_api_key', { service }),
-
-  /**
-   * Clears all stored credentials from secure storage.
-   * Removes API keys for all services.
-   *
-   * @returns Void on success
-   */
-  clearAllCredentials: async (): Promise<ApiResult<void>> => apiCall<void>('clear_all_credentials'),
-
-  /**
-   * Sets a custom API endpoint URL for a service.
-   * Useful for self-hosted models or alternative providers.
-   *
-   * @param endpoint - Custom endpoint URL (e.g., 'http://localhost:11434')
-   * @returns Void on success
-   */
-  setCustomEndpoint: async (endpoint: string): Promise<ApiResult<void>> => apiCall<void>('set_custom_endpoint', { endpoint }),
-
-  /**
-   * Retrieves a custom endpoint URL for a service.
-   *
-   * @returns Custom endpoint URL or null if not set
-   */
-  getCustomEndpoint: async (): Promise<ApiResult<string | null>> => apiCall<string | null>('get_custom_endpoint'),
 
   // ============================================================
   // Cache Management
@@ -2047,15 +1920,6 @@ const VaultAPI = {
   getSystemStats: async (): Promise<ApiResult<SystemStats>> => apiCall<SystemStats>('get_system_stats'),
 
   /**
-   * Retrieves system performance metrics (legacy).
-   * Includes query counts, response times, and resource usage.
-   *
-   * @returns Metrics object with performance data
-   * @deprecated Use getSystemStats for DDD architecture
-   */
-  getMetrics: async (): Promise<ApiResult<MetricsSnapshot>> => apiCall<MetricsSnapshot>('get_metrics'),
-
-  /**
    * Gets the application version from Cargo.toml.
    * Returns semantic version string for display and update checking.
    *
@@ -2069,7 +1933,7 @@ const VaultAPI = {
    *
    * @returns Detailed version information object
    */
-  getVersionInfo: async (): Promise<ApiResult<Record<string, unknown>>> => apiCall<Record<string, unknown>>('get_version_info'),
+  getVersionInfo: async (): Promise<ApiResult<VersionInfo>> => apiCall<VersionInfo>('get_version_info'),
 
   // ============================================================
   // Initialization Commands
@@ -2265,7 +2129,7 @@ const VaultAPI = {
    * @param documentId - Internal document identifier
    * @returns Array of mention objects found in the document
    */
-  getMentionsForDocument: async (documentId: string): Promise<ApiResult<MentionWithContext[]>> => apiCall<MentionWithContext[]>('get_mentions_for_document', { documentId }),
+  getMentionsForDocument: async (documentId: string): Promise<ApiResult<GetMentionsForDocumentResult>> => apiCall<GetMentionsForDocumentResult>('get_mentions_for_document', { documentId }),
 
   /**
    * Gets backlinks for a mention (documents that reference it).
@@ -2275,6 +2139,40 @@ const VaultAPI = {
    * @returns Array of documents that reference this mention
    */
   getBacklinksForMention: async (mentionName: string): Promise<ApiResult<BacklinksResponse>> => apiCall<BacklinksResponse>('get_backlinks_for_mention', { mentionName }),
+
+  /**
+   * Vault-wide type mix and recent growth.
+   *
+   * For surfaces that do not already hold the document list (Home, the
+   * post-ingest sentence). The Library counts its own array so the counts and
+   * the filter can never disagree.
+   */
+  getCorpusShape: async (): Promise<ApiResult<CorpusShapeDto>> =>
+    apiCall<CorpusShapeDto>('get_corpus_shape'),
+
+  /**
+   * Conversations that have this document among their linked documents.
+   *
+   * @param documentId - The document to look up
+   * @param limit - Maximum conversations to return (default 10, max 50)
+   */
+  listConversationsCitingDocument: async (
+    documentId: string,
+    limit?: number,
+  ): Promise<ApiResult<CitingConversationDto[]>> =>
+    apiCall<CitingConversationDto[]>('list_conversations_citing_document', {
+      document_id: documentId,
+      documentId,
+      limit,
+    }),
+
+  /** The themes from the most recent clustering run. */
+  listClusters: async (): Promise<ApiResult<ClusterDto[]>> =>
+    apiCall<ClusterDto[]>('list_clusters'),
+
+  /** Runs clustering over the vault and replaces the stored themes. */
+  clusterVaultRun: async (): Promise<ApiResult<ClusterRunDto>> =>
+    apiCall<ClusterRunDto>('cluster_vault_run'),
 
   /**
    * Gets mentions filtered by type.
@@ -2389,38 +2287,6 @@ const VaultAPI = {
    */
   extractAndResolveLinks: async (content: string, sourcePath: string): Promise<ApiResult<ExtractAndResolveLinksResponse>> => apiCall<ExtractAndResolveLinksResponse>('extract_and_resolve_links', { content, sourcePath }),
 
-  /**
-   * Generates tags for content using LLM (Large Language Model).
-   * Analyzes content and suggests semantically relevant tags.
-   *
-   * @param content - Document content to analyze
-   * @param maxTags - Maximum number of tags to generate (optional)
-   * @returns Array of generated tag names
-   */
-  generateTagsLLM: async (content: string, maxTags?: number): Promise<ApiResult<string[]>> => apiCall<string[]>('generate_tags_llm', { content, maxTags }),
-
-  /**
-   * Generates tags for multiple documents in batch.
-   * More efficient than calling generateTagsLLM repeatedly.
-   *
-   * @param documents - Array of document objects with id and content
-   * @param maxTags - Maximum tags per document (optional)
-   * @returns Array of tag generation results per document
-   */
-  generateTagsBatch: async (
-    documents: Array<{ id: string; content: string }>,
-    maxTags?: number
-  ): Promise<ApiResult<GenerateTagsBatchResponse>> => apiCall<GenerateTagsBatchResponse>('generate_tags_batch', { documents, maxTags }),
-
-  /**
-   * Gets cache statistics for LLM API calls.
-   * Shows prompt caching efficiency and cost savings.
-   *
-   * @param apiKey - API key to check stats for (optional)
-   * @returns LLM cache statistics object
-   */
-  getLLMCacheStats: async (apiKey?: string): Promise<ApiResult<LLMCacheStats>> => apiCall<LLMCacheStats>('get_llm_cache_stats', { apiKey }),
-
   // ============================================================
   // Conversation Operations (Wave 2B)
   // ============================================================
@@ -2529,7 +2395,8 @@ const VaultAPI = {
   chatWithConversation: async (
     conversationId: string | null,
     message: string,
-    toolPreferences?: ToolPreferences
+    toolPreferences?: ToolPreferences,
+    requestId?: string
   ): Promise<ApiResult<{
     conversationId: string;
     messages: ConversationMessage[];
@@ -2541,6 +2408,11 @@ const VaultAPI = {
       conversationId,
       message,
     };
+
+    if (requestId) {
+      payload.request_id = requestId;
+      payload.requestId = requestId;
+    }
 
     if (toolPreferences) {
       payload.tool_preferences = toolPreferences;
@@ -2558,7 +2430,8 @@ const VaultAPI = {
    * Cancels active model generation for a conversation if one is currently in-flight.
    */
   cancelConversationGeneration: async (
-    conversationId: string
+    conversationId: string,
+    requestId: string
   ): Promise<ApiResult<void>> => {
     const response = await apiCall<{
       conversationId: string;
@@ -2568,6 +2441,8 @@ const VaultAPI = {
       conversation_id: conversationId,
       conversationId,
       message: '',
+      request_id: requestId,
+      requestId,
       cancel_only: true,
       cancelOnly: true,
     });
@@ -2664,35 +2539,10 @@ const VaultAPI = {
   ): Promise<ApiResult<RenameConversationResponse>> =>
     apiCall<RenameConversationResponse>('archive_conversation_space', { request }),
 
-  createConversationThread: async (
-    request: CreateConversationThreadRequest
-  ): Promise<ApiResult<ConversationThreadDto>> =>
-    apiCall<ConversationThreadDto>('create_conversation_thread', { request }),
-
-  listConversationThreads: async (
-    request: ListConversationThreadsRequest
-  ): Promise<ApiResult<ConversationThreadDto[]>> =>
-    apiCall<ConversationThreadDto[]>('list_conversation_threads', { request }),
-
-  updateConversationThread: async (
-    request: UpdateConversationThreadRequest
-  ): Promise<ApiResult<ConversationThreadDto>> =>
-    apiCall<ConversationThreadDto>('update_conversation_thread', { request }),
-
-  archiveConversationThread: async (
-    request: ArchiveConversationThreadRequest
-  ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('archive_conversation_thread', { request }),
-
-  deleteConversationThread: async (
-    request: DeleteConversationThreadRequest
-  ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('delete_conversation_thread', { request }),
-
-  moveConversationToThread: async (
-    request: MoveConversationToThreadRequest
-  ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('move_conversation_to_thread', { request }),
+  // The `*ConversationThread` wrappers that used to live here were removed:
+  // the feature was renamed thread → space on the backend, so they invoked
+  // `create_conversation_thread` and friends, none of which are registered
+  // Tauri commands. Use the `*ConversationSpace` functions above.
 
   /**
    * Updates a journal notebook.
@@ -2854,28 +2704,6 @@ const VaultAPI = {
     }),
 
   /**
-   * Adds a linked document reference to a conversation.
-   */
-  addConversationLinkedDocument: async (
-    conversationId: string,
-    documentId: string,
-    options?: {
-      chunkId?: string;
-      relevanceScore?: number;
-    }
-  ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('add_conversation_linked_document', {
-      conversation_id: conversationId,
-      conversationId,
-      document_id: documentId,
-      documentId,
-      chunk_id: options?.chunkId,
-      chunkId: options?.chunkId,
-      relevance_score: options?.relevanceScore,
-      relevanceScore: options?.relevanceScore,
-    }),
-
-  /**
    * Adds or updates a non-ingested web source linked to a conversation.
    */
   addConversationWebSource: async (
@@ -2958,6 +2786,65 @@ const VaultAPI = {
     apiCall<SynthesizeJournalEntriesResponse>('synthesize_journal_entries', {
       request,
     }),
+
+  /**
+   * Deletes every message after `messageId` (and `messageId` itself when
+   * `inclusive`). Returns the remaining messages so callers can replace their
+   * cache rather than reason about what was removed.
+   */
+  truncateConversationAfter: async (
+    conversationId: string,
+    messageId: string,
+    inclusive = false
+  ): Promise<ApiResult<{
+    conversationId: string;
+    deletedCount: number;
+    messages: ConversationMessage[];
+  }>> =>
+    apiCall('truncate_conversation_after', {
+      request: { conversationId, messageId, inclusive },
+    }),
+
+  /** Creates a sibling conversation copying messages up to `upToMessageId`. */
+  forkConversation: async (
+    conversationId: string,
+    upToMessageId?: string
+  ): Promise<ApiResult<{ conversation: Conversation; copiedMessageCount: number }>> =>
+    apiCall('fork_conversation', {
+      request: { conversationId, upToMessageId },
+    }),
+
+  /**
+   * Re-runs the last user message. Streams over `llm-stream` exactly like
+   * `chatWithConversation`; the user message is not duplicated.
+   */
+  regenerateResponse: async (
+    conversationId: string,
+    toolPreferences?: ToolPreferences,
+    requestId?: string
+  ): Promise<ApiResult<{
+    conversationId: string;
+    messages: ConversationMessage[];
+    contextUsed: number;
+  }>> => {
+    const payload: Record<string, unknown> = {
+      // Send both naming styles for compatibility with Tauri arg deserialization.
+      conversation_id: conversationId,
+      conversationId,
+    };
+
+    if (toolPreferences) {
+      payload.tool_preferences = toolPreferences;
+      payload.toolPreferences = toolPreferences;
+    }
+
+    if (requestId) {
+      payload.request_id = requestId;
+      payload.requestId = requestId;
+    }
+
+    return apiCall('regenerate_response', payload);
+  },
 
   /**
    * Assigns or removes multiple documents from a space scope.
@@ -3207,6 +3094,12 @@ const VaultAPI = {
   getActiveEmbeddingModel: async (): Promise<ApiResult<DownloadedModel | null>> =>
     apiCall<DownloadedModel | null>('get_active_embedding_model'),
 
+  /**
+   * Absolute path of the local models folder (created on first call).
+   */
+  getModelDownloadPath: async (): Promise<ApiResult<string>> =>
+    apiCall<string>('get_model_download_path'),
+
   getActiveModels: async (): Promise<ApiResult<{
     chat_model: DownloadedModel | null;
     embedding_model: DownloadedModel | null;
@@ -3239,54 +3132,6 @@ const VaultAPI = {
    */
   getSystemCapabilities: async (): Promise<ApiResult<SystemCapabilities>> =>
     apiCall<SystemCapabilities>('detect_system_capabilities'),
-
-  /**
-   * Lists all available models from the catalog.
-   * Returns curated models that can be downloaded and used.
-   *
-   * @returns Array of available models with metadata
-   */
-  getAvailableModels: async (): Promise<ApiResult<ModelInfo[]>> =>
-    apiCall<ModelInfo[]>('get_available_models'),
-
-  /**
-   * Gets recommended models for the current system.
-   * Filters models by hardware compatibility (RAM, GPU, etc.).
-   *
-   * @returns Array of recommended models that will run on this system
-   */
-  getRecommendedModels: async (): Promise<ApiResult<ModelInfo[]>> =>
-    apiCall<ModelInfo[]>('get_recommended_models'),
-
-  /**
-   * Gets the best model for a specific task and system.
-   * Considers task type, hardware capabilities, and performance trade-offs.
-   *
-   * @param task - Task type (e.g., "chat", "embedding", "code")
-   * @returns Best model for the task or null if none suitable
-   */
-  getBestModel: async (task: string): Promise<ApiResult<ModelInfo | null>> =>
-    apiCall<ModelInfo | null>('get_best_model', { task }),
-
-  /**
-   * Checks if a model is downloaded by querying the catalog.
-   * This is the catalog-level check (use isModelDownloaded for database check).
-   *
-   * @param modelId - Model identifier to check
-   * @returns True if model is downloaded
-   */
-  isModelDownloadedCatalog: async (modelId: string): Promise<ApiResult<boolean>> =>
-    apiCall<boolean>('is_model_downloaded', { modelId }),
-
-  /**
-   * Gets the filesystem path where a model is or will be stored.
-   * Returns the path even if model isn't downloaded yet.
-   *
-   * @param modelId - Model identifier
-   * @returns Absolute filesystem path for the model
-   */
-  getModelPath: async (modelId: string): Promise<ApiResult<string>> =>
-    apiCall<string>('get_model_path', { modelId }),
 
   /**
    * Downloads a model from the catalog.
@@ -3328,24 +3173,6 @@ const VaultAPI = {
    */
   deleteModel: async (modelId: string): Promise<ApiResult<void>> =>
     apiCall<void>('delete_model', { modelId }),
-
-  /**
-   * Lists all models (downloaded + available).
-   * Returns comprehensive list for model selection UI.
-   *
-   * @returns Array of all models with download status
-   */
-  listModels: async (): Promise<ApiResult<ModelInfo[]>> =>
-    apiCall<ModelInfo[]>('list_models'),
-
-  /**
-   * Gets the directory where models are downloaded.
-   * Returns the base path for model storage.
-   *
-   * @returns Absolute path to model download directory
-   */
-  getModelDownloadPath: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('get_model_download_path'),
 
   // ============================================================
   // Model Catalog Management (Wave 4B)
@@ -3441,25 +3268,6 @@ const VaultAPI = {
   // Auto-Backup Operations (Wave 4B)
   // ============================================================
 
-  /**
-   * Starts automatic periodic backups.
-   * Schedules backups at specified interval (e.g., "daily", "weekly").
-   *
-   * @param schedule - Backup schedule ("hourly", "daily", "weekly")
-   * @returns Void on success
-   */
-  startAutoBackup: async (schedule: string): Promise<ApiResult<void>> =>
-    apiCall<void>('start_auto_backup', { schedule }),
-
-  /**
-   * Stops automatic periodic backups.
-   * Cancels scheduled backup jobs.
-   *
-   * @returns Void on success
-   */
-  stopAutoBackup: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('stop_auto_backup'),
-
   // ============================================================
   // Function Calling Stats (Wave 4B)
   // ============================================================
@@ -3477,16 +3285,27 @@ const VaultAPI = {
   // Backup and Export Operations (Wave 2D)
   // ============================================================
 
-  createBackup: async (backupPath?: string): Promise<ApiResult<string>> => apiCall<string>('create_backup', { backup_path: backupPath }),
-  listBackups: async (): Promise<ApiResult<BackupInfo[]>> => apiCall<BackupInfo[]>('list_backups'),
-  restoreBackup: async (backupPath: string): Promise<ApiResult<void>> => apiCall<void>('restore_backup', { backup_path: backupPath }),
-  exportMarkdown: async (outputDir: string): Promise<ApiResult<number>> => apiCall<number>('export_markdown', { output_dir: outputDir }),
-  exportJson: async (outputPath: string, pretty: boolean = false): Promise<ApiResult<void>> => apiCall<void>('export_json', { output_path: outputPath, pretty }),
-  exportCsv: async (outputPath: string): Promise<ApiResult<number>> => apiCall<number>('export_csv', { output_path: outputPath }),
-  exportHtml: async (outputDir: string): Promise<ApiResult<number>> => apiCall<number>('export_html', { output_dir: outputDir }),
-  importObsidianVault: async (vaultPath: string): Promise<ApiResult<number>> => apiCall<number>('import_obsidian_vault', { vault_path: vaultPath }),
-  importNotionExport: async (exportPath: string): Promise<ApiResult<number>> => apiCall<number>('import_notion_export', { export_path: exportPath }),
-  importRoamJson: async (jsonPath: string): Promise<ApiResult<number>> => apiCall<number>('import_roam_json', { json_path: jsonPath }),
+  // ============================================================
+  // Transcription
+  // ============================================================
+
+  /**
+   * Transcribes an audio file on-device and returns timestamped segments.
+   * Explicit re-run; normal ingest transcribes automatically.
+   *
+   * @param path - Absolute path to an mp3/wav/m4a/flac/ogg file
+   * @returns Transcript with segments and rendered text
+   */
+  transcribeFile: async (path: string): Promise<ApiResult<Transcript>> =>
+    apiCall<Transcript>('transcribe_file', { path }),
+
+  /**
+   * Reports whether a transcription model is downloaded.
+   *
+   * @returns TranscriptionStatus with the model name when ready
+   */
+  getTranscriptionStatus: async (): Promise<ApiResult<TranscriptionStatus>> =>
+    apiCall<TranscriptionStatus>('get_transcription_status'),
 
 };
 

@@ -5,7 +5,7 @@
  * to break the cycle between api/models.ts and modelCatalog.ts.
  */
 
-export type ModelCategory = 'LLM' | 'Embedding' | 'OCR';
+export type ModelCategory = 'LLM' | 'Embedding' | 'OCR' | 'Transcription';
 
 export type PerformanceTier = 'Fast' | 'Balanced' | 'Accurate';
 

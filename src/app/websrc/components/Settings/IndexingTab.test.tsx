@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -5,7 +7,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { IndexingTab } from './IndexingTab';
 
-import type { ReactNode } from 'react';
 
 const {
   mockDialogOpen,
@@ -66,22 +67,24 @@ describe('IndexingTab', () => {
     mockRemoveWatchFolder.mockResolvedValue({ ok: true, data: undefined });
   });
 
-  it('renders indexing settings header', async () => {
+  it('renders the page header and sections', async () => {
     renderTab();
-    expect(screen.getByText('Indexing Settings')).toBeInTheDocument();
-    expect(await screen.findByText('Manage file watching and indexing behavior')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
+    expect(await screen.findByText('Behavior')).toBeInTheDocument();
+    expect(screen.getByText('Watched folders')).toBeInTheDocument();
+    expect(screen.getByText('Excluded patterns')).toBeInTheDocument();
   });
 
   it('displays auto-index checkbox with current state', async () => {
     renderTab();
-    const checkbox = (await screen.findByLabelText('Auto-index New Files')) as HTMLInputElement;
+    const checkbox = (await screen.findByLabelText('Auto-index new files')) as HTMLInputElement;
     await waitFor(() => expect(checkbox).toBeChecked());
   });
 
   it('toggles auto-index by calling updateSettings', async () => {
     const user = userEvent.setup();
     renderTab();
-    const checkbox = await screen.findByLabelText('Auto-index New Files');
+    const checkbox = await screen.findByLabelText('Auto-index new files');
     await waitFor(() => expect(checkbox).not.toBeDisabled());
 
     await user.click(checkbox);
@@ -98,7 +101,7 @@ describe('IndexingTab', () => {
 
   it('displays current batch size value from backend', async () => {
     renderTab();
-    expect(await screen.findByText('Batch Size: 32')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Batch size')).toHaveValue(32);
   });
 
   describe('Watch Folders', () => {
@@ -116,7 +119,9 @@ describe('IndexingTab', () => {
         },
       });
       renderTab();
-      expect(await screen.findByText('No folders are being watched')).toBeInTheDocument();
+      expect(
+        await screen.findByText('No folders watched. Add one to start indexing.')
+      ).toBeInTheDocument();
     });
 
     it('adds folder via Tauri dialog + addWatchFolder command', async () => {

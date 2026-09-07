@@ -5,24 +5,29 @@
  *
  * Actions:
  * - Open file
+ * - Ask about this
  * - Open in system viewer
  * - Show in folder
- * - Copy path
+ * - Rename / Copy path / Reindex
+ * - Remove from index
  * - Delete file
- * - Get file info
  */
 
 import { useEffect, useRef, useState } from 'react';
 
 import {
+  Check,
   FolderOpen,
   Copy,
   Trash2,
-  Info,
   ExternalLink,
   Eye,
   Edit3,
+  EyeOff,
+  MessageSquare,
+  RefreshCw,
 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -38,10 +43,21 @@ interface ContextMenuProps {
   onViewInRecall?: (doc: DocumentMetadata) => void;
   onRename?: (doc: DocumentMetadata) => void;
   onDelete?: (doc: DocumentMetadata) => void;
+  /** Called after the document leaves the index, so the list can refetch. */
+  onIndexChanged?: () => void;
 }
 
-export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, onDelete }: ContextMenuProps) {
+export function ContextMenu({
+  doc,
+  position,
+  onClose,
+  onViewInRecall,
+  onRename,
+  onDelete,
+  onIndexChanged,
+}: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
   const [spaces, setSpaces] = useState<ConversationSpaceDto[]>([]);
   const [assignedSpaceIds, setAssignedSpaceIds] = useState<Set<string>>(new Set());
   const [isLoadingSpaces, setIsLoadingSpaces] = useState(true);
@@ -166,6 +182,13 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
 
   const canPreview = isSupportedFileType(doc.filePath) || isWebDocument;
 
+  /** An absolute local path, resolving through the backend when the row only carries an id. */
+  const resolvePath = async (): Promise<string | null> => {
+    if (!/^https?:\/\//i.test(doc.filePath) && doc.filePath.startsWith('/')) return doc.filePath;
+    const result = await VaultAPI.getFilePathById(doc.id);
+    return result.ok ? result.data : null;
+  };
+
   const actions = [
     ...(canPreview && onViewInRecall ? [{
       id: 'view-in-lattice',
@@ -178,8 +201,18 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
       disabled: false,
     }] : []),
     {
+      id: 'ask-about-this',
+      label: 'Ask about this',
+      icon: <MessageSquare className="w-4 h-4" />,
+      action: () => {
+        navigate(`/chat?${new URLSearchParams({ new: '1', documentId: doc.id }).toString()}`);
+        onClose();
+      },
+      disabled: false,
+    },
+    {
       id: 'open-external',
-      label: 'Open in System Viewer',
+      label: 'Open in system viewer',
       icon: <ExternalLink className="w-4 h-4" />,
       action: async () => {
         const result = await VaultAPI.openFileById(doc.id);
@@ -198,7 +231,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
     },
     {
       id: 'show-in-folder',
-      label: 'Show in Folder',
+      label: 'Show in folder',
       icon: <FolderOpen className="w-4 h-4" />,
       action: async () => {
         const pathResult = await VaultAPI.getFilePathById(doc.id);
@@ -236,7 +269,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
     },
     {
       id: 'copy-path',
-      label: 'Copy Path',
+      label: 'Copy path',
       icon: <Copy className="w-4 h-4" />,
       action: async () => {
         try {
@@ -249,13 +282,56 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
       disabled: false,
     },
     {
-      id: 'file-info',
-      label: 'Get Info',
-      icon: <Info className="w-4 h-4" />,
-      action: () => {
+      id: 'reindex',
+      label: 'Reindex',
+      icon: <RefreshCw className="w-4 h-4" />,
+      action: async () => {
+        const path = await resolvePath();
+        if (!path) {
+          toast.error(`Couldn't reindex ${doc.fileName}`, { message: 'No file path for this document.' });
+          onClose();
+          return;
+        }
+        const result = await VaultAPI.reindexFile(path);
+        if (result.ok) {
+          toast.success(`Reindexing ${doc.fileName}`);
+        } else {
+          toast.error(`Couldn't reindex ${doc.fileName}`, { message: result.error });
+        }
         onClose();
       },
+      disabled: isWebDocument,
+    },
+    {
+      id: 'separator-2',
+      label: '',
+      separator: true,
+      action: () => {},
       disabled: false,
+    },
+    {
+      id: 'remove-from-index',
+      label: 'Remove from index',
+      icon: <EyeOff className="w-4 h-4" />,
+      action: async () => {
+        const path = await resolvePath();
+        if (!path) {
+          toast.error(`Couldn't remove ${doc.fileName} from the index`, {
+            message: 'No file path for this document.',
+          });
+          onClose();
+          return;
+        }
+        const result = await VaultAPI.removeIndexedFile(path);
+        if (result.ok) {
+          toast.success(`Removed ${doc.fileName} from the index`);
+          onIndexChanged?.();
+        } else {
+          toast.error(`Couldn't remove ${doc.fileName} from the index`, { message: result.error });
+        }
+        onClose();
+      },
+      disabled: isWebDocument,
     },
     {
       id: 'delete',
@@ -277,7 +353,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[200px] bg-[hsl(var(--surface-raised))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] py-1"
+      className="fixed z-50 min-w-[200px] rounded-md border border-border-subtle bg-surface-raised py-1 shadow-md"
       style={{
         left: position.x,
         top: position.y,
@@ -290,7 +366,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
           return (
             <div
               key={action.id}
-              className="h-px bg-[hsl(var(--surface-raised))] my-1"
+              className="my-1 h-px bg-border-subtle"
               role="separator"
             />
           );
@@ -303,12 +379,12 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
             key={action.id}
             onClick={() => !isDisabled && action.action()}
             disabled={isDisabled}
-            className={`w-full flex items-center gap-3 px-4 py-2 text-sm text-left transition-colors duration-fast ${
+            className={`flex w-full items-center gap-3 px-4 py-2 text-left text-sm transition-colors duration-fast ${
               isDisabled
-                ? 'opacity-50 cursor-not-allowed'
+                ? 'cursor-not-allowed opacity-50'
                 : action.dangerous
                 ? 'text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))]'
-                : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]'
+                : 'text-text-secondary hover:bg-surface'
             }`}
             role="menuitem"
           >
@@ -318,21 +394,17 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
         );
       })}
 
-      <div className="mx-2 my-1 h-px bg-[hsl(var(--surface-raised))]" />
-      <div className="px-4 py-2">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-[hsl(var(--text-tertiary))]">
-          Space Scope
-        </p>
+      <div className="mx-2 my-1 h-px bg-border-subtle" />
+      <div className="px-4 pb-1 pt-2">
+        <p className="text-xs text-text-muted">Spaces</p>
       </div>
 
       {isLoadingSpaces && (
-        <div className="px-4 pb-2 text-xs text-[hsl(var(--text-tertiary))]">Loading spaces...</div>
+        <div className="px-4 pb-2 text-xs text-text-muted">Loading…</div>
       )}
 
       {!isLoadingSpaces && spaces.length === 0 && (
-        <div className="px-4 pb-2 text-xs text-[hsl(var(--text-tertiary))]">
-          No spaces available.
-        </div>
+        <div className="px-4 pb-2 text-xs text-text-muted">No spaces yet.</div>
       )}
 
       {!isLoadingSpaces && spaces.map((space) => {
@@ -343,10 +415,10 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
             key={`space-${space.id}`}
             onClick={() => void toggleSpaceAssignment(space.id)}
             disabled={isSaving}
-            className={`w-full flex items-center justify-between gap-3 px-4 py-2 text-sm text-left transition-colors duration-fast ${
+            className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm transition-colors duration-fast ${
               isSaving
-                ? 'opacity-60 cursor-not-allowed text-[hsl(var(--text-tertiary))]'
-                : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))]'
+                ? 'cursor-not-allowed text-text-muted opacity-60'
+                : 'text-text-secondary hover:bg-surface'
             }`}
             role="menuitemcheckbox"
             aria-checked={assigned}
@@ -355,7 +427,7 @@ export function ContextMenu({ doc, position, onClose, onViewInRecall, onRename, 
               {space.name}
               {space.isArchived ? ' (archived)' : ''}
             </span>
-            {assigned && <span className="text-[hsl(var(--accent))]">✓</span>}
+            {assigned && <Check className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={2} />}
           </button>
         );
       })}

@@ -1,14 +1,14 @@
 import { useMemo, useRef } from 'react';
 
-import { TiptapEditor } from '@/components/TiptapEditor';
+import { TiptapEditor, type SelectionAction } from '@/components/TiptapEditor';
 import type { SnapshotMessage, WorkspaceNote } from '@/types/api/dailyNotes';
 
 import { EntryActionRail } from './EntryActionRail';
 import { EntryFromConversation } from './EntryFromConversation';
 import { EntryHeader } from './EntryHeader';
-import { EntryHighlightsStrip } from './EntryHighlightsStrip';
+import { EntryHighlightsStrip, HIGHLIGHT_CHAR_LIMIT } from './EntryHighlightsStrip';
 
-import type { SynthesisScope } from './SynthesizePopover';
+import type { SynthesisScope, WeekCandidateCounts } from './SynthesizePopover';
 import type { JournalEntrySummary } from './useJournalEntries';
 import type { JournalSourceSummary } from './useJournalSources';
 
@@ -26,6 +26,10 @@ interface EntryEditorProps {
   pinnedHighlightIds: Set<string>;
   onTogglePinnedHighlight: (highlightId: string) => void;
   journalName: string;
+  /** Title of the page being edited, so the reader knows which one it is. */
+  pageTitle: string | null;
+  /** True when that title is just this journal's default page name. */
+  isDefaultPage: boolean;
   selectedEntry: JournalEntrySummary | null;
   selectedEntryMessages: SnapshotMessage[];
   selectedEntryLoading: boolean;
@@ -36,6 +40,7 @@ interface EntryEditorProps {
   scannedConversationCount: number;
   onJumpToEntry: (entryId: string) => void;
   onSynthesize: (scope: SynthesisScope) => Promise<boolean>;
+  weekCandidates?: WeekCandidateCounts;
   onNotify: (tone: 'info' | 'success' | 'error', message: string) => void;
 }
 
@@ -71,6 +76,8 @@ export function EntryEditor({
   pinnedHighlightIds,
   onTogglePinnedHighlight,
   journalName,
+  pageTitle,
+  isDefaultPage,
   selectedEntry,
   selectedEntryMessages,
   selectedEntryLoading,
@@ -81,6 +88,7 @@ export function EntryEditor({
   scannedConversationCount,
   onJumpToEntry,
   onSynthesize,
+  weekCandidates,
   onNotify,
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
@@ -95,6 +103,19 @@ export function EntryEditor({
 
   const wordCount = useMemo(() => countWords(activeNote?.content ?? ''), [activeNote?.content]);
 
+  // The Journal's one capture verb rides in the editor's selection toolbar so a
+  // selection never grows a second floating bar.
+  const selectionActions = useMemo<SelectionAction[]>(
+    () => [
+      {
+        id: 'journal.highlight',
+        label: 'Save highlight',
+        onSelect: (text) => onAddHighlight(text.slice(0, HIGHLIGHT_CHAR_LIMIT)),
+      },
+    ],
+    [onAddHighlight],
+  );
+
   return (
     <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
       <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,900px)] flex-1 flex-col px-6 pt-10 pb-6">
@@ -107,6 +128,7 @@ export function EntryEditor({
             <EntryHeader
               date={date}
               journalName={journalName}
+              pageTitle={isDefaultPage ? null : pageTitle}
               wordCount={wordCount}
               lastEditedAt={activeNote.updatedAt}
               hasPendingChanges={hasPendingChanges}
@@ -122,6 +144,7 @@ export function EntryEditor({
                 value={activeNote.content ?? ''}
                 onChange={onUpdateNoteContent}
                 placeholder="Start writing — just yourself, today."
+                selectionActions={selectionActions}
               />
             </div>
             <EntryHighlightsStrip
@@ -131,6 +154,7 @@ export function EntryEditor({
               onRemoveHighlight={onRemoveHighlight}
               onTogglePinned={onTogglePinnedHighlight}
               editorContainerRef={editorContainerRef}
+              showFloatingToolbar={false}
             />
             <EntryFromConversation
               entry={selectedEntry}
@@ -148,6 +172,7 @@ export function EntryEditor({
               deckCount={deckCount}
               onSynthesize={onSynthesize}
               disabled={!activeNote}
+              weekCandidates={weekCandidates}
             />
           </>
         )}

@@ -30,6 +30,14 @@ export interface SourceWithMetadata {
   score: number;
   fileSizeBytes: number;
   modifiedAt: string;
+  /**
+   * The number the model was told to cite this source as — the `n` in `[n]`.
+   *
+   * Resolve footnotes by this value, never by array position: the backend's
+   * prompt and this list are built by different pipelines, so position only
+   * happened to agree when every document contributed exactly one chunk.
+   */
+  citationId?: number;
 }
 
 export interface SourceChunkExcerpt {
@@ -68,6 +76,7 @@ export const SourceWithMetadataSchema = z.object({
   score: z.number().finite().min(0),
   fileSizeBytes: z.number().min(0),
   modifiedAt: z.string(), // ISO 8601
+  citationId: z.number().int().min(1).max(1000).optional(),
 }).strict(); // Reject unknown properties
 
 /**
@@ -213,3 +222,52 @@ export function isOptimistic(message: DisplayMessage): message is OptimisticMess
  * Union type for displaying messages (real or optimistic)
  */
 export type DisplayMessage = ConversationMessage | OptimisticMessage;
+
+/**
+ * Retrieval trace for one assistant turn (BRIEF rank 17, contract §4.6).
+ *
+ * `searchedDocuments` is the size of the set the backend's hard space-scope
+ * filter actually allowed — not the size of the corpus. An absent trace means
+ * retrieval did not run; it never means zeros.
+ */
+export interface RetrievalTrace {
+  searchedDocuments: number;
+  passages: number;
+  files: number;
+  scope: 'vault' | 'linked';
+  /** Why the knowledge base could not be searched, straight from the backend. */
+  unavailableReason?: string;
+}
+
+export const RetrievalTraceSchema = z.object({
+  searchedDocuments: z.number().int().min(0).max(100_000_000),
+  passages: z.number().int().min(0).max(1000),
+  files: z.number().int().min(0).max(1000),
+  scope: z.enum(['vault', 'linked']),
+  unavailableReason: z.string().max(400).optional(),
+}).strict();
+
+/** Where in a file a cited passage lives, and how to find it again. */
+export interface PassageLocator {
+  /** The chunk text as sent in the citation payload. */
+  text: string;
+  /** Ordinal of the chunk in the document, when known. */
+  chunkIndex?: number;
+  /** 1-based PDF page, only when already resolved. */
+  page?: number;
+  /** Terms to sub-highlight inside the located passage. */
+  highlights?: string[];
+  /** Display label: "p. 12", "12:40–13:05", "§ Methods". */
+  label?: string;
+  /** Identity for the resolved-location memo. */
+  chunkId?: string;
+}
+
+/**
+ * How confidently a passage was located in the open file.
+ *
+ * `approximate` is shown to the user as such — a scroll position derived from
+ * the chunk ordinal is a guess, and the UI says so rather than implying the
+ * highlight is where the passage really is.
+ */
+export type PassageMatchTier = 'exact' | 'approximate' | 'none';

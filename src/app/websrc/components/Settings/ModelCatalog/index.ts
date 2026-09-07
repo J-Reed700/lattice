@@ -6,7 +6,7 @@
 
 export { ModelCatalogBrowser } from './ModelCatalogBrowser';
 export { SystemCapabilitiesCard } from './SystemCapabilitiesCard';
-export { ModelCard } from './ModelCard';
+export { ModelRow } from './ModelRow';
 export { ModelListView } from './ModelListView';
 export { ModelDetailPanel } from './ModelDetailPanel';
 export { ModelFilterPanel } from './ModelFilterPanel';

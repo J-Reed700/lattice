@@ -1,107 +1,89 @@
-import { useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
 import { VaultAPI } from '../lib/api';
-import { useDownloadedModelsStore } from '../stores/downloadedModelsStore';
 import { toast } from '../stores/toastStore';
 import { TauriEventNames, EventSchemas, listenValidated } from '../types/events';
 
 import type { DownloadedModel } from '../types/downloadedModels';
 
+export const DOWNLOADED_MODELS_QUERY_KEY = ['downloaded-models'] as const;
+
+async function loadDownloadedModels(): Promise<DownloadedModel[]> {
+  const result = await VaultAPI.getDownloadedModels();
+  if (result.ok) return result.data;
+  // Compatibility fallback for older backend routing. The returned data still
+  // enters the same React Query cache; it never becomes a second state owner.
+  return invoke<DownloadedModel[]>('plugin:model|list_downloaded_models');
+}
+
 export const useDownloadedModels = () => {
-  const {
-    setDownloadedModel,
-    clearDownloadedModels,
-    removeDownloadedModel,
-    setActiveModel,
-    setActiveEmbeddingModel,
-    getDownloadedModel,
-    getAllDownloadedModels,
-    isModelDownloaded: isModelDownloadedInStore,
-  } = useDownloadedModelsStore();
+  const queryClient = useQueryClient();
+  const modelsQuery = useQuery<DownloadedModel[]>({
+    queryKey: DOWNLOADED_MODELS_QUERY_KEY,
+    queryFn: loadDownloadedModels,
+    staleTime: 30_000,
+  });
+  const downloadedModels = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
+  const activeModel = useMemo(
+    () => downloadedModels.find((model) => model.is_active_for_chat) ?? null,
+    [downloadedModels]
+  );
+  const activeEmbeddingModel = useMemo(
+    () => downloadedModels.find((model) => model.is_active_for_embedding) ?? null,
+    [downloadedModels]
+  );
+  const downloadedModelMap = useMemo(
+    () => new Map(downloadedModels.map((model) => [model.id, model])),
+    [downloadedModels]
+  );
 
-  const fetchDownloadedModels = useCallback(async (): Promise<DownloadedModel[]> => {
-    const result = await VaultAPI.getDownloadedModels();
-    let models: DownloadedModel[];
-    if (result.ok) {
-      models = result.data;
-    } else {
-      // Fallback to direct plugin invocation for environments with legacy API routing.
-      models = await invoke<DownloadedModel[]>('plugin:model|list_downloaded_models');
-    }
+  const refresh = useCallback(async (): Promise<DownloadedModel[]> =>
+    queryClient.fetchQuery({
+      queryKey: DOWNLOADED_MODELS_QUERY_KEY,
+      queryFn: loadDownloadedModels,
+      staleTime: 0,
+    }), [queryClient]);
 
-    // Treat backend response as source of truth so deletions/removals don't leave stale entries.
-    clearDownloadedModels();
-    models.forEach((model) => {
-      setDownloadedModel(model.id, model);
-    });
+  const invalidateModels = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY });
+  }, [queryClient]);
 
-    return models;
-  }, [clearDownloadedModels, setDownloadedModel]);
-
-  const isModelDownloaded = useCallback(async (model_id: string): Promise<boolean> => {
-    const result = await VaultAPI.isModelDownloaded(model_id);
-    if (!result.ok) {
-      try {
-        return await invoke<boolean>('plugin:model|is_model_already_downloaded', {
-          modelId: model_id,
-          model_id,
-        });
-      } catch {
-        console.error('Failed to check model download status:', result.error);
-      }
-      return isModelDownloadedInStore(model_id);
-    }
-    return result.data;
-  }, [isModelDownloadedInStore]);
-
-  const setActiveChatModel = useCallback(async (model_id: string): Promise<void> => {
-    try {
-      const result = await VaultAPI.setActiveChatModel(model_id);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-
-      const updatedModels = await fetchDownloadedModels();
-      const activeModel = updatedModels.find((m) => m.is_active_for_chat);
-      setActiveModel(activeModel || null);
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to set active chat model:', error);
-      throw new Error(`Failed to set active chat model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [fetchDownloadedModels, setActiveModel]);
-
-  const warmUpActiveChatModel = useCallback(async (): Promise<void> => {
-    try {
-      const result = await VaultAPI.warmUpActiveChatModel();
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to warm up active chat model:', error);
-      throw new Error(`Failed to warm up active chat model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, []);
-
-  const warmUpActiveUtilityModel = useCallback(async (): Promise<void> => {
-    try {
-      const result = await VaultAPI.warmUpActiveUtilityModel();
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to warm up active utility model:', error);
-      throw new Error(`Failed to warm up active utility model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, []);
-
-  const deleteDownloadedModel = useCallback(async (id: string, deleteFile = true): Promise<void> => {
-    try {
+  const setActiveChatMutation = useMutation({
+    mutationFn: async (modelId: string) => {
+      const result = await VaultAPI.setActiveChatModel(modelId);
+      if (!result.ok) throw new Error(result.error);
+    },
+    onSuccess: invalidateModels,
+  });
+  const setActiveEmbeddingMutation = useMutation({
+    mutationFn: async (modelId: string) => {
+      const result = await VaultAPI.setActiveEmbeddingModel(modelId);
+      if (!result.ok) throw new Error(result.error);
+    },
+    onSuccess: invalidateModels,
+  });
+  const setActiveUtilityMutation = useMutation({
+    mutationFn: async (modelId: string) => {
+      const result = await VaultAPI.setActiveUtilityModel(modelId);
+      if (!result.ok) throw new Error(result.error);
+    },
+    onSuccess: invalidateModels,
+  });
+  const clearActiveUtilityMutation = useMutation({
+    mutationFn: async () => {
+      const result = await VaultAPI.clearActiveUtilityModel();
+      if (!result.ok) throw new Error(result.error);
+    },
+    onSuccess: invalidateModels,
+  });
+  const deleteModelMutation = useMutation({
+    mutationFn: async ({ id, deleteFile }: { id: string; deleteFile: boolean }) => {
       const result = await VaultAPI.deleteDownloadedModel(id, deleteFile);
       if (!result.ok) {
-        // Fallback to direct plugin invocation for environments with legacy API routing.
         await invoke<void>('plugin:model|delete_model', {
           modelId: id,
           model_id: id,
@@ -109,196 +91,105 @@ export const useDownloadedModels = () => {
           delete_file: deleteFile,
         });
       }
+    },
+    onSuccess: invalidateModels,
+  });
 
-      removeDownloadedModel(id);
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to delete model:', error);
-      throw new Error(`Failed to delete model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [removeDownloadedModel]);
-
-  const getActiveModel = useCallback(async (): Promise<DownloadedModel | null> => {
+  const isModelDownloaded = useCallback(async (modelId: string): Promise<boolean> => {
+    const result = await VaultAPI.isModelDownloaded(modelId);
+    if (result.ok) return result.data;
     try {
-      const result = await VaultAPI.getActiveModels();
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-      const { chat_model, embedding_model } = result.data;
-
-      if (chat_model) {
-        setActiveModel(chat_model);
-      }
-
-      if (embedding_model) {
-        setActiveEmbeddingModel(embedding_model);
-      }
-
-      return chat_model || null;
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to get active models:', error);
-      throw new Error(`Failed to get active chat model: ${error instanceof Error ? error.message : String(error)}`);
+      return await invoke<boolean>('plugin:model|is_model_already_downloaded', {
+        modelId,
+        model_id: modelId,
+      });
+    } catch {
+      return downloadedModels.some((model) => model.model_id === modelId);
     }
-  }, [setActiveModel, setActiveEmbeddingModel]);
+  }, [downloadedModels]);
 
-  const setActiveEmbeddingModelById = useCallback(async (model_id: string): Promise<void> => {
-    try {
-      const result = await VaultAPI.setActiveEmbeddingModel(model_id);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
+  const warmUpActiveChatModel = useCallback(async () => {
+    const result = await VaultAPI.warmUpActiveChatModel();
+    if (!result.ok) throw new Error(result.error);
+  }, []);
+  const warmUpActiveUtilityModel = useCallback(async () => {
+    const result = await VaultAPI.warmUpActiveUtilityModel();
+    if (!result.ok) throw new Error(result.error);
+  }, []);
 
-      const updatedModels = await fetchDownloadedModels();
-      const activeEmbModel = updatedModels.find((m) => m.is_active_for_embedding);
-      setActiveEmbeddingModel(activeEmbModel || null);
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to set active embedding model:', error);
-      throw new Error(`Failed to set active embedding model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [fetchDownloadedModels, setActiveEmbeddingModel]);
+  return {
+    downloadedModels,
+    downloadedModelMap,
+    activeModel,
+    activeEmbeddingModel,
+    isLoading: modelsQuery.isLoading,
+    error: modelsQuery.error?.message ?? null,
+    fetchDownloadedModels: refresh,
+    isModelDownloaded,
+    setActiveChatModel: setActiveChatMutation.mutateAsync,
+    warmUpActiveChatModel,
+    warmUpActiveUtilityModel,
+    setActiveEmbeddingModel: setActiveEmbeddingMutation.mutateAsync,
+    setActiveUtilityModel: setActiveUtilityMutation.mutateAsync,
+    clearActiveUtilityModel: clearActiveUtilityMutation.mutateAsync,
+    deleteDownloadedModel: (id: string, deleteFile = true) =>
+      deleteModelMutation.mutateAsync({ id, deleteFile }),
+    getActiveModel: async () => (await refresh()).find((model) => model.is_active_for_chat) ?? null,
+    getActiveEmbeddingModel: async () =>
+      (await refresh()).find((model) => model.is_active_for_embedding) ?? null,
+    getDownloadedModel: (id: string) => downloadedModels.find((model) => model.id === id),
+    getAllDownloadedModels: () => downloadedModels,
+  };
+};
 
-  const setActiveUtilityModel = useCallback(async (model_id: string): Promise<void> => {
-    try {
-      const result = await VaultAPI.setActiveUtilityModel(model_id);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-
-      await fetchDownloadedModels();
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to set active utility model:', error);
-      throw new Error(`Failed to set active utility model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [fetchDownloadedModels]);
-
-  const clearActiveUtilityModel = useCallback(async (): Promise<void> => {
-    try {
-      const result = await VaultAPI.clearActiveUtilityModel();
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-
-      await fetchDownloadedModels();
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to clear active utility model:', error);
-      throw new Error(`Failed to clear active utility model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [fetchDownloadedModels]);
-
-  const getActiveEmbeddingModel = useCallback(async (): Promise<DownloadedModel | null> => {
-    try {
-      const result = await VaultAPI.getActiveModels();
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-      const { chat_model, embedding_model } = result.data;
-
-      if (chat_model) {
-        setActiveModel(chat_model);
-      }
-
-      if (embedding_model) {
-        setActiveEmbeddingModel(embedding_model);
-      }
-
-      return embedding_model || null;
-    } catch (error) {
-      console.error('[useDownloadedModels] Failed to get active embedding model:', error);
-      throw new Error(`Failed to get active embedding model: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [setActiveModel, setActiveEmbeddingModel]);
+/** Own the model-completion listener at one app-level mount. */
+export const useDownloadedModelsListener = () => {
+  const { fetchDownloadedModels } = useDownloadedModels();
 
   useEffect(() => {
-    const isMounted = { current: true };
+    let isMounted = true;
     let unlistenFn: UnlistenFn | undefined;
 
-    const setupListener = async () => {
+    void (async () => {
       try {
-        // Listen for model download completion events from backend
         const listener = await listenValidated(
           TauriEventNames.Models.DownloadCompleted,
           EventSchemas.Models.DownloadCompleted,
           async (event) => {
-          const { modelName } = event.payload;
-          console.log('[useDownloadedModels] Model download completed:', modelName);
-
-          try {
-            // Refetch downloaded models to sync with database
-            const updated = await fetchDownloadedModels();
-
-            // Show success notification
-            toast.success(`${modelName} ready`);
-
-            // Auto-warm whichever roles the saga just auto-activated so
-            // the first chat turn doesn't pay the cold-mmap cost.
-            const justCompleted = updated.find((m) => m.model_name === modelName);
-            if (justCompleted?.is_active_for_chat) {
-              void VaultAPI.warmUpActiveChatModel().catch((err) =>
-                console.warn('[useDownloadedModels] post-download chat warmup failed:', err),
-              );
+            const { modelName } = event.payload;
+            try {
+              const updated = await fetchDownloadedModels();
+              toast.success(`${modelName} ready`);
+              const completed = updated.find((model) => model.model_name === modelName);
+              if (completed?.is_active_for_chat) {
+                void VaultAPI.warmUpActiveChatModel().catch((error) =>
+                  console.warn('[useDownloadedModels] post-download chat warmup failed:', error)
+                );
+              }
+              if (completed?.is_active_for_utility) {
+                void VaultAPI.warmUpActiveUtilityModel().catch((error) =>
+                  console.warn('[useDownloadedModels] post-download utility warmup failed:', error)
+                );
+              }
+            } catch (error) {
+              console.error('[useDownloadedModels] Failed to refresh after completion:', error);
             }
-            if (justCompleted?.is_active_for_utility) {
-              void VaultAPI.warmUpActiveUtilityModel().catch((err) =>
-                console.warn('[useDownloadedModels] post-download utility warmup failed:', err),
-              );
-            }
-          } catch (error) {
-            console.error('[useDownloadedModels] Failed to refresh after completion:', error);
-          }
-        },
-          (error) => {
-            console.error('[useDownloadedModels] Validation error for model-download-completed:', error.format());
-          }
+          },
+          (error) => console.error('[useDownloadedModels] Invalid completion event:', error.format())
         );
-
-        // Check if component unmounted during async operation
-        if (!isMounted.current) {
-          listener(); // Clean up immediately if unmounted
-          return;
-        }
-
-        unlistenFn = listener;
+        if (!isMounted) listener();
+        else unlistenFn = listener;
       } catch (error) {
         console.error('[useDownloadedModels] Failed to setup event listener:', error);
       }
-    };
+    })();
 
-    const loadModels = async () => {
-      try {
-        // fetchDownloadedModels already fetches all models with active flags
-        // The store automatically updates activeModel and activeEmbeddingModel
-        await fetchDownloadedModels();
-        await getActiveModel();
-      } catch {
-        // Silently handle error - fetchDownloadedModels now returns empty array on error
-        // This is expected on first run when no models are downloaded yet
-      }
-    };
-
-    setupListener();
-    loadModels();
-
-    // Cleanup: unlisten when component unmounts
+    void fetchDownloadedModels().catch(() => {
+      // Expected during first run when no local model exists yet.
+    });
     return () => {
-      isMounted.current = false;
-      if (unlistenFn) {
-        unlistenFn();
-      }
+      isMounted = false;
+      unlistenFn?.();
     };
-  }, [fetchDownloadedModels, getActiveModel]);
-
-  return {
-    fetchDownloadedModels,
-    isModelDownloaded,
-    setActiveChatModel,
-    warmUpActiveChatModel,
-    warmUpActiveUtilityModel,
-    setActiveEmbeddingModel: setActiveEmbeddingModelById,
-    setActiveUtilityModel,
-    clearActiveUtilityModel,
-    deleteDownloadedModel,
-    getActiveModel,
-    getActiveEmbeddingModel,
-    getDownloadedModel,
-    getAllDownloadedModels,
-  };
+  }, [fetchDownloadedModels]);
 };

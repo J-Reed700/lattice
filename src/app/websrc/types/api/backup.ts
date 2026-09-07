@@ -33,3 +33,28 @@ export interface ExportResult {
   /** Export format used */
   format: 'markdown' | 'json' | 'csv' | 'html';
 }
+
+/** What `plugin_create_backup` returns. */
+export interface CreateBackupResult {
+  /** Full path to the backup file that was written. */
+  backupPath: string;
+  /** Backup file size in bytes. */
+  size: number;
+  /** ISO 8601 timestamp of backup creation. */
+  createdAt: string;
+}
+
+/** What `plugin_restore_backup` returns. */
+export interface RestoreBackupResult {
+  success: boolean;
+  restoredCount: number;
+  message: string | null;
+}
+
+/** What `plugin_export_markdown` / `plugin_export_json` return. */
+export interface ExportSummary {
+  /** Conversations plus journal pages written. */
+  count: number;
+  /** Directory the export landed in. */
+  outputDir: string;
+}

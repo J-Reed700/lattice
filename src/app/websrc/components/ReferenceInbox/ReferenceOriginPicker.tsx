@@ -16,18 +16,20 @@ interface ReferenceOriginPickerProps {
 const OPTIONS: Array<{ value: OriginFilter; label: string }> = [
   { value: 'all', label: 'All references' },
   { value: 'chat', label: 'From Chat' },
-  { value: 'journal', label: 'From Journal entries' },
+  { value: 'journal', label: 'From Journal' },
+  { value: 'document', label: 'From documents' },
 ];
 
 /**
- * Sidebar origin filter: shadcn Select with three options.
- * Replaces the prior role-tab rail (All / AI / You / System).
- * Spec §4.1.2, §6.3.
+ * Sidebar origin filter. One-line trigger matching the Chat scope line.
  */
 export function ReferenceOriginPicker({ value, onChange }: ReferenceOriginPickerProps) {
   return (
     <Select value={value} onValueChange={(next) => onChange(next as OriginFilter)}>
-      <SelectTrigger className="h-9 text-sm" aria-label="Filter by origin">
+      <SelectTrigger
+        className="h-7 rounded-sm border-0 px-1 py-0.5 text-sm transition-colors duration-fast hover:bg-surface-raised"
+        aria-label="Filter by origin"
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

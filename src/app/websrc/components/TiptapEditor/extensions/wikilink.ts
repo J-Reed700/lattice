@@ -48,12 +48,17 @@ export const Wikilink = Mark.create<WikilinkOptions>({
         props: {
           handleClick(_view, _pos, event) {
             const target = event.target;
-            if (
-              target instanceof HTMLElement &&
-              target.hasAttribute('data-wikilink') &&
-              onClick
-            ) {
+            if (!(target instanceof HTMLElement) || !onClick) return false;
+            // The mark renders `data-wikilink`; the decoration path (plain
+            // `[[text]]` that has not been converted yet) renders
+            // `data-wikilink-decoration` and carries the name as its value.
+            if (target.hasAttribute('data-wikilink')) {
               onClick(target.textContent ?? '');
+              return true;
+            }
+            const decorated = target.getAttribute('data-wikilink-decoration');
+            if (decorated !== null) {
+              onClick(decorated);
               return true;
             }
             return false;

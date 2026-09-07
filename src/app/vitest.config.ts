@@ -6,7 +6,9 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
-    environment: 'happy-dom',
+    // DOMPurify explicitly requires a standards-compliant DOM for security;
+    // happy-dom is not a supported sanitizer runtime.
+    environment: 'jsdom',
     setupFiles: ['./websrc/tests/setup.ts'],
     include: ['websrc/**/*.{test,spec,integration.test}.{ts,tsx}'],
     coverage: {
@@ -31,7 +33,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './websrc'),
+      '@': path.resolve(import.meta.dirname, './websrc'),
     },
   },
 });

@@ -21,8 +21,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { AlertTriangle, Info, AlertCircle } from 'lucide-react';
-
 import { sanitizeFileName } from '@/utils/sanitize';
 
 import { ButtonLoading } from '../LoadingState';
@@ -136,131 +134,78 @@ export function ConfirmDialog({
 
   if (!isOpen) return null;
 
-  const variantStyles = {
-    danger: {
-      icon: <AlertTriangle className="w-6 h-6" strokeWidth={1.75} />,
-      iconBg: 'bg-[hsl(var(--danger-muted))]',
-      iconColor: 'text-[hsl(var(--danger-fg))]',
-      buttonBg: 'bg-[hsl(var(--danger))] hover:opacity-90',
-      buttonText: 'text-[hsl(var(--accent-fg))]',
-    },
-    warning: {
-      icon: <AlertCircle className="w-6 h-6" strokeWidth={1.75} />,
-      iconBg: 'bg-[hsl(var(--warning-muted))]',
-      iconColor: 'text-[hsl(var(--warning-fg))]',
-      buttonBg: 'bg-[hsl(var(--warning))] hover:opacity-90',
-      buttonText: 'text-[hsl(var(--accent-fg))]',
-    },
-    info: {
-      icon: <Info className="w-6 h-6" strokeWidth={1.75} />,
-      iconBg: 'bg-[hsl(var(--accent-muted))]',
-      iconColor: 'text-[hsl(var(--accent))]',
-      buttonBg: 'bg-[hsl(var(--accent))] hover:bg-[hsl(var(--accent-hover))]',
-      buttonText: 'text-[hsl(var(--accent-fg))]',
-    },
-  };
-
-  const styles = variantStyles[variant];
+  const confirmButtonClass =
+    variant === 'danger'
+      ? 'bg-danger text-accent-fg hover:opacity-90'
+      : variant === 'warning'
+        ? 'bg-warning text-accent-fg hover:opacity-90'
+        : 'bg-accent text-accent-fg hover:bg-accent-hover';
 
   return (
     <>
-      {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-[hsl(var(--overlay))] z-50 animate-in fade-in duration-base"
+        className="fixed inset-0 z-50 bg-overlay animate-in fade-in duration-fast"
         onClick={onCancel}
         aria-hidden="true"
       />
 
-      {/* Dialog */}
       <div
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md animate-in zoom-in-95 duration-base"
+        className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 animate-in fade-in zoom-in-95 duration-fast"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-description"
       >
-        <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md border border-[hsl(var(--border-subtle))] p-6">
-          {/* Icon and Title */}
-          <div className="flex items-start gap-4 mb-4">
-            <div
-              className={`flex-shrink-0 w-12 h-12 rounded-full ${styles.iconBg} ${styles.iconColor} flex items-center justify-center`}
-            >
-              {styles.icon}
+        <div className="rounded-lg border border-border-subtle bg-surface-raised p-5 shadow-md">
+          <h2 id="confirm-dialog-title" className="font-serif text-base font-semibold text-text-primary">
+            {title}
+          </h2>
+          <p id="confirm-dialog-description" className="mt-2 text-sm text-text-secondary">
+            {message}
+          </p>
+          {details && <p className="mt-1 text-xs text-text-muted">{details}</p>}
+
+          {requireConfirmation && (
+            <div className="mt-4">
+              <label htmlFor="confirm-text" className="block text-xs text-text-secondary">
+                Type <span className="font-mono text-text-primary">{requireConfirmation}</span> to confirm
+              </label>
+              <input
+                id="confirm-text"
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                className="mt-1.5 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                placeholder={requireConfirmation}
+                disabled={isLoading}
+                autoComplete="off"
+              />
             </div>
-            <div className="flex-1 pt-1">
-              <h2
-                id="confirm-dialog-title"
-                className="text-lg font-semibold text-[hsl(var(--text-primary))]"
-              >
-                {title}
-              </h2>
-            </div>
-          </div>
+          )}
 
-          {/* Message */}
-          <div className="mb-6 pl-16">
-            <p
-              id="confirm-dialog-description"
-              className="text-sm text-[hsl(var(--text-secondary))] mb-2"
-            >
-              {message}
-            </p>
-
-            {/* Details */}
-            {details && (
-              <p className="text-xs text-[hsl(var(--text-tertiary))] mt-2">
-                {details}
-              </p>
-            )}
-
-            {/* Confirmation Input */}
-            {requireConfirmation && (
-              <div className="mt-4">
-                <label
-                  htmlFor="confirm-text"
-                  className="block text-xs font-medium text-[hsl(var(--text-secondary))] mb-2"
-                >
-                  Type <span className="font-mono font-bold">{requireConfirmation}</span> to
-                  confirm:
-                </label>
-                <input
-                  id="confirm-text"
-                  type="text"
-                  value={confirmText}
-                  onChange={(e) => setConfirmText(e.target.value)}
-                  className="w-full px-3 py-2 border border-[hsl(var(--border-default))] rounded-md bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-                  placeholder={requireConfirmation}
-                  disabled={isLoading}
-                  autoComplete="off"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-3 justify-end">
+          <div className="mt-6 flex items-center justify-end gap-2">
             <button
               ref={cancelButtonRef}
+              type="button"
               onClick={onCancel}
               disabled={isLoading}
-              className="px-4 py-2 text-sm font-medium text-[hsl(var(--text-secondary))] bg-[hsl(var(--surface))] border border-[hsl(var(--border-subtle))] rounded-md hover:bg-[hsl(var(--surface-raised))] transition-colors duration-fast disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex h-8 items-center rounded-md px-3 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               {cancelLabel}
             </button>
             <button
               ref={confirmButtonRef}
+              type="button"
               onClick={handleConfirm}
               disabled={!canConfirm}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors duration-fast disabled:opacity-50 disabled:cursor-not-allowed ${styles.buttonBg} ${styles.buttonText}`}
+              className={`inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50 ${confirmButtonClass}`}
             >
               {isLoading ? (
                 <ButtonLoading>{confirmLabel}</ButtonLoading>
               ) : (
                 <>
                   {confirmLabel}
-                  {!requireConfirmation && (
-                    <span className="ml-2 text-xs opacity-60">⌘↵</span>
-                  )}
+                  {!requireConfirmation && <kbd className="font-mono text-xxs opacity-70">⌘↵</kbd>}
                 </>
               )}
             </button>

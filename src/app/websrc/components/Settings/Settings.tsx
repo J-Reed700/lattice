@@ -1,16 +1,18 @@
 /**
- * Settings Component - Main Container
+ * Settings — shell.
  *
- * Tabbed settings interface with persistent storage,
- * keyboard shortcuts (Cmd/Ctrl + ,), and export/import functionality.
+ * Plain-text tab list on the left (no icons, no icon box), reading column
+ * on the right. Every tab renders exactly one PageHeader whose title is a
+ * noun. See `.design/UX-OVERHAUL-BRIEF.md` §3.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { Settings as SettingsIcon, Search, Database, MessageSquare, Brain, Palette, Shield, RotateCcw, Download, Upload, HardDrive, FileText, Settings2, Wrench, FolderOpen } from 'lucide-react';
+
+import { cn } from '@/lib/utils';
 
 import { AIModelsTab } from './AIModelsTab';
 import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
@@ -22,13 +24,24 @@ import { VaultTab } from './VaultTab';
 import { SETTINGS_QUERY_KEY } from '../../hooks/queries/useSettingsQuery';
 import VaultAPI from '../../lib/api';
 import { toast } from '../../stores/toastStore';
+import { SidebarHeader } from '../ui';
 
-type SettingsTab = 'search' | 'indexing' | 'vault' | 'chat' | 'models' | 'downloaded-models' | 'prompts' | 'tuning' | 'tools' | 'display' | 'privacy';
+type SettingsTab =
+  | 'search'
+  | 'indexing'
+  | 'vault'
+  | 'chat'
+  | 'models'
+  | 'downloaded-models'
+  | 'prompts'
+  | 'tuning'
+  | 'tools'
+  | 'display'
+  | 'privacy';
 
 interface Tab {
   id: SettingsTab;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
   component: React.ComponentType;
 }
 
@@ -41,27 +54,31 @@ const tabGroups: TabGroup[] = [
   {
     label: 'General',
     tabs: [
-      { id: 'search', label: 'Search', icon: Search, component: SearchTab },
-      { id: 'indexing', label: 'Indexing', icon: Database, component: IndexingTab },
-      { id: 'vault', label: 'Vault', icon: FolderOpen, component: VaultTab },
-      { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
-      { id: 'privacy', label: 'Privacy', icon: Shield, component: PrivacyTab },
+      { id: 'search', label: 'Search', component: SearchTab },
+      { id: 'indexing', label: 'Indexing', component: IndexingTab },
+      { id: 'vault', label: 'Vault', component: VaultTab },
+      { id: 'display', label: 'Display', component: DisplayTab },
+      { id: 'privacy', label: 'Privacy', component: PrivacyTab },
     ],
   },
   {
     label: 'AI',
     tabs: [
-      { id: 'chat', label: 'Chat', icon: MessageSquare, component: ChatTab },
-      { id: 'models', label: 'Models', icon: Brain, component: ModelsTab },
-      { id: 'downloaded-models', label: 'Downloaded', icon: HardDrive, component: AIModelsTab },
-      { id: 'prompts', label: 'Prompts', icon: FileText, component: PromptsTab },
-      { id: 'tuning', label: 'Tuning', icon: Settings2, component: TuningTab },
-      { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },
+      { id: 'chat', label: 'Chat', component: ChatTab },
+      { id: 'models', label: 'Models', component: ModelsTab },
+      { id: 'downloaded-models', label: 'Downloaded', component: AIModelsTab },
+      { id: 'prompts', label: 'Prompts', component: PromptsTab },
+      { id: 'tuning', label: 'Tuning', component: TuningTab },
+      { id: 'tools', label: 'Tools', component: ToolsTab },
     ],
   },
 ];
 
 const tabs: Tab[] = tabGroups.flatMap((group) => group.tabs);
+const tabIds = new Set<string>(tabs.map((tab) => tab.id));
+
+const footerButtonClass =
+  'flex w-full items-center rounded-sm px-2.5 py-1.5 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50';
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('search');
@@ -71,6 +88,19 @@ export function Settings() {
   const [isResetting, setIsResetting] = useState(false);
 
   const queryClient = useQueryClient();
+
+  // Other panes ask to jump here (e.g. "Browse catalog" from an empty
+  // Downloaded list). Without this the request went nowhere.
+  useEffect(() => {
+    const handleNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string }>).detail;
+      if (detail?.tab && tabIds.has(detail.tab)) {
+        setActiveTab(detail.tab as SettingsTab);
+      }
+    };
+    window.addEventListener('settings:navigate-tab', handleNavigate);
+    return () => window.removeEventListener('settings:navigate-tab', handleNavigate);
+  }, []);
 
   // Invalidate React Query caches whenever settings change on the backend
   // (reset/import). Tabs that consume that cache refetch automatically.
@@ -154,146 +184,117 @@ export function Settings() {
   };
 
   const ActiveTabComponent = tabs.find((tab) => tab.id === activeTab)?.component || SearchTab;
-  const isWideContentTab = activeTab === 'models' || activeTab === 'downloaded-models' || activeTab === 'tools';
+  const isWideContentTab =
+    activeTab === 'models' || activeTab === 'downloaded-models' || activeTab === 'tools';
 
   return (
-    <div className="flex h-full bg-[hsl(var(--bg))]">
+    <div className="flex h-full bg-bg">
       {/* Sidebar */}
-      <div className="w-60 bg-[hsl(var(--surface))] border-r border-[hsl(var(--border-subtle))] flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b border-[hsl(var(--border-subtle))]">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-[hsl(var(--accent-muted))] rounded-lg">
-              <SettingsIcon className="w-5 h-5 text-[hsl(var(--accent))]" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold text-[hsl(var(--text-primary))]">Settings</h1>
-            </div>
-          </div>
-        </div>
+      <div className="flex w-[240px] shrink-0 flex-col border-r border-border-subtle bg-surface">
+        <SidebarHeader title="Settings" />
 
-        {/* Tabs */}
-        <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
+        {/* Tab list — scrolls so the footer never clips it */}
+        <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
           {tabGroups.map((group) => (
-            <div key={group.label}>
-              <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--text-tertiary))]">
+            <div key={group.label} className="mb-5 last:mb-0">
+              <div className="px-2.5 pb-1.5 text-xxs uppercase tracking-[0.08em] text-text-muted">
                 {group.label}
               </div>
-              <div className="space-y-1">
-                {group.tabs.map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`
-                        w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-md transition-colors duration-fast
-                        ${
-                          activeTab === tab.id
-                            ? 'bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))] font-semibold'
-                            : 'text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]'
-                        }
-                      `}
-                    >
-                      <Icon className="w-4 h-4 flex-shrink-0" />
-                      <span className="font-medium">{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              {group.tabs.map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={cn(
+                      'relative flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors duration-fast',
+                      isActive
+                        ? 'bg-surface-raised text-text-primary'
+                        : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary',
+                    )}
+                  >
+                    {isActive ? (
+                      <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" />
+                    ) : null}
+                    {tab.label}
+                  </button>
+                );
+              })}
             </div>
           ))}
         </nav>
 
-        {/* Actions */}
-        <div className="p-3 border-t border-[hsl(var(--border-subtle))] space-y-2">
-          <button
-            onClick={handleExport}
-            disabled={isExporting}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] rounded-md transition-colors duration-fast disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" strokeWidth={1.75} />
-            {isExporting ? 'Exporting...' : 'Export'}
+        {/* Footer — never scrolls, never clips the list above it */}
+        <div className="shrink-0 border-t border-border-subtle p-2">
+          <button type="button" onClick={handleExport} disabled={isExporting} className={footerButtonClass}>
+            {isExporting ? 'Exporting…' : 'Export'}
           </button>
-
-          <button
-            onClick={handleImport}
-            disabled={isImporting}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] rounded-md transition-colors duration-fast disabled:opacity-50"
-          >
-            <Upload className="w-4 h-4" strokeWidth={1.75} />
-            {isImporting ? 'Importing...' : 'Import'}
+          <button type="button" onClick={handleImport} disabled={isImporting} className={footerButtonClass}>
+            {isImporting ? 'Importing…' : 'Import'}
           </button>
-
           <button
+            type="button"
             onClick={() => setShowResetDialog(true)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] rounded-md transition-colors duration-fast"
+            className="flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-sm text-danger-fg transition-colors duration-fast hover:bg-danger-muted"
           >
-            <RotateCcw className="w-4 h-4" strokeWidth={1.75} />
             Reset all
           </button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Main content — reading column */}
+      <main className="h-full flex-1 overflow-y-auto bg-bg">
         <div
-          className={
-            isWideContentTab
-              ? 'mx-auto w-full max-w-[1700px] px-6 py-8 lg:px-10'
-              : 'max-w-3xl mx-auto p-8'
-          }
+          className={cn(
+            'mx-auto w-full px-6 pb-16 pt-10',
+            isWideContentTab ? 'max-w-[1100px]' : 'max-w-[760px]',
+          )}
         >
           <LlmSettingsProvider>
             <ActiveTabComponent />
           </LlmSettingsProvider>
         </div>
-      </div>
+      </main>
 
-      {/* Reset Confirmation Dialog */}
+      {/* Reset confirmation */}
       {showResetDialog && (
-        <div className="fixed inset-0 bg-[hsl(var(--overlay))] flex items-center justify-center z-50 p-4">
-          <div className="bg-[hsl(var(--surface-raised))] rounded-lg shadow-md max-w-md w-full p-6 border border-[hsl(var(--border-subtle))]">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-[hsl(var(--danger-muted))] rounded-md">
-                <RotateCcw className="w-4 h-4 text-[hsl(var(--danger-fg))]" strokeWidth={1.75} />
-              </div>
-              <h2 className="text-xl font-semibold text-[hsl(var(--text-primary))]">
-                Reset all settings?
-              </h2>
-            </div>
-
-            <p className="text-sm text-[hsl(var(--text-secondary))] mb-6">
-              This will restore all settings to their default values. This action cannot be
-              undone. Consider exporting your settings first.
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-reset-title"
+            className="w-full max-w-sm rounded-md border border-border-subtle bg-surface-raised p-5 shadow-md"
+          >
+            <h2 id="settings-reset-title" className="text-base font-medium text-text-primary">
+              Reset all settings?
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">
+              Every setting goes back to its default. Export first if you want a copy.
             </p>
-
-            <div className="flex gap-3 justify-end">
+            <div className="mt-5 flex justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setShowResetDialog(false)}
-                className="px-4 py-2 text-sm font-medium text-[hsl(var(--text-primary))] bg-[hsl(var(--surface-raised))] hover:bg-[hsl(var(--surface))] rounded-md transition-colors duration-fast border border-[hsl(var(--border-subtle))]"
+                className="h-8 rounded-sm border border-border-default bg-surface px-3 text-sm text-text-primary transition-colors duration-fast hover:bg-surface-raised"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={() => {
                   void handleReset();
                 }}
                 disabled={isResetting}
-                className="px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] bg-[hsl(var(--danger))] hover:opacity-90 rounded-md transition-opacity duration-fast disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-8 rounded-sm bg-danger px-3 text-sm font-medium text-accent-fg transition-opacity duration-fast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isResetting ? 'Resetting...' : 'Reset settings'}
+                {isResetting ? 'Resetting…' : 'Reset'}
               </button>
             </div>
           </div>
         </div>
       )}
-
-      {/* Auto-save indicator */}
-      <div className="fixed bottom-4 right-4 px-3 py-2 bg-[hsl(var(--surface-raised))] border border-[hsl(var(--border-subtle))] rounded-md shadow-sm flex items-center gap-2">
-        <div className="w-2 h-2 bg-[hsl(var(--success-fg))] rounded-full animate-pulse" />
-        <span className="text-xs text-[hsl(var(--text-secondary))]">Settings saved automatically</span>
-      </div>
     </div>
   );
 }

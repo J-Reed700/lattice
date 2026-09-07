@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut , Loader2, AlertCircle } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 
 import VaultAPI from '../../../lib/api';
 import { isRemoteFileSource, resolveLocalPathFromViewerSource } from '../../../utils/fileSources';
+import {
+  buildPassageTextRenderer,
+  findPassagePage,
+} from '../../Reading/pdfPassageSearch';
+
+import type { PassageLocator, PassageMatchTier } from '../../../types/conversation';
+
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -18,16 +25,42 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 interface PDFViewerProps {
   filePath: string;
   title?: string;
+  /**
+   * A cited passage to land on. No extractor writes a page number into a
+   * chunk, so the page is resolved here by scanning the loaded document — the
+   * label is reported back through `onLocationResolved` once it is a fact.
+   */
+  highlight?: PassageLocator | null;
+  onLocationResolved?: (_label: string) => void;
+  onMatch?: (_tier: PassageMatchTier) => void;
 }
 
-export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
+export function PDFViewer({
+  filePath,
+  title: _title,
+  highlight,
+  onLocationResolved,
+  onMatch,
+}: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [isResolvingPassage, setIsResolvingPassage] = useState(false);
+  const [passageHit, setPassageHit] = useState<{ page: number; needle: string } | null>(null);
+  const pdfProxyRef = useRef<Parameters<typeof findPassagePage>[0] | null>(null);
+  const [proxyReadyAt, setProxyReadyAt] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const onLocationResolvedRef = useRef(onLocationResolved);
+  onLocationResolvedRef.current = onLocationResolved;
+  const onMatchRef = useRef(onMatch);
+  onMatchRef.current = onMatch;
   const isRemoteSource = useMemo(() => isRemoteFileSource(filePath), [filePath]);
+  const highlightText = highlight?.text ?? '';
+  const highlightPage = highlight?.page;
+  const highlightChunkIndex = highlight?.chunkIndex;
 
   useEffect(() => {
     let isMounted = true;
@@ -69,11 +102,66 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
     };
   }, [filePath, isRemoteSource]);
 
-  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
-    setNumPages(numPages);
+  const onDocumentLoadSuccess = useCallback((proxy: { numPages: number }) => {
+    // Keep the proxy: passage resolution needs `getPage`/`getTextContent`,
+    // which only this object exposes.
+    pdfProxyRef.current = proxy as Parameters<typeof findPassagePage>[0];
+    setProxyReadyAt(Date.now());
+    setNumPages(proxy.numPages);
     setIsLoading(false);
-    setPageNumber((current) => (current > numPages ? 1 : current));
-  };
+    setPageNumber((current) => (current > proxy.numPages ? 1 : current));
+  }, []);
+
+  useEffect(() => {
+    const proxy = pdfProxyRef.current;
+    if (!proxy || !highlightText.trim()) return;
+
+    // A page the caller already knows needs no scan.
+    if (typeof highlightPage === 'number' && highlightPage > 0) {
+      setPageNumber(highlightPage);
+      onMatchRef.current?.('exact');
+      return;
+    }
+
+    const signal = { aborted: false };
+    setIsResolvingPassage(true);
+    void findPassagePage(proxy, highlightText, { signal })
+      .then((hit) => {
+        if (signal.aborted) return;
+        if (hit) {
+          setPageNumber(hit.page);
+          setPassageHit(hit);
+          onLocationResolvedRef.current?.(`p. ${hit.page}`);
+          onMatchRef.current?.('exact');
+          return;
+        }
+        // Not found: say which kind of "not found" it is.
+        onMatchRef.current?.(
+          typeof highlightChunkIndex === 'number' ? 'approximate' : 'none'
+        );
+      })
+      .finally(() => {
+        if (!signal.aborted) setIsResolvingPassage(false);
+      });
+
+    return () => {
+      signal.aborted = true;
+    };
+  }, [proxyReadyAt, highlightText, highlightPage, highlightChunkIndex]);
+
+  const customTextRenderer = useMemo(
+    () =>
+      passageHit?.needle && pageNumber === passageHit.page
+        ? buildPassageTextRenderer(passageHit.needle)
+        : undefined,
+    [passageHit, pageNumber]
+  );
+
+  const scrollToMark = useCallback(() => {
+    containerRef.current
+      ?.querySelector('.lattice-pdf-mark')
+      ?.scrollIntoView?.({ block: 'center' });
+  }, []);
 
   const onDocumentLoadError = (error: Error) => {
     console.error('PDF load error:', error);
@@ -117,7 +205,9 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
             <ChevronLeft className="w-5 h-5 text-[hsl(var(--text-primary))]" />
           </button>
           <span className="text-sm font-medium text-[hsl(var(--text-primary))] min-w-[100px] text-center">
-            Page {pageNumber} of {numPages || '...'}
+            {isResolvingPassage
+              ? 'Finding the passage…'
+              : `Page ${pageNumber} of ${numPages || '...'}`}
           </span>
           <button
             onClick={goToNextPage}
@@ -152,7 +242,10 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
       </div>
 
       {/* PDF content area */}
-      <div className="flex-1 overflow-auto flex items-start justify-center p-8 relative">
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-auto flex items-start justify-center p-8 relative"
+      >
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--surface))]/70">
             <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--accent))]" />
@@ -175,6 +268,8 @@ export function PDFViewer({ filePath, title: _title }: PDFViewerProps) {
                 scale={scale}
                 renderTextLayer
                 renderAnnotationLayer
+                customTextRenderer={customTextRenderer}
+                onRenderTextLayerSuccess={customTextRenderer ? scrollToMark : undefined}
               />
             </Document>
           </div>

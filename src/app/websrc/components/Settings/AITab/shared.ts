@@ -2,6 +2,8 @@
  * Shared constants and utilities for AI settings sub-tabs.
  */
 
+import { settingsFieldClass, settingsTextareaClass } from '../../ui';
+
 import type {
   CustomToolSettings as ApiCustomToolSettings,
 } from '../../../types/api/settings';
@@ -107,11 +109,20 @@ export const CUSTOM_TOOL_PRESETS: CustomToolPreset[] = [
   },
 ];
 
-export const INPUT_CLASS =
-  'w-full px-3 py-2 text-sm bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] border border-[hsl(var(--border-subtle))] rounded-lg focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:border-transparent';
+// Settings panes share one field look. Re-exported here so the AI sub-tabs
+// don't each reach for the primitive path.
+export const INPUT_CLASS = settingsFieldClass;
 
-export const TEXTAREA_CLASS =
-  'w-full rounded-lg border border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] px-3 py-2 text-xs text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:border-transparent';
+export const TEXTAREA_CLASS = settingsTextareaClass;
+
+export {
+  NUMBER_FIELD_CLASS,
+  SECONDARY_BUTTON_CLASS,
+  GHOST_BUTTON_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  ROW_ACTION_CLASS,
+  SWITCH_CLASS,
+} from '../settingsStyles';
 
 export const toFinite = (value: string, fallback: number) => {
   const parsed = Number(value);

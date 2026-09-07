@@ -6,7 +6,6 @@ import {
   Copy,
   Loader2,
   NotebookPen,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 
@@ -93,7 +92,7 @@ export function ReferenceActionRail({
           {capturing ? (
             <Loader2 className="h-3.5 w-3.5 text-[hsl(var(--text-muted))]" strokeWidth={1.75} />
           ) : (
-            <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <NotebookPen className="h-3.5 w-3.5" strokeWidth={1.75} />
           )}
           {isCaptured ? 'Re-capture' : 'Capture'}
         </button>

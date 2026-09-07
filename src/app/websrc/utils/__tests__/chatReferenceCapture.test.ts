@@ -50,6 +50,7 @@ describe('chatReferenceCapture', () => {
       messageId: 'msg_table_1',
       messageRole: 'assistant',
       messageContent: tableMarkdown,
+      preferredNoteId: existing.id,
     });
 
     const updateCall = vi.mocked(VaultAPI.updateWorkspaceNote).mock.calls[0];
@@ -108,6 +109,7 @@ describe('chatReferenceCapture', () => {
       messageId: 'msg_table_legacy',
       messageRole: 'assistant',
       messageContent: freshMarkdown,
+      preferredNoteId: existing.id,
     });
 
     const persisted = vi.mocked(VaultAPI.updateWorkspaceNote).mock.calls[0][0];
@@ -160,6 +162,7 @@ describe('chatReferenceCapture', () => {
       messageId: 'msg_new',
       messageRole: 'assistant',
       messageContent: newContent,
+      preferredNoteId: existing.id,
     });
 
     const persisted = vi.mocked(VaultAPI.updateWorkspaceNote).mock.calls[0][0];

@@ -14,6 +14,18 @@ export interface AppSettings {
   backup: BackupSettings;
   privacy: PrivacySettings;
   vault: VaultSettings;
+  onboarding: OnboardingSettings;
+}
+
+/**
+ * Onboarding state — what the user has already been through.
+ *
+ * SSOT for the first-run gate. This used to be a `localStorage` key
+ * (`lattice:first-run-skipped`), which put state the startup path acts on
+ * outside the repository. Matches Rust `OnboardingSettingsDto`.
+ */
+export interface OnboardingSettings {
+  firstRunDismissed: boolean;  // Matches Rust first_run_dismissed with camelCase
 }
 
 /**

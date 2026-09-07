@@ -1,4 +1,4 @@
-import { BookOpen, Database, Globe, Sparkles, Wrench } from 'lucide-react';
+import { BookOpen, Database, Globe, Telescope, Wrench } from 'lucide-react';
 
 import type { CustomToolSettings, ToolPreferences } from '../../types';
 
@@ -49,7 +49,7 @@ export function ComposerControls({
     <div className="space-y-4 text-sm">
       {/* Turn mode segmented control */}
       <section>
-        <p className="mb-2 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+        <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
           Turn mode
         </p>
         <div
@@ -85,14 +85,14 @@ export function ComposerControls({
 
       {/* Tools checklist */}
       <section>
-        <p className="mb-2 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+        <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
           Tools
         </p>
         <div className="space-y-0.5">
           <ToolRow
             icon={Database}
-            label="Knowledge base"
-            description="Search indexed documents"
+            label="Your documents"
+            description="Search your library"
             checked={toolPreferences.knowledgeBase}
             onToggle={onToggleKnowledgeBase}
           />
@@ -111,7 +111,7 @@ export function ComposerControls({
             onToggle={onToggleWikiTools}
           />
           <ToolRow
-            icon={Sparkles}
+            icon={Telescope}
             label="Deep research"
             description="Multi-step research across sources. Slower."
             checked={deepResearchEnabled}
@@ -159,7 +159,7 @@ function ToolRow({ icon: Icon, label, description, checked, onToggle }: ToolRowP
       onClick={onToggle}
       className="flex w-full items-start gap-2.5 rounded-sm px-2 py-1.5 text-left transition-colors duration-fast hover:bg-surface"
     >
-      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-default">
+      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border-default">
         {checked && (
           <span className="h-2 w-2 rounded-sm bg-[hsl(var(--accent))]" aria-hidden="true" />
         )}

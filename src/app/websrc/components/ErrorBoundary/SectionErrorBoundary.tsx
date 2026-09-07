@@ -89,7 +89,7 @@ export function SearchSectionErrorBoundary({ children }: { children: React.React
 
 export function FilesSectionErrorBoundary({ children }: { children: React.ReactNode }) {
   return (
-    <SectionErrorBoundary sectionName="File Browser">
+    <SectionErrorBoundary sectionName="Library">
       {children}
     </SectionErrorBoundary>
   );
@@ -113,7 +113,7 @@ export function SettingsSectionErrorBoundary({ children }: { children: React.Rea
 
 export function DailySectionErrorBoundary({ children }: { children: React.ReactNode }) {
   return (
-    <SectionErrorBoundary sectionName="Journals">
+    <SectionErrorBoundary sectionName="Journal">
       {children}
     </SectionErrorBoundary>
   );

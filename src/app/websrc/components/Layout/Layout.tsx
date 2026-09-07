@@ -1,240 +1,157 @@
-import { useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react';
 
-import { AnimatePresence } from 'framer-motion'
-import { Home, Search, FolderOpen, PlusCircle, MessageCircle, NotebookPen, Settings, Menu, X, Bookmark } from 'lucide-react'
-import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { AnimatePresence } from 'framer-motion';
+import {
+  Bookmark,
+  FolderOpen,
+  Home,
+  MessageCircle,
+  NotebookPen,
+  Plus,
+  Search,
+  Settings,
+} from 'lucide-react';
+import { Outlet, useLocation, useNavigate } from 'react-router';
 
-import { DownloadsDrawer } from '../Downloads/DownloadsDrawer'
-import { DrawerTrigger } from '../Downloads/DrawerTrigger'
-import { HeaderDownloadsIndicator } from '../Downloads/HeaderDownloadsIndicator'
+import { cn } from '@/lib/utils';
 
-interface NavButtonProps {
-  view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'journals' | 'references'
-  activeView: string
-  onClick: () => void
-  icon: ReactNode
-  label: string
-  shortcut: string
-  isMobile?: boolean
+import { DownloadsDrawer } from '../Downloads/DownloadsDrawer';
+import { DrawerTrigger } from '../Downloads/DrawerTrigger';
+import { HeaderDownloadsIndicator } from '../Downloads/HeaderDownloadsIndicator';
+import { IndexingStatusRail } from '../IndexingStatus/IndexingStatusRail';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+
+/**
+ * Layout — the persistent left rail plus the routed content area.
+ *
+ * The rail lists the app's surfaces in the same order as their ⌘-number
+ * shortcuts so the two never disagree. Desktop only: the Tauri window has an
+ * 800px minimum width, so there is no mobile breakpoint to serve.
+ */
+
+type View = 'home' | 'search' | 'files' | 'journals' | 'chat' | 'references' | 'ingest' | 'settings';
+
+interface NavItem {
+  view: View;
+  label: string;
+  shortcut: string;
+  icon: ReactNode;
 }
 
-function NavButton({ view, activeView, onClick, icon, label, shortcut, isMobile = false }: NavButtonProps) {
-  const isActive = activeView === view
+const ICON_CLASS = 'h-[18px] w-[18px]';
 
+const PRIMARY_NAV: NavItem[] = [
+  { view: 'home', label: 'Home', shortcut: '⌘0', icon: <Home className={ICON_CLASS} strokeWidth={1.75} /> },
+  { view: 'search', label: 'Search', shortcut: '⌘1', icon: <Search className={ICON_CLASS} strokeWidth={1.75} /> },
+  { view: 'files', label: 'Library', shortcut: '⌘2', icon: <FolderOpen className={ICON_CLASS} strokeWidth={1.75} /> },
+  { view: 'journals', label: 'Journal', shortcut: '⌘3', icon: <NotebookPen className={ICON_CLASS} strokeWidth={1.75} /> },
+  { view: 'chat', label: 'Chat', shortcut: '⌘4', icon: <MessageCircle className={ICON_CLASS} strokeWidth={1.75} /> },
+  { view: 'references', label: 'References', shortcut: '⌘5', icon: <Bookmark className={ICON_CLASS} strokeWidth={1.75} /> },
+];
+
+const IMPORT_NAV: NavItem = {
+  view: 'ingest',
+  label: 'Import',
+  shortcut: '⌘I',
+  icon: <Plus className={ICON_CLASS} strokeWidth={1.75} />,
+};
+
+const SETTINGS_NAV: NavItem = {
+  view: 'settings',
+  label: 'Settings',
+  shortcut: '⌘,',
+  icon: <Settings className={ICON_CLASS} strokeWidth={1.75} />,
+};
+
+function resolveActiveView(pathname: string): View {
+  const first = pathname.split('/').filter(Boolean)[0] ?? 'home';
+  if (first === 'daily') return 'journals';
+  return (first as View) || 'home';
+}
+
+interface NavButtonProps {
+  item: NavItem;
+  isActive: boolean;
+  onClick: () => void;
+}
+
+function NavButton({ item, isActive, onClick }: NavButtonProps) {
   return (
-    <div className="relative group">
-      <button
-        onClick={onClick}
-        className={`relative min-w-[44px] min-h-[44px] p-3 rounded-md transition-colors duration-fast flex items-center justify-center ${
-          isActive
-            ? 'bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))]'
-            : 'text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--surface-raised))]'
-        } ${isMobile ? 'w-full justify-start gap-3' : ''}`}
-        title={`${label} (${shortcut})`}
-        aria-label={label}
-        aria-current={isActive ? 'page' : undefined}
-      >
-        {isActive && !isMobile && (
-          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[hsl(var(--accent))] rounded-r-full" />
-        )}
-        {icon}
-        {isMobile && <span className="font-medium">{label}</span>}
-      </button>
-
-      {!isMobile && (
-        <div className="hidden md:block absolute left-full ml-4 px-2.5 py-1.5 bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-primary))] text-xs rounded-md shadow-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-fast whitespace-nowrap z-50 pointer-events-none border border-[hsl(var(--border-subtle))]">
-          <div className="font-medium">{label}</div>
-          <div className="text-[10px] text-[hsl(var(--text-muted))] mt-0.5">{shortcut}</div>
-        </div>
-      )}
-    </div>
-  )
+    <Tooltip delayDuration={400}>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={item.label}
+          aria-current={isActive ? 'page' : undefined}
+          className={cn(
+            'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors duration-fast',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+            isActive
+              ? 'bg-accent-muted text-accent'
+              : 'text-text-muted hover:bg-surface-raised hover:text-text-primary',
+          )}
+        >
+          {isActive ? (
+            <span
+              aria-hidden="true"
+              className="absolute -left-[14px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-accent"
+            />
+          ) : null}
+          {item.icon}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={10}>
+        <span className="flex items-center gap-2">
+          <span>{item.label}</span>
+          <kbd className="font-mono text-xxs text-text-muted">{item.shortcut}</kbd>
+        </span>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 export function Layout() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const navigate = useNavigate()
-  const location = useLocation()
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activeView = resolveActiveView(location.pathname);
 
-  const pathView = location.pathname.slice(1) || 'home'
-  const activeView = pathView === 'daily' ? 'journals' : pathView
-
-  const handleNavClick = (view: 'home' | 'search' | 'files' | 'ingest' | 'chat' | 'settings' | 'journals' | 'references') => {
-    navigate(`/${view}`)
-    setMobileMenuOpen(false)
-  }
-
-  const navItems = [
-    {
-      view: 'home' as const,
-      label: 'Home',
-      shortcut: '⌘0',
-      icon: <Home className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-    {
-      view: 'search' as const,
-      label: 'Search',
-      shortcut: '⌘1',
-      icon: <Search className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-    {
-      view: 'files' as const,
-      label: 'Files',
-      shortcut: '⌘2',
-      icon: <FolderOpen className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-    {
-      view: 'ingest' as const,
-      label: 'Add content',
-      shortcut: '⌘I',
-      icon: <PlusCircle className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-    {
-      view: 'chat' as const,
-      label: 'Chat',
-      shortcut: '⌘4',
-      icon: <MessageCircle className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-    {
-      view: 'journals' as const,
-      label: 'Journals',
-      shortcut: '⌘3',
-      icon: <NotebookPen className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-    {
-      view: 'references' as const,
-      label: 'References',
-      shortcut: '⌘5',
-      icon: <Bookmark className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-    },
-  ]
-
-  const settingsItem = {
-    view: 'settings' as const,
-    label: 'Settings',
-    shortcut: '⌘,',
-    icon: <Settings className="w-[18px] h-[18px]" strokeWidth={1.75} />,
-  }
+  const go = (view: View) => navigate(`/${view}`);
 
   return (
-    <div className="flex h-screen bg-[hsl(var(--bg))]">
-      {/* Mobile Header with Hamburger */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[hsl(var(--surface))] border-b border-[hsl(var(--border-subtle))] flex items-center px-4 z-40">
-        <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="min-w-[44px] min-h-[44px] p-2 text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--surface-raised))] rounded-md transition-colors duration-fast"
-          aria-label="Toggle menu"
-          aria-expanded={mobileMenuOpen}
-        >
-          {mobileMenuOpen ? (
-            <X className="w-5 h-5" strokeWidth={1.75} />
-          ) : (
-            <Menu className="w-5 h-5" strokeWidth={1.75} />
-          )}
-        </button>
-        <span className="ml-3 text-[hsl(var(--text-primary))] font-serif font-semibold">Lattice</span>
-      </div>
-
-      {/* Mobile Menu Backdrop */}
-      {mobileMenuOpen && (
-        <div
-          className="md:hidden fixed inset-0 bg-[hsl(var(--overlay))] z-40 mt-14"
-          onClick={() => setMobileMenuOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Mobile Sidebar */}
+    <div className="flex h-screen bg-bg">
       <nav
-        className={`
-          md:hidden
-          fixed
-          top-14
-          left-0
-          h-[calc(100vh-3.5rem)]
-          w-64
-          bg-[hsl(var(--surface))]
-          flex flex-col
-          py-4
-          space-y-2
-          px-4
-          transform transition-transform duration-base ease-out
-          z-50
-          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}
         aria-label="Main navigation"
+        className="flex w-[60px] shrink-0 flex-col items-center border-r border-border-subtle bg-surface pb-3 pt-4"
       >
-        {navItems.map((item) => (
-          <NavButton
-            key={item.view}
-            view={item.view}
-            activeView={activeView}
-            onClick={() => handleNavClick(item.view)}
-            label={item.label}
-            shortcut={item.shortcut}
-            icon={item.icon}
-            isMobile
-          />
-        ))}
+        <div className="flex flex-col items-center gap-1">
+          {PRIMARY_NAV.map((item) => (
+            <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={() => go(item.view)} />
+          ))}
+        </div>
+
+        <div className="my-3 h-px w-6 bg-border-subtle" aria-hidden="true" />
+
+        <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={() => go(IMPORT_NAV.view)} />
 
         <div className="flex-1" />
 
-        <NavButton
-          view={settingsItem.view}
-          activeView={activeView}
-          onClick={() => handleNavClick(settingsItem.view)}
-          label={settingsItem.label}
-          shortcut={settingsItem.shortcut}
-          icon={settingsItem.icon}
-          isMobile
-        />
+        <div className="flex flex-col items-center gap-1">
+          <IndexingStatusRail />
+          <HeaderDownloadsIndicator />
+          <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={() => go(SETTINGS_NAV.view)} />
+        </div>
       </nav>
 
-      {/* Desktop Sidebar */}
-      <nav
-        className="hidden md:flex w-[68px] bg-[hsl(var(--surface))] flex-col items-center py-5 space-y-1.5"
-        aria-label="Main navigation"
-      >
-        {navItems.map((item) => (
-          <NavButton
-            key={item.view}
-            view={item.view}
-            activeView={activeView}
-            onClick={() => handleNavClick(item.view)}
-            label={item.label}
-            shortcut={item.shortcut}
-            icon={item.icon}
-            isMobile={false}
-          />
-        ))}
-
-        <div className="flex-1" />
-
-        <HeaderDownloadsIndicator />
-
-        <NavButton
-          view={settingsItem.view}
-          activeView={activeView}
-          onClick={() => handleNavClick(settingsItem.view)}
-          label={settingsItem.label}
-          shortcut={settingsItem.shortcut}
-          icon={settingsItem.icon}
-          isMobile={false}
-        />
-      </nav>
-
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden mt-14 md:mt-0">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <AnimatePresence mode="wait">
           <Outlet key={location.pathname} />
         </AnimatePresence>
       </div>
 
-      {/* Global Downloads UI — the single IPC listener for download events
-          is mounted at the App level (see App.tsx). These components only
-          read from useDownloadStore. */}
+      {/* Downloads UI. The single IPC listener lives in App.tsx; these only read the store. */}
       <DrawerTrigger />
       <DownloadsDrawer />
     </div>
-  )
+  );
 }

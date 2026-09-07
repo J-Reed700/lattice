@@ -13,5 +13,5 @@ export interface SearchResult {
   bm25Score: number | null | undefined;
   vectorRank: number | null | undefined;
   bm25Rank: number | null | undefined;
-  metadata: SearchResultMetadata | any;
+  metadata: Partial<SearchResultMetadata> & Record<string, unknown>;
 }

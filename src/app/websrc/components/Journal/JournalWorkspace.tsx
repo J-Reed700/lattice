@@ -1,15 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { NotebookPen, PanelLeft, Plus } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Combine, FilePlus2, NotebookPen, PanelLeft, Plus } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
 
+import { NEW_ITEM_EVENT } from '@/components/RootLayout';
+import { useWeeklySynthesisCandidatesQuery } from '@/hooks/queries/useWeeklySynthesisCandidatesQuery';
+import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
+import type { PaletteCommand } from '@/stores/paletteCommandsStore';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
 import { EntryEditor } from './EntryEditor';
 import { EntryList } from './EntryList';
+import {
+  appendToNote,
+  buildSynthesisBlock,
+  resolveWeekPage,
+  weekPageTitle,
+} from './synthesisTargets';
 import { useJournalEntries } from './useJournalEntries';
 import { useJournalNote } from './useJournalNote';
 import { useJournalSources } from './useJournalSources';
@@ -19,10 +29,17 @@ import type { SynthesisScope } from './SynthesizePopover';
 const LAST_JOURNAL_SPACE_KEY = 'journal.lastSpaceId';
 const SIDEBAR_COLLAPSED_KEY = 'journal.sidebar.collapsed';
 const DEFAULT_JOURNAL_ICON = '📓';
-const DEFAULT_JOURNAL_ACCENT = '#14b8a6';
+const DEFAULT_JOURNAL_ACCENT = '#8b72ff'; // matches --accent (dark)
 const SYNTHESIS_ENTRY_LIMIT = 12;
 
 type ActionTone = 'info' | 'success' | 'error';
+
+interface Notice {
+  tone: ActionTone;
+  message: string;
+  /** One verb, when the message names somewhere the user may want to go. */
+  action?: { label: string; run: () => void };
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -63,26 +80,13 @@ function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
-function createSynthesisBlock(
-  scope: SynthesisScope,
-  entryCount: number,
-  synthesis: string,
-): string {
-  const scopeLabel =
-    scope === 'current'
-      ? 'Current Entry'
-      : scope === 'pinned'
-        ? 'Pinned Entries'
-        : 'Entry Deck';
-  const generatedAt = new Date().toLocaleString();
-  return [
-    `## Journal Synthesis · ${scopeLabel}`,
-    `_Generated ${generatedAt} from ${entryCount} entr${entryCount === 1 ? 'y' : 'ies'}._`,
-    '',
-    synthesis.trim(),
-    '',
-  ].join('\n');
-}
+const SYNTHESIS_HEADINGS: Record<SynthesisScope, string> = {
+  current: 'Current Entry',
+  pinned: 'Pinned Entries',
+  deck: 'Recent Entries',
+  week: 'Past Week',
+  conversation: 'This Conversation',
+};
 
 function readPinnedNoteHighlights(spaceId: string | null): Set<string> {
   if (!spaceId) return new Set();
@@ -119,15 +123,23 @@ function makeId(prefix: string): string {
  */
 export function JournalWorkspace() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedJournalSpaceId = searchParams.get('journalSpaceId');
   const requestedEntryId = searchParams.get('entryId');
+  const requestedNoteIdParam = searchParams.get('noteId');
+  // `?noteId=` is a one-shot instruction ("open the page that was just
+  // written"), not a mirror of the selection: it is consumed on arrival so a
+  // later journal switch does not drag the user back to the same page.
+  const [requestedNoteId, setRequestedNoteId] = useState<string | null>(requestedNoteIdParam);
+
+  const { data: weekCandidates, refetch: refetchWeekCandidates } =
+    useWeeklySynthesisCandidatesQuery();
 
   const [allJournals, setAllJournals] = useState<ConversationJournalDto[]>([]);
   const [journalSpace, setJournalSpace] = useState<ConversationJournalDto | null>(null);
   const [topLevelError, setTopLevelError] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
-  const [notice, setNotice] = useState<{ tone: ActionTone; message: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(
     new Set(),
   );
@@ -152,9 +164,11 @@ export function JournalWorkspace() {
   const noteState = useJournalNote({
     journalSpaceId: requestedJournalSpaceId,
     journalName: journalSpace?.name ?? null,
+    requestedNoteId,
   });
   const {
     activeNote,
+    pages,
     isLoadingNote,
     loadError: noteLoadError,
     saveError,
@@ -162,6 +176,9 @@ export function JournalWorkspace() {
     isSavingNow,
     updateNote,
     saveNow,
+    selectPage,
+    createPage,
+    refreshPages,
   } = noteState;
 
   const sourcesState = useJournalSources({
@@ -177,6 +194,15 @@ export function JournalWorkspace() {
   useEffect(() => {
     writeSidebarCollapsed(sidebarCollapsed);
   }, [sidebarCollapsed]);
+
+  // Take `?noteId=` off the URL once it has been handed to the note hook.
+  useEffect(() => {
+    if (!requestedNoteIdParam) return;
+    setRequestedNoteId(requestedNoteIdParam);
+    const next = new URLSearchParams(searchParams);
+    next.delete('noteId');
+    setSearchParams(next, { replace: true });
+  }, [requestedNoteIdParam, searchParams, setSearchParams]);
 
   // Sync pinned note-highlight ids (per journal) from localStorage
   useEffect(() => {
@@ -290,9 +316,12 @@ export function JournalWorkspace() {
   }, [requestedJournalSpaceId, navigate, searchParams]);
 
   // Action handlers
-  const notify = useCallback((tone: ActionTone, message: string) => {
-    setNotice({ tone, message });
-  }, []);
+  const notify = useCallback(
+    (tone: ActionTone, message: string, action?: Notice['action']) => {
+      setNotice({ tone, message, action });
+    },
+    [],
+  );
 
   const handleSwitchJournal = useCallback(
     (journalId: string) => {
@@ -420,6 +449,41 @@ export function JournalWorkspace() {
     }
   }, [createConversationViaStore, notify, reloadEntries, requestedJournalSpaceId, setSelectedId]);
 
+  // ⌘N from anywhere in the app (RootLayout) and `?new=1` deep links both
+  // create an entry in the current journal.
+  useEffect(() => {
+    const onNew = () => {
+      void handleNewEntry();
+    };
+    window.addEventListener(NEW_ITEM_EVENT, onNew);
+    return () => window.removeEventListener(NEW_ITEM_EVENT, onNew);
+  }, [handleNewEntry]);
+
+  useEffect(() => {
+    if (searchParams.get('new') !== '1' || !requestedJournalSpaceId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    setSearchParams(next, { replace: true });
+    void handleNewEntry();
+  }, [handleNewEntry, requestedJournalSpaceId, searchParams, setSearchParams]);
+
+  const handleSelectPage = useCallback(
+    (noteId: string) => {
+      void selectPage(noteId);
+    },
+    [selectPage],
+  );
+
+  const handleNewPage = useCallback(async () => {
+    const title = `Page · ${new Date().toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    })}`;
+    const created = await createPage(title);
+    if (created) notify('success', `Created "${created.title}".`);
+  }, [createPage, notify]);
+
   const handleRenameEntry = useCallback(
     async (entryId: string, title: string) => {
       const result = await VaultAPI.renameConversation(entryId, title);
@@ -500,6 +564,9 @@ export function JournalWorkspace() {
 
   const selectSynthesisTargets = useCallback(
     (scope: SynthesisScope) => {
+      // The week scope selects server-side; "this conversation" is not reachable
+      // from the Journal surface.
+      if (scope === 'week' || scope === 'conversation') return [];
       if (scope === 'current') {
         const currentId = selectedId ?? entries[0]?.id ?? null;
         if (!currentId) return [];
@@ -522,7 +589,7 @@ export function JournalWorkspace() {
         return false;
       }
       const targets = selectSynthesisTargets(scope);
-      if (targets.length === 0) {
+      if (scope !== 'week' && targets.length === 0) {
         notify('error', 'No journal entries available for synthesis.');
         return false;
       }
@@ -536,7 +603,33 @@ export function JournalWorkspace() {
           notify('error', result.error);
           return false;
         }
-        const block = createSynthesisBlock(scope, result.data.entryCount, result.data.synthesis);
+        const block = buildSynthesisBlock({
+          heading: SYNTHESIS_HEADINGS[scope],
+          entryCount: result.data.entryCount,
+          synthesis: result.data.synthesis,
+          citations: result.data.citations,
+        });
+
+        // The week synthesis belongs on the week's own page, not on whatever
+        // page happens to be open.
+        if (scope === 'week') {
+          const page = await resolveWeekPage(weekPageTitle());
+          const saved = await appendToNote(page, block);
+          if (saved.id === activeNote.id) {
+            updateNote((note: WorkspaceNote) => ({ ...note, content: saved.content }));
+          }
+          void refetchWeekCandidates();
+          void refreshPages();
+          notify(
+            'success',
+            `Written to "${saved.title}".`,
+            saved.id === activeNote.id
+              ? undefined
+              : { label: 'Open', run: () => void selectPage(saved.id) },
+          );
+          return true;
+        }
+
         updateNote((note: WorkspaceNote) => ({
           ...note,
           content: note.content.trim() ? `${note.content.trim()}\n\n${block}` : block,
@@ -560,8 +653,83 @@ export function JournalWorkspace() {
         return false;
       }
     },
-    [activeNote, notify, selectSynthesisTargets, updateNote],
+    [
+      activeNote,
+      notify,
+      refetchWeekCandidates,
+      refreshPages,
+      selectPage,
+      selectSynthesisTargets,
+      updateNote,
+    ],
   );
+
+  // Home's "Synthesize last week" row lands here with ?synthesize=week.
+  const weekSynthesisRequested = searchParams.get('synthesize') === 'week';
+  useEffect(() => {
+    if (!weekSynthesisRequested || !activeNote) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('synthesize');
+    setSearchParams(next, { replace: true });
+    void handleSynthesize('week');
+    // handleSynthesize is intentionally excluded: this must fire once per
+    // arrival, not on every re-derivation of the callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekSynthesisRequested, activeNote?.id]);
+
+  const journalPaletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      {
+        id: 'journal.synthesize.week',
+        label: 'Synthesize the past week',
+        group: 'Journal',
+        icon: Combine,
+        enabled: (weekCandidates?.total ?? 0) > 0,
+        run: () => {
+          void handleSynthesize('week');
+        },
+      },
+      {
+        id: 'journal.synthesize.pinned',
+        label: 'Synthesize pinned entries',
+        group: 'Journal',
+        icon: Combine,
+        enabled: pinnedIds.size > 0,
+        run: () => {
+          void handleSynthesize('pinned');
+        },
+      },
+      {
+        id: 'journal.newEntry',
+        label: 'New journal entry',
+        group: 'Journal',
+        icon: Plus,
+        enabled: Boolean(journalSpace),
+        run: () => {
+          void handleNewEntry();
+        },
+      },
+      {
+        id: 'journal.newPage',
+        label: 'New journal page',
+        group: 'Journal',
+        icon: FilePlus2,
+        enabled: Boolean(journalSpace),
+        run: () => {
+          void handleNewPage();
+        },
+      },
+    ],
+    [
+      handleNewEntry,
+      handleNewPage,
+      handleSynthesize,
+      journalSpace,
+      pinnedIds,
+      weekCandidates?.total,
+    ],
+  );
+  useRegisterPaletteCommands(journalPaletteCommands);
 
   // Keyboard shortcuts: J/K navigate, T today, ⌘N new entry, ⌘S save now,
   // ⌘⇧H highlight selection (delegates to highlights strip via selection),
@@ -714,6 +882,10 @@ export function JournalWorkspace() {
           onRenameEntry={handleRenameEntry}
           onDeleteEntry={handleDeleteEntry}
           onToggleCollapse={() => setSidebarCollapsed(true)}
+          pages={pages}
+          activePageId={activeNote?.id ?? null}
+          onSelectPage={handleSelectPage}
+          onNewPage={() => void handleNewPage()}
         />
       )}
 
@@ -731,6 +903,10 @@ export function JournalWorkspace() {
         pinnedHighlightIds={pinnedNoteHighlightIds}
         onTogglePinnedHighlight={handleTogglePinnedHighlight}
         journalName={journalName}
+        pageTitle={activeNote?.title ?? null}
+        isDefaultPage={
+          (activeNote?.title.trim() ?? '') === defaultJournalTitle(journalName)
+        }
         selectedEntry={selectedEntry}
         selectedEntryMessages={selectedEntryMessages}
         selectedEntryLoading={selectedEntryLoading}
@@ -741,13 +917,16 @@ export function JournalWorkspace() {
         scannedConversationCount={sourcesState.scannedConversationCount}
         onJumpToEntry={(id) => setSelectedId(id)}
         onSynthesize={handleSynthesize}
+        weekCandidates={weekCandidates}
         onNotify={notify}
       />
 
       {notice && (
         <div
           role="status"
-          className={`pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs shadow-md ${
+          className={`absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-1.5 text-xs shadow-md ${
+            notice.action ? '' : 'pointer-events-none '
+          }${
             notice.tone === 'error'
               ? 'border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))]'
               : notice.tone === 'success'
@@ -755,7 +934,19 @@ export function JournalWorkspace() {
                 : 'border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface-raised))] text-[hsl(var(--text-secondary))]'
           }`}
         >
-          {notice.message}
+          <span>{notice.message}</span>
+          {notice.action && (
+            <button
+              type="button"
+              onClick={() => {
+                notice.action?.run();
+                setNotice(null);
+              }}
+              className="shrink-0 font-medium underline-offset-2 hover:underline"
+            >
+              {notice.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>

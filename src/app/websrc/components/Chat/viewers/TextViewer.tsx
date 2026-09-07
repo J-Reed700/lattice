@@ -34,12 +34,15 @@ export const TextViewer: FC<TextViewerProps> = ({ content, language = 'text' }) 
   const style = theme === 'dark' ? atomOneDark : atomOneLight;
 
   return (
-    <div className="rounded-lg overflow-hidden border border-[hsl(var(--border-subtle))] dark:border-[hsl(var(--border-default))]">
+    <div className="rounded-lg overflow-hidden border border-[hsl(var(--border-subtle))]">
       <SyntaxHighlighter
         language={language}
         style={style}
         showLineNumbers
         wrapLines
+        // Gives PassageHighlighter a block to attach to: without a stable class
+        // a highlighted code passage would have nothing to mark.
+        lineProps={{ className: 'lattice-line' }}
         customStyle={{
           margin: 0,
           borderRadius: 0,

@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 import path from 'path';
 
-const TAURI_DEV_PORT = 1420;
+const WEB_DEV_PORT = 5173;
 
 export default defineConfig({
   testDir: './e2e',
@@ -16,7 +16,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: `http://localhost:${TAURI_DEV_PORT}`,
+    baseURL: `http://127.0.0.1:${WEB_DEV_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -28,7 +28,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'tauri-e2e',
+      name: 'web-smoke',
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1280, height: 720 },
@@ -37,8 +37,11 @@ export default defineConfig({
   ],
   outputDir: 'e2e-results/artifacts',
   webServer: {
-    command: 'npm run tauri:dev',
-    url: `http://localhost:${TAURI_DEV_PORT}`,
+    // Browser smoke tests exercise the renderer. Full Tauri IPC integration
+    // remains covered by Rust command/integration tests; tauri-driver is not
+    // available on macOS.
+    command: 'npx vite --host 127.0.0.1',
+    url: `http://127.0.0.1:${WEB_DEV_PORT}`,
     timeout: 120000,
     reuseExistingServer: !process.env.CI,
   },

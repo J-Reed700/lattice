@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Bookmark, PanelLeft } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowUpRight, Bookmark, Copy, PanelLeft, Trash2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
 
+import { FilePreviewModal } from '@/components/Chat/FilePreviewModal';
+import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/stores/paletteCommandsStore';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
-import type { SourceWithMetadata } from '@/types/conversation';
+import type { PassageReferenceDto } from '@/types/api/references';
+import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 import type { CapturedChatReference } from '@/utils/chatReferenceIndex';
+import { mimeTypeForPath } from '@/utils/mimeTypes';
 
+import { PassageReader } from './PassageReader';
 import { ReferenceList } from './ReferenceList';
 import { ReferenceReader } from './ReferenceReader';
 import { useReferenceInbox } from './useReferenceInbox';
@@ -49,7 +55,11 @@ export function ReferenceInbox() {
 
   const state = useReferenceInbox({ requestedReferenceId });
 
+  const [previewSource, setPreviewSource] = useState<SourceWithMetadata | null>(null);
+  const [previewLocator, setPreviewLocator] = useState<PassageLocator | null>(null);
+
   const {
+    selectedItem,
     selectedBookmark,
     selectedCapture,
     selectedSpace,
@@ -62,14 +72,23 @@ export function ReferenceInbox() {
     captureReference,
     removeReference,
     saveAnnotations,
+    savePassageAnnotations,
+    removePassage,
     getPayload,
   } = state;
+
+  const selectedPassage: PassageReferenceDto | null =
+    selectedItem?.kind === 'passage' ? selectedItem.passage : null;
 
   // Sync selectedId back into URL (?referenceId=) without polluting history.
   useEffect(() => {
     const current = searchParams.get('referenceId');
     if (!selectedId) {
-      if (current) {
+      // A deep link arrives before the list does. Stripping it on that first
+      // render — when nothing is selected yet because nothing is loaded yet —
+      // threw away the id the inbox was about to open. Only an inbox that has
+      // finished loading with nothing in it clears the parameter.
+      if (current && !state.isLoading && state.filteredItems.length === 0) {
         const next = new URLSearchParams(searchParams);
         next.delete('referenceId');
         setSearchParams(next, { replace: true });
@@ -81,7 +100,7 @@ export function ReferenceInbox() {
       next.set('referenceId', selectedId);
       setSearchParams(next, { replace: true });
     }
-  }, [searchParams, selectedId, setSearchParams]);
+  }, [searchParams, selectedId, setSearchParams, state.filteredItems.length, state.isLoading]);
 
   // Toggle sidebar via ⌘\
   useEffect(() => {
@@ -171,18 +190,126 @@ export function ReferenceInbox() {
     [removeReference],
   );
 
+  const openPassageSource = useCallback((passage: PassageReferenceDto) => {
+    // `section` is the label the reader shows; `initialLocator` is what makes
+    // it land on the saved passage rather than the top of the file.
+    setPreviewLocator({
+      text: passage.text,
+      chunkId: passage.chunkId ?? undefined,
+      label: passage.locator ?? undefined,
+    });
+    setPreviewSource({
+      documentId: passage.documentId,
+      chunkId: passage.chunkId ?? '',
+      fileName: passage.fileName,
+      filePath: passage.filePath,
+      mimeType: mimeTypeForPath(passage.filePath),
+      category: '',
+      content: passage.text,
+      excerpt: passage.text,
+      highlights: [],
+      section: passage.locator ?? undefined,
+      score: 1,
+      fileSizeBytes: 0,
+      modifiedAt: passage.createdAt,
+    });
+  }, []);
+
+  const handleCopyPassage = useCallback(
+    async (passage: PassageReferenceDto): Promise<boolean> => {
+      try {
+        await navigator.clipboard.writeText(passage.text);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        toast.error('Failed to copy reference', { message });
+        return false;
+      }
+    },
+    [],
+  );
+
+  const handleDeletePassage = useCallback(
+    async (passage: PassageReferenceDto): Promise<void> => {
+      const ok = await removePassage(passage);
+      if (ok) {
+        toast.success('Reference removed');
+      }
+    },
+    [removePassage],
+  );
+
   const handleViewSource = useCallback(
     (source: SourceWithMetadata) => {
       if (source.filePath.startsWith('http://') || source.filePath.startsWith('https://')) {
         window.open(source.filePath, '_blank', 'noopener,noreferrer');
         return;
       }
-      toast.info('Source reference', {
-        message: source.fileName,
-      });
+      // The preview modal is already mounted on this surface: open the file
+      // rather than naming it. A control that only announces itself is a lie.
+      setPreviewLocator(
+        source.content
+          ? { text: source.content, chunkId: source.chunkId || undefined }
+          : null,
+      );
+      setPreviewSource(source);
     },
     [],
   );
+
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      {
+        id: 'references.openSource',
+        label: 'Open the source document',
+        group: 'References',
+        icon: ArrowUpRight,
+        enabled: selectedPassage !== null,
+        run: () => {
+          if (selectedPassage) openPassageSource(selectedPassage);
+        },
+      },
+      {
+        id: 'references.copy',
+        label: 'Copy reference',
+        group: 'References',
+        icon: Copy,
+        enabled: selectedItem !== null,
+        run: async () => {
+          if (selectedPassage) {
+            await handleCopyPassage(selectedPassage);
+            return;
+          }
+          if (selectedBookmark) await handleCopy(selectedBookmark);
+        },
+      },
+      {
+        id: 'references.delete',
+        label: 'Delete reference',
+        group: 'References',
+        icon: Trash2,
+        enabled: selectedItem !== null,
+        run: async () => {
+          if (selectedPassage) {
+            await handleDeletePassage(selectedPassage);
+            return;
+          }
+          if (selectedBookmark) await handleDelete(selectedBookmark);
+        },
+      },
+    ],
+    [
+      handleCopy,
+      handleCopyPassage,
+      handleDelete,
+      handleDeletePassage,
+      openPassageSource,
+      selectedBookmark,
+      selectedItem,
+      selectedPassage,
+    ],
+  );
+  useRegisterPaletteCommands(paletteCommands);
 
   const selectedDestination = selectedBookmark
     ? resolveCaptureDestination(selectedBookmark)
@@ -218,9 +345,21 @@ export function ReferenceInbox() {
           onOpenInOrigin={openBookmarkInChat}
           onCopy={(b) => void handleCopy(b)}
           onDelete={(b) => void handleDelete(b)}
+          onOpenPassageSource={openPassageSource}
+          onCopyPassage={(p) => void handleCopyPassage(p)}
+          onDeletePassage={(p) => void handleDeletePassage(p)}
         />
       )}
 
+      {selectedPassage ? (
+        <PassageReader
+          passage={selectedPassage}
+          onSaveAnnotations={async (next) => savePassageAnnotations(selectedPassage, next)}
+          onOpenSource={() => openPassageSource(selectedPassage)}
+          onCopy={async () => handleCopyPassage(selectedPassage)}
+          onDelete={() => void handleDeletePassage(selectedPassage)}
+        />
+      ) : (
       <ReferenceReader
         bookmark={selectedBookmark}
         space={selectedSpace}
@@ -250,6 +389,17 @@ export function ReferenceInbox() {
           if (selectedBookmark) void handleDelete(selectedBookmark);
         }}
         onViewSource={handleViewSource}
+      />
+      )}
+
+      <FilePreviewModal
+        isOpen={previewSource !== null}
+        onClose={() => {
+          setPreviewSource(null);
+          setPreviewLocator(null);
+        }}
+        source={previewSource}
+        initialLocator={previewLocator}
       />
     </div>
   );

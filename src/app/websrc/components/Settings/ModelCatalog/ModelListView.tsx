@@ -1,84 +1,148 @@
 /**
  * ModelListView
  *
- * Grid display of model cards with loading states
+ * The catalog results: hairline rows, one line of muted text for empty,
+ * loading, and error. Owns the download state for the rows so the list
+ * subscribes once rather than once per row.
  */
 
-import { AlertCircle, Inbox } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 
-import { ModelCard } from './ModelCard';
-import { SkeletonCard } from '../../ui/Skeleton/Skeleton';
+import { useQueryClient } from '@tanstack/react-query';
+
+import { CATALOG_TEXT_BUTTON_CLASS } from './catalogUtils';
+import { ModelRow } from './ModelRow';
+import { startModelDownload } from './startModelDownload';
+import { useHuggingFaceTokenStatusQuery } from '../../../hooks/queries/useHuggingFaceTokenQuery';
+import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
+import { useDownloadState } from '../../../hooks/useDownloadState';
+import { useModelCatalog } from '../../../hooks/useModelCatalog';
+import { useToastStore } from '../../../stores/toastStore';
+import { Skeleton } from '../../ui/Skeleton/Skeleton';
 
 import type { ModelRecommendation } from '../../../types/modelCatalog';
-
 
 interface ModelListViewProps {
   models: ModelRecommendation[];
   loading: boolean;
   error?: string | null;
-  selectedModelId?: string | null;
   onModelSelect: (model: ModelRecommendation) => void;
+  /** Shown next to the empty state so a filtered-to-nothing list has a way out. */
+  filtersActive?: boolean;
+  onResetFilters?: () => void;
+  /** Retry the catalog fetch after a failure. */
+  onRetry?: () => void;
+  /** Sends the user to the Hugging Face token field on this page. */
+  onAddToken?: () => void;
 }
 
 export function ModelListView({
   models,
   loading,
   error,
-  selectedModelId,
   onModelSelect,
+  filtersActive = false,
+  onResetFilters,
+  onRetry,
+  onAddToken,
 }: ModelListViewProps) {
-  const gridClassName = 'grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4 md:gap-5';
+  const { downloadedModels } = useDownloadedModels();
+  const { getActiveDownloadForModel } = useDownloadState();
+  // Read the machine once for the whole list rather than once per row.
+  const { systemCapabilities } = useModelCatalog({
+    autoLoadCapabilities: true,
+    autoLoadModels: false,
+  });
+  const { data: tokenStatus } = useHuggingFaceTokenStatusQuery();
+  const addToast = useToastStore((state) => state.addToast);
+  const queryClient = useQueryClient();
+  const [startingIds, setStartingIds] = useState<ReadonlySet<string>>(new Set());
 
-  // Loading state
+  const downloadedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const model of downloadedModels) {
+      ids.add(model.id);
+      if (model.model_id) ids.add(model.model_id);
+    }
+    return ids;
+  }, [downloadedModels]);
+
+  const handleDownload = useCallback(
+    async (model: ModelRecommendation) => {
+      const modelId = model.model.id;
+      if (startingIds.has(modelId)) return;
+      setStartingIds((previous) => new Set(previous).add(modelId));
+      try {
+        await startModelDownload({ metadata: model.model, addToast, queryClient });
+      } finally {
+        setStartingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(modelId);
+          return next;
+        });
+      }
+    },
+    [addToast, queryClient, startingIds],
+  );
+
   if (loading) {
     return (
-      <div className={gridClassName}>
-        {[1, 2, 3, 4, 5, 6].map((i) => (
-          <SkeletonCard key={i} showActions={false} />
+      <div className="border-t border-border-subtle">
+        {[1, 2, 3, 4, 5].map((index) => (
+          <div key={index} className="border-b border-border-subtle py-3">
+            <Skeleton variant="text" width="34%" height="1rem" />
+            <div className="mt-1.5">
+              <Skeleton variant="text" width="22%" height="0.75rem" />
+            </div>
+            <div className="mt-1.5">
+              <Skeleton variant="text" width="46%" height="0.75rem" />
+            </div>
+          </div>
         ))}
       </div>
     );
   }
 
-  // Error state
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <AlertCircle className="w-12 h-12 text-[hsl(var(--danger-fg))] mb-4" />
-        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
-          Failed to Load Models
-        </h3>
-        <p className="text-sm text-[hsl(var(--text-secondary))] max-w-md">
-          {error}
-        </p>
+      <div className="flex items-center gap-2 border-t border-border-subtle py-3">
+        <p className="text-sm text-danger-fg">Couldn&apos;t load the catalog. {error}</p>
+        {onRetry ? (
+          <button type="button" onClick={onRetry} className={CATALOG_TEXT_BUTTON_CLASS}>
+            Retry
+          </button>
+        ) : null}
       </div>
     );
   }
 
-  // Empty state
-  if (!models || models.length === 0) {
+  if (models.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <Inbox className="w-12 h-12 text-[hsl(var(--text-tertiary))] mb-4" />
-        <h3 className="text-lg font-semibold text-[hsl(var(--text-primary))] mb-2">
-          No Models Found
-        </h3>
-        <p className="text-sm text-[hsl(var(--text-secondary))] max-w-md">
-          Try adjusting your filters or search query to find more models.
-        </p>
+      <div className="flex items-center gap-2 border-t border-border-subtle py-3">
+        <p className="text-sm text-text-muted">No models match.</p>
+        {filtersActive && onResetFilters ? (
+          <button type="button" onClick={onResetFilters} className={CATALOG_TEXT_BUTTON_CLASS}>
+            Reset filters
+          </button>
+        ) : null}
       </div>
     );
   }
 
-  // Grid of model cards
   return (
-    <div className={gridClassName}>
+    <div className="border-t border-border-subtle">
       {models.map((model) => (
-        <ModelCard
+        <ModelRow
           key={model.model.id}
           model={model}
-          onClick={() => onModelSelect(model)}
-          isSelected={selectedModelId === model.model.id}
+          onSelect={() => onModelSelect(model)}
+          isDownloaded={downloadedIds.has(model.model.id)}
+          activeDownload={getActiveDownloadForModel(model.model.id)}
+          isStarting={startingIds.has(model.model.id)}
+          onDownload={() => void handleDownload(model)}
+          capabilities={systemCapabilities}
+          hasHfToken={tokenStatus?.isSet ?? false}
+          onAddToken={onAddToken}
         />
       ))}
     </div>

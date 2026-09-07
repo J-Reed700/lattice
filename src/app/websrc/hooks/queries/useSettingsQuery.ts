@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
-
 import type { AppSettings } from '@/types/api/settings';
 
 export const SETTINGS_QUERY_KEY = ['settings'] as const;
@@ -39,7 +38,11 @@ export function useUpdateSettingsMutation() {
       return result.data;
     },
     onSuccess: (data) => {
+      // The command answers with the whole persisted document, so seed the
+      // cache with it for an immediate render, then invalidate so the next
+      // read is the repository's own answer rather than this response.
       queryClient.setQueryData(SETTINGS_QUERY_KEY, data);
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
     },
   });
 }

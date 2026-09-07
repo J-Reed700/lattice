@@ -1,22 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { differenceInDays, formatDistanceToNow, isToday, isYesterday, startOfDay } from 'date-fns';
+import { differenceInDays, formatDistanceToNowStrict, isToday, isYesterday, startOfDay } from 'date-fns';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   Plus,
   MessageSquare,
   Trash2,
   Loader2,
+  Combine,
   AlertCircle,
   X,
   Star,
-  Bookmark,
   Pin,
   PanelLeft,
-  Search,
   Archive,
   RotateCcw,
   ArrowUpRight,
+  ChevronDown,
+  ListChecks,
   Save,
   Settings2,
   FolderPlus,
@@ -25,12 +26,18 @@ import {
   Check,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
+
+import { buildSynthesisBlock } from '@/components/Journal/synthesisTargets';
+import { IconButton } from '@/components/ui/IconButton';
+import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
+import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/stores/paletteCommandsStore';
 
 import { useDebounce } from '../../hooks/useDebounce';
+import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
-import { useDownloadedModelsStore } from '../../stores/downloadedModelsStore';
 import { toast } from '../../stores/toastStore';
 import {
   buildCapturedChatReferenceIndex,
@@ -90,7 +97,7 @@ interface SpaceToolPreferences {
 type SpaceKind = 'standard' | 'journal';
 
 const JOURNAL_SPACE_DEFAULT_ICON = '📓';
-const JOURNAL_SPACE_DEFAULT_ACCENT = '#14b8a6';
+const JOURNAL_SPACE_DEFAULT_ACCENT = '#8b72ff'; // matches --accent (dark)
 
 const buildSpaceToolPreferencesJson = ({
   knowledgeBase,
@@ -149,6 +156,27 @@ const normalizeHexColor = (value: string | null | undefined): string | null => {
   return isHex ? candidate.toLowerCase() : null;
 };
 
+const RELATIVE_UNIT_SUFFIX: Record<string, string> = {
+  second: 's',
+  minute: 'm',
+  hour: 'h',
+  day: 'd',
+  week: 'w',
+  month: 'mo',
+  year: 'y',
+};
+
+/** "12 minutes" -> "12m", "2 days" -> "2d". Falls back to the long form. */
+const formatShortRelativeTime = (value: string | null | undefined): string => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const raw = formatDistanceToNowStrict(date);
+  const match = /^(\d+)\s+(second|minute|hour|day|week|month|year)s?$/.exec(raw);
+  if (!match) return raw;
+  return `${match[1]}${RELATIVE_UNIT_SUFFIX[match[2]] ?? ''}`;
+};
+
 const getLocalDayKey = (value: Date): string => {
   const year = value.getFullYear();
   const month = `${value.getMonth() + 1}`.padStart(2, '0');
@@ -183,11 +211,11 @@ const TIME_BUCKET_ORDER: readonly TimeBucketKey[] = [
 ];
 
 const TIME_BUCKET_LABELS: Record<TimeBucketKey, string> = {
-  'today': 'Today',
-  'yesterday': 'Yesterday',
+  today: 'Today',
+  yesterday: 'Yesterday',
   'last-7-days': 'Last 7 days',
   'last-30-days': 'Last 30 days',
-  'older': 'Older',
+  older: 'Older',
 };
 
 const getTimeBucket = (updatedAt: Date, now: Date): TimeBucketKey => {
@@ -217,7 +245,12 @@ const isReferenceInboxEnabled = (): boolean => {
   }
 };
 
-export function ConversationSidebar() {
+interface ConversationSidebarProps {
+  /** Hide the sidebar. Owned by ChatView, which also binds ⌘\. */
+  onCollapse?: () => void;
+}
+
+export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {}) {
   const navigate = useNavigate();
   const prefersReducedMotion = useReducedMotion();
   const {
@@ -291,7 +324,7 @@ export function ConversationSidebar() {
   const [ollamaDefaultModel, setOllamaDefaultModel] = useState('');
   const [referenceInboxEnabled] = useState(isReferenceInboxEnabled);
   const debouncedQuery = useDebounce(localQuery, 250);
-  const downloadedModelMap = useDownloadedModelsStore((state) => state.downloadedModels);
+  const { downloadedModelMap } = useDownloadedModels();
 
   const spaceNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -335,6 +368,11 @@ export function ConversationSidebar() {
   const isJournalScope = Boolean(
     selectedJournal
   );
+  const scopeLabel = selectedSpace
+    ? `${selectedSpace.icon ? `${selectedSpace.icon} ` : ''}${selectedSpace.name}`
+    : selectedJournal
+      ? `${selectedJournal.icon ? `${selectedJournal.icon} ` : ''}${selectedJournal.name} · Journal`
+      : 'All spaces';
 
   const archivedSpaces = useMemo(
     () => spaces.filter((space) => space.isArchived),
@@ -702,11 +740,6 @@ export function ConversationSidebar() {
     };
   }, [capturedReferenceIndex, roleFilteredSnippets]);
 
-  const selectedSnippet = useMemo(() => {
-    if (!selectedSnippetId) return null;
-    return filteredSnippets.find((snippet) => snippet.id === selectedSnippetId) ?? null;
-  }, [filteredSnippets, selectedSnippetId]);
-
   useEffect(() => {
     if (filterMode !== 'snippets') return;
     if (filteredSnippets.length === 0) {
@@ -753,6 +786,72 @@ export function ConversationSidebar() {
     setRenamingConversationId(null);
     setRenameDraft('');
   };
+
+  const [synthesizingConversationId, setSynthesizingConversationId] = useState<string | null>(
+    null,
+  );
+
+  /**
+   * Writes a synthesis of one conversation onto the journal. `quickCapture`
+   * lands on today's page, and we open the Journal on that page by id so the
+   * user arrives at what was just written rather than wherever they left off.
+   */
+  const synthesizeConversationToJournal = useCallback(
+    async (conversationId: string, conversationTitle: string) => {
+      setSynthesizingConversationId(conversationId);
+      try {
+        const result = await VaultAPI.synthesizeJournalEntries({
+          conversationIds: [conversationId],
+          scope: 'conversation',
+          maxEntries: 1,
+        });
+        if (!result.ok) {
+          toast.error('Synthesis failed', { message: result.error });
+          return;
+        }
+        const block = buildSynthesisBlock({
+          heading: conversationTitle,
+          entryCount: result.data.entryCount,
+          synthesis: result.data.synthesis,
+          citations: result.data.citations,
+        });
+        const capture = await VaultAPI.quickCapture(block);
+        if (!capture.ok) {
+          toast.error('Could not write to the journal', { message: capture.error });
+          return;
+        }
+        // We navigate to the page itself, so an "Open" action on the toast
+        // would be a control that changes nothing.
+        toast.success(`Synthesis saved to "${capture.data.noteTitle}"`);
+        navigate(`/journals?${new URLSearchParams({ noteId: capture.data.noteId }).toString()}`);
+      } finally {
+        setSynthesizingConversationId(null);
+      }
+    },
+    [navigate],
+  );
+
+  const synthesizePaletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      {
+        id: 'chat.synthesizeToJournal',
+        label: 'Synthesize this conversation to Journal',
+        group: 'Journal',
+        icon: Combine,
+        enabled: Boolean(activeConversationId),
+        run: () => {
+          if (!activeConversationId) return;
+          const conversation = conversations.find((c) => c.id === activeConversationId);
+          void synthesizeConversationToJournal(
+            activeConversationId,
+            conversation?.title ?? 'Conversation',
+          );
+        },
+      },
+    ],
+    [activeConversationId, conversations, synthesizeConversationToJournal],
+  );
+  useRegisterPaletteCommands(synthesizePaletteCommands);
 
   const saveConversationRename = async (
     conversationId: string,
@@ -911,16 +1010,14 @@ export function ConversationSidebar() {
     await loadConversations({ filterMode: mode });
   };
 
-  const filterOptions: Array<{
-    id: 'all' | 'saved' | 'bookmarked' | 'pinned' | 'archived' | 'snippets';
-    label: string;
-    icon: typeof Star;
-  }> = [
-    { id: 'all', label: 'All', icon: MessageSquare },
-    { id: 'saved', label: 'Starred', icon: Star },
-    { id: 'pinned', label: 'Pinned', icon: Pin },
-    { id: 'snippets', label: 'References', icon: Save },
-    { id: 'archived', label: 'Archived', icon: Archive },
+  type FilterId = 'all' | 'saved' | 'bookmarked' | 'pinned' | 'archived' | 'snippets';
+
+  const filterOptions: ReadonlyArray<{ id: FilterId; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'saved', label: 'Starred' },
+    { id: 'pinned', label: 'Pinned' },
+    { id: 'archived', label: 'Archived' },
+    { id: 'snippets', label: 'Referenced' },
   ];
 
   const openSnippet = async (bookmark: ConversationMessageBookmarkDto) => {
@@ -1122,10 +1219,6 @@ export function ConversationSidebar() {
     }
   };
 
-  const selectedSnippetCapture = selectedSnippet
-    ? getCapturedSnippetReference(selectedSnippet)
-    : null;
-
   const updateSpacesPanelFrame = useCallback(() => {
     const sidebarElement = sidebarRef.current;
     if (!sidebarElement) return;
@@ -1162,126 +1255,26 @@ export function ConversationSidebar() {
   return (
     <div
       ref={sidebarRef}
-      className={`relative h-full w-[280px] max-w-full shrink-0 bg-surface border-r border-subtle flex flex-col overflow-hidden ${
+      className={`relative flex h-full w-[280px] max-w-full shrink-0 flex-col overflow-hidden border-r border-border-subtle bg-surface ${
         isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
       }`}
     >
-      {/* Top rail (CHAT-REDESIGN-SPEC §5.1) */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-subtle bg-surface px-4">
-        <span className="font-serif text-base font-semibold text-[hsl(var(--text-primary))]">
-          Lattice
-        </span>
-        <button
-          type="button"
-          aria-label="Toggle sidebar"
-          title="Toggle sidebar"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-        >
-          <PanelLeft className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
-
-      <div className="p-4 border-b border-subtle overflow-x-hidden">
-        <button
-          onClick={handleAsyncEvent(handleNewConversation)}
-          disabled={isCreating}
-          aria-label="Create new conversation"
-          className="flex w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--accent))] px-4 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isCreating ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Plus className="w-4 h-4" />
-          )}
-          <span>{isJournalScope ? 'New entry' : 'New conversation'}</span>
-        </button>
-
-        <div className="mt-3 flex items-center justify-between gap-2 rounded-sm border border-subtle bg-surface-raised px-3 py-2">
-          <div className="min-w-0">
-            <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">Scope</p>
-            <p className="truncate text-xs text-[hsl(var(--text-primary))]">
-              {selectedSpace
-                ? `${selectedSpace.icon ? `${selectedSpace.icon} ` : ''}${selectedSpace.name}`
-                : selectedJournal
-                  ? `${selectedJournal.icon ? `${selectedJournal.icon} ` : ''}${selectedJournal.name} · Journal`
-                  : 'All spaces'}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {isJournalScope && selectedJournal && (
-              <button
-                onClick={openSelectedJournalNotebook}
-                className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-              >
-                <NotebookPen className="w-3.5 h-3.5" />
-                Notebook
-              </button>
-            )}
-            <button
-              onClick={() => setIsSpacesOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              Spaces
-            </button>
-          </div>
-        </div>
-
-        {isJournalScope && journalSpaces.length > 0 && (
-          <div className="mt-2 rounded-sm border border-subtle bg-surface-raised px-3 py-2">
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-xs text-[hsl(var(--text-secondary))]">
-                Entries, pinned highlights, and notebook pages.
-              </p>
-              <button
-                onClick={openSelectedJournalNotebook}
-                className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
-              >
-                <NotebookPen className="h-3 w-3" />
-                Open
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          {filterOptions.map((option) => {
-            const Icon = option.icon;
-            const active = filterMode === option.id;
-            return (
-            <button
-              key={option.id}
-              onClick={handleAsyncEvent(() => handleFilterSelect(option.id))}
-              aria-label={`${option.label} conversations`}
-              aria-pressed={active}
-              title={option.label}
-              className={`inline-flex items-center gap-1 pb-1 text-xs transition-colors duration-fast ${
-                active
-                  ? 'text-[hsl(var(--text-primary))] border-b-2 border-[hsl(var(--accent))]'
-                  : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] border-b-2 border-transparent'
-              }`}
-            >
-              <Icon className="h-3 w-3" />
-              <span>{option.label}</span>
-            </button>
-          );
-          })}
-        </div>
-
-        <div className="mt-3 relative">
-          <Search className="w-4 h-4 text-[hsl(var(--text-muted))] absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            value={localQuery}
-            onChange={(e) => setLocalQuery(e.target.value)}
-            placeholder={isJournalScope ? 'Search entries' : 'Search conversations'}
-            className="w-full h-8 pl-9 pr-3 rounded-sm border border-default bg-surface text-sm text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-          />
-        </div>
-
-        {filterMode !== 'snippets' && (
+      <SidebarHeader
+        title={isJournalScope && selectedJournal ? selectedJournal.name : 'Chat'}
+        actions={
           <>
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <button
+            <IconButton
+              label={isJournalScope ? 'New entry' : 'New conversation'}
+              shortcut="⌘N"
+              onClick={handleAsyncEvent(handleNewConversation)}
+              disabled={isCreating}
+            >
+              {isCreating ? <Loader2 className="animate-spin" /> : <Plus />}
+            </IconButton>
+            {filterMode !== 'snippets' && (
+              <IconButton
+                label="Select"
+                active={isSelectionMode}
                 onClick={() => {
                   const nextSelectionMode = !isSelectionMode;
                   setIsSelectionMode(nextSelectionMode);
@@ -1289,130 +1282,146 @@ export function ConversationSidebar() {
                     void loadJournals(false);
                   }
                 }}
-                className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${
-                  isSelectionMode
-                    ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                    : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                }`}
               >
-                {isSelectionMode ? (
-                  <>
-                    <X className="h-3 w-3" />
-                    Done
-                  </>
-                ) : (
-                  <>
-                    <Bookmark className="h-3 w-3" />
-                    Select multiple
-                  </>
-                )}
-              </button>
-
-              {isSelectionMode && (
-                <button
-                  onClick={toggleSelectAllVisibleConversations}
-                  className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-                >
-                  {areAllVisibleConversationsSelected ? 'Clear' : 'Select all'}
-                </button>
-              )}
-            </div>
-
-            {isSelectionMode && (
-              <div className="mt-2 rounded-sm border border-subtle bg-surface-raised px-3 py-2.5">
-                <p className="text-xs text-[hsl(var(--text-secondary))]">
-                  {selectedConversationCount} selected
-                </p>
-                <div className="mt-2 flex items-center gap-1.5">
-                  <select
-                    value={bulkSpaceIdDraft}
-                    onChange={(e) => setBulkSpaceIdDraft(e.target.value)}
-                    disabled={isLoadingJournals}
-                    className="min-w-0 flex-1 rounded-sm border border-default bg-surface px-2 py-1 text-xs text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-                  >
-                    {isLoadingJournals ? (
-                      <option value="" disabled>
-                        Loading...
-                      </option>
-                    ) : journalsLoadError ? (
-                      <option value="" disabled>
-                        Couldn't load journals
-                      </option>
-                    ) : journalSpaces.length === 0 ? (
-                      <option value="" disabled>
-                        No journals yet
-                      </option>
-                    ) : (
-                      <>
-                        <option value="" disabled>
-                          Choose a journal
-                        </option>
-                        {journalSpaces.map((space) => (
-                          <option key={space.id} value={space.id}>
-                            {space.name}
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                  <button
-                    onClick={handleAsyncEvent(addSelectedConversationsToJournal)}
-                    disabled={
-                      selectedConversationCount === 0
-                      || !bulkSpaceIdDraft
-                      || isBulkMoving
-                      || Boolean(journalsLoadError)
-                      || journalSpaces.length === 0
-                    }
-                    className="inline-flex items-center gap-1 rounded-sm border border-default bg-surface px-2 py-1 text-xs text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isBulkMoving ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <ArrowUpRight className="h-3 w-3" />
-                    )}
-                    Add
-                  </button>
-                </div>
-                {journalsLoadError ? (
-                  <p className="mt-2 text-xs text-[hsl(var(--danger-fg))]">
-                    Couldn't load journals. {journalsLoadError}
-                  </p>
-                ) : journalSpaces.length === 0 && (
-                  <div className="mt-2 space-y-1.5">
-                    <p className="text-xs text-[hsl(var(--text-muted))]">
-                      No journals yet. Create one to organize selected conversations.
-                    </p>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={handleAsyncEvent(createQuickJournal)}
-                        disabled={isCreatingQuickJournal}
-                        className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isCreatingQuickJournal ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Plus className="h-3 w-3" />
-                        )}
-                        Create journal
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => navigate('/journals')}
-                        className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-                      >
-                        <ArrowUpRight className="h-3 w-3" />
-                        Open journals
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+                <ListChecks />
+              </IconButton>
             )}
+            <IconButton label="Hide sidebar" shortcut="⌘\" onClick={onCollapse}>
+              <PanelLeft />
+            </IconButton>
           </>
+        }
+      />
+
+      {/* Scope — one line, opens the Spaces panel */}
+      <div className="flex shrink-0 items-center gap-1 border-b border-border-subtle px-4 py-2">
+        <button
+          type="button"
+          onClick={() => setIsSpacesOpen(true)}
+          aria-label="Change scope"
+          className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-sm px-1 py-0.5 text-sm text-text-primary transition-colors duration-fast hover:bg-surface-raised"
+        >
+          <span className="truncate">{scopeLabel}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
+        </button>
+        {isJournalScope && selectedJournal && (
+          <IconButton label="Open notebook" onClick={openSelectedJournalNotebook}>
+            <NotebookPen />
+          </IconButton>
         )}
       </div>
+
+      <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 py-2.5">
+        <SidebarSearch
+          value={localQuery}
+          onChange={setLocalQuery}
+          placeholder={isJournalScope ? 'Search entries' : 'Search conversations'}
+        />
+        <SidebarTabs
+          value={filterMode as FilterId}
+          onChange={handleAsyncEvent((id: FilterId) => handleFilterSelect(id))}
+          options={filterOptions}
+          className="justify-between gap-2"
+        />
+      </div>
+
+      {isSelectionMode && filterMode !== 'snippets' && (
+        <div className="shrink-0 space-y-1.5 border-b border-border-subtle px-4 py-2">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-text-muted">{selectedConversationCount} selected</span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={toggleSelectAllVisibleConversations}
+                className="text-text-secondary transition-colors duration-fast hover:text-text-primary"
+              >
+                {areAllVisibleConversationsSelected ? 'Clear' : 'Select all'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSelectionMode(false)}
+                className="text-text-secondary transition-colors duration-fast hover:text-text-primary"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={bulkSpaceIdDraft}
+              onChange={(e) => setBulkSpaceIdDraft(e.target.value)}
+              disabled={isLoadingJournals}
+              aria-label="Move to journal"
+              className="h-7 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-xs text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+            >
+              {isLoadingJournals ? (
+                <option value="" disabled>
+                  Loading…
+                </option>
+              ) : journalsLoadError ? (
+                <option value="" disabled>
+                  Couldn't load journals
+                </option>
+              ) : journalSpaces.length === 0 ? (
+                <option value="" disabled>
+                  No journals yet
+                </option>
+              ) : (
+                <>
+                  <option value="" disabled>
+                    Choose a journal
+                  </option>
+                  {journalSpaces.map((space) => (
+                    <option key={space.id} value={space.id}>
+                      {space.name}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+            <button
+              type="button"
+              onClick={handleAsyncEvent(addSelectedConversationsToJournal)}
+              disabled={
+                selectedConversationCount === 0
+                || !bulkSpaceIdDraft
+                || isBulkMoving
+                || Boolean(journalsLoadError)
+                || journalSpaces.length === 0
+              }
+              className="inline-flex shrink-0 items-center gap-1 text-xs text-text-secondary transition-colors duration-fast hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isBulkMoving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              Add
+            </button>
+          </div>
+
+          {journalsLoadError ? (
+            <p className="text-xs text-[hsl(var(--danger-fg))]">
+              Couldn't load journals. {journalsLoadError}
+            </p>
+          ) : journalSpaces.length === 0 ? (
+            <div className="flex items-center gap-3 text-xs">
+              <button
+                type="button"
+                onClick={handleAsyncEvent(createQuickJournal)}
+                disabled={isCreatingQuickJournal}
+                className="text-text-secondary transition-colors duration-fast hover:text-text-primary disabled:opacity-60"
+              >
+                New journal
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/journals')}
+                className="text-text-secondary transition-colors duration-fast hover:text-text-primary"
+              >
+                Open Journal
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {error && (
         <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-sm border border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))] px-3 py-2">
@@ -1433,223 +1442,128 @@ export function ConversationSidebar() {
 
       <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
         {filterMode === 'snippets' && (
-          <div className="border-b border-subtle p-2.5">
-            <div className="rounded-sm border border-subtle bg-surface-raised p-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[hsl(var(--text-primary))]">
-                    References
-                  </p>
-                  <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">
-                    Review and process them below.
-                  </p>
-                </div>
-                <span className="inline-flex items-center gap-1 rounded-sm border border-subtle bg-surface px-2 py-0.5 text-xs text-[hsl(var(--text-secondary))]">
-                  <Bookmark className="h-3 w-3" />
-                  {snippetResults.length}
-                </span>
-              </div>
-
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  {([
-                    ['all', 'All'],
-                    ['assistant', 'Assistant'],
-                    ['user', 'You'],
-                    ['system', 'System'],
-                  ] as const).map(([value, label]) => (
-                    <button
-                      key={value}
-                      onClick={() => setSnippetRoleFilter(value)}
-                      className={`rounded-sm border px-2 py-0.5 text-xs transition-colors duration-fast ${
-                        snippetRoleFilter === value
-                          ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                          : 'border-default text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))]'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
+          <div className="border-b border-border-subtle pb-2">
+            <div className="flex items-center gap-3 px-4 pb-2 pt-3 text-xs">
+              {([
+                ['all', 'All'],
+                ['assistant', 'Assistant'],
+                ['user', 'You'],
+                ['system', 'System'],
+              ] as const).map(([value, label]) => (
                 <button
-                  onClick={() => navigate('/references')}
-                  className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-0.5 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
+                  key={value}
+                  onClick={() => setSnippetRoleFilter(value)}
+                  className={`transition-colors duration-fast ${
+                    snippetRoleFilter === value
+                      ? 'text-text-primary'
+                      : 'text-text-tertiary hover:text-text-primary'
+                  }`}
                 >
-                  <ArrowUpRight className="h-3 w-3" />
-                  Inbox
+                  {label}
                 </button>
-              </div>
+              ))}
+            </div>
 
-              {referenceInboxEnabled && (
-                <div className="mt-2 inline-flex items-center gap-1 text-xs text-[hsl(var(--text-muted))]">
-                  {isLoadingCaptureIndex && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {snippetCaptureStats.pending} pending · {snippetCaptureStats.captured} captured
-                </div>
+            <div className="flex items-center justify-between gap-2 px-4 pb-2 text-xs">
+              {referenceInboxEnabled ? (
+                <span className="flex min-w-0 items-center gap-1 truncate text-text-muted">
+                  {isLoadingCaptureIndex && <Loader2 className="h-3 w-3 shrink-0 animate-spin" />}
+                  {snippetCaptureStats.total} {snippetCaptureStats.total === 1 ? 'reference' : 'references'}
+                  {snippetCaptureStats.captured > 0 ? ` · ${snippetCaptureStats.captured} captured` : ''}
+                </span>
+              ) : (
+                <span />
               )}
+              <button
+                onClick={() => navigate('/references')}
+                className="shrink-0 text-text-secondary transition-colors duration-fast hover:text-text-primary"
+              >
+                Open References
+              </button>
             </div>
 
             {isLoadingSnippets ? (
-              <div className="h-12 flex items-center justify-center text-[hsl(var(--text-muted))]">
+              <div className="flex h-12 items-center justify-center text-text-muted">
                 <Loader2 className="h-4 w-4 animate-spin" />
               </div>
             ) : filteredSnippets.length === 0 ? (
-              <div className="px-2 py-3 text-xs text-[hsl(var(--text-muted))]">
+              <p className="px-4 py-3 text-xs text-text-muted">
                 {roleFilteredSnippets.length === 0
-                  ? 'No references yet. Reference any message with the bookmark icon.'
+                  ? 'No references yet.'
                   : 'No matches in this filter.'}
-              </div>
+              </p>
             ) : (
-              <div className="mt-2 space-y-2">
-                <div className="space-y-1">
-                  {filteredSnippets.slice(0, 20).map((bookmark) => {
-                    const isSelected = bookmark.id === selectedSnippetId;
-                    const capturedReference = referenceInboxEnabled
-                      ? getCapturedSnippetReference(bookmark)
-                      : null;
-                    return (
-                      <div
-                        key={bookmark.id}
-                        className={`relative rounded-sm transition-colors duration-fast ${
-                          isSelected
-                            ? 'bg-surface-raised'
-                            : 'hover:bg-surface-raised'
-                        }`}
-                      >
-                        {isSelected && (
-                          <span
-                            className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
-                            aria-hidden="true"
-                          />
-                        )}
-                        <button
-                          onClick={() => setSelectedSnippetId(bookmark.id)}
-                          className="w-full text-left px-3 pt-2.5 pb-2"
-                        >
-                          <div className="mb-1 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5">
-                              <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-tertiary))] truncate">
-                                {formatRoleLabel(bookmark.messageRole)}
-                              </p>
-                              <span
-                                className={`rounded-sm border px-1.5 py-0 text-xxs uppercase tracking-[0.04em] ${
-                                  capturedReference
-                                    ? 'border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]'
-                                    : 'border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))]'
-                                }`}
-                              >
-                                {capturedReference ? 'Captured' : 'Pending'}
-                              </span>
-                            </div>
-                            <p className="text-xs text-[hsl(var(--text-muted))]">
-                              {new Date(bookmark.createdAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <p className="text-sm text-[hsl(var(--text-primary))] truncate">
-                            {bookmark.title || bookmark.conversationTitle}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[hsl(var(--text-tertiary))] truncate">
-                            <span className="inline-flex items-center gap-1">
-                              {(() => {
-                                const accent = spaceAccentById.get(bookmark.spaceId) ?? null;
-                                return accent ? (
-                                  <span
-                                    className="inline-block h-2 w-2 rounded-full"
-                                    style={{ backgroundColor: accent }}
-                                    aria-hidden="true"
-                                  />
-                                ) : null;
-                              })()}
-                              {bookmark.conversationTitle}
-                            </span>
-                          </p>
-                          <p className="mt-1.5 text-xs text-[hsl(var(--text-muted))] line-clamp-2 break-words">
-                            {bookmark.messagePreview}
-                          </p>
-                        </button>
-                        <div className="px-3 pb-2.5">
-                          <button
-                            onClick={handleAsyncEvent(() => openSnippet(bookmark))}
-                            className="text-xs inline-flex items-center gap-1 rounded-sm border border-default px-2 py-0.5 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
-                          >
-                            <ArrowUpRight className="w-3 h-3" />
-                            Open in chat
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {selectedSnippet && (
-                  <div className="rounded-sm border border-subtle bg-surface-raised p-3">
-                    <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
-                      Selected reference
-                    </p>
-                    <p className="mt-1 text-sm text-[hsl(var(--text-primary))] line-clamp-2">
-                      {selectedSnippet.title || selectedSnippet.conversationTitle}
-                    </p>
-                    <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">
-                      {selectedSnippetCapture
-                        ? `Captured in ${selectedSnippetCapture.noteTitle}.`
-                        : 'Pending capture.'}
-                    </p>
-                    <button
-                      onClick={() => navigate('/references')}
-                      className="mt-2 w-full inline-flex items-center justify-center gap-1 text-xs rounded-sm border border-default px-2 py-1 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
+              <div>
+                {filteredSnippets.slice(0, 20).map((bookmark) => {
+                  const isSelected = bookmark.id === selectedSnippetId;
+                  const capturedReference = referenceInboxEnabled
+                    ? getCapturedSnippetReference(bookmark)
+                    : null;
+                  return (
+                    <div
+                      key={bookmark.id}
+                      className={`group relative transition-colors duration-fast ${
+                        isSelected ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+                      }`}
                     >
-                      <ArrowUpRight className="w-3 h-3" />
-                      Manage references
-                    </button>
-                  </div>
-                )}
+                      {isSelected && (
+                        <span
+                          className="absolute inset-y-0 left-0 w-0.5 bg-accent"
+                          aria-hidden="true"
+                        />
+                      )}
+                      <button
+                        onClick={() => setSelectedSnippetId(bookmark.id)}
+                        className="w-full px-4 py-2.5 text-left"
+                      >
+                        <p className="truncate text-sm text-text-primary">
+                          {bookmark.title || bookmark.conversationTitle}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-text-muted">
+                          {formatRoleLabel(bookmark.messageRole)}
+                          {capturedReference ? ' · Captured' : ''}
+                          {' · '}
+                          {formatShortRelativeTime(bookmark.createdAt)}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-text-tertiary">
+                          {bookmark.messagePreview}
+                        </p>
+                      </button>
+                      <div className="pointer-events-none absolute right-2 top-1.5 flex items-center gap-0.5 rounded-sm bg-surface-raised pl-2 opacity-0 transition-opacity duration-fast group-hover:pointer-events-auto group-hover:opacity-100">
+                        <IconButton
+                          label="Open in chat"
+                          onClick={handleAsyncEvent(() => openSnippet(bookmark))}
+                        >
+                          <ArrowUpRight />
+                        </IconButton>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
         )}
 
         {isLoading && conversations.length === 0 ? (
-          <div className="flex items-center justify-center h-32 text-[hsl(var(--text-muted))]">
-            <Loader2 className="w-5 h-5 animate-spin" />
+          <div className="flex h-32 items-center justify-center text-text-muted">
+            <Loader2 className="h-5 w-5 animate-spin" />
           </div>
         ) : conversations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center min-h-[8rem] px-6 py-8 text-center">
-            <MessageSquare className="w-6 h-6 mb-3 text-[hsl(var(--text-muted))]" />
-            {isJournalScope ? (
-              <>
-                <p className="text-sm text-[hsl(var(--text-secondary))]">No entries in this journal.</p>
-                <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">Each entry is a day's conversation.</p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-[hsl(var(--text-secondary))]">No conversations here.</p>
-                <p className="mt-1 text-xs text-[hsl(var(--text-muted))]">Every question you ask lives in a conversation.</p>
-              </>
-            )}
-          </div>
+          <p className="px-4 py-6 text-sm text-text-secondary">
+            {isJournalScope ? 'No entries yet.' : 'No conversations yet.'}
+          </p>
         ) : (
-          <nav
-            className="p-2 pr-3"
-            role="navigation"
-            aria-label="Conversations"
-          >
-            {journalConversationGroups.map((group, groupIdx) => (
-              <section
-                key={group.key}
-                className={`space-y-0.5 ${!isJournalScope && groupIdx > 0 ? 'mt-4' : ''}`}
-              >
-                {isJournalScope && group.label && (
-                  <p className="px-2 py-1 text-xs italic font-serif text-[hsl(var(--text-tertiary))]">
+          <nav className="pb-2" role="navigation" aria-label="Conversations">
+            {journalConversationGroups.map((group) => (
+              <section key={group.key}>
+                {group.label && (
+                  <p className="px-4 pb-1 pt-4 text-xxs uppercase tracking-[0.08em] text-text-muted">
                     {group.label}
                   </p>
                 )}
-                {!isJournalScope && group.label && (
-                  <p className="px-4 py-2 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
-                    {group.label}
-                  </p>
-                )}
-                <div className="space-y-0.5">
-                  {group.items.map((conversation, groupIndex) => {
+                <div>
+                  {group.items.map((conversation) => {
                     const isActive = conversation.id === activeConversationId;
                     const isDeleting = deletingId === conversation.id;
                     const accent = conversation.spaceId
@@ -1658,6 +1572,17 @@ export function ConversationSidebar() {
                     const conversationSpaceKind = conversation.spaceId
                       ? (spaceKindById.get(conversation.spaceId) ?? 'standard')
                       : 'standard';
+                    const spaceLabel = conversation.spaceId
+                      ? `${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}${
+                          conversationSpaceKind === 'journal' ? ' · Journal' : ''
+                        }`
+                      : '';
+                    const relativeTime = formatShortRelativeTime(conversation.updatedAt);
+                    const metaLine = [spaceLabel, relativeTime].filter(Boolean).join(' · ');
+                    const preview =
+                      conversation.lastMessagePreview
+                      ?? conversation.messages?.[conversation.messages.length - 1]?.content
+                      ?? '';
 
                     return (
                       <div
@@ -1690,228 +1615,197 @@ export function ConversationSidebar() {
                         })}
                         aria-label={`Select conversation: ${conversation.title}`}
                         aria-current={isActive ? 'page' : undefined}
-                        className={`group relative w-full text-left px-4 py-2 rounded-sm transition-colors duration-fast cursor-pointer ${
-                          isActive
-                            ? 'bg-surface-raised'
-                            : 'hover:bg-surface-raised'
+                        className={`group relative w-full cursor-pointer px-4 py-2.5 text-left transition-colors duration-fast ${
+                          isActive ? 'bg-surface-raised' : 'hover:bg-surface-raised'
                         }`}
                       >
                         {isActive && (
                           prefersReducedMotion ? (
                             <span
-                              className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                              className="absolute inset-y-0 left-0 w-0.5 bg-accent"
                               aria-hidden="true"
                             />
                           ) : (
                             <motion.span
                               layoutId="sidebar-active-bar"
-                              className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                              className="absolute inset-y-0 left-0 w-0.5 bg-accent"
                               aria-hidden="true"
                               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                             />
                           )
                         )}
-                        <div className="relative flex items-start gap-2">
-                          <div className={`flex-1 min-w-0 transition-[padding] duration-fast ${isSelectionMode ? '' : 'pr-28'}`}>
-                            {isJournalScope && (
-                              <p className="mb-1 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
-                                Entry {groupIndex + 1}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 mb-0.5">
-                              {isSelectionMode && (
-                                <input
-                                  type="checkbox"
-                                  checked={selectedConversationIds.has(conversation.id)}
-                                  onChange={() => toggleConversationSelection(conversation.id)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="h-3.5 w-3.5 rounded-sm border-default bg-transparent accent-[hsl(var(--accent))]"
-                                  aria-label={`Select conversation: ${conversation.title}`}
-                                />
-                              )}
-                              {/* Per-space 8x8 identity dot (CHAT-REDESIGN-SPEC §5.4) */}
-                              {accent ? (
-                                <span
-                                  className="h-2 w-2 shrink-0 rounded-full"
-                                  style={{ backgroundColor: accent }}
-                                  aria-label={conversation.spaceId ? `Space: ${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}` : undefined}
-                                />
-                              ) : isJournalScope ? (
-                                <NotebookPen className="w-3.5 h-3.5 text-[hsl(var(--text-tertiary))] flex-shrink-0" />
-                              ) : (
-                                <MessageSquare className="w-3.5 h-3.5 text-[hsl(var(--text-tertiary))] flex-shrink-0" />
-                              )}
-                              {renamingConversationId === conversation.id ? (
-                                <div
-                                  className="flex min-w-0 flex-1 items-center gap-1"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <input
-                                    autoFocus
-                                    value={renameDraft}
-                                    maxLength={120}
-                                    onChange={(e) => setRenameDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        void saveConversationRename(
-                                          conversation.id,
-                                          conversation.title
-                                        );
-                                        return;
-                                      }
-                                      if (e.key === 'Escape') {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        cancelRenameConversation();
-                                      }
-                                    }}
-                                    className="h-6 min-w-0 flex-1 rounded-sm border border-default bg-surface px-2 text-xs text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-                                    aria-label={`Rename conversation: ${conversation.title}`}
-                                  />
-                                  <button
-                                    onClick={handleAsyncEvent(async (e) => {
-                                      e.stopPropagation();
-                                      await saveConversationRename(
-                                        conversation.id,
-                                        conversation.title
-                                      );
-                                    })}
-                                    className="rounded-sm border border-default p-1 text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--accent))]"
-                                    aria-label="Save conversation title"
-                                    title="Save title"
-                                  >
-                                    <Check className="h-3 w-3" />
-                                  </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      cancelRenameConversation();
-                                    }}
-                                    className="rounded-sm border border-default p-1 text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-                                    aria-label="Cancel rename"
-                                    title="Cancel"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <h3
-                                  className={`text-sm line-clamp-1 break-words ${
-                                    isActive
-                                      ? 'font-medium text-[hsl(var(--text-primary))]'
-                                      : 'font-normal text-[hsl(var(--text-primary))]'
-                                  }`}
-                                  onDoubleClick={(e) => {
-                                    e.stopPropagation();
-                                    beginRenameConversation(conversation.id, conversation.title);
-                                  }}
-                                  title={conversation.title}
-                                >
-                                  {conversation.title}
-                                </h3>
-                              )}
-                            </div>
-                            {conversation.spaceId && (
-                              <p className="text-xs text-[hsl(var(--text-muted))] truncate">
-                                {spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}
-                                {conversationSpaceKind === 'journal' && ' · Journal'}
-                              </p>
-                            )}
-                            <p className="text-xs text-[hsl(var(--text-muted))] line-clamp-1">
-                              {(() => {
-                                const date = new Date(conversation.updatedAt);
-                                return isNaN(date.getTime()) ? 'Recently' : formatDistanceToNow(date, { addSuffix: true });
-                              })()}
-                            </p>
-                          </div>
 
-                          <div className={`${
-                            isSelectionMode
-                              ? 'hidden'
-                              : 'absolute right-0 top-0 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
-                          } transition-opacity duration-fast flex items-center gap-0.5`}>
-                            <button
+                        <div className="flex items-center gap-2">
+                          {isSelectionMode && (
+                            <input
+                              type="checkbox"
+                              checked={selectedConversationIds.has(conversation.id)}
+                              onChange={() => toggleConversationSelection(conversation.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-3.5 w-3.5 shrink-0 cursor-pointer appearance-none rounded-sm border border-border-strong bg-transparent transition-colors duration-fast checked:border-accent checked:bg-accent checked:shadow-[inset_0_0_0_2px_hsl(var(--surface))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              aria-label={`Select conversation: ${conversation.title}`}
+                            />
+                          )}
+                          {accent ? (
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: accent }}
+                              aria-label={conversation.spaceId ? `Space: ${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}` : undefined}
+                            />
+                          ) : isJournalScope ? (
+                            <NotebookPen className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                          ) : (
+                            <MessageSquare className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                          )}
+
+                          {renamingConversationId === conversation.id ? (
+                            <div
+                              className="flex min-w-0 flex-1 items-center gap-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                autoFocus
+                                value={renameDraft}
+                                maxLength={120}
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void saveConversationRename(
+                                      conversation.id,
+                                      conversation.title
+                                    );
+                                    return;
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    cancelRenameConversation();
+                                  }
+                                }}
+                                className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-2 text-sm text-text-primary outline-none transition-colors duration-fast focus:border-accent"
+                                aria-label={`Rename conversation: ${conversation.title}`}
+                              />
+                              <IconButton
+                                label="Save conversation title"
+                                onClick={handleAsyncEvent(async (e) => {
+                                  e.stopPropagation();
+                                  await saveConversationRename(
+                                    conversation.id,
+                                    conversation.title
+                                  );
+                                })}
+                              >
+                                <Check />
+                              </IconButton>
+                              <IconButton
+                                label="Cancel rename"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cancelRenameConversation();
+                                }}
+                              >
+                                <X />
+                              </IconButton>
+                            </div>
+                          ) : (
+                            <h3
+                              className={`min-w-0 flex-1 truncate text-sm text-text-primary ${
+                                isActive ? 'font-medium' : 'font-normal'
+                              }`}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                beginRenameConversation(conversation.id, conversation.title);
+                              }}
+                              title={conversation.title}
+                            >
+                              {conversation.title}
+                            </h3>
+                          )}
+                        </div>
+
+                        {metaLine && (
+                          <p className="mt-0.5 truncate text-xs text-text-muted">{metaLine}</p>
+                        )}
+                        {preview && (
+                          <p className="truncate text-xs text-text-tertiary">{preview}</p>
+                        )}
+
+                        {!isSelectionMode && renamingConversationId !== conversation.id && (
+                          <div
+                            className="pointer-events-none absolute right-2 top-1.5 flex items-center gap-0.5 rounded-sm bg-surface-raised pl-2 opacity-0 transition-opacity duration-fast group-hover:pointer-events-auto group-hover:opacity-100"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <IconButton
+                              label={`Synthesize to Journal: ${conversation.title}`}
+                              disabled={synthesizingConversationId === conversation.id}
+                              onClick={handleAsyncEvent(async (e) => {
+                                e.stopPropagation();
+                                await synthesizeConversationToJournal(
+                                  conversation.id,
+                                  conversation.title,
+                                );
+                              })}
+                            >
+                              {synthesizingConversationId === conversation.id ? (
+                                <Loader2 className="animate-spin" />
+                              ) : (
+                                <Combine />
+                              )}
+                            </IconButton>
+
+                            <IconButton
+                              label={`Rename conversation: ${conversation.title}`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 beginRenameConversation(conversation.id, conversation.title);
                               }}
-                              aria-label={`Rename conversation: ${conversation.title}`}
-                              className="p-1 rounded-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
-                              title="Rename conversation"
                             >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
+                              <Pencil />
+                            </IconButton>
 
-                            <button
+                            <IconButton
+                              label={`${conversation.isSaved ? 'Unstar' : 'Star'} conversation: ${conversation.title}`}
+                              className={conversation.isSaved ? 'text-accent' : undefined}
                               onClick={handleAsyncEvent(async (e) => {
                                 e.stopPropagation();
                                 await setConversationSaved(conversation.id, !conversation.isSaved);
                               })}
-                              aria-label={`${conversation.isSaved ? 'Unstar' : 'Star'} conversation: ${conversation.title}`}
-                              className={`p-1 rounded-sm transition-colors duration-fast ${
-                                conversation.isSaved
-                                  ? 'text-[hsl(var(--accent))]'
-                                  : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]'
-                              }`}
-                              title={conversation.isSaved ? 'Unstar conversation' : 'Star conversation'}
                             >
-                              <Star className={`w-3.5 h-3.5 ${conversation.isSaved ? 'fill-current' : ''}`} />
-                            </button>
+                              <Star className={conversation.isSaved ? 'fill-current' : undefined} />
+                            </IconButton>
 
-                            <button
+                            <IconButton
+                              label={`${conversation.isPinned ? 'Unpin' : 'Pin'} conversation: ${conversation.title}`}
+                              className={conversation.isPinned ? 'text-accent' : undefined}
                               onClick={handleAsyncEvent(async (e) => {
                                 e.stopPropagation();
                                 await setConversationPinned(conversation.id, !conversation.isPinned);
                               })}
-                              aria-label={`${conversation.isPinned ? 'Unpin' : 'Pin'} conversation: ${conversation.title}`}
-                              className={`p-1 rounded-sm transition-colors duration-fast ${
-                                conversation.isPinned
-                                  ? 'text-[hsl(var(--accent))]'
-                                  : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]'
-                              }`}
-                              title={conversation.isPinned ? 'Unpin conversation' : 'Pin conversation'}
                             >
-                              <Pin className="w-3.5 h-3.5" />
-                            </button>
+                              <Pin />
+                            </IconButton>
 
-                            <button
+                            <IconButton
+                              label={`${conversation.isArchived ? 'Unarchive' : 'Archive'} conversation: ${conversation.title}`}
                               onClick={handleAsyncEvent(async (e) => {
                                 e.stopPropagation();
                                 await setConversationArchived(conversation.id, !conversation.isArchived);
                               })}
-                              aria-label={`${conversation.isArchived ? 'Unarchive' : 'Archive'} conversation: ${conversation.title}`}
-                              className="p-1 rounded-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
-                              title={conversation.isArchived ? 'Unarchive' : 'Archive'}
                             >
-                              {conversation.isArchived ? (
-                                <RotateCcw className="w-3.5 h-3.5" />
-                              ) : (
-                                <Archive className="w-3.5 h-3.5" />
-                              )}
-                            </button>
+                              {conversation.isArchived ? <RotateCcw /> : <Archive />}
+                            </IconButton>
 
-                            <button
-                              onClick={handleAsyncEvent((e) => handleDelete(conversation.id, e))}
+                            <IconButton
+                              label={`Delete conversation: ${conversation.title}`}
                               disabled={isDeleting}
-                              aria-label={`Delete conversation: ${conversation.title}`}
-                              className="p-1 rounded-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--danger-fg))] disabled:opacity-50 transition-colors duration-fast"
-                              title="Delete conversation"
+                              className="hover:text-[hsl(var(--danger-fg))]"
+                              onClick={handleAsyncEvent((e) => handleDelete(conversation.id, e))}
                             >
-                              {isDeleting ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-3.5 h-3.5" />
-                              )}
-                            </button>
+                              {isDeleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                            </IconButton>
                           </div>
-                        </div>
-
-                        {(conversation.lastMessagePreview || (conversation.messages && conversation.messages.length > 0)) && (
-                          <p className="mt-1 text-xs text-[hsl(var(--text-muted))] line-clamp-2 break-words">
-                            {conversation.lastMessagePreview ?? conversation.messages?.[conversation.messages.length - 1]?.content}
-                          </p>
                         )}
                       </div>
                     );
@@ -1923,10 +1817,10 @@ export function ConversationSidebar() {
         )}
       </div>
 
-      <div className="p-3 border-t border-subtle">
-        <div className="text-xs text-[hsl(var(--text-muted))] text-center">
+      <div className="flex h-8 shrink-0 items-center justify-end border-t border-border-subtle px-4">
+        <span className="text-xs text-text-muted">
           {conversations.length} {isJournalScope ? 'entry' : 'conversation'}{conversations.length !== 1 ? 's' : ''}
-        </div>
+        </span>
       </div>
 
       {isSpacesOpen && createPortal(
@@ -1949,10 +1843,7 @@ export function ConversationSidebar() {
           >
             <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col overflow-hidden`}>
               <div className={`flex items-center justify-between border-b border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
-                <div>
-                  <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">Per-space context</p>
-                  <h3 className="text-sm font-medium text-[hsl(var(--text-primary))]">Spaces</h3>
-                </div>
+                <h3 className="font-serif text-sm font-semibold text-[hsl(var(--text-primary))]">Spaces</h3>
                 <button
                   onClick={() => setIsSpacesOpen(false)}
                   className="rounded-sm p-1.5 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]"
@@ -1967,7 +1858,7 @@ export function ConversationSidebar() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsCreateSpaceOpen((open) => !open)}
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
+                    className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]"
                   >
                     <FolderPlus className="w-3.5 h-3.5" />
                     {isCreateSpaceOpen ? 'Cancel' : 'New space'}
@@ -1975,7 +1866,7 @@ export function ConversationSidebar() {
                   <button
                     onClick={() => setIsSpaceEditorOpen((open) => !open)}
                     disabled={!selectedSpace}
-                    className="inline-flex items-center gap-1.5 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Settings2 className="w-3.5 h-3.5" />
                     Edit space
@@ -1983,7 +1874,7 @@ export function ConversationSidebar() {
                 </div>
 
                 {isCreateSpaceOpen && (
-                  <div className="mt-2 space-y-2 rounded-sm border border-subtle bg-surface p-2.5">
+                  <div className="mt-3 space-y-2 border-t border-subtle pt-3">
                     <input
                       value={newSpaceNameDraft}
                       onChange={(e) => setNewSpaceNameDraft(e.target.value)}
@@ -1992,7 +1883,7 @@ export function ConversationSidebar() {
                           ? 'Journal name (e.g. Food Research, Weekly Notes)'
                           : 'Space name (e.g. Product, Research, Personal)'
                       }
-                      className="w-full rounded-sm border border-default bg-surface-raised px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                      className="w-full rounded-sm border border-border-default bg-surface-raised px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                     />
                     <div className="flex items-center gap-1.5">
                       <button
@@ -2001,7 +1892,7 @@ export function ConversationSidebar() {
                         className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${
                           newSpaceKindDraft === 'standard'
                             ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                            : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
+                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                         }`}
                       >
                         Standard
@@ -2012,7 +1903,7 @@ export function ConversationSidebar() {
                         className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${
                           newSpaceKindDraft === 'journal'
                             ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                            : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
+                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                         }`}
                       >
                         Journal
@@ -2026,7 +1917,7 @@ export function ConversationSidebar() {
                           setNewSpaceNameDraft('');
                           setNewSpaceKindDraft('standard');
                         }}
-                        className="inline-flex items-center gap-1 rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
+                        className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                       >
                         Cancel
                       </button>
@@ -2047,9 +1938,7 @@ export function ConversationSidebar() {
                 )}
 
                 <div className="mt-3 flex min-h-0 flex-1 flex-col">
-                  <p className="mb-2 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
-                    Choose space
-                  </p>
+
                   <div className="flex-1 min-h-0 space-y-0.5 overflow-y-auto pr-1">
                     <button
                       onClick={handleAsyncEvent(() => handleSpaceSelect(null))}
@@ -2077,7 +1966,7 @@ export function ConversationSidebar() {
                     </button>
 
                     {standardSpaces.length > 0 && (
-                      <p className="px-2 pt-3 pb-1 text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+                      <p className="px-2 pt-4 pb-1 text-xs font-medium text-[hsl(var(--text-secondary))]">
                         Spaces
                       </p>
                     )}
@@ -2128,11 +2017,7 @@ export function ConversationSidebar() {
                                 <p className="mt-0.5 line-clamp-2 text-xs text-[hsl(var(--text-muted))]">
                                   {space.description}
                                 </p>
-                              ) : (
-                                <p className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
-                                  No description
-                                </p>
-                              )}
+                              ) : null}
                             </div>
                           </div>
                         </button>
@@ -2142,12 +2027,12 @@ export function ConversationSidebar() {
                 </div>
 
                 {isSpaceEditorOpen && selectedSpace && (
-                  <div className="mt-2 space-y-2 rounded-sm border border-subtle bg-surface p-3">
-                    <p className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
-                      Settings
+                  <div className="mt-3 space-y-3 border-t border-subtle pt-3">
+                    <p className="text-xs font-medium text-[hsl(var(--text-secondary))]">
+                      {selectedSpace.name}
                     </p>
 
-                    <details open className="rounded-sm border border-subtle bg-surface-raised p-2">
+                    <details open className="border-b border-subtle pb-3">
                       <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Basics</summary>
                       <div className="mt-2 space-y-2">
                         <div className="grid grid-cols-[72px_1fr] gap-2">
@@ -2155,13 +2040,13 @@ export function ConversationSidebar() {
                             value={spaceIconDraft}
                             onChange={(e) => setSpaceIconDraft(e.target.value)}
                             placeholder="Icon"
-                            className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                            className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                           />
                           <input
                             value={spaceNameDraft}
                             onChange={(e) => setSpaceNameDraft(e.target.value)}
                             placeholder="Space name"
-                            className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                            className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                           />
                         </div>
                         <div className="grid grid-cols-[92px_1fr_56px] gap-2">
@@ -2169,21 +2054,21 @@ export function ConversationSidebar() {
                             type="color"
                             value={normalizeHexColor(spaceAccentDraft) ?? '#8b72ff'}
                             onChange={(e) => setSpaceAccentDraft(e.target.value)}
-                            className="h-8 w-full rounded-sm border border-default bg-surface p-1"
+                            className="h-8 w-full rounded-sm border border-border-default bg-surface p-1"
                             title="Accent color"
                           />
                           <input
                             value={spaceAccentDraft}
                             onChange={(e) => setSpaceAccentDraft(e.target.value)}
                             placeholder="#8b72ff"
-                            className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                            className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                           />
                           <button
                             type="button"
                             onClick={() => setSpaceAccentDraft('')}
                             aria-label="Clear accent color"
                             title="Clear accent color"
-                            className="rounded-sm border border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
+                            className="rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                           >
                             Clear
                           </button>
@@ -2192,12 +2077,12 @@ export function ConversationSidebar() {
                           value={spaceDescriptionDraft}
                           onChange={(e) => setSpaceDescriptionDraft(e.target.value)}
                           placeholder="Description"
-                          className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                          className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                         />
                       </div>
                     </details>
 
-                    <details className="rounded-sm border border-subtle bg-surface-raised p-2">
+                    <details className="border-b border-subtle pb-3">
                       <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Defaults</summary>
                       <div className="mt-2 space-y-2">
                         <input
@@ -2205,7 +2090,7 @@ export function ConversationSidebar() {
                           onChange={(e) => setSpaceModelDraft(e.target.value)}
                           placeholder="Default model id (optional)"
                           list="space-model-options"
-                          className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                          className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
                         />
                         <datalist id="space-model-options">
                           {availableSpaceModels.map((modelId) => (
@@ -2217,7 +2102,7 @@ export function ConversationSidebar() {
                           onChange={(e) => setSpacePromptDraft(e.target.value)}
                           placeholder="System prompt for this space"
                           rows={4}
-                          className="w-full rounded-sm border border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
+                          className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
                         />
                         <div className="flex items-center gap-2">
                           <button
@@ -2226,10 +2111,10 @@ export function ConversationSidebar() {
                             className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${
                               spaceKbDefault
                                 ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                                : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
+                                : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                             }`}
                           >
-                            Knowledge base by default
+                            Search documents by default
                           </button>
                           <button
                             type="button"
@@ -2237,7 +2122,7 @@ export function ConversationSidebar() {
                             className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${
                               spaceWebDefault
                                 ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                                : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
+                                : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                             }`}
                           >
                             Web by default
@@ -2248,7 +2133,7 @@ export function ConversationSidebar() {
                             className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${
                               spaceDeepResearchDefault
                                 ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                                : 'border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
+                                : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
                             }`}
                           >
                             Deep research by default
@@ -2283,7 +2168,7 @@ export function ConversationSidebar() {
                         <button
                           onClick={handleAsyncEvent(() => setSelectedSpaceArchived(!selectedSpace.isArchived))}
                           disabled={isArchivingSpace}
-                          className="inline-flex items-center gap-1 rounded-sm border border-default px-2.5 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="inline-flex items-center gap-1 rounded-sm px-2.5 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isArchivingSpace ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -2296,7 +2181,7 @@ export function ConversationSidebar() {
                     </div>
 
                     {archivedSpaces.length > 0 && (
-                      <details className="rounded-sm border border-subtle bg-surface-raised p-2">
+                      <details className="border-b border-subtle pb-3">
                         <summary className="cursor-pointer text-xs text-[hsl(var(--text-muted))]">
                           Archived spaces · {archivedSpaces.length}
                         </summary>
@@ -2312,7 +2197,7 @@ export function ConversationSidebar() {
                               <button
                                 onClick={handleAsyncEvent(() => restoreArchivedSpace(space.id))}
                                 disabled={isRestoringSpace}
-                                className="rounded-sm border border-default px-1.5 py-0.5 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-fast"
+                                className="rounded-sm border border-border-default px-1.5 py-0.5 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-fast"
                               >
                                 Restore
                               </button>
