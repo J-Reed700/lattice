@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[specta(rename = "RecentDocumentDto")]
 pub struct RecentDocumentRecord {
     pub id: String,
     pub document_id: String,
