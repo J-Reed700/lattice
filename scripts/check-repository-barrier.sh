@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Repository Barrier Rule check
+# Repository Barrier (SSOT) check.
 #
-# Per CLAUDE.md "Repository Barrier (SSOT)": no use_case may import
-# tokio::fs / std::fs to make state decisions ("does X exist?").
+# High-level feature code must not decide persisted state by inspecting the
+# filesystem, and orchestration code must not own SQL. Filesystem-backed
+# repositories and legitimate file-resource workflows may opt out at a
+# specific call site with:
 #
-# Filesystem use is legitimate when the file IS the resource (reading content,
-# walking a user-provided ingestion path, deleting model artifacts). It is
-# split-brain when the question being answered ("is this model installed?")
-# could be answered by querying the repository instead.
+#   // repository-barrier-allow: <why the file itself is the resource>
 #
-# This check finds NEW violations: any use_case file that calls *::read_dir
-# without an inline `// repository-barrier-allow:` justification comment.
-#
-# Exit 0 = clean. Exit 1 = unjustified violation found.
+# The marker must be on the matching line or one of the two lines above it.
+# Test modules are excluded: assertions about their own fixtures are not
+# application state decisions.
 
 set -euo pipefail
 
@@ -24,33 +22,84 @@ if [[ ! -d "$SRC" ]]; then
   exit 2
 fi
 
-# Find all use_cases/*.rs files that mention read_dir
+FS_PATTERN='((tokio::fs|std::fs)::(read_dir|metadata|try_exists)|\.(exists|is_file|is_dir|try_exists)\(\))'
+SQL_PATTERN='sqlx::(query|query_as|query_scalar|raw_sql)'
 violations=0
-while IFS= read -r file; do
-  # For each read_dir line, check if the line itself OR the line above
-  # contains the allow marker.
+checked_files=0
+
+is_high_level_file() {
+  local file="$1"
+  local base
+  base="$(basename "$file")"
+  [[ "$file" == */use_cases/* ]] ||
+    [[ "$base" == commands*.rs ]] ||
+    [[ "$base" == watcher*.rs ]] ||
+    [[ "$base" == service*.rs ]] ||
+    [[ "$base" == repository*.rs ]]
+}
+
+owns_no_sql() {
+  local file="$1"
+  local base
+  base="$(basename "$file")"
+  [[ "$file" == */use_cases/* ]] ||
+    [[ "$base" == commands*.rs ]] ||
+    [[ "$base" == watcher*.rs ]] ||
+    [[ "$base" == service*.rs ]]
+}
+
+has_allow_marker() {
+  local file="$1"
+  local line_num="$2"
+  local start=1
+  if ((line_num > 2)); then
+    start=$((line_num - 2))
+  fi
+  sed -n "${start},${line_num}p" "$file" | grep -q 'repository-barrier-allow:'
+}
+
+check_matches() {
+  local file="$1"
+  local kind="$2"
+  local pattern="$3"
+  local match line_num line_content
+
   while IFS= read -r match; do
+    [[ -z "$match" ]] && continue
     line_num="${match%%:*}"
-    above=$((line_num - 1))
-    line_content=$(sed -n "${line_num}p" "$file")
-    above_content=$(sed -n "${above}p" "$file")
+    line_content="${match#*:}"
+    if has_allow_marker "$file" "$line_num"; then
+      continue
+    fi
 
-    if echo "$line_content" | grep -q "repository-barrier-allow"; then continue; fi
-    if echo "$above_content" | grep -q "repository-barrier-allow"; then continue; fi
-
-    echo "VIOLATION: $file:$line_num"
+    echo "VIOLATION [$kind]: $file:$line_num"
     echo "  $line_content"
-    echo "  Add '// repository-barrier-allow: <reason>' on the line above to justify."
+    echo "  Add '// repository-barrier-allow: <reason>' immediately above to justify."
     violations=$((violations + 1))
-  done < <(grep -nE 'fs::read_dir|tokio::fs::read_dir|std::fs::read_dir' "$file" || true)
-done < <(find "$SRC" -path '*/use_cases/*.rs' -type f)
+  done < <(
+    # Repository-barrier checks apply to production code. In this codebase,
+    # cfg(test) modules are terminal sections of their source files.
+    awk '/^[[:space:]]*#\[cfg\(test\)\]/{exit} {print}' "$file" |
+      rg -n "$pattern" || true
+  )
+}
 
-if [[ $violations -gt 0 ]]; then
-  echo ""
-  echo "Found $violations Repository Barrier violation(s) in use_cases/."
+while IFS= read -r -d '' file; do
+  if ! is_high_level_file "$file"; then
+    continue
+  fi
+  checked_files=$((checked_files + 1))
+  check_matches "$file" "filesystem state" "$FS_PATTERN"
+  if owns_no_sql "$file"; then
+    check_matches "$file" "raw SQL outside repository" "$SQL_PATTERN"
+  fi
+done < <(find "$SRC" -type f -name '*.rs' -print0)
+
+if ((violations > 0)); then
+  echo
+  echo "Found $violations Repository Barrier violation(s) across $checked_files production feature files."
   echo "See CLAUDE.md 'ARCHITECTURAL RULE: Repository Barrier (SSOT)'."
   exit 1
 fi
 
-echo "Repository Barrier check: clean ($SRC/*/use_cases/)."
-exit 0
+echo "Repository Barrier check: clean ($checked_files production feature files)."

@@ -43,4 +43,4 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS update_electric_timestamp()")
     op.execute("DROP EXTENSION IF EXISTS pg_trgm")
     op.execute("DROP EXTENSION IF EXISTS vector")
-    op.execute("DROP EXTENSION IF EXISTS "uuid-ossp"")
+    op.execute('DROP EXTENSION IF EXISTS "uuid-ossp"')

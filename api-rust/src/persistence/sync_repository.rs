@@ -331,10 +331,11 @@ impl SyncRepository for PgSyncRepository {
 
             let server_version = head.map(|item| item.version).unwrap_or(0);
 
-            if let Some(base_version) = change.base_version {
-                if base_version != server_version {
-                    let conflict_row = sqlx::query_as::<_, ConflictRow>(
-                        r#"
+            if let Some(base_version) = change.base_version
+                && base_version != server_version
+            {
+                let conflict_row = sqlx::query_as::<_, ConflictRow>(
+                    r#"
                         INSERT INTO conflicts (
                           user_id,
                           path,
@@ -355,31 +356,30 @@ impl SyncRepository for PgSyncRepository {
                           created_at,
                           resolved_at
                         "#,
-                    )
-                    .bind(user_id)
-                    .bind(&change.path)
-                    .bind(op_seq)
-                    .bind(device.id)
-                    .bind(change.client_op_id)
-                    .bind(server_version)
-                    .bind(base_version)
-                    .fetch_one(tx.as_mut())
-                    .await?;
+                )
+                .bind(user_id)
+                .bind(&change.path)
+                .bind(op_seq)
+                .bind(device.id)
+                .bind(change.client_op_id)
+                .bind(server_version)
+                .bind(base_version)
+                .fetch_one(tx.as_mut())
+                .await?;
 
-                    conflicts.push(ConflictInfo {
-                        id: conflict_row.id,
-                        path: conflict_row.path,
-                        server_version: conflict_row.server_version,
-                        incoming_base_version: conflict_row.incoming_base_version,
-                        status: ConflictStatus::from_db(&conflict_row.status).ok_or_else(|| {
-                            AppError::Internal("invalid conflict status in database".to_string())
-                        })?,
-                        created_at: conflict_row.created_at,
-                        resolved_at: conflict_row.resolved_at,
-                    });
+                conflicts.push(ConflictInfo {
+                    id: conflict_row.id,
+                    path: conflict_row.path,
+                    server_version: conflict_row.server_version,
+                    incoming_base_version: conflict_row.incoming_base_version,
+                    status: ConflictStatus::from_db(&conflict_row.status).ok_or_else(|| {
+                        AppError::Internal("invalid conflict status in database".to_string())
+                    })?,
+                    created_at: conflict_row.created_at,
+                    resolved_at: conflict_row.resolved_at,
+                });
 
-                    continue;
-                }
+                continue;
             }
 
             let applied_version = match change.action {
