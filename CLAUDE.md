@@ -71,6 +71,12 @@ Run the audit: `oracle ask "audit <feature> for split-brain"` with the relevant 
 
 ---
 
+## 🟪 UI RULE: One visual dialect
+
+Every frontend change follows `src/app/websrc/.design/UX-OVERHAUL-BRIEF.md` (page anatomy, sidebar anatomy, settings anatomy, voice) and `AESTHETIC-GUIDE.md` (visual DNA). Build pages from the primitives in `components/ui` (`PageHeader`, `SectionHeading`, `SettingsSection`/`SettingsRow`, `SidebarHeader`/`SidebarSearch`/`SidebarTabs`, `IconButton`, `EmptyState`). No cards inside cards, no icon-in-tinted-box headers, no uppercase section labels, no explanatory sentence under a title, no pills for non-state, no stat that is always zero, no control that changes nothing. Look at the result with the screenshot rig before calling it done.
+
+---
+
 ## AI Assistant Guidelines
 
 ### **🔴 THE SACRED RULES - MUST FOLLOW ALWAYS 🔴**

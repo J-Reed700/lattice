@@ -113,7 +113,7 @@ poetry run mypy src/
 
 - API app factory: `src/api/src/api/app.py`
 - API runner: `src/api/src/main.py`
-- App Rust binary entry: `src/app/src/src/crates/recall/main.rs`
+- App Rust binary entry: `src/app/src/src/main.rs`
 - App React entry: `src/app/websrc/main.tsx`
 
 ## Documentation Conventions

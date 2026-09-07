@@ -215,6 +215,14 @@ cargo build --release
 npm run tauri:build
 ```
 
+On macOS, the checked-in Tauri configuration uses ad-hoc signing so local `.app` and
+`.dmg` artifacts are sealed and can be verified with `codesign`, but they are not trusted
+for public distribution. A distribution build must override `bundle.macOS.signingIdentity`
+with an installed Developer ID Application identity (or set it to `null` when using
+Tauri's `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` CI variables) and provide
+Apple notarization credentials. The top-level `npm run build` command also verifies the
+resulting app signature and disk image before reporting success.
+
 ### Testing
 
 ```bash
