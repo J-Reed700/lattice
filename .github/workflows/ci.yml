@@ -50,35 +50,35 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            src/src/target/
-          key: cargo-${{ matrix.os }}-${{ hashFiles('src/src/Cargo.lock') }}
+            src-tauri/target/
+          key: cargo-${{ matrix.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
             cargo-${{ matrix.os }}-
 
       - name: cargo check
-        working-directory: src/src
+        working-directory: src-tauri
         run: cargo check --all-targets
 
       - name: Desktop Rust unit and repository tests
-        working-directory: src/src
+        working-directory: src-tauri
         run: cargo test --lib --bin export_bindings
 
       - name: Audit and credential backend integration tests
-        working-directory: src/src
+        working-directory: src-tauri
         run: cargo test --test security_audit_logging_test --test native_keyring_backend_test
 
       # The crate defines additional safety lints in Cargo.toml. Existing
       # warnings are not promoted to errors yet.
       - name: cargo clippy
-        working-directory: src/src
+        working-directory: src-tauri
         run: cargo clippy --all-targets
 
       - name: generated bindings are current
-        working-directory: src/src
+        working-directory: src-tauri
         run: cargo run --bin export_bindings -- --check
 
       - name: cargo fmt --check
-        working-directory: src/src
+        working-directory: src-tauri
         run: cargo fmt --all -- --check
 
   # Syntax-aware layer checks complement the filesystem-state guard.
@@ -97,9 +97,6 @@ jobs:
   frontend:
     name: frontend (type-check, lint, test)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src
     steps:
       - uses: actions/checkout@v4
 
@@ -108,7 +105,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: src/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - run: npm ci
 

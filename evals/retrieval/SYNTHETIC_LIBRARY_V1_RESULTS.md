@@ -44,7 +44,7 @@ performance on a user's actual library.
 ## Reproduce
 
 ```sh
-cd src/src
+cd src-tauri
 SQLX_OFFLINE=true cargo build --release --example retrieval_eval
 
 LATTICE_FORCE_CPU=1 ./target/release/examples/retrieval_eval \
