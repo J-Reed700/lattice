@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::infrastructure::search::query_expansion::{QueryExpander, QueryExpansionConfig};
+//! use crate::features::search::engine::query_expansion::{QueryExpander, QueryExpansionConfig};
 //!
 //! let config = QueryExpansionConfig::default();
 //! let expander = QueryExpander::new(config)?;
@@ -35,6 +35,5 @@ pub mod config;
 pub mod dictionaries;
 pub mod expander;
 
-// Re-export public API
 pub use config::{QueryExpansion, QueryExpansionConfig};
 pub use expander::QueryExpander;

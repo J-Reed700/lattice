@@ -34,10 +34,6 @@ use crate::infrastructure::services::traits::ModelManagerTrait;
 use crate::shared::result::Result;
 use std::sync::Arc;
 
-// =============================================================================
-// Use Case
-// =============================================================================
-
 /// Initialize models use case.
 ///
 /// Ensures embedding models are loaded and ready for use.
@@ -85,15 +81,10 @@ impl InitializeModelsUseCase {
     }
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::infrastructure::services::traits::ModelInfo;
-    use crate::shared::error::AppError;
     use async_trait::async_trait;
     use parking_lot::RwLock;
     use std::path::PathBuf;
@@ -109,10 +100,6 @@ mod tests {
                 is_ready: RwLock::new(is_ready),
                 model_path: PathBuf::from("/tmp/model.onnx"),
             }
-        }
-
-        fn set_ready(&self, ready: bool) {
-            *self.is_ready.write() = ready;
         }
     }
 
@@ -168,14 +155,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_models_success() {
-        // Arrange
         let model_manager = Arc::new(MockModelManager::new(true));
         let use_case = InitializeModelsUseCase::new(model_manager);
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.success);
@@ -185,14 +169,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_models_not_ready() {
-        // Arrange
         let model_manager = Arc::new(MockModelManager::new(false));
         let use_case = InitializeModelsUseCase::new(model_manager);
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(!response.was_cached);
@@ -200,28 +181,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_models_returns_correct_dimension() {
-        // Arrange
         let model_manager = Arc::new(MockModelManager::new(true));
         let use_case = InitializeModelsUseCase::new(model_manager);
 
-        // Act
         let result = use_case.execute().await.unwrap();
 
-        // Assert
         assert_eq!(result.model_dimension, Some(DEFAULT_EMBEDDING_DIM));
     }
 
     #[tokio::test]
     async fn test_initialize_models_cached() {
-        // Arrange
         let model_manager = Arc::new(MockModelManager::new(true));
         let use_case = InitializeModelsUseCase::new(model_manager);
 
-        // Act
         let result = use_case.execute().await.unwrap();
 
-        // Assert
-        // Since model is already ready, it was cached
         assert!(result.was_cached);
     }
 }

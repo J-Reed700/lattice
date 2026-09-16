@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! # End-to-End Indexing Integration Tests
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -38,27 +36,20 @@
 //! - Concurrent indexing
 //! - Error recovery
 
-use lattice::error::Result;
-use lattice::infrastructure::indexing::chunker::{ChunkingStrategy, RecursiveChunker};
+use lattice::shared::error::Result;
+use lattice::features::indexing::engine::chunker::{ChunkingStrategy, RecursiveChunker};
 
 mod helpers;
 use helpers::{TestContext, DocumentFactory, ChunkFactory, assert_document_exists, assert_chunk_count};
-
-// ============================================================================
-// Basic Indexing Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_single_document_indexing() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create document
     let doc = ctx.create_test_document("test.md", "# Test Document\n\nThis is test content.").await?;
 
-    // Verify document exists
     assert_document_exists(&ctx.doc_repo(), &doc.id).await?;
 
-    // Verify stats
     let stats = ctx.get_db_stats().await?;
     assert_eq!(stats.documents, 1);
 
@@ -69,16 +60,12 @@ async fn test_single_document_indexing() -> Result<()> {
 async fn test_document_with_chunks_indexing() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create document
     let doc = ctx.create_test_document("test.md", "Test content").await?;
 
-    // Create chunks
     let chunks = ctx.create_test_chunks(&doc.id, 3).await?;
 
-    // Verify chunks
     assert_chunk_count(&ctx.chunk_repo(), &doc.id, 3).await?;
 
-    // Verify chunk content
     for (i, chunk) in chunks.iter().enumerate() {
         assert_eq!(chunk.chunk_index, i as i32);
         assert!(!chunk.content.is_empty());
@@ -91,17 +78,13 @@ async fn test_document_with_chunks_indexing() -> Result<()> {
 async fn test_document_with_embeddings_indexing() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create document
     let doc = ctx.create_test_document("test.md", "Test content").await?;
 
-    // Create chunks
     let chunks = ctx.create_test_chunks(&doc.id, 2).await?;
 
-    // Create embeddings
     let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.id.as_str()).collect();
     let embeddings = ctx.create_test_embeddings(&chunk_ids).await?;
 
-    // Verify embeddings
     assert_eq!(embeddings.len(), 2);
 
     for embedding in &embeddings {
@@ -111,22 +94,16 @@ async fn test_document_with_embeddings_indexing() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Content Chunking Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_large_document_chunking() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create large document
     let large_content = "Lorem ipsum dolor sit amet. ".repeat(100); // ~2800 chars
     let doc = ctx.create_test_document("large.md", &large_content).await?;
 
     // Chunk it
     let chunk_repo = ctx.chunk_repo();
 
-    // Create chunks manually with different sizes
     for i in 0..5 {
         let chunk_content = large_content.chars().skip(i * 500).take(500).collect::<String>();
         chunk_repo
@@ -134,12 +111,10 @@ async fn test_large_document_chunking() -> Result<()> {
             .await?;
     }
 
-    // Verify chunking
     assert_chunk_count(&chunk_repo, &doc.id, 5).await?;
 
     let chunks = chunk_repo.get_chunks_by_document(&doc.id).await?;
 
-    // Verify chunks are sequential
     for (i, chunk) in chunks.iter().enumerate() {
         assert_eq!(chunk.chunk_index, i as i32);
     }
@@ -174,7 +149,6 @@ The results of our study.
 
     let doc = ctx.create_test_document("research.md", markdown_content).await?;
 
-    // Create semantic chunks (by section)
     let sections = vec![
         "# Introduction\n\nThis is the introduction section.",
         "## Background\n\nHere is some background information.",
@@ -191,11 +165,9 @@ The results of our study.
             .await?;
     }
 
-    // Verify semantic chunking preserved structure
     let chunks = chunk_repo.get_chunks_by_document(&doc.id).await?;
     assert_eq!(chunks.len(), 5);
 
-    // Verify first chunk has heading
     assert!(chunks[0].content.starts_with('#'));
 
     Ok(())
@@ -250,22 +222,16 @@ impl Person {
             .await?;
     }
 
-    // Verify code chunking
     let stored_chunks = chunk_repo.get_chunks_by_document(&doc.id).await?;
     assert_eq!(stored_chunks.len(), 5);
 
     Ok(())
 }
 
-// ============================================================================
-// Batch Indexing Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_batch_document_indexing() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create multiple documents
     let mut doc_ids = Vec::new();
 
     for i in 0..10 {
@@ -279,7 +245,6 @@ async fn test_batch_document_indexing() -> Result<()> {
         doc_ids.push(doc.id);
     }
 
-    // Verify all documents exist
     let stats = ctx.get_db_stats().await?;
     assert_eq!(stats.documents, 10);
 
@@ -304,14 +269,13 @@ async fn test_concurrent_document_indexing() -> Result<()> {
 
                 doc.insert_into_db(&doc_repo).await?;
 
-                // Add chunks
                 for j in 0..3 {
                     chunk_repo
                         .create_chunk(&doc.id, &format!("Chunk {}", j), j, None, None)
                         .await?;
                 }
 
-                Ok::<_, lattice::error::AppError>(doc.id)
+                Ok::<_, lattice::shared::error::AppError>(doc.id)
             })
         })
         .collect();
@@ -319,14 +283,12 @@ async fn test_concurrent_document_indexing() -> Result<()> {
     // Wait for all to complete
     let results: Vec<_> = futures::future::join_all(handles).await;
 
-    // Verify all succeeded
     for result in results {
         assert!(result.is_ok());
         let doc_id = result.unwrap()?;
         assert!(!doc_id.is_empty());
     }
 
-    // Verify database state
     let stats = ctx.get_db_stats().await?;
     assert_eq!(stats.documents, 5);
     assert_eq!(stats.chunks, 15); // 5 docs * 3 chunks
@@ -334,18 +296,12 @@ async fn test_concurrent_document_indexing() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Edge Cases and Error Handling
-// ============================================================================
-
 #[tokio::test]
 async fn test_empty_document_indexing() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create empty document
     let doc = ctx.create_test_document("empty.md", "").await?;
 
-    // Verify it was stored
     assert_document_exists(&ctx.doc_repo(), &doc.id).await?;
 
     Ok(())
@@ -355,7 +311,6 @@ async fn test_empty_document_indexing() -> Result<()> {
 async fn test_very_long_document_indexing() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create very long document (100KB)
     let long_content = "A".repeat(100_000);
     let doc = ctx.create_test_document("long.txt", &long_content).await?;
 
@@ -389,10 +344,8 @@ Newlines and tabs:
 async fn test_duplicate_document_handling() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create first document
     let doc1 = ctx.create_test_document("duplicate.md", "Original content").await?;
 
-    // Create "duplicate" with same name but different ID
     let doc2 = DocumentFactory::new()
         .file_name("duplicate.md")
         .content("Different content")
@@ -407,10 +360,6 @@ async fn test_duplicate_document_handling() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Metadata and Content Extraction Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_document_metadata_extraction() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -424,7 +373,6 @@ async fn test_document_metadata_extraction() -> Result<()> {
 
     doc.insert_into_db(&ctx.doc_repo()).await?;
 
-    // Verify metadata is stored correctly
     let retrieved = ctx.doc_repo().get_by_id(&doc.id).await?;
     assert!(retrieved.is_some());
 
@@ -435,30 +383,20 @@ async fn test_document_metadata_extraction() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Cleanup and Resource Management Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_context_cleanup() -> Result<()> {
-    // Create context in a scope
     let doc_id = {
         let ctx = TestContext::new().await?;
         let doc = ctx.create_test_document("cleanup.md", "Test").await?;
         doc.id
     }; // Context dropped here
 
-    // Verify cleanup happened (new context shouldn't have old data)
     let new_ctx = TestContext::new().await?;
     let stats = new_ctx.get_db_stats().await?;
     assert_eq!(stats.documents, 0); // Fresh database
 
     Ok(())
 }
-
-// ============================================================================
-// Performance Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_indexing_performance() -> Result<()> {
@@ -474,7 +412,6 @@ async fn test_indexing_performance() -> Result<()> {
 
     let duration = start.elapsed();
 
-    // Should complete in reasonable time (< 5 seconds for in-memory DB)
     assert!(duration.as_secs() < 5, "Indexing took too long: {:?}", duration);
 
     let stats = ctx.get_db_stats().await?;
@@ -491,7 +428,6 @@ async fn test_chunk_creation_performance() -> Result<()> {
 
     let start = std::time::Instant::now();
 
-    // Create 1000 chunks
     for i in 0..1000 {
         let chunk_repo = ctx.chunk_repo();
         chunk_repo
@@ -501,7 +437,6 @@ async fn test_chunk_creation_performance() -> Result<()> {
 
     let duration = start.elapsed();
 
-    // Should complete in reasonable time
     assert!(duration.as_secs() < 10, "Chunk creation took too long: {:?}", duration);
 
     assert_chunk_count(&ctx.chunk_repo(), &doc.id, 1000).await?;

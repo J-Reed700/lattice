@@ -1,6 +1,6 @@
 //! # Mock HTTP Client for Download Testing
 //!
-//! Oracle-approved mock HTTP client for testing download operations,
+//! Mock HTTP client for testing download operations,
 //! with CRITICAL support for Range header verification (Test 26).
 //!
 //! ## Key Features
@@ -126,7 +126,6 @@ mod tests {
 
         client.set_response("http://example.com/file", response);
 
-        // Verify response was stored
         let responses = client.responses.lock().unwrap();
         assert!(responses.contains_key("http://example.com/file"));
     }

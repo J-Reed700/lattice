@@ -6,7 +6,7 @@ set -e
 echo "Running pre-commit CI checks..."
 echo ""
 
-cd "$(git rev-parse --show-toplevel)/src/app/src"
+cd "$(git rev-parse --show-toplevel)/src/src"
 
 # Run quick CI checks (production code only)
 just ci-quick

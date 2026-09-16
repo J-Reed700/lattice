@@ -95,16 +95,19 @@ impl RecencyScorer {
         }
 
         let rows = query_builder.fetch_all(pool).await.map_err(|e| {
-            crate::error::AppError::Database(format!("Failed to fetch timestamps: {}", e))
+            crate::shared::error::AppError::Database(format!("Failed to fetch timestamps: {}", e))
         })?;
 
         let mut timestamps = HashMap::new();
         for row in rows {
             let id: String = row.try_get("id").map_err(|e| {
-                crate::error::AppError::Database(format!("Failed to get document id: {}", e))
+                crate::shared::error::AppError::Database(format!(
+                    "Failed to get document id: {}",
+                    e
+                ))
             })?;
             let updated_at: String = row.try_get("updated_at").map_err(|e| {
-                crate::error::AppError::Database(format!("Failed to get updated_at: {}", e))
+                crate::shared::error::AppError::Database(format!("Failed to get updated_at: {}", e))
             })?;
 
             match crate::shared::time::parse_db_timestamp(&updated_at) {

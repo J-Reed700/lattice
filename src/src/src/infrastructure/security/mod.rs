@@ -13,11 +13,6 @@ pub use migration::{migrate_credentials, CredentialMigration, MigrationReport};
 pub use rate_limiter::{RateLimiter, RateLimiters};
 pub use validated_file::{ValidatedFile, ValidatedFileError, ValidationError};
 
-// ============================================================================
-// SecurityContext - DDD Migration Phase 2B
-// ============================================================================
-// Implements security context with rate limiting and input validation
-
 use crate::shared::error::Result;
 
 /// Security context for request validation and authorization
@@ -193,7 +188,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_store_and_retrieve_ollama_key() {
         let test_key = "test-ollama-api-key-123";
 
@@ -209,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_store_and_retrieve_openai_key() {
         let test_key = "test-openai-api-key-456";
 
@@ -222,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_custom_endpoint() {
         let test_endpoint = "https://custom-api.example.com";
 
@@ -235,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_has_credentials() {
         let _ = SecureStorage::clear_all();
 

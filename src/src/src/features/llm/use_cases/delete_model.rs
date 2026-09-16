@@ -10,9 +10,9 @@
 //!
 //! # Repository Barrier Rule (DB-as-SSOT)
 //!
-//! When constructed via `new_with_repository`, the database is the
-//! Single Source of Truth for "does this model exist". Existence and
-//! size are sourced from the `models` table, NOT from the filesystem.
+//! The database is the Single Source of Truth for "does this model
+//! exist". Existence and size are sourced from the `models` table, NOT
+//! from the filesystem.
 //!
 //! Filesystem deletion is then performed best-effort: missing files
 //! (e.g. user removed them via Finder) are logged and ignored. The
@@ -21,11 +21,8 @@
 //! manually-deleted file made the model un-deletable from the UI
 //! because the FS check happened before the DB delete.
 //!
-//! Legacy `new()` constructor retains the prior FS-first behavior for
-//! backwards compatibility with existing tests.
-//!
 //! # Dependencies
-//! - `ModelStoragePort` - Filesystem model storage (legacy)
+//! - `ModelStoragePort` - Filesystem model storage
 //! - `DownloadedModelRepository` - Database tracking (Registry/Usage bounded context)
 //!
 //! # Example
@@ -44,11 +41,11 @@ use crate::domain::repositories::downloaded_model_repository::DownloadedModelRep
 use crate::features::llm::dto::{DeleteModelRequestDto, DeleteModelResponseDto};
 use crate::shared::error::AppError;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 pub struct DeleteModelUseCase {
     storage: Arc<dyn ModelStoragePort>,
-    repository: Option<Arc<dyn DownloadedModelRepository>>,
+    repository: Arc<dyn DownloadedModelRepository>,
 }
 
 impl DeleteModelUseCase {
@@ -57,24 +54,13 @@ impl DeleteModelUseCase {
     /// # Arguments
     /// * `storage` - Filesystem storage port for deleting model files
     /// * `repository` - Database repository for deleting model records
-    pub fn new_with_repository(
+    pub fn new(
         storage: Arc<dyn ModelStoragePort>,
         repository: Arc<dyn DownloadedModelRepository>,
     ) -> Self {
         Self {
             storage,
-            repository: Some(repository),
-        }
-    }
-
-    /// Create a new DeleteModelUseCase with filesystem-only deletion (legacy)
-    ///
-    /// This constructor is for backwards compatibility with existing tests.
-    /// New code should use `new_with_repository` to ensure database cleanup.
-    pub fn new(storage: Arc<dyn ModelStoragePort>) -> Self {
-        Self {
-            storage,
-            repository: None,
+            repository,
         }
     }
 
@@ -92,26 +78,16 @@ impl DeleteModelUseCase {
             return Err(AppError::InvalidInput("Model ID cannot be empty".into()));
         }
 
-        if let Some(repository) = self.repository.clone() {
-            self.execute_db_ssot(model_id, repository.as_ref()).await
-        } else {
-            debug!(
-                "delete_model: using legacy FS-only path; consider migrating caller to new_with_repository"
-            );
-            self.execute_legacy(model_id).await
-        }
+        self.execute_db_ssot(model_id).await
     }
 
-    /// DB-as-SSOT deletion path (preferred).
+    /// DB-as-SSOT deletion path.
     ///
     /// 1. Source the model from the DB; NotFound iff the DB row is absent.
     /// 2. Delete files best-effort (NotFound errors logged and ignored).
     /// 3. Delete the DB row authoritatively (errors propagate).
-    async fn execute_db_ssot(
-        &self,
-        model_id: &str,
-        repository: &dyn DownloadedModelRepository,
-    ) -> Result<DeleteModelResponseDto, AppError> {
+    async fn execute_db_ssot(&self, model_id: &str) -> Result<DeleteModelResponseDto, AppError> {
+        let repository = self.repository.as_ref();
         let downloaded = repository
             .find_by_model_id(model_id)
             .await?
@@ -126,114 +102,6 @@ impl DeleteModelUseCase {
         info!(
             model_id = %model_id,
             "Deleted model from database (DB-as-SSOT path)"
-        );
-
-        Ok(DeleteModelResponseDto {
-            success: true,
-            freed_space_gb,
-        })
-    }
-
-    /// Legacy FS-first deletion path (backwards-compatible with `new()`).
-    ///
-    /// Preserved verbatim for existing tests built against `MockModelStoragePort`.
-    async fn execute_legacy(&self, model_id: &str) -> Result<DeleteModelResponseDto, AppError> {
-        if !self.storage.is_model_downloaded(model_id).await? {
-            return Err(AppError::NotFound(format!(
-                "Model {} is not downloaded",
-                model_id
-            )));
-        }
-
-        let models = self.storage.list_models().await?;
-        let model = models
-            .iter()
-            .find(|m| m.model_id == *model_id)
-            .ok_or_else(|| AppError::NotFound(format!("Model {} not found", model_id)))?;
-
-        let size_bytes = model.size_bytes;
-        let freed_space_gb = size_bytes as f64 / 1_000_000_000.0;
-
-        // Delete from filesystem - check if multi-file model
-        let curated_models = get_all_curated_models();
-        let curated_model = curated_models.iter().find(|m| m.id == *model_id);
-
-        if let Some(model_meta) = curated_model {
-            if !model_meta.files.is_empty() {
-                // Multi-file model - delete all files individually
-                info!(
-                    model_id = %model_id,
-                    file_count = model_meta.files.len(),
-                    "Deleting multi-file model"
-                );
-
-                let model_path = self.storage.get_model_path(model_id).await?;
-
-                // Validate all filenames first (security check - prevents CWE-22 path traversal)
-                for file in &model_meta.files {
-                    if file.filename.contains("..")
-                        || file.filename.contains('/')
-                        || file.filename.contains('\\')
-                    {
-                        return Err(AppError::InvalidInput(format!(
-                            "Invalid filename contains path separators: {}",
-                            file.filename
-                        )));
-                    }
-                }
-
-                // Now safe to delete files
-                for file in &model_meta.files {
-                    let file_path = model_path.join(&file.filename);
-                    // repository-barrier-allow: deletion verifies each model artifact before removing that resource.
-                    if file_path.exists() {
-                        tokio::fs::remove_file(&file_path).await.map_err(|e| {
-                            AppError::FileSystem(format!(
-                                "Failed to delete {} at {}: {}",
-                                file.filename,
-                                file_path.display(),
-                                e
-                            ))
-                        })?;
-
-                        info!(file = %file.filename, "Deleted model file");
-                    } else {
-                        warn!(file = %file.filename, "File not found, skipping");
-                    }
-                }
-
-                // Try to remove directory if empty (async I/O)
-                // repository-barrier-allow: cleaning up the model's own directory after deletion, not a state query.
-                let mut entries = tokio::fs::read_dir(&model_path).await.map_err(|e| {
-                    AppError::FileSystem(format!("Failed to read directory: {}", e))
-                })?;
-
-                if entries
-                    .next_entry()
-                    .await
-                    .map_err(|e| AppError::FileSystem(format!("Failed to check directory: {}", e)))?
-                    .is_none()
-                {
-                    tokio::fs::remove_dir(&model_path).await.map_err(|e| {
-                        AppError::FileSystem(format!("Failed to remove directory: {}", e))
-                    })?;
-
-                    info!("Removed empty model directory");
-                }
-            } else {
-                // Single-file model (or legacy) - use existing storage deletion
-                self.storage.delete_model(model_id).await?;
-            }
-        } else {
-            // Not a curated model - use legacy deletion
-            self.storage.delete_model(model_id).await?;
-        }
-
-        // No repository configured (legacy mode / tests)
-        warn!(
-            model_id = %model_id,
-            "DeleteModelUseCase running without database repository. \
-             Database records will not be cleaned up."
         );
 
         Ok(DeleteModelResponseDto {
@@ -355,7 +223,7 @@ impl DeleteModelUseCase {
                     }
                 }
             } else {
-                // Single-file model (or legacy) - delegate to storage, tolerating NotFound
+                // Single-file model - delegate to storage, tolerating NotFound
                 match storage.delete_model(model_id).await {
                     Ok(()) => {}
                     Err(AppError::NotFound(msg)) => {
@@ -389,233 +257,20 @@ impl DeleteModelUseCase {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::application::ports::model_storage::{DownloadedModel, MockModelStoragePort};
-    use chrono::Utc;
-    use std::path::PathBuf;
-
-    #[tokio::test]
-    async fn test_delete_model_success() {
-        let storage = Arc::new(MockModelStoragePort::with_models());
-        let use_case = DeleteModelUseCase::new(storage.clone());
-
-        let request = DeleteModelRequestDto {
-            model_id: "phi-3-mini".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert!(response.success);
-        assert_eq!(response.freed_space_gb, 1.8);
-
-        assert!(!storage.is_model_downloaded("phi-3-mini").await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_not_found() {
-        let storage = Arc::new(MockModelStoragePort::new());
-        let use_case = DeleteModelUseCase::new(storage);
-
-        let request = DeleteModelRequestDto {
-            model_id: "nonexistent".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_err());
-        match result {
-            Err(AppError::NotFound(msg)) => {
-                assert!(msg.contains("not downloaded"));
-            }
-            _ => panic!("Expected NotFound error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_empty_id() {
-        let storage = Arc::new(MockModelStoragePort::new());
-        let use_case = DeleteModelUseCase::new(storage);
-
-        let request = DeleteModelRequestDto {
-            model_id: "".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_err());
-        match result {
-            Err(AppError::InvalidInput(msg)) => {
-                assert!(msg.contains("cannot be empty"));
-            }
-            _ => panic!("Expected InvalidInput error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_calculates_freed_space() {
-        let storage = Arc::new(MockModelStoragePort::new());
-
-        storage.add_model(DownloadedModel {
-            model_id: "test-model".to_string(),
-            path: PathBuf::from("/models/test"),
-            size_bytes: 4_100_000_000,
-            downloaded_at: Utc::now(),
-        });
-
-        let use_case = DeleteModelUseCase::new(storage.clone());
-
-        let request = DeleteModelRequestDto {
-            model_id: "test-model".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert!(response.success);
-        assert_eq!(response.freed_space_gb, 4.1);
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_removes_from_storage() {
-        let storage = Arc::new(MockModelStoragePort::with_models());
-        let use_case = DeleteModelUseCase::new(storage.clone());
-
-        assert_eq!(storage.model_count(), 2);
-
-        let request = DeleteModelRequestDto {
-            model_id: "mistral-7b".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_ok());
-        assert_eq!(storage.model_count(), 1);
-        assert!(!storage.is_model_downloaded("mistral-7b").await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_large_model() {
-        let storage = Arc::new(MockModelStoragePort::new());
-
-        storage.add_model(DownloadedModel {
-            model_id: "large-model".to_string(),
-            path: PathBuf::from("/models/large"),
-            size_bytes: 26_000_000_000,
-            downloaded_at: Utc::now(),
-        });
-
-        let use_case = DeleteModelUseCase::new(storage);
-
-        let request = DeleteModelRequestDto {
-            model_id: "large-model".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert!(response.success);
-        assert_eq!(response.freed_space_gb, 26.0);
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_small_model() {
-        let storage = Arc::new(MockModelStoragePort::new());
-
-        storage.add_model(DownloadedModel {
-            model_id: "tiny-model".to_string(),
-            path: PathBuf::from("/models/tiny"),
-            size_bytes: 1_100_000_000,
-            downloaded_at: Utc::now(),
-        });
-
-        let use_case = DeleteModelUseCase::new(storage);
-
-        let request = DeleteModelRequestDto {
-            model_id: "tiny-model".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert!(response.success);
-        assert_eq!(response.freed_space_gb, 1.1);
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_multiple_deletions() {
-        let storage = Arc::new(MockModelStoragePort::with_models());
-        let use_case = DeleteModelUseCase::new(storage.clone());
-
-        let request1 = DeleteModelRequestDto {
-            model_id: "phi-3-mini".to_string(),
-        };
-        let result1 = use_case.execute(request1).await;
-        assert!(result1.is_ok());
-
-        let request2 = DeleteModelRequestDto {
-            model_id: "mistral-7b".to_string(),
-        };
-        let result2 = use_case.execute(request2).await;
-        assert!(result2.is_ok());
-
-        assert_eq!(storage.model_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_cannot_delete_twice() {
-        let storage = Arc::new(MockModelStoragePort::with_models());
-        let use_case = DeleteModelUseCase::new(storage);
-
-        let request = DeleteModelRequestDto {
-            model_id: "phi-3-mini".to_string(),
-        };
-
-        let result1 = use_case.execute(request.clone()).await;
-        assert!(result1.is_ok());
-
-        let result2 = use_case.execute(request).await;
-        assert!(result2.is_err());
-        match result2 {
-            Err(AppError::NotFound(_)) => {}
-            _ => panic!("Expected NotFound error on second deletion"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delete_model_validates_id_format() {
-        let storage = Arc::new(MockModelStoragePort::new());
-        let use_case = DeleteModelUseCase::new(storage);
-
-        let request = DeleteModelRequestDto {
-            model_id: "   ".to_string(),
-        };
-
-        let result = use_case.execute(request).await;
-
-        assert!(result.is_err());
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
-mod db_ssot_tests {
-    //! Tests for the DB-as-SSOT path (constructor: `new_with_repository`).
-    //!
-    //! Regression coverage for the orphan-on-FS-miss bug: if the user removes
-    //! the model file via Finder, the FS-first path stranded the DB row
-    //! forever. The DB-SSOT path tolerates the missing file and authoritatively
-    //! deletes the DB row.
+    //! The use case is DB-as-SSOT: existence and freed size come from the
+    //! `models` table, the filesystem is cleaned best-effort. Tests therefore
+    //! seed an in-memory SQLite repository and use the storage mock only to
+    //! observe filesystem-side effects.
 
     use super::*;
-    use crate::application::ports::model_storage::MockModelStoragePort;
+    use crate::application::ports::model_storage::{
+        DownloadedModel as StoredModel, MockModelStoragePort,
+    };
     use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
     use crate::infrastructure::persistence::repositories::DownloadedModelRepository as ConcreteRepo;
+    use chrono::Utc;
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::path::PathBuf;
 
     async fn setup_repo() -> ConcreteRepo {
         let pool = SqlitePoolOptions::new()
@@ -645,42 +300,219 @@ mod db_ssot_tests {
         .expect("create local model")
     }
 
+    async fn register(repo: &ConcreteRepo, model_id: &str, size_bytes: i64) {
+        repo.save(&make_local_model(model_id, size_bytes))
+            .await
+            .expect("seed model in DB");
+    }
+
+    fn use_case(storage: Arc<MockModelStoragePort>, repo: &ConcreteRepo) -> DeleteModelUseCase {
+        let repository: Arc<dyn DownloadedModelRepository> = Arc::new(repo.clone());
+        DeleteModelUseCase::new(storage, repository)
+    }
+
+    fn request(model_id: &str) -> DeleteModelRequestDto {
+        DeleteModelRequestDto {
+            model_id: model_id.to_string(),
+        }
+    }
+
     #[tokio::test]
-    async fn test_delete_model_db_path_handles_missing_file_gracefully() {
-        // Arrange:
-        // - Model is registered in the DB (size 2_500_000_000 bytes).
-        // - Filesystem mock has NO file (delete_model returns NotFound).
-        // The pre-fix code returned NotFound from is_model_downloaded() before
-        // touching the DB, leaving the row orphaned forever.
+    async fn test_delete_model_success() {
         let repo = setup_repo().await;
-        let model_id = "phantom-model";
-        let size_bytes: i64 = 2_500_000_000;
-        let model = make_local_model(model_id, size_bytes);
-        repo.save(&model).await.expect("seed model in DB");
+        register(&repo, "phi-3-mini", 1_800_000_000).await;
+
+        let storage = Arc::new(MockModelStoragePort::with_models());
+        let use_case = use_case(storage.clone(), &repo);
+
+        let response = use_case
+            .execute(request("phi-3-mini"))
+            .await
+            .expect("delete succeeds");
+
+        assert!(response.success);
+        assert_eq!(response.freed_space_gb, 1.8);
+        assert!(!storage.is_model_downloaded("phi-3-mini").await.unwrap());
+        assert!(repo
+            .find_by_model_id("phi-3-mini")
+            .await
+            .expect("query DB")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_not_found() {
+        let repo = setup_repo().await;
+        let storage = Arc::new(MockModelStoragePort::new());
+        let use_case = use_case(storage, &repo);
+
+        let result = use_case.execute(request("nonexistent")).await;
+
+        match result {
+            Err(AppError::NotFound(msg)) => {
+                assert!(msg.contains("not registered"));
+            }
+            _ => panic!("Expected NotFound error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_empty_id() {
+        let repo = setup_repo().await;
+        let storage = Arc::new(MockModelStoragePort::new());
+        let use_case = use_case(storage, &repo);
+
+        let result = use_case.execute(request("")).await;
+
+        match result {
+            Err(AppError::InvalidInput(msg)) => {
+                assert!(msg.contains("cannot be empty"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_calculates_freed_space() {
+        let repo = setup_repo().await;
+        register(&repo, "test-model", 4_100_000_000).await;
 
         let storage = Arc::new(MockModelStoragePort::new());
-        let repo_arc: Arc<dyn DownloadedModelRepository> = Arc::new(repo.clone());
-        let use_case = DeleteModelUseCase::new_with_repository(storage.clone(), repo_arc);
+        storage.add_model(StoredModel {
+            model_id: "test-model".to_string(),
+            path: PathBuf::from("/models/test"),
+            size_bytes: 4_100_000_000,
+            downloaded_at: Utc::now(),
+        });
 
-        let request = DeleteModelRequestDto {
-            model_id: model_id.to_string(),
-        };
+        let use_case = use_case(storage, &repo);
 
-        // Act
-        let result = use_case.execute(request).await;
+        let response = use_case
+            .execute(request("test-model"))
+            .await
+            .expect("delete succeeds");
 
-        // Assert: success
-        let response = result.expect("DB-SSOT delete should succeed despite missing file");
+        assert!(response.success);
+        assert_eq!(response.freed_space_gb, 4.1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_removes_from_storage() {
+        let repo = setup_repo().await;
+        register(&repo, "mistral-7b", 4_100_000_000).await;
+
+        let storage = Arc::new(MockModelStoragePort::with_models());
+        let use_case = use_case(storage.clone(), &repo);
+        assert_eq!(storage.model_count(), 2);
+
+        use_case
+            .execute(request("mistral-7b"))
+            .await
+            .expect("delete succeeds");
+
+        assert_eq!(storage.model_count(), 1);
+        assert!(!storage.is_model_downloaded("mistral-7b").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_large_model() {
+        let repo = setup_repo().await;
+        register(&repo, "large-model", 26_000_000_000).await;
+
+        let storage = Arc::new(MockModelStoragePort::new());
+        let use_case = use_case(storage, &repo);
+
+        let response = use_case
+            .execute(request("large-model"))
+            .await
+            .expect("delete succeeds");
+
+        assert!(response.success);
+        assert_eq!(response.freed_space_gb, 26.0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_small_model() {
+        let repo = setup_repo().await;
+        register(&repo, "tiny-model", 1_100_000_000).await;
+
+        let storage = Arc::new(MockModelStoragePort::new());
+        let use_case = use_case(storage, &repo);
+
+        let response = use_case
+            .execute(request("tiny-model"))
+            .await
+            .expect("delete succeeds");
+
+        assert!(response.success);
+        assert_eq!(response.freed_space_gb, 1.1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_multiple_deletions() {
+        let repo = setup_repo().await;
+        register(&repo, "phi-3-mini", 1_800_000_000).await;
+        register(&repo, "mistral-7b", 4_100_000_000).await;
+
+        let storage = Arc::new(MockModelStoragePort::with_models());
+        let use_case = use_case(storage.clone(), &repo);
+
+        use_case
+            .execute(request("phi-3-mini"))
+            .await
+            .expect("first delete succeeds");
+        use_case
+            .execute(request("mistral-7b"))
+            .await
+            .expect("second delete succeeds");
+
+        assert_eq!(storage.model_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_cannot_delete_twice() {
+        let repo = setup_repo().await;
+        register(&repo, "phi-3-mini", 1_800_000_000).await;
+
+        let storage = Arc::new(MockModelStoragePort::with_models());
+        let use_case = use_case(storage, &repo);
+
+        use_case
+            .execute(request("phi-3-mini"))
+            .await
+            .expect("first delete succeeds");
+
+        match use_case.execute(request("phi-3-mini")).await {
+            Err(AppError::NotFound(_)) => {}
+            _ => panic!("Expected NotFound error on second deletion"),
+        }
+    }
+
+    /// Regression: the pre-fix code returned NotFound from
+    /// `is_model_downloaded()` before touching the DB, so a model whose files
+    /// the user removed via Finder stayed in the `models` table forever and
+    /// could never be deleted from the UI.
+    #[tokio::test]
+    async fn test_delete_model_db_path_handles_missing_file_gracefully() {
+        let repo = setup_repo().await;
+        register(&repo, "phantom-model", 2_500_000_000).await;
+
+        // Filesystem mock has NO file: delete_model returns NotFound.
+        let storage = Arc::new(MockModelStoragePort::new());
+        let use_case = use_case(storage, &repo);
+
+        let response = use_case
+            .execute(request("phantom-model"))
+            .await
+            .expect("DB-SSOT delete should succeed despite missing file");
+
         assert!(response.success);
         assert_eq!(response.freed_space_gb, 2.5);
-
-        // Assert: DB row gone
-        let row = repo
-            .find_by_model_id(model_id)
-            .await
-            .expect("query DB after delete");
         assert!(
-            row.is_none(),
+            repo.find_by_model_id("phantom-model")
+                .await
+                .expect("query DB after delete")
+                .is_none(),
             "DB row must be removed (authoritative delete)"
         );
     }

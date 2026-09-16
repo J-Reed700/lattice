@@ -140,20 +140,13 @@ impl GetSystemStatsUseCase {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{Filter, NoFilter, RepositoryPort};
+    use crate::application::ports::{Filter, RepositoryPort};
     use crate::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
-    use crate::features::tags::entity::Tag;
     use async_trait::async_trait;
-    use std::sync::Mutex;
 
-    // Mock document repository
     struct MockDocumentRepo {
         count: usize,
     }
@@ -197,7 +190,6 @@ mod tests {
         }
     }
 
-    // Mock chunk repository
     struct MockChunkRepo {
         count: usize,
     }
@@ -241,22 +233,10 @@ mod tests {
         }
     }
 
-    // Mock tag repository
-    struct MockTagRepo {
-        tags: Vec<Tag>,
-    }
-
-    impl MockTagRepo {
-        async fn get_all(&self) -> Result<Vec<Tag>> {
-            Ok(self.tags.clone())
-        }
-    }
-
     #[tokio::test]
     async fn test_get_system_stats_empty() {
-        let doc_repo = Arc::new(MockDocumentRepo { count: 0 });
-        let chunk_repo = Arc::new(MockChunkRepo { count: 0 });
-        let tag_repo = Arc::new(MockTagRepo { tags: vec![] });
+        let _doc_repo = Arc::new(MockDocumentRepo { count: 0 });
+        let _chunk_repo = Arc::new(MockChunkRepo { count: 0 });
 
         // For this test, we'll need to adjust the use case to accept a trait
         // object for tags as well, or use a different approach
@@ -276,9 +256,8 @@ mod tests {
     #[tokio::test]
 
     async fn test_estimate_storage_size() {
-        let doc_repo = Arc::new(MockDocumentRepo { count: 10 });
-        let chunk_repo = Arc::new(MockChunkRepo { count: 100 });
-        let tag_repo = Arc::new(MockTagRepo { tags: vec![] });
+        let _doc_repo = Arc::new(MockDocumentRepo { count: 10 });
+        let _chunk_repo = Arc::new(MockChunkRepo { count: 100 });
 
         // Create a temporary tag repo for testing
         // We'll need to refactor this once we have proper DI

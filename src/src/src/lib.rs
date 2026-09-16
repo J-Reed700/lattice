@@ -1,10 +1,5 @@
-// =============================================================================
-// LINT CONFIGURATION - Oracle Week 1 Day 5: CI Check
-// =============================================================================
-// Phase 2 Week 1 Day 5: Allow unwrap/expect in test code only
-// Production code (src/) has these lints denied in Cargo.toml
-// Test code (#[cfg(test)] modules and tests/) is allowed to use unwrap for assertions
-// Oracle's guidance: "A panic in a test is a valid failure signal"
+// Production code denies these lints in Cargo.toml. Tests may use panics and
+// unwraps as assertion failure signals.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::unwrap_in_result))]
@@ -211,46 +206,6 @@
 //! - `qa`: Enable question-answering and LLM integration
 //! - `extraction`: Enable content extraction from documents
 //!
-//! ## Migration from Old API
-//!
-//! The old API is still available but deprecated. Migration guide:
-//!
-//! ### Error Handling
-//!
-//! ```rust
-//! // ❌ Old (deprecated)
-//! use lattice_desktop::error::{AppError, Result};
-//!
-//! // ✅ New (recommended)
-//! use lattice_desktop::shared::error::{AppError, Result};
-//! // Or use the convenient re-exports:
-//! use lattice_desktop::{AppError, Result};
-//! ```
-//!
-//! ### Domain Types
-//!
-//! ```rust
-//! // ❌ Old (deprecated)
-//! use lattice_desktop::domain_types::DocumentId;
-//!
-//! // ✅ New (recommended)
-//! use lattice_desktop::shared::domain_types::DocumentId;
-//! // Or use the convenient re-exports:
-//! use lattice_desktop::DocumentId;
-//! ```
-//!
-//! ### Domain Models
-//!
-//! ```rust
-//! // ❌ Old (deprecated - DocumentAggregate removed)
-//! // use lattice_desktop::domain::document::DocumentAggregate;
-//!
-//! // ✅ New (recommended)
-//! use lattice_desktop::domain::entities::document::Document;
-//! // Or simpler:
-//! use lattice_desktop::domain::Document;
-//! ```
-//!
 //! ## SOLID Principles
 //!
 //! This library strictly follows SOLID principles:
@@ -281,21 +236,10 @@
 //! ## Version
 //!
 //! - Library: v0.2.0 (DDD architecture)
-//! - Previous: v0.1.x (legacy architecture)
 
-// Phase 2: Suppress warnings for cleanup phase (will be addressed in later phases)
-#![allow(missing_docs)] // Phase 4: Documentation phase
-#![allow(unused_imports)] // Phase 2: Clean up unused imports
-#![allow(unused_variables)] // Phase 2: Clean up unused variables
-#![allow(dead_code)] // Phase 2: Remove dead code
-#![allow(deprecated)] // Phase 3: Update deprecated APIs
 #![deny(unsafe_code)]
 // Note: unused_crate_dependencies disabled - many crates are build/dev dependencies
 // #![cfg_attr(test, deny(unused_crate_dependencies))]
-
-// =============================================================================
-// SHARED KERNEL - Foundation types used across all layers
-// =============================================================================
 
 /// Shared kernel module containing foundation types, errors, and utilities.
 ///
@@ -321,10 +265,6 @@ pub use shared::{
     error::{AppError, ErrorResponse, Result, ResultExt},
     utils::{alignment, retry},
 };
-
-// =============================================================================
-// DOMAIN LAYER - Pure business logic (ZERO external dependencies)
-// =============================================================================
 
 /// Domain layer containing pure business logic with zero external dependencies.
 ///
@@ -367,10 +307,6 @@ pub use domain::{
     Document, DocumentStatus,
 };
 
-// =============================================================================
-// APPLICATION LAYER - Use cases, DTOs, and port interfaces
-// =============================================================================
-
 /// Application layer containing use cases, DTOs, and port interfaces.
 ///
 /// # Responsibilities
@@ -411,10 +347,6 @@ pub use application::{
     },
 };
 
-// =============================================================================
-// INFRASTRUCTURE LAYER - Technical implementations (concrete adapters)
-// =============================================================================
-
 /// Infrastructure layer containing technical implementations of application ports.
 ///
 /// # Implementations
@@ -446,13 +378,8 @@ pub use application::{
 pub mod infrastructure;
 
 pub use infrastructure::{
-    audit, extraction, file_system, llm, ml, observability, persistence, search, security,
-    services, web,
+    audit, extraction, file_system, ml, observability, persistence, security, services,
 };
-
-// =============================================================================
-// INTERFACES LAYER - External boundaries (commands, events, DI container)
-// =============================================================================
 
 /// Interfaces layer containing external boundaries and dependency injection.
 ///
@@ -484,17 +411,11 @@ pub mod interfaces;
 
 pub use interfaces::di::Container;
 
-// =============================================================================
-// IPC LAYER - Anti-Corruption Boundary
-// =============================================================================
-
 /// IPC (Inter-Process Communication) Layer
 ///
 /// Provides the transport boundary between Rust backend and TypeScript frontend.
 /// Acts as an anti-corruption layer preventing transport concerns (Specta, Serde, Tauri)
 /// from polluting domain and application layers.
-///
-/// **Phase 5: Crystal Conduit** - Oracle-mandated separation of transport and domain concerns.
 ///
 /// # Key Types
 ///
@@ -512,69 +433,20 @@ pub use interfaces::di::Container;
 /// Domain Layer             ← Pure business logic
 /// ```
 ///
-/// Tauri Plugin Infrastructure (Phase 1: Diamond Standard)
+/// Tauri plugin infrastructure.
 ///
 /// Domain-sharded plugins using tauri-specta v2 for type-safe IPC.
-/// Coexists peacefully with the gateway pattern.
+/// Plugins are split by domain and use tauri-specta for typed IPC.
 ///
 /// # Plugins
 /// - **model**: 13 commands for model management
 /// - **search**: 6 commands for search operations
 /// - **file**: 12 commands for file operations
 ///
-/// # Oracle Mandate
-/// "Plugins are thin wrappers. ALL business logic stays in domain adapters."
+/// Plugins remain thin wrappers; business logic belongs in use cases and
+/// domain services.
 pub mod plugins;
 
-// =============================================================================
-// LEGACY MODULES - Deprecated but functional for backward compatibility
-// =============================================================================
-
-/// Legacy error module (DEPRECATED).
-///
-/// # Migration
-///
-/// ```rust
-/// // ❌ Old
-/// use lattice_desktop::error::AppError;
-///
-/// // ✅ New
-/// use lattice_desktop::shared::error::AppError;
-/// // Or simply:
-/// use lattice_desktop::AppError;
-/// ```
-#[deprecated(
-    since = "0.2.0",
-    note = "Use `shared::error` module instead, or use re-exported types at crate root"
-)]
-pub mod error {
-    pub use crate::shared::error::*;
-}
-
-/// Legacy domain_types module (DEPRECATED).
-///
-/// # Migration
-///
-/// ```rust
-/// // ❌ Old
-/// use lattice_desktop::domain_types::DocumentId;
-///
-/// // ✅ New
-/// use lattice_desktop::shared::domain_types::DocumentId;
-/// // Or simply:
-/// use lattice_desktop::DocumentId;
-/// ```
-#[deprecated(
-    since = "0.2.0",
-    note = "Use `shared::domain_types` module instead, or use re-exported types at crate root"
-)]
-pub mod domain_types {
-    pub use crate::shared::domain_types::*;
-}
-
-// =============================================================================
-// PUBLIC UTILITY FUNCTIONS
-// =============================================================================
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -615,19 +487,11 @@ pub fn get_tokenizer_path(app: &AppHandle) -> Result<PathBuf> {
     Ok(get_model_dir(app)?.join("tokenizer.json"))
 }
 
-// =============================================================================
-// LIBRARY METADATA
-// =============================================================================
-
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Library name
 pub const NAME: &str = env!("CARGO_PKG_NAME");
-
-// =============================================================================
-// TESTS
-// =============================================================================
 
 // Test modules (public for test utilities)
 #[cfg(test)]

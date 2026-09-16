@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::application::ports::BatchJobRepositoryPort;
-use crate::domain::repositories::UnitOfWorkFactory;
+use crate::application::ports::UnitOfWorkFactory;
 use crate::features::batch::services::url_import::BatchUrlImportService;
 use crate::features::batch::use_cases::{
     CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
@@ -14,6 +14,7 @@ use crate::features::indexing::use_cases::IndexFileUseCase;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
 use crate::features::web::WebIngestionServiceTrait;
 use crate::infrastructure::setup::degraded_mocks;
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct BatchDi {
@@ -35,6 +36,7 @@ pub fn build(
     ingest_web_url_use_case: Arc<IngestWebUrlUseCase>,
     web_ingestion_service: Arc<dyn WebIngestionServiceTrait>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
+    document_scope: Arc<dyn crate::application::ports::document_scope::DocumentScopePort>,
 ) -> BatchDi {
     // Batch file import is degraded by default (depends on real indexing service).
     let batch_file_import_service = degraded_mocks::create_degraded_batch_file_import();
@@ -43,11 +45,10 @@ pub fn build(
         batch_job_repo.clone(),
     )) as Arc<dyn BatchUrlImportServiceTrait>;
 
-    let start_batch_file_import_use_case = Arc::new(StartBatchFileImportUseCase::new(
-        batch_job_repo.clone(),
-        index_file_use_case,
-        uow_factory,
-    ));
+    let start_batch_file_import_use_case = Arc::new(
+        StartBatchFileImportUseCase::new(batch_job_repo.clone(), index_file_use_case, uow_factory)
+            .with_document_scope(document_scope),
+    );
     let start_batch_url_import_use_case = Arc::new(StartBatchUrlImportUseCase::new(
         batch_job_repo.clone(),
         ingest_web_url_use_case,
@@ -55,6 +56,7 @@ pub fn build(
     let retry_failed_items_use_case = Arc::new(RetryFailedItemsUseCase::new(
         batch_job_repo.clone(),
         start_batch_url_import_use_case.clone(),
+        start_batch_file_import_use_case.clone(),
     ));
 
     BatchDi {
@@ -69,5 +71,40 @@ pub fn build(
         list_batch_jobs_use_case: Arc::new(ListBatchJobsUseCase::new(batch_job_repo.clone())),
         delete_batch_job_use_case: Arc::new(DeleteBatchJobUseCase::new(batch_job_repo)),
         retry_failed_items_use_case,
+    }
+}
+
+/// Batch import's registrar surface on `Container`.
+impl Container {
+    pub fn start_batch_file_import_use_case(&self) -> Arc<StartBatchFileImportUseCase> {
+        Arc::clone(self.indexing.start_batch_file_import_use_case())
+    }
+
+    pub fn start_batch_url_import_use_case(&self) -> Arc<StartBatchUrlImportUseCase> {
+        Arc::clone(self.indexing.start_batch_url_import_use_case())
+    }
+
+    pub fn get_batch_job_status_use_case(&self) -> Arc<GetBatchJobStatusUseCase> {
+        Arc::clone(self.indexing.get_batch_job_status_use_case())
+    }
+
+    pub fn cancel_batch_job_use_case(&self) -> Arc<CancelBatchJobUseCase> {
+        Arc::clone(self.indexing.cancel_batch_job_use_case())
+    }
+
+    pub fn list_batch_jobs_use_case(&self) -> Arc<ListBatchJobsUseCase> {
+        Arc::clone(self.indexing.list_batch_jobs_use_case())
+    }
+
+    pub fn delete_batch_job_use_case(&self) -> Arc<DeleteBatchJobUseCase> {
+        Arc::clone(self.indexing.delete_batch_job_use_case())
+    }
+
+    pub fn retry_failed_items_use_case(&self) -> Arc<RetryFailedItemsUseCase> {
+        Arc::clone(self.indexing.retry_failed_items_use_case())
+    }
+
+    pub fn batch_job_repository(&self) -> Arc<dyn BatchJobRepositoryPort> {
+        Arc::clone(self.indexing.batch_job_repo())
     }
 }

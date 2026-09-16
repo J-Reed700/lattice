@@ -37,10 +37,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-// ============================================================================
-// Prompt Templates
-// ============================================================================
-
 /// Prompt template for question expansion via HyDE.
 ///
 /// Instructs the LLM to expand intent and retrieval vocabulary without
@@ -162,10 +158,6 @@ Latest user input:
 {query}
 
 Search query:"#;
-
-// ============================================================================
-// HyDE Generator
-// ============================================================================
 
 /// Service for generating HyDE interpretations.
 ///
@@ -673,17 +665,12 @@ impl HyDEGenerator {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::qa::hyde::SearchStrategy;
     use async_trait::async_trait;
     use futures::stream::{self, Stream};
-    use std::pin::Pin;
 
     /// Shared mock LLM for testing HyDE generation.
     struct MockLLM {

@@ -1,20 +1,19 @@
 //! Batch File Import Service Implementation
 //!
 //! Orchestrates batch file import workflow: create job → process files → track progress.
-//! Uses the "bricks and studs" philosophy with clear service boundaries.
+//! Keeps orchestration and file processing behind explicit service boundaries.
 
 use async_trait::async_trait;
-use std::fs;
 use std::sync::Arc;
-use tokio::task;
 use uuid::Uuid;
 
-use super::file_import_trait::{BatchFileImportServiceTrait, ProcessedFileInfo};
+use super::file_import_trait::BatchFileImportServiceTrait;
+use crate::application::factories::FileMetadataFactory;
 use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
+use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
-use crate::infrastructure::indexing::extraction::ContentExtractor;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
 
@@ -123,7 +122,6 @@ impl BatchFileImportService {
         tokio::spawn(async move {
             tracing::info!("Starting batch file import job {}", job_id);
 
-            // Update job status to running
             if let Err(e) = batch_job_repo
                 .update_job_status(
                     &job_id,
@@ -137,7 +135,6 @@ impl BatchFileImportService {
                 return;
             }
 
-            // Get pending items from database
             let items = match batch_job_repo.get_pending_items(&job_id).await {
                 Ok(items) => items,
                 Err(e) => {
@@ -165,7 +162,6 @@ impl BatchFileImportService {
             let mut failed = 0i64;
 
             for item in items {
-                // Check if job was cancelled
                 if let Ok(job) = batch_job_repo.get_batch_job(&job_id).await {
                     if job.status == "cancelled" {
                         tracing::info!("Job {} was cancelled", job_id);
@@ -176,7 +172,6 @@ impl BatchFileImportService {
                 let file_path = &item.url; // URL field stores file path
                 let item_id = &item.id;
 
-                // Update item status to processing
                 if let Err(e) = batch_job_repo
                     .update_item_status(item_id, "processing", None, None)
                     .await
@@ -190,7 +185,6 @@ impl BatchFileImportService {
                     continue;
                 }
 
-                // Process file with IndexFileUseCase
                 match Self::process_file_with_indexing(Arc::clone(&index_file_use_case), file_path)
                     .await
                 {
@@ -202,7 +196,6 @@ impl BatchFileImportService {
                             document_id
                         );
 
-                        // Update item status to completed with document_id
                         if let Err(e) = batch_job_repo
                             .update_item_status(item_id, "completed", Some(&document_id), None)
                             .await
@@ -219,7 +212,6 @@ impl BatchFileImportService {
                         let error_msg = format!("Failed to index file {}: {}", file_path, e);
                         tracing::error!("{}", error_msg);
 
-                        // Update item status to failed with error message
                         if let Err(e) = batch_job_repo
                             .update_item_status(item_id, "failed", None, Some(&error_msg))
                             .await
@@ -233,7 +225,6 @@ impl BatchFileImportService {
                     }
                 }
 
-                // Update job progress
                 let progress = (completed + failed) as f64 / total as f64;
                 if let Err(e) = batch_job_repo
                     .update_progress(&job_id, completed, failed, progress)
@@ -314,12 +305,10 @@ impl BatchFileImportServiceTrait for BatchFileImportService {
         &self,
         file_paths: Vec<ValidatedFilePath>,
     ) -> Result<String, AppError> {
-        // Validate all files first (fail fast)
         for path in &file_paths {
             self.validate_file(path)?;
         }
 
-        // Create batch job
         let job_id = Uuid::new_v4().to_string();
         let total_items = file_paths.len() as i64;
 
@@ -333,7 +322,6 @@ impl BatchFileImportServiceTrait for BatchFileImportService {
             .create_batch_job(&job_id, "file_import", total_items, None)
             .await?;
 
-        // Create batch items (store file paths as URLs)
         let urls: Vec<String> = file_paths
             .iter()
             .map(|p| p.as_path().to_string_lossy().to_string())
@@ -357,10 +345,8 @@ impl BatchFileImportServiceTrait for BatchFileImportService {
     }
 
     fn validate_file(&self, path: &ValidatedFilePath) -> Result<FileMetadata, AppError> {
-        #[allow(deprecated)]
-        let metadata = FileMetadata::from_path(path.as_path())?;
+        let metadata = FileMetadataFactory::from_path(path.as_path())?;
 
-        // Validate file type using the same extraction capability registry used by indexing.
         if !ContentExtractor::new().is_supported(path.as_path()) {
             return Err(AppError::InvalidInput(format!(
                 "Unsupported file type: {}. This file extension is not supported for indexing.",
@@ -368,7 +354,6 @@ impl BatchFileImportServiceTrait for BatchFileImportService {
             )));
         }
 
-        // Validate size (max 50MB)
         if metadata.size_bytes() > MAX_FILE_SIZE {
             return Err(AppError::InvalidInput(format!(
                 "File too large: {} bytes (max {} bytes)",
@@ -380,10 +365,6 @@ impl BatchFileImportServiceTrait for BatchFileImportService {
         Ok(metadata)
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -566,7 +547,6 @@ mod tests {
         let service =
             BatchFileImportService::new(batch_job_repo.clone(), Arc::new(mock_index_use_case));
 
-        // Create temp file for testing
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         std::fs::write(&file_path, "test content").unwrap();
@@ -577,7 +557,6 @@ mod tests {
 
         assert!(!job_id.is_empty());
 
-        // Verify job was created
         let status = batch_job_repo.get_batch_job(&job_id).await.unwrap();
         assert_eq!(status.total_items, 1);
         assert_eq!(status.status, "pending");
@@ -589,7 +568,6 @@ mod tests {
         let mock_index_use_case = create_mock_index_file_use_case();
         let service = BatchFileImportService::new(batch_job_repo, Arc::new(mock_index_use_case));
 
-        // Create temp file
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         std::fs::write(&file_path, "test content").unwrap();
@@ -606,7 +584,6 @@ mod tests {
         let mock_index_use_case = create_mock_index_file_use_case();
         let service = BatchFileImportService::new(batch_job_repo, Arc::new(mock_index_use_case));
 
-        // Create temp file with unsupported extension
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("test.exe");
         std::fs::write(&file_path, "test content").unwrap();
@@ -623,11 +600,11 @@ mod tests {
 
     // Helper to create mock IndexFileUseCase
     fn create_mock_index_file_use_case() -> IndexFileUseCase {
+        use crate::application::ports::UnitOfWorkFactory;
         use crate::application::ports::{
             EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, RepositoryPort,
         };
         use crate::domain::entities::document::Document;
-        use crate::domain::repositories::UnitOfWorkFactory;
         use crate::features::embedding::entity::Embedding;
         use crate::shared::result::Result as AppResult;
         use std::path::Path;
@@ -709,6 +686,7 @@ mod tests {
                         text: "Mock content".to_string(),
                         mime_type: "text/plain".to_string(),
                         page_count: Some(1),
+                        page_ranges: Vec::new(),
                         word_count: 2,
                         char_count: 12,
                     },
@@ -861,7 +839,7 @@ mod tests {
         struct MockUnitOfWork;
 
         #[async_trait]
-        impl crate::domain::repositories::UnitOfWork for MockUnitOfWork {
+        impl crate::application::ports::UnitOfWork for MockUnitOfWork {
             fn chunk_repository(
                 &self,
             ) -> AppResult<Box<dyn crate::application::ports::ChunkRepositoryPort + Send + '_>>
@@ -913,9 +891,8 @@ mod tests {
 
             fn model_repository(
                 &self,
-            ) -> AppResult<
-                Box<dyn crate::domain::repositories::unit_of_work::ModelRepositoryPort + '_>,
-            > {
+            ) -> AppResult<Box<dyn crate::application::ports::unit_of_work::ModelRepositoryPort + '_>>
+            {
                 Err(AppError::InvalidState(
                     "Model repository not used in test".to_string(),
                 ))
@@ -924,7 +901,7 @@ mod tests {
             fn model_file_repository(
                 &self,
             ) -> AppResult<
-                Box<dyn crate::domain::repositories::unit_of_work::ModelFileRepositoryPort + '_>,
+                Box<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort + '_>,
             > {
                 Err(AppError::InvalidState(
                     "Model file repository not used in test".to_string(),
@@ -946,7 +923,7 @@ mod tests {
         impl UnitOfWorkFactory for MockUnitOfWorkFactory {
             async fn create(
                 &self,
-            ) -> AppResult<Box<dyn crate::domain::repositories::UnitOfWork + Send>> {
+            ) -> AppResult<Box<dyn crate::application::ports::UnitOfWork + Send>> {
                 Ok(Box::new(MockUnitOfWork))
             }
         }

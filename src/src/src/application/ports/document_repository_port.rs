@@ -41,6 +41,12 @@ use async_trait::async_trait;
 /// and document metadata lookups.
 #[async_trait]
 pub trait DocumentRepositoryPort: RepositoryPort<Document> {
+    /// List document metadata without requiring indexed chunks or loading document bodies.
+    /// Pending and failed documents remain visible in the inventory.
+    async fn list_metadata(&self) -> Result<Vec<Document>> {
+        self.find_all().await
+    }
+
     /// Find the file path for a document by its ID.
     ///
     /// # Arguments

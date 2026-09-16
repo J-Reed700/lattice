@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::tag::Tag;
-/// use lattice::domain_types::TagName;
+/// use lattice::shared::domain_types::TagName;
 ///
 /// let name = TagName::new("rust".to_string()).unwrap();
 /// let tag = Tag::new(name, "#ff5733".to_string());
@@ -61,7 +61,7 @@ impl Tag {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::tag::Tag;
-    /// use lattice::domain_types::TagName;
+    /// use lattice::shared::domain_types::TagName;
     ///
     /// let name = TagName::new("machine-learning".to_string()).unwrap();
     /// let tag = Tag::new(name, "#6366f1".to_string());
@@ -176,10 +176,6 @@ impl Tag {
         self.name.as_str()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -24,7 +24,8 @@
 use crate::application::ports::credentials_port::CredentialsPort;
 use crate::application::ports::file_system_port::FileSystemPort;
 use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
-use crate::application::ports::model_storage::{DownloadedModel, ModelStoragePort};
+use crate::application::ports::model_storage::ModelStoragePort;
+use crate::application::ports::UnitOfWorkFactory;
 use crate::domain::curated_models::get_all_curated_models;
 use crate::domain::download::DownloadOperationState;
 use crate::domain::entities::model::Model;
@@ -32,15 +33,13 @@ use crate::domain::entities::model_file::ModelFile;
 use crate::domain::model_file_validator::ModelFileValidator;
 use crate::domain::model_paths::ModelPaths;
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
-use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::shared::error::AppError;
 use chrono::Utc;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -83,7 +82,7 @@ impl DownloadModelUseCase {
     /// Returns Ok(true) if all files present, Ok(false) if any missing, Err on filesystem errors
     async fn verify_model_files(
         &self,
-        model_id: &str,
+        _model_id: &str,
         curated: &crate::features::model_management::domain::ModelMetadata,
         model_path: &Path,
     ) -> Result<bool, AppError> {
@@ -134,7 +133,6 @@ impl DownloadModelUseCase {
         _curated: &crate::features::model_management::domain::ModelMetadata,
         _model_path: &std::path::Path,
     ) -> Result<(), AppError> {
-        // Cleanup stale pending downloads
         if let Err(e) = self
             .download_manager
             .delete_pending_by_model(model_id)
@@ -164,27 +162,37 @@ impl DownloadModelUseCase {
         }
     }
 
-    /// Build a file list for Candle-backed safetensors embedding models.
+    /// Build a file list for Candle-backed embedding models.
     ///
     /// These require exactly:
-    /// - `model.safetensors` — the weights
+    /// - `weights_filename` — the weights, `model.safetensors` for almost
+    ///   every repo and `pytorch_model.bin` for the ones that never published
+    ///   a safetensors conversion (BAAI/bge-m3). The caller picks which,
+    ///   mirroring the catalog adapter's preference order.
     /// - `tokenizer.json` — tokenizer vocab
     /// - `config.json` — model configuration (hidden_size, architecture)
     ///
     /// Optionally includes `1_Pooling/config.json` if it exists at the repo
     /// root — this tells the inference service whether to CLS- or mean-pool.
     /// Absent is fine: `CandleEmbeddingService` defaults to CLS.
+    ///
+    /// Also probes for `sparse_linear.pt`, the learned sparse head BGE-M3 and
+    /// its derivatives publish. It is a few kilobytes and only exists on
+    /// hybrid dense/sparse checkpoints; fetching it is what lets
+    /// `CandleEmbeddingService` report `supports_sparse()` and lets the sparse
+    /// retrieval branch run. A repo without one is unaffected.
     async fn build_safetensors_embedding_file_list(
         repo_id: &str,
-        _auth_token: Option<&str>,
+        weights_filename: &str,
+        auth_token: Option<&str>,
     ) -> Vec<crate::domain::model_metadata::ModelFileMetadata> {
         use crate::domain::model_metadata::ModelFileMetadata;
 
         let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
-        vec![
+        let mut files = vec![
             ModelFileMetadata::new(
-                "model.safetensors".to_string(),
-                format!("{}/model.safetensors", base_url),
+                weights_filename.to_string(),
+                format!("{}/{}", base_url, weights_filename),
                 0,
             ),
             ModelFileMetadata::new(
@@ -197,7 +205,19 @@ impl DownloadModelUseCase {
                 format!("{}/config.json", base_url),
                 0,
             ),
-        ]
+        ];
+
+        let sparse_head = crate::features::embedding::sparse_head::SPARSE_HEAD_PT;
+        let sparse_url = format!("{}/{}", base_url, sparse_head);
+        if Self::remote_file_exists(&sparse_url, auth_token).await {
+            files.push(ModelFileMetadata::new(
+                sparse_head.to_string(),
+                sparse_url,
+                0,
+            ));
+        }
+
+        files
     }
 
     /// Build a file list for ONNX embedding models with required companion files.
@@ -323,7 +343,7 @@ impl DownloadModelUseCase {
                     total_size_bytes: 0,
                     embedding_dimensions: None,
                     embedding_compatibility: None,
-                    format: crate::llm::models::ModelFormat::Gguf,
+                    format: crate::features::llm::engine::models::ModelFormat::Gguf,
                 },
             };
 
@@ -357,9 +377,17 @@ impl DownloadModelUseCase {
                     None
                 };
 
-                if filename.ends_with(".safetensors") {
+                // `pytorch_model.bin` joins the Candle branch: the catalog
+                // adapter picks it when a repo ships no safetensors, and the
+                // loader reads it through `candle_core::pickle`. Without this
+                // it would fall through to a bare single-file download with
+                // no tokenizer or config beside it.
+                if filename.ends_with(".safetensors")
+                    || filename == crate::features::embedding::candle_service::WEIGHTS_PYTORCH_BIN
+                {
                     resolved.files = Self::build_safetensors_embedding_file_list(
                         &repo_id,
+                        &filename,
                         auth_token.as_deref(),
                     )
                     .await;
@@ -396,14 +424,12 @@ impl DownloadModelUseCase {
     ) -> Result<DownloadModelResponseDto, AppError> {
         let model_id = &request.model_id;
 
-        // STEP 1: Input validation
         if model_id.is_empty() {
             return Err(AppError::InvalidInput("Model ID cannot be empty".into()));
         }
 
         info!("Starting model download: {}", model_id);
 
-        // STEP 2: Resolve metadata from catalog (curated and Hugging Face external IDs)
         let model_metadata = self.resolve_model_metadata(model_id).await?;
 
         // STEP 2.5: Refuse incompatible embedding models server-side. The
@@ -440,14 +466,11 @@ impl DownloadModelUseCase {
             }
         }
 
-        // STEP 3: Create paths (needed for verification)
         let paths = ModelPaths::new(model_id)?;
         let model_path = paths.unified_path();
 
-        // Create model directory
         self.file_system.create_directory_all(model_path).await?;
 
-        // STEP 4: Trust but Verify - Check DB status and verify files
         if self.storage.is_model_downloaded(model_id).await? {
             match self
                 .verify_model_files(model_id, &model_metadata, model_path)
@@ -503,8 +526,6 @@ impl DownloadModelUseCase {
             }
         }
 
-        // STEP 5: Download model (existing logic - unchanged)
-        // Branch: multi-file vs single-file models
         if !model_metadata.files.is_empty() {
             // Multi-file model (e.g., BGE-M3 with model.onnx + model.onnx_data)
             info!(
@@ -595,7 +616,6 @@ impl DownloadModelUseCase {
                 downloaded_at: None,
             };
 
-            // Create model record (parent) - no files yet
             model_repo
                 .create_model_with_files(&model, vec![])
                 .await
@@ -626,7 +646,6 @@ impl DownloadModelUseCase {
             }
         }
 
-        // STEP 2: Create model_file record with Pending status (child - FK constraint satisfied)
         let mut uow = self.uow_factory.create().await?;
         let db_result = {
             let model_file_repo = uow.model_file_repository()?;
@@ -679,7 +698,6 @@ impl DownloadModelUseCase {
         // Yield to allow connection pool to reclaim connections
         tokio::task::yield_now().await;
 
-        // STEP 3: Retrieve HuggingFace token if model requires authentication (e.g., Meta Llama models)
         let auth_token = if curated.requires_auth {
             match self.credentials.get_api_key("huggingface_token").await {
                 Ok(Some(token)) => {
@@ -704,7 +722,6 @@ impl DownloadModelUseCase {
             None
         };
 
-        // Start the actual download using DownloadManager
         let download_request = DownloadRequest {
             url: model_file_url.clone(),
             destination: destination.clone(),
@@ -783,7 +800,6 @@ impl DownloadModelUseCase {
             .and_then(|session| session.progress().total_bytes())
             .unwrap_or(curated.total_size_bytes);
 
-        // Return immediate success with DownloadStarted state
         Ok(DownloadModelResponseDto {
             state: DownloadOperationState::DownloadStarted {
                 total_size_bytes,
@@ -855,7 +871,6 @@ impl DownloadModelUseCase {
                 downloaded_at: None,
             };
 
-            // Create model record (parent) - no files yet
             model_repo
                 .create_model_with_files(&model, vec![])
                 .await
@@ -886,7 +901,6 @@ impl DownloadModelUseCase {
             }
         }
 
-        // STEP 2: Pre-create all model_file records with Pending status (children - FK constraint satisfied)
         let mut uow = self.uow_factory.create().await?;
         let db_result = {
             let model_file_repo = uow.model_file_repository()?;
@@ -949,7 +963,6 @@ impl DownloadModelUseCase {
         // Yield to allow connection pool to reclaim connections
         tokio::task::yield_now().await;
 
-        // STEP 3: Retrieve HuggingFace token if model requires authentication (e.g., Meta Llama models)
         let auth_token = if curated.requires_auth {
             match self.credentials.get_api_key("huggingface_token").await {
                 Ok(Some(token)) => {
@@ -974,7 +987,6 @@ impl DownloadModelUseCase {
             None
         };
 
-        // Start download for each file
         for (index, file) in curated.files.iter().enumerate() {
             let destination = paths.manifest_file_path(&file.filename)?;
 
@@ -988,7 +1000,6 @@ impl DownloadModelUseCase {
                 "Starting file download"
             );
 
-            // Convert String checksum to Checksum domain object if present
             let checksum = if let Some(checksum_str) = &file.checksum {
                 Some(
                     crate::domain::download::Checksum::new(
@@ -1159,7 +1170,6 @@ impl DownloadModelUseCase {
             curated.total_size_bytes
         };
 
-        // Return immediate success with DownloadStarted state
         Ok(DownloadModelResponseDto {
             state: DownloadOperationState::DownloadStarted {
                 total_size_bytes,

@@ -212,7 +212,7 @@ pub fn cosine_similarity_simd(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn cosine_similarity_neon_impl(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::*;
 
-    // ORACLE FIX: Runtime alignment check with fallback
+    // Use a runtime alignment check with a safe fallback.
     // ARM NEON vld1q_f32 requires 16-byte alignment on many implementations
     // Vec<f32> from test helpers provides NO such guarantee
     // Check alignment and fall back to naive if misaligned
@@ -454,7 +454,6 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0, 4.0];
         let b = vec![5.0, 6.0, 7.0, 8.0];
 
-        // Should not panic and should produce valid result
         let result = cosine_similarity_simd(&a, &b);
         assert!(result.is_finite());
         assert!((-1.0..=1.0).contains(&result));
@@ -545,7 +544,6 @@ mod tests {
         let mut vec = vec![0.0; 10];
         normalize_vector(&mut vec);
 
-        // Should remain zero, not NaN
         for &val in &vec {
             assert!(val.is_finite());
             assert_eq!(val, 0.0);

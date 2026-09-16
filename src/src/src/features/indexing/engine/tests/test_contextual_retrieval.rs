@@ -1,5 +1,5 @@
-use crate::infrastructure::indexing::chunker::{ChunkerConfig, ContextualizedChunk, SemanticChunker};
-use crate::infrastructure::indexing::metadata_extractor::{
+use crate::features::indexing::engine::chunker::{ChunkerConfig, ContextualizedChunk, SemanticChunker};
+use crate::features::indexing::engine::metadata_extractor::{
     determine_page_number, extract_metadata, DocumentMetadata,
 };
 use std::path::Path;

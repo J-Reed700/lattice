@@ -1,6 +1,6 @@
 //! # Common Test Utilities
 //!
-//! Oracle-approved test infrastructure following async best practices.
+//! Shared asynchronous test infrastructure.
 //!
 //! ## Modules
 //!

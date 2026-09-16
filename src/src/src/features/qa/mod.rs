@@ -13,13 +13,11 @@
 //! - `crate::features::qa::plugin::init()` — Tauri plugin
 //! - `crate::features::qa::{QAEngineTrait, ConversationalQAServiceTrait}` — service traits
 //!
-//! ## Kept as shared namespaces
+//! - `crate::features::qa::engine` — QA engine modules
+//! - `crate::features::qa::hyde` — HyDE retrieval
 //!
-//! - `crate::domain::qa::*` (domain types like HyDEInterpretation, QueryType)
-//! - `crate::infrastructure::qa` (QA engine modules)
-//! - `crate::infrastructure::services::hyde` — HyDE retrieval
-//! - `tests/conversational_service.rs` remains via
-//!   `infrastructure::services::tests` aggregator
+//! Domain types (HyDEInterpretation, QueryType, ChatResponse, ...) live in
+//! `crate::domain::qa` because the application layer depends on them.
 //!
 //! Shared ports stay in `application/ports/`.
 
@@ -37,3 +35,7 @@ pub mod use_cases;
 pub mod mocks;
 
 pub use traits::{ConversationalQAServiceTrait, QAEngineTrait};
+pub mod engine;
+pub mod hyde;
+#[cfg(test)]
+mod tests;

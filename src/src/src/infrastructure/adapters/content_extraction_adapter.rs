@@ -9,13 +9,11 @@ use crate::application::ports::content_extraction_port::{
     ContentExtractionPort, ExtractedContentData,
 };
 use crate::application::ports::TranscriptionPort;
+use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::features::transcription::engine::{
     group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
 };
-use crate::infrastructure::indexing::extraction::ContentExtractor;
-use crate::infrastructure::services::file_type_detector::{
-    FileCategory, FileTypeDetector,
-};
+use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use std::path::Path;
@@ -26,7 +24,7 @@ use tracing::{info, instrument};
 /// Shown when audio is ingested with no transcription model downloaded.
 ///
 /// Must begin with this exact phrase — the indexing UI keys off it
-/// (GROUND-RULES §4.16).
+/// for indexing.
 const NEEDS_MODEL: &str =
     "Needs a transcription model — download Whisper Tiny in Settings → AI → Models.";
 
@@ -96,6 +94,7 @@ impl ContentExtractionAdapter {
             text,
             mime_type,
             page_count: None,
+            page_ranges: Vec::new(),
         })
     }
 }
@@ -146,6 +145,7 @@ impl ContentExtractionPort for ContentExtractionAdapter {
             text: extracted.text,
             mime_type: extracted.mime_type,
             page_count: extracted.metadata.page_count,
+            page_ranges: extracted.page_ranges,
             word_count: extracted.metadata.word_count,
             char_count: extracted.metadata.char_count,
         })

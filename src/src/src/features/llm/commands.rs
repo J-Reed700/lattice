@@ -1,7 +1,5 @@
 //! LLM management commands for local inference.
-use crate::audit_success;
 use crate::features::llm::dto::*;
-use crate::infrastructure::audit::AuditAction;
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
 use std::fs;
@@ -756,7 +754,6 @@ pub async fn download_model(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Execute use case
     let use_case = container.download_model_use_case();
     let request = DownloadModelRequestDto {
         model_id: model_id.clone(),
@@ -927,7 +924,6 @@ pub async fn delete_model(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Execute use case
     let use_case = container.delete_model_use_case();
     let request = DeleteModelRequestDto {
         model_id: model_id.clone(),
@@ -1163,7 +1159,6 @@ pub async fn list_models(
 /// 4. Validate path is within app data directory
 /// 5. Return absolute path as string
 pub async fn get_model_download_path(app_handle: tauri::AppHandle) -> Result<String, String> {
-    // Get app data directory
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
@@ -1172,7 +1167,6 @@ pub async fn get_model_download_path(app_handle: tauri::AppHandle) -> Result<Str
     // Construct models directory path
     let models_dir = app_data_dir.join("models");
 
-    // Create directory if it doesn't exist
     fs::create_dir_all(&models_dir)
         .map_err(|e| format!("Failed to create models directory: {}", e))?;
 
@@ -1189,7 +1183,6 @@ pub async fn get_model_download_path(app_handle: tauri::AppHandle) -> Result<Str
         return Err("Models directory is not within app data directory".to_string());
     }
 
-    // Return absolute path as string
     canonical_models
         .to_str()
         .ok_or_else(|| "Failed to convert path to string".to_string())
@@ -1198,9 +1191,6 @@ pub async fn get_model_download_path(app_handle: tauri::AppHandle) -> Result<Str
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::interfaces::di::Container;
-    use tauri::State;
 
     // Note: Command tests are integration tests that verify the thin controller
     // delegates correctly to use cases. Use case business logic is tested

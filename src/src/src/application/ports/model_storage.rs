@@ -114,7 +114,6 @@ impl MockModelStoragePort {
     pub fn with_models() -> Self {
         let mock = Self::new();
 
-        // Add some test models
         mock.add_model(DownloadedModel {
             model_id: "phi-3-mini".to_string(),
             path: PathBuf::from("/models/phi-3-mini"),

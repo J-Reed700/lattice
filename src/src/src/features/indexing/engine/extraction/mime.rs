@@ -1,6 +1,6 @@
 //! MIME type detection for file types.
 
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
 
 /// Detect MIME type from file extension.

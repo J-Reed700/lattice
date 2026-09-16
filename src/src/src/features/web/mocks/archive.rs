@@ -95,14 +95,12 @@ impl Default for MockWebArchiveService {
 #[async_trait]
 impl WebArchiveServiceTrait for MockWebArchiveService {
     async fn archive_article(&self, article: CleanArticle, url: &str) -> Result<PathBuf> {
-        // Extract domain from URL
         let domain = url::Url::parse(url)
             .map_err(|e| AppError::InvalidInput(format!("Invalid URL: {}", e)))?
             .host_str()
             .ok_or_else(|| AppError::InvalidInput("URL has no host".to_string()))?
             .to_string();
 
-        // Generate unique path
         let id = {
             let mut counter = self.counter.lock();
             *counter += 1;
@@ -116,7 +114,6 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
             id
         ));
 
-        // Store article
         self.articles.lock().insert(path.clone(), article);
 
         Ok(path)
@@ -199,7 +196,6 @@ mod tests {
         let mock = MockWebArchiveService::new();
         let path = PathBuf::from("/nonexistent/path.md");
 
-        // Should not error on deleting nonexistent article
         let result = mock.delete_article(&path).await;
         assert!(result.is_ok());
     }

@@ -55,12 +55,10 @@ impl FileSystemAdapter {
     /// Note: More comprehensive validation should be done at the domain layer
     /// using ValidatedFilePath before calling these methods.
     async fn validate_path(path: &Path) -> Result<std::path::PathBuf> {
-        // Check for empty path
         if path.as_os_str().is_empty() {
             return Err(AppError::InvalidInput("Path cannot be empty".to_string()));
         }
 
-        // Check for null bytes (potential attack)
         let path_str = path.to_str().ok_or_else(|| {
             AppError::InvalidInput("Path contains invalid UTF-8 characters".to_string())
         })?;
@@ -250,10 +248,8 @@ impl Default for FileSystemAdapter {
 #[async_trait]
 impl FileSystemPort for FileSystemAdapter {
     async fn open_file(&self, path: &Path) -> Result<()> {
-        // Validate path
         let validated_path = Self::validate_path(path).await?;
 
-        // Check file exists
         if !tokio::fs::try_exists(&validated_path)
             .await
             .unwrap_or(false)
@@ -264,7 +260,6 @@ impl FileSystemPort for FileSystemAdapter {
             )));
         }
 
-        // Check it's a file, not a directory
         if tokio::fs::metadata(&validated_path)
             .await
             .map(|m| m.is_dir())
@@ -284,10 +279,8 @@ impl FileSystemPort for FileSystemAdapter {
     }
 
     async fn show_in_folder(&self, path: &Path) -> Result<()> {
-        // Validate path
         let validated_path = Self::validate_path(path).await?;
 
-        // Check file exists
         if !tokio::fs::try_exists(&validated_path)
             .await
             .unwrap_or(false)
@@ -321,7 +314,6 @@ impl FileSystemPort for FileSystemAdapter {
             ));
         }
 
-        // Check existence
         Ok(tokio::fs::try_exists(path).await.unwrap_or(false))
     }
 
@@ -341,7 +333,6 @@ impl FileSystemPort for FileSystemAdapter {
             ));
         }
 
-        // Check if path exists
         if !tokio::fs::try_exists(path).await.unwrap_or(false) {
             return Err(AppError::NotFound(format!(
                 "Path not found: {}",
@@ -349,7 +340,6 @@ impl FileSystemPort for FileSystemAdapter {
             )));
         }
 
-        // Check if it's a directory
         Ok(tokio::fs::metadata(path)
             .await
             .map(|m| m.is_dir())
@@ -360,7 +350,6 @@ impl FileSystemPort for FileSystemAdapter {
         // Validate path to prevent directory traversal
         let validated_path = Self::validate_path(path).await?;
 
-        // Create directory and all parent directories
         tokio::fs::create_dir_all(&validated_path)
             .await
             .map_err(|e| {
@@ -376,10 +365,8 @@ impl FileSystemPort for FileSystemAdapter {
     }
 
     async fn list_directory(&self, path: &Path) -> Result<Vec<std::path::PathBuf>> {
-        // Validate path
         let validated_path = Self::validate_path(path).await?;
 
-        // Check directory exists
         if !tokio::fs::try_exists(&validated_path)
             .await
             .unwrap_or(false)
@@ -390,7 +377,6 @@ impl FileSystemPort for FileSystemAdapter {
             )));
         }
 
-        // Check it's a directory
         if !tokio::fs::metadata(&validated_path)
             .await
             .map(|m| m.is_dir())
@@ -402,7 +388,6 @@ impl FileSystemPort for FileSystemAdapter {
             )));
         }
 
-        // Read directory entries
         let mut entries = Vec::new();
         let mut read_dir =
             tokio::fs::read_dir(&validated_path)
@@ -447,7 +432,6 @@ mod tests {
         // File doesn't exist yet
         assert!(!adapter.file_exists(&file_path).await.unwrap());
 
-        // Create file
         std::fs::write(&file_path, "test content").unwrap();
 
         // Now it exists
@@ -508,7 +492,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_path_null_bytes() {
-        // Create path with null byte (unsafe)
         let path_with_null = "test\0file.txt";
         let path = Path::new(path_with_null);
 
@@ -541,7 +524,6 @@ mod tests {
         let file_path = temp_dir.path().join("test.txt");
         std::fs::write(&file_path, "test content").unwrap();
 
-        // Should succeed (mocked in tests)
         let result = adapter.open_file(&file_path).await;
         assert!(result.is_ok());
     }
@@ -553,7 +535,6 @@ mod tests {
         let file_path = temp_dir.path().join("test.txt");
         std::fs::write(&file_path, "test content").unwrap();
 
-        // Should succeed (mocked in tests)
         let result = adapter.show_in_folder(&file_path).await;
         assert!(result.is_ok());
     }

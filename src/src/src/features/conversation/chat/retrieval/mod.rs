@@ -1,13 +1,11 @@
 use crate::domain::qa::hyde::QueryType;
 use crate::features::function_calling::dto::{WebSearchResult, WikiSearchOutput};
 use crate::features::qa::dto::SourceDto;
-use crate::features::search::dto::{
-    SearchModeDto, SearchRequestDto, SearchResponseDto, SearchResultDto,
-};
+use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
+use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::settings::dto::{
     RetrievalTuningSettingsDto, RouterSettingsDto, SearchSettingsDto, ToolOutputSettingsDto,
 };
-use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
 use crate::infrastructure::services::router::RouterAction;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
@@ -20,76 +18,53 @@ use tracing::{debug, info, warn};
 
 use super::SearchFlags;
 mod conversation_helpers;
+mod corpus_plan;
 mod external_query;
 mod followup_context;
-mod kb_execution;
 mod kb_retrieval;
 mod keyword;
 mod overlap;
 mod pipeline;
 mod policy;
 mod rerank;
-mod result_filters;
 mod source_citations;
+mod sufficiency;
 mod tool_format;
 use self::conversation_helpers::{
-    apply_hard_space_scope_filter as apply_hard_space_scope_filter_impl,
     build_hyde_context_window_for_conversation as build_hyde_context_window_for_conversation_impl,
     load_recent_document_metadata as load_recent_document_metadata_impl,
     load_space_document_scope as load_space_document_scope_impl,
     persist_document_references as persist_document_references_impl,
     record_tool_document_references as record_tool_document_references_impl,
 };
+#[cfg(test)]
+use self::external_query::select_web_search_query;
 use self::external_query::{
-    select_web_search_query, select_web_search_query_with_tuning, select_wiki_search_query,
-    select_wiki_search_query_with_tuning,
+    select_web_search_query_with_tuning, select_wiki_search_query_with_tuning,
 };
+#[cfg(test)]
+use self::followup_context::extract_turn_anchor_terms;
 use self::followup_context::{
     build_followup_context as build_followup_context_impl,
-    extract_turn_anchor_terms as extract_turn_anchor_terms_impl,
     load_followup_turn_anchor_terms as load_followup_turn_anchor_terms_impl,
-    source_excerpt_text as source_excerpt_text_impl,
-};
-use self::kb_execution::{
-    apply_rag_post_filters as apply_rag_post_filters_impl,
-    derive_doc_shortlist_candidate_limit as derive_doc_shortlist_candidate_limit_impl,
-    derive_doc_shortlist_doc_limit as derive_doc_shortlist_doc_limit_impl,
-    derive_kb_search_limit as derive_kb_search_limit_impl,
-    execute_kb_search_plan as execute_kb_search_plan_impl,
 };
 use self::kb_retrieval::run_kb_retrieval as run_kb_retrieval_impl;
-pub(super) use self::keyword::{build_keyword_query_plan, KeywordQueryPlan};
-use self::keyword::{
-    expand_keyword_plan_with_rm3, extract_phrase_terms, normalize_keyword_token, stem_token,
-    tokenize_keyword_terms,
-};
-use self::overlap::{
-    extract_overlap_query_terms as extract_overlap_query_terms_impl, extract_query_anchor_terms,
-    filter_followup_anchor_terms_by_candidate_coverage,
-    filter_results_by_query_overlap as filter_results_by_query_overlap_impl,
-    filter_results_by_query_overlap_with_tuning, select_informative_overlap_terms,
-    tokenize_overlap_terms,
-};
+use self::keyword::{extract_phrase_terms, normalize_keyword_token, tokenize_keyword_terms};
+use self::overlap::tokenize_overlap_terms;
 use self::pipeline::run_retrieval_pipeline as run_retrieval_pipeline_impl;
 use self::policy::{
     empty_search_response, should_execute_external_lookup, should_use_external_as_fallback,
 };
 use self::rerank::apply_rerank_stage as apply_rerank_stage_impl;
-use self::result_filters::{
-    build_document_shortlist as build_document_shortlist_impl,
-    filter_results_by_document_shortlist as filter_results_by_document_shortlist_impl,
-    filter_results_by_document_support as filter_results_by_document_support_impl,
-    filter_results_by_document_support_with_tuning as filter_results_by_document_support_with_tuning_impl,
-    should_apply_document_shortlist as should_apply_document_shortlist_impl,
-    should_apply_document_shortlist_with_tuning as should_apply_document_shortlist_with_tuning_impl,
-};
 use self::source_citations::{
     assign_citation_ids as assign_citation_ids_impl,
     build_source_citations as build_source_citations_impl,
     build_web_source_citations as build_web_source_citations_impl,
-    citation_ids_by_document as citation_ids_by_document_impl,
+    citation_ids_by_chunk as citation_ids_by_chunk_impl,
     deduplicate_sources as deduplicate_sources_impl, infer_category as infer_category_impl,
 };
+use self::sufficiency::assess_sufficiency;
+pub(super) use self::sufficiency::SufficiencyVerdict;
 use self::tool_format::format_tool_result as format_tool_result_impl;
 
 /// The vault-wide space. A conversation in any other space is scoped to the
@@ -99,6 +74,58 @@ const DEFAULT_SPACE_ID: &str = "space_general";
 
 const CLARIFY_NO_RECENT_DOCUMENT_PROMPT: &str =
     "I don't see a recent linked document yet. Do you want me to search your documents, or answer this generally?";
+
+/// The post-rerank sufficiency verdict, in the one shape callers outside the
+/// chat feature can read.
+///
+/// [`SufficiencyVerdict`] and the planner's `CorpusSearchPlan` are internal and
+/// stay that way; this is the narrow projection the retrieval evaluation
+/// harness needs so a run row can carry the same verdict the pipeline would
+/// have acted on, computed by the same code rather than a copy of it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetrievalSufficiency {
+    /// False only when a corrective retry could plausibly do better.
+    pub sufficient: bool,
+    /// Blended score of the best passage. Comparable across runs only when
+    /// `reranked` was true for both.
+    pub top_score: f32,
+    /// `top_score` minus the score at rank five, or minus the last result's
+    /// score when fewer came back.
+    pub spread: f32,
+    /// Fraction of the informative query terms found in the top passages.
+    pub term_coverage: f32,
+    /// Reason codes, not prose. Empty when nothing was wrong.
+    pub reasons: Vec<&'static str>,
+}
+
+/// Judge one pass of retrieval from a bare query list.
+///
+/// The plan built here is the ordinary keyword-search shape — the given
+/// queries, no opening documents, no start-at-beginning — so none of the
+/// ordered-reading exemptions apply and the verdict is the score, spread and
+/// coverage judgement itself. `reranked` must be true only when a cross-encoder
+/// actually rescored the candidates; passing true otherwise thresholds RRF
+/// ranks as if they were relevance probabilities, which they are not.
+pub fn assess_retrieval_sufficiency(
+    results: &[SearchResultDto],
+    queries: &[String],
+    tuning: &RetrievalTuningSettingsDto,
+    reranked: bool,
+) -> RetrievalSufficiency {
+    let plan = self::corpus_plan::CorpusSearchPlan {
+        queries: queries.to_vec(),
+        opening_document_ids: Vec::new(),
+        start_at_beginning: false,
+    };
+    let verdict = assess_sufficiency(results, &plan, tuning, reranked);
+    RetrievalSufficiency {
+        sufficient: verdict.sufficient,
+        top_score: verdict.top_score,
+        spread: verdict.spread,
+        term_coverage: verdict.term_coverage,
+        reasons: verdict.reasons,
+    }
+}
 
 pub(super) struct RouterDecisionOutcome {
     pub(super) action: RouterAction,
@@ -120,14 +147,17 @@ pub(super) struct RetrievalPipelineOutcome {
     pub(super) sub_timings: RetrievalSubTimingMetrics,
     /// Size of the document set the hard space-scope filter actually allowed.
     /// Not the size of the corpus — a scoped conversation must not claim to
-    /// have read the whole vault (BRIEF rank 17, contract §4.6).
+    /// have read the whole vault.
     pub(super) searched_documents: usize,
     /// True when the conversation lives outside the general space, i.e. its
     /// retrieval was scoped to the documents linked to it.
     pub(super) scope_is_linked: bool,
+    /// The post-rerank sufficiency verdict for the turn, after any corrective
+    /// retry. `None` when knowledge-base retrieval did not run.
+    pub(super) sufficiency: Option<SufficiencyVerdict>,
 }
 
-#[derive(Debug, Serialize, Clone, Default)]
+#[derive(Debug, Serialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrievalSubTimingMetrics {
     pub kb_total_ms: u64,
@@ -139,6 +169,20 @@ pub struct RetrievalSubTimingMetrics {
     pub kb_merge_shortlist_gate_ms: u64,
     pub kb_post_filters_ms: u64,
     pub kb_rerank_ms: u64,
+    /// Cost of the post-rerank sufficiency check. Local and cheap by design —
+    /// if this is ever material, the check is doing too much.
+    pub kb_sufficiency_ms: u64,
+    /// The whole corrective second pass: replanning, both branches again, and
+    /// the second rerank. Zero when no retry ran.
+    pub kb_corrective_retry_ms: u64,
+    /// 0 or 1. The loop is capped at exactly one replanned retry per turn.
+    pub kb_corrective_retries: u32,
+    /// The final sufficiency verdict, or `None` when KB retrieval never ran.
+    /// Absent is not the same as insufficient.
+    pub kb_sufficient: Option<bool>,
+    /// True when a short follow-up reused the previous turn's topic and the
+    /// planner LLM call was skipped.
+    pub kb_planner_skipped: bool,
     pub kb_build_sources_ms: u64,
     pub kb_persist_references_ms: u64,
     pub external_hyde_interpretation_ms: u64,
@@ -207,70 +251,6 @@ impl RetrievalPlan {
     }
 }
 
-#[derive(Debug, Clone)]
-struct KbSearchPlan {
-    query: String,
-    mode: SearchModeDto,
-    threshold: Option<f32>,
-    run_parallel_keyword_branch: bool,
-}
-
-impl KbSearchPlan {
-    fn from_interpretation(
-        validated_message: &str,
-        interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
-        search_flags: SearchFlags,
-        semantic_threshold: f32,
-    ) -> Self {
-        let hyde_text = interpretation.hyde_text.as_deref();
-        let search_query = if let Some(hyde) = hyde_text {
-            // Anchor HyDE with high-signal query terms (not full conversational text)
-            // so vector retrieval stays in-domain without over-weighting filler words.
-            let raw_tokens = tokenize_keyword_terms(validated_message);
-            let anchor_terms = {
-                let selected = select_informative_terms(raw_tokens.clone(), 14);
-                if selected.is_empty() {
-                    raw_tokens
-                } else {
-                    selected
-                }
-            };
-            if anchor_terms.is_empty() {
-                format!("{validated_message}\n\n{hyde}")
-            } else {
-                format!("{}\n\n{hyde}", anchor_terms.join(" "))
-            }
-        } else {
-            validated_message.to_string()
-        };
-        let has_distinct_hyde_query = hyde_text
-            .map(|hyde| !hyde.trim().eq_ignore_ascii_case(validated_message.trim()))
-            .unwrap_or(false);
-        let run_parallel_keyword_branch = has_distinct_hyde_query;
-        let mode = if run_parallel_keyword_branch {
-            SearchModeDto::Vector
-        } else if search_flags.force_kb_search {
-            SearchModeDto::Hybrid {
-                vector_weight: 0.7,
-                bm25_weight: 0.3,
-            }
-        } else {
-            SearchModeDto::Vector
-        };
-
-        Self {
-            query: search_query,
-            mode,
-            threshold: if run_parallel_keyword_branch {
-                Some(0.05)
-            } else {
-                Some(semantic_threshold.clamp(0.0, 1.0))
-            },
-            run_parallel_keyword_branch,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct KbRetrievalOutcome {
     interpretation: crate::domain::qa::hyde::HyDEInterpretation,
@@ -283,14 +263,8 @@ struct KbRetrievalOutcome {
     searched_documents: usize,
     /// Whether that scope was a linked-document space rather than the vault.
     scope_is_linked: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct KbSearchPlanTimingMetrics {
-    shortlist_planning_ms: u64,
-    query_execution_ms: u64,
-    merge_shortlist_gate_ms: u64,
-    total_ms: u64,
+    /// The verdict the corrective loop acted on, kept for the turn's trace.
+    sufficiency: Option<SufficiencyVerdict>,
 }
 
 #[derive(Debug)]
@@ -378,7 +352,7 @@ async fn apply_rerank_stage(
     search_response: SearchResponseDto,
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
-) -> SearchResponseDto {
+) -> (SearchResponseDto, bool) {
     apply_rerank_stage_impl(
         container,
         validated_message,
@@ -390,49 +364,11 @@ async fn apply_rerank_stage(
     .await
 }
 
-fn is_low_confidence_kb_response(search_response: &SearchResponseDto) -> bool {
-    if search_response.results.is_empty() {
-        return true;
-    }
-
-    let top_score = search_response
-        .results
-        .first()
-        .map(|result| result.score)
-        .unwrap_or(0.0);
-    let second_score = search_response
-        .results
-        .get(1)
-        .map(|result| result.score)
-        .unwrap_or(0.0);
-    let gap = (top_score - second_score).max(0.0);
-
-    if top_score < 0.12 {
-        return true;
-    }
-    if search_response.results.len() == 1 && top_score < 0.28 {
-        return true;
-    }
-    if search_response.results.len() >= 2 && top_score < 0.22 && gap < 0.03 {
-        return true;
-    }
-
-    false
-}
-
 async fn load_space_document_scope(
     container: &Container,
     conversation_id: &str,
 ) -> Option<SpaceDocumentScope> {
     load_space_document_scope_impl(container, conversation_id).await
-}
-
-fn apply_hard_space_scope_filter(
-    response: SearchResponseDto,
-    space_id: &str,
-    scoped_document_ids: &HashSet<String>,
-) -> SearchResponseDto {
-    apply_hard_space_scope_filter_impl(response, space_id, scoped_document_ids)
 }
 
 async fn build_hyde_context_window_for_conversation(
@@ -442,64 +378,15 @@ async fn build_hyde_context_window_for_conversation(
     build_hyde_context_window_for_conversation_impl(conv_service, conversation_id).await
 }
 
-async fn execute_kb_search_plan(
-    container: &Container,
-    validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
-    kb_plan: &KbSearchPlan,
-    forced_kb: bool,
-    kb_search_limit: usize,
-    scope: &SpaceDocumentScope,
-    tuning: &RetrievalTuningSettingsDto,
-) -> (SearchResponseDto, KbSearchPlanTimingMetrics) {
-    execute_kb_search_plan_impl(
-        container,
-        validated_message,
-        interpretation,
-        kb_plan,
-        forced_kb,
-        kb_search_limit,
-        scope,
-        tuning,
-    )
-    .await
-}
-
 fn derive_kb_search_limit(
     tool_output_settings: &ToolOutputSettingsDto,
     tuning: &RetrievalTuningSettingsDto,
 ) -> usize {
-    derive_kb_search_limit_impl(tool_output_settings, tuning)
-}
-
-fn derive_doc_shortlist_candidate_limit(
-    kb_search_limit: usize,
-    tuning: &RetrievalTuningSettingsDto,
-) -> usize {
-    derive_doc_shortlist_candidate_limit_impl(kb_search_limit, tuning)
-}
-
-fn derive_doc_shortlist_doc_limit(
-    kb_search_limit: usize,
-    tuning: &RetrievalTuningSettingsDto,
-) -> usize {
-    derive_doc_shortlist_doc_limit_impl(kb_search_limit, tuning)
-}
-
-fn apply_rag_post_filters(
-    search_response: SearchResponseDto,
-    validated_message: &str,
-    hyde_text: Option<&str>,
-    followup_anchor_terms: Option<&HashSet<String>>,
-    tuning: &RetrievalTuningSettingsDto,
-) -> SearchResponseDto {
-    apply_rag_post_filters_impl(
-        search_response,
-        validated_message,
-        hyde_text,
-        followup_anchor_terms,
-        tuning,
-    )
+    let min_limit = tuning.kb_search_min_limit as usize;
+    let max_limit = tuning.kb_search_max_limit as usize;
+    (tool_output_settings.max_results as usize)
+        .max(min_limit)
+        .min(max_limit)
 }
 
 async fn persist_document_references(
@@ -561,58 +448,6 @@ fn build_router_clarify_response(
 fn clarify_mentions_previous_document(text: &str) -> bool {
     let normalized = text.to_lowercase();
     normalized.contains("previous document") || normalized.contains("recent document")
-}
-
-pub(super) fn extract_overlap_query_terms(query: &str) -> Vec<String> {
-    extract_overlap_query_terms_impl(query)
-}
-
-pub(super) fn filter_results_by_query_overlap(
-    results: Vec<SearchResultDto>,
-    query: &str,
-    hyde_text: Option<&str>,
-    followup_anchor_terms: Option<&HashSet<String>>,
-) -> Vec<SearchResultDto> {
-    filter_results_by_query_overlap_impl(results, query, hyde_text, followup_anchor_terms)
-}
-
-fn build_document_shortlist(results: &[SearchResultDto], max_docs: usize) -> HashSet<String> {
-    build_document_shortlist_impl(results, max_docs)
-}
-
-fn filter_results_by_document_shortlist(
-    response: SearchResponseDto,
-    document_shortlist: &HashSet<String>,
-) -> SearchResponseDto {
-    filter_results_by_document_shortlist_impl(response, document_shortlist)
-}
-
-fn should_apply_document_shortlist(
-    shortlist_response: &SearchResponseDto,
-    document_shortlist: &HashSet<String>,
-) -> bool {
-    should_apply_document_shortlist_impl(shortlist_response, document_shortlist)
-}
-
-fn should_apply_document_shortlist_with_tuning(
-    shortlist_response: &SearchResponseDto,
-    document_shortlist: &HashSet<String>,
-    tuning: &RetrievalTuningSettingsDto,
-) -> bool {
-    should_apply_document_shortlist_with_tuning_impl(shortlist_response, document_shortlist, tuning)
-}
-
-pub(super) fn filter_results_by_document_support(
-    results: Vec<SearchResultDto>,
-) -> Vec<SearchResultDto> {
-    filter_results_by_document_support_impl(results)
-}
-
-fn filter_results_by_document_support_with_tuning(
-    results: Vec<SearchResultDto>,
-    tuning: &RetrievalTuningSettingsDto,
-) -> Vec<SearchResultDto> {
-    filter_results_by_document_support_with_tuning_impl(results, tuning)
 }
 
 pub(super) fn extract_acronym_terms(query: &str) -> std::collections::HashSet<String> {
@@ -684,13 +519,6 @@ async fn build_followup_context(
     .await
 }
 
-fn extract_turn_anchor_terms(
-    user_text: &str,
-    assistant_text: &str,
-) -> std::collections::HashSet<String> {
-    extract_turn_anchor_terms_impl(user_text, assistant_text)
-}
-
 async fn load_followup_turn_anchor_terms(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
@@ -698,11 +526,7 @@ async fn load_followup_turn_anchor_terms(
     load_followup_turn_anchor_terms_impl(conv_service, conversation_id).await
 }
 
-fn source_excerpt_text(source: &SourceDto) -> Option<String> {
-    source_excerpt_text_impl(source)
-}
-
-/// Deduplicate sources by `document_id`, while preserving multiple chunk excerpts per document.
+/// Deduplicate repeated chunks while retaining distinct passages from each document.
 pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
     deduplicate_sources_impl(sources)
 }
@@ -712,11 +536,11 @@ pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
     assign_citation_ids_impl(sources)
 }
 
-/// Map document id -> the citation number the model was given.
-pub(super) fn citation_ids_by_document(
+/// Map chunk id -> the citation number the model was given.
+pub(super) fn citation_ids_by_chunk(
     sources: &[SourceDto],
 ) -> std::collections::HashMap<String, u32> {
-    citation_ids_by_document_impl(sources)
+    citation_ids_by_chunk_impl(sources)
 }
 
 /// Build source citations from search results with parallel document lookups.

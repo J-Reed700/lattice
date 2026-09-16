@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 use lattice::domain::aggregates::Document;
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]

@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! # Test Data Factories
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -43,7 +41,7 @@
 
 use chrono::Utc;
 use uuid::Uuid;
-use lattice::error::Result;
+use lattice::shared::error::Result;
 use lattice::infrastructure::persistence::repositories::{
     chunk_repository::ChunkRepository,
     document_repository::DocumentRepository,
@@ -52,10 +50,6 @@ use lattice::infrastructure::persistence::repositories::{
 use sqlx;
 
 use super::{TestDocument, TestChunk, TestEmbedding};
-
-// ============================================================================
-// DocumentFactory
-// ============================================================================
 
 /// Factory for creating test documents.
 ///
@@ -165,10 +159,6 @@ impl TestDocument {
     }
 }
 
-// ============================================================================
-// ChunkFactory
-// ============================================================================
-
 /// Factory for creating test chunks.
 ///
 /// # Examples
@@ -274,10 +264,6 @@ impl TestChunk {
     }
 }
 
-// ============================================================================
-// EmbeddingFactory
-// ============================================================================
-
 /// Factory for creating test embeddings.
 ///
 /// # Examples
@@ -342,10 +328,6 @@ impl TestEmbedding {
         Ok(())
     }
 }
-
-// ============================================================================
-// Batch Factories
-// ============================================================================
 
 /// Create multiple test documents with related data.
 ///
@@ -412,10 +394,6 @@ pub fn create_test_embedding_batch(chunk_ids: &[String], dimensions: usize) -> V
         })
         .collect()
 }
-
-// ============================================================================
-// Content Generators
-// ============================================================================
 
 /// Generate markdown content with mentions and tags.
 pub fn generate_markdown_with_mentions(person: &str, topic: &str, tags: &[&str]) -> String {

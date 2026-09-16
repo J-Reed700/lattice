@@ -103,7 +103,6 @@ impl AuditLogger {
     /// Returns an error only if all sinks fail. Individual sink failures
     /// are logged as warnings.
     pub async fn log(&self, event: AuditEvent) -> Result<()> {
-        // Check if logging is enabled
         let enabled = *self.enabled.read().await;
         if !enabled {
             debug!("Audit logging is disabled, skipping event");
@@ -130,7 +129,6 @@ impl AuditLogger {
         let mut errors = Vec::new();
         let mut success_count = 0;
 
-        // Write to all sinks
         for (i, sink) in sinks.iter().enumerate() {
             match sink.log(&event).await {
                 Ok(()) => {
@@ -378,7 +376,6 @@ mod tests {
         let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success());
         let result = logger.log(event).await;
 
-        // Should succeed but not actually log
         assert!(result.is_ok());
     }
 }

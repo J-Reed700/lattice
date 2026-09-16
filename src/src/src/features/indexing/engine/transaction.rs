@@ -178,7 +178,6 @@ impl FileIndexTransaction {
             "Rolling back failed indexing transaction"
         );
 
-        // Delete file storage
         if let Err(e) = self.file_storage.delete_file(&self.file_id).await {
             tracing::error!(
                 file_id = %self.file_id,
@@ -215,9 +214,6 @@ impl FileIndexTransaction {
             }
         }
 
-        // Delete the `files` row too. Leaving it behind stranded an entry at
-        // `is_indexed = 0` that no later run would revisit, so failures
-        // accumulated and polluted "needs indexing" queries.
         match sqlx::query("DELETE FROM files WHERE id = ?")
             .bind(&self.file_id)
             .execute(&self.db_pool)
@@ -276,7 +272,6 @@ impl Drop for FileIndexTransaction {
 mod tests {
     use super::*;
     use sqlx::SqlitePool;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     async fn create_test_pool() -> (SqlitePool, TempDir) {
@@ -329,14 +324,12 @@ mod tests {
         .await
         .unwrap();
 
-        // Drop without committing — this is the failure path.
         {
             let _tx =
                 FileIndexTransaction::new(file_id.clone(), file_storage.clone(), pool.clone())
                     .with_file_path(file_path);
         }
 
-        // Cleanup is spawned, so give it a moment.
         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
         let documents: i64 =
@@ -370,7 +363,6 @@ mod tests {
         let file_storage = Arc::new(FileStorageService::new(vault_path, pool.clone()));
         let file_id = "test-file-123".to_string();
 
-        // Create and commit transaction
         {
             let tx = FileIndexTransaction::new(file_id.clone(), file_storage.clone(), pool.clone());
             tx.commit(); // Should prevent rollback
@@ -393,16 +385,13 @@ mod tests {
         let file_storage = Arc::new(FileStorageService::new(vault_path.clone(), pool.clone()));
         let file_id = "test-file-456".to_string();
 
-        // Create test file to be cleaned up
         let test_file = vault_path.join(&file_id);
         tokio::fs::write(&test_file, b"test content").await.unwrap();
         assert!(test_file.exists());
 
-        // Create transaction and drop without committing
         {
             let _tx =
                 FileIndexTransaction::new(file_id.clone(), file_storage.clone(), pool.clone());
-            // Drop happens here - should trigger rollback
         }
 
         // Give time for async rollback to complete
@@ -421,18 +410,13 @@ mod tests {
         let file_storage = Arc::new(FileStorageService::new(vault_path, pool.clone()));
         let file_id = "nonexistent-file".to_string();
 
-        // Create transaction for file that doesn't exist
-        // Rollback should handle errors gracefully
         {
             let _tx =
                 FileIndexTransaction::new(file_id.clone(), file_storage.clone(), pool.clone());
-            // Drop should trigger rollback, which logs errors but doesn't panic
         }
 
         // Give time for async rollback
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Test passes if no panic occurred
     }
 
     #[tokio::test]
@@ -443,7 +427,6 @@ mod tests {
 
         let file_storage = Arc::new(FileStorageService::new(vault_path, pool.clone()));
 
-        // Create multiple transactions
         let tx1 =
             FileIndexTransaction::new("file-1".to_string(), file_storage.clone(), pool.clone());
         let tx2 =

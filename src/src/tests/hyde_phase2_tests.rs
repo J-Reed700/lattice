@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Integration tests for HyDE Phase 2: Generator and Service
 //!
@@ -18,13 +17,9 @@ use async_trait::async_trait;
 use futures::stream::{self, Stream};
 use lattice::application::ports::LLMPort;
 use lattice::domain::qa::hyde::{HyDEInterpretation, QueryType, SearchStrategy};
-use lattice::infrastructure::services::hyde::{HyDEGenerator, HyDEService, QueryClassifier};
+use lattice::features::qa::hyde::{HyDEGenerator, HyDEService, QueryClassifier};
 use lattice::shared::error::Result;
 use std::sync::Arc;
-
-// ============================================================================
-// Mock LLM for Testing
-// ============================================================================
 
 struct MockLLM {
     response: String,
@@ -76,10 +71,6 @@ impl LLMPort for MockLLM {
     }
 }
 
-// ============================================================================
-// Phase 1 Tests: Query Classifier
-// ============================================================================
-
 #[test]
 fn test_classifier_greeting_detection() {
     let classifier = QueryClassifier::new();
@@ -110,10 +101,6 @@ fn test_classifier_command_detection() {
     assert_eq!(classifier.classify("find documents"), QueryType::Command);
     assert_eq!(classifier.classify("list all tags"), QueryType::Command);
 }
-
-// ============================================================================
-// Phase 2 Tests: HyDE Generator
-// ============================================================================
 
 #[tokio::test]
 async fn test_generator_greeting_fast_path() {
@@ -182,10 +169,6 @@ async fn test_generator_empty_llm_response_fallback() {
     assert!(result.hyde_text.is_none());
     assert_eq!(result.search_strategy, SearchStrategy::RawOnly);
 }
-
-// ============================================================================
-// Phase 2 Tests: HyDE Service (Full Integration)
-// ============================================================================
 
 #[tokio::test]
 async fn test_service_end_to_end_greeting() {
@@ -279,10 +262,6 @@ async fn test_service_case_insensitive_classification() {
     assert_eq!(mixed.query_type, QueryType::Greeting);
 }
 
-// ============================================================================
-// Performance Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_greeting_fast_path_performance() {
     // Panic if LLM is called (should use fast path)
@@ -332,10 +311,6 @@ async fn test_greeting_fast_path_performance() {
     let result = service.interpret_query("Hello!").await.unwrap();
     assert_eq!(result.query_type, QueryType::Greeting);
 }
-
-// ============================================================================
-// Domain Model Tests
-// ============================================================================
 
 #[test]
 fn test_interpretation_search_text_extraction() {

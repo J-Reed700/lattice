@@ -27,23 +27,16 @@
 //! println!("Downloaded: {} ({} bytes)", response.model_name, response.file_size_bytes);
 //! ```
 
-use crate::domain::downloaded_model::DownloadedModel;
 use crate::domain::embedding_constants::{
     DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
-use crate::features::download::manager::{
-    DownloadManager, DownloadManagerService, DownloadRequest,
-};
+use crate::features::download::manager::{DownloadManager, DownloadRequest};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-
-// =============================================================================
-// DTOs
-// =============================================================================
 
 /// Response DTO for default model download
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,10 +52,6 @@ pub struct DownloadDefaultModelResponse {
     /// Estimated file size in bytes
     pub file_size_bytes: u64,
 }
-
-// =============================================================================
-// Use Case
-// =============================================================================
 
 /// Download default embedding model use case
 pub struct DownloadDefaultModelUseCase {
@@ -127,7 +116,6 @@ impl DownloadDefaultModelUseCase {
         // Ensure models directory exists
         self.ensure_models_directory().await?;
 
-        // Check if model is already downloaded
         let existing_models = self.downloaded_model_repo.list_all().await?;
         for model in existing_models {
             if model.model_id() == Self::DEFAULT_MODEL_ID {
@@ -138,7 +126,6 @@ impl DownloadDefaultModelUseCase {
             }
         }
 
-        // Build model file path
         let model_dir = self.models_path.join(Self::DEFAULT_MODEL_NAME);
         tokio::fs::create_dir_all(&model_dir).await.map_err(|e| {
             AppError::FileSystem(format!("Failed to create model directory: {}", e))
@@ -146,7 +133,6 @@ impl DownloadDefaultModelUseCase {
 
         let model_file_path = model_dir.join(Self::MODEL_FILE);
 
-        // Build download URL
         let download_url = self.build_download_url();
 
         debug!(
@@ -155,7 +141,6 @@ impl DownloadDefaultModelUseCase {
             "Initiating model download"
         );
 
-        // Start download
         let download_request = DownloadRequest {
             url: download_url,
             destination: model_file_path.clone(),
@@ -212,10 +197,6 @@ impl DownloadDefaultModelUseCase {
     }
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,7 +209,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::{mpsc, RwLock};
 
-    // Mock DownloadManager
     struct MockDownloadManager {
         started_downloads: Arc<RwLock<Vec<DownloadRequest>>>,
         should_fail: bool,
@@ -331,7 +311,6 @@ mod tests {
         assert_eq!(result.model_name, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME);
         assert!(result.file_path.contains("model.onnx"));
 
-        // Verify models directory was created
         assert!(models_path.exists());
     }
 

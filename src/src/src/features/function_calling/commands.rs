@@ -36,8 +36,7 @@
 //! - **Tool Use**: Agentic workflows with function calling
 //! - **Research Assistant**: LLM-driven research with tool access
 
-use crate::features::function_calling::domain::{FunctionCall, FunctionResult, ToolDefinition};
-use crate::features::function_calling::dto::*;
+use crate::features::function_calling::domain::{FunctionCall, FunctionResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 use tauri::State;
@@ -135,24 +134,14 @@ use tracing::{debug, error, info};
 /// # Architecture
 ///
 /// Thin controller delegating to `FunctionRegistry::list_tools()`
-async fn list_available_functions_impl(container: &Container) -> Result<Vec<serde_json::Value>> {
+async fn list_available_functions_impl(
+    container: &Container,
+) -> Result<Vec<crate::features::function_calling::domain::ToolDefinition>> {
     debug!("Listing available functions");
 
-    // Get registry
     let registry = container.function_registry();
 
-    // Get tools as JSON
-    let tools: Vec<serde_json::Value> = registry
-        .list_tools()
-        .iter()
-        .map(|tool| {
-            serde_json::json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-            })
-        })
-        .collect();
+    let tools = registry.list_tools();
 
     info!("Listed {} available functions", tools.len());
 
@@ -161,7 +150,7 @@ async fn list_available_functions_impl(container: &Container) -> Result<Vec<serd
 
 pub async fn list_available_functions(
     container: State<'_, Container>,
-) -> Result<Vec<serde_json::Value>> {
+) -> Result<Vec<crate::features::function_calling::domain::ToolDefinition>> {
     list_available_functions_impl(&container).await
 }
 
@@ -282,10 +271,8 @@ async fn execute_function_impl(
         .input_validator()
         .validate_search_query(&call.name)?; // Reuse search validator for function names
 
-    // Get executor
     let executor = container.function_executor();
 
-    // Execute function
     let result = executor.execute(call.clone()).await?;
 
     // Audit logging
@@ -435,10 +422,8 @@ pub async fn get_function_stats(
 ) -> Result<crate::features::function_calling::domain::RegistryStats> {
     debug!("Getting function registry statistics");
 
-    // Get registry
     let registry = container.function_registry();
 
-    // Get stats
     let stats = registry.stats();
 
     info!(
@@ -464,10 +449,8 @@ mod tests {
 
         let result = list_available_functions_impl(&container).await?;
 
-        assert!(result.iter().any(|tool| tool["name"] == "semantic_search"));
-        assert!(result
-            .iter()
-            .any(|tool| tool["name"] == "fetch_url_content"));
+        assert!(result.iter().any(|tool| tool.name == "semantic_search"));
+        assert!(result.iter().any(|tool| tool.name == "fetch_url_content"));
         Ok(())
     }
 

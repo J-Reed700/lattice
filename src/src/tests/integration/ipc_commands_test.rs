@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! IPC command integration tests.
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -171,7 +169,6 @@ mod link_commands {
 
     #[tokio::test]
     async fn test_error_handling() {
-        // Test that commands handle edge cases gracefully
         let result = links::extract_wikilink_targets("No links here".to_string()).await;
 
         assert!(result.is_ok());

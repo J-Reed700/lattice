@@ -63,7 +63,6 @@ impl ReadFileBytesUseCase {
             .validate_path(&request.path)
             .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
 
-        // Check file exists (using validated path)
         if !self.file_storage.exists(&validated_path).await {
             return Err(AppError::NotFound(format!(
                 "File not found: {}",
@@ -71,10 +70,8 @@ impl ReadFileBytesUseCase {
             )));
         }
 
-        // Get metadata to check size
         let metadata = self.file_storage.metadata(&validated_path).await?;
 
-        // Verify it's a file, not a directory
         if metadata.is_directory {
             return Err(AppError::InvalidInput(format!(
                 "Cannot read directory as file: {}",
@@ -91,7 +88,6 @@ impl ReadFileBytesUseCase {
             });
         }
 
-        // Read file content as bytes (using validated path)
         self.file_storage.read_file_bytes(&validated_path).await
     }
 }
@@ -114,22 +110,6 @@ mod tests {
         fn with_file(mut self, path: &str, content: &[u8]) -> Self {
             let size = content.len() as u64;
             self.files.push((path.to_string(), content.to_vec(), size));
-            self
-        }
-
-        fn with_large_file(mut self, path: &str) -> Self {
-            let size = MAX_FILE_SIZE_BYTES + 1;
-            self.files.push((path.to_string(), Vec::new(), size));
-            self
-        }
-
-        fn with_directory(mut self, path: &str) -> Self {
-            let dir_path = if path.ends_with('/') {
-                path.to_string()
-            } else {
-                format!("{}/", path)
-            };
-            self.files.push((dir_path, Vec::new(), 0));
             self
         }
     }

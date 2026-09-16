@@ -5,8 +5,8 @@
 //! This mapper implements the transformation layer between the anemic
 //! database model (used by SQLx) and the rich domain entity.
 
-use crate::domain_types::{TagId, TagName};
 use crate::features::tags::entity::Tag as DomainTag;
+use crate::shared::domain_types::{TagId, TagName};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -68,7 +68,6 @@ impl TagMapper {
     /// - `AppError::InvalidData` if tag ID is invalid
     /// - `AppError::InvalidData` if tag name is invalid
     pub fn to_entity(model: &TagModel) -> Result<DomainTag> {
-        // Parse timestamps
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
             .with_timezone(&Utc);
@@ -77,15 +76,12 @@ impl TagMapper {
             .map_err(|e| AppError::InvalidData(format!("Invalid updated_at timestamp: {}", e)))?
             .with_timezone(&Utc);
 
-        // Parse tag ID
         let id = TagId::from_string(model.id.clone())
             .map_err(|e| AppError::InvalidData(format!("Invalid tag ID: {}", e)))?;
 
-        // Parse tag name
         let name = TagName::new(model.name.clone())
             .map_err(|e| AppError::InvalidData(format!("Invalid tag name: {}", e)))?;
 
-        // Create domain entity
         Ok(DomainTag::with_id(
             id,
             name,
@@ -126,10 +122,6 @@ impl TagMapper {
         entities.iter().map(Self::to_model).collect()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

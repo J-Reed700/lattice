@@ -1,6 +1,6 @@
 //! Model catalog adapter implementation.
 //!
-//! ⚠️  DEPRECATED: This adapter is deprecated in favor of the new Phase 2 model management system.
+//! Deprecated compatibility adapter for the current model-management system.
 //! Use `HuggingFaceAdapter` + `ModelCacheAdapter` for external model catalogs.
 //! This adapter remains for backward compatibility with existing use cases.
 //!
@@ -10,7 +10,6 @@ use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatal
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 
-// Re-export ModelInfo for backward compatibility with existing use cases
 pub use self::model_info::ModelInfo;
 
 mod model_info {
@@ -170,9 +169,7 @@ impl ModelCatalogPort for HardcodedModelCatalog {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ExternalModelMetadata>, AppError> {
-        // Filter models by query (if provided)
         let filtered: Vec<ExternalModelMetadata> = if query.is_empty() {
-            // Return all models
             self.models
                 .iter()
                 .map(|m| m.to_external_metadata())
@@ -193,7 +190,6 @@ impl ModelCatalogPort for HardcodedModelCatalog {
                 .collect()
         };
 
-        // Apply limit
         let limited: Vec<ExternalModelMetadata> = filtered.into_iter().take(limit).collect();
 
         Ok(limited)
@@ -214,39 +210,31 @@ impl ModelCatalogPort for HardcodedModelCatalog {
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//
 //     #[tokio::test]
 //     async fn test_catalog_has_models() {
 //         let catalog = HardcodedModelCatalog::new();
 //         let models = catalog.get_all_models().await.unwrap();
-//
 //         assert!(models.len() >= 7);
 //     }
-//
 //     #[tokio::test]
 //     async fn test_catalog_get_by_id() {
 //         let catalog = HardcodedModelCatalog::new();
 //         let model = catalog.get_model_by_id("phi-3-mini").await.unwrap();
-//
 //         assert!(model.is_some());
 //         let model = model.unwrap();
 //         assert_eq!(model.id, "phi-3-mini");
 //         assert_eq!(model.name, "Phi-3 Mini");
 //     }
-//
 //     #[tokio::test]
 //     async fn test_catalog_get_by_id_not_found() {
 //         let catalog = HardcodedModelCatalog::new();
 //         let model = catalog.get_model_by_id("nonexistent").await.unwrap();
-//
 //         assert!(model.is_none());
 //     }
-//
 //     #[tokio::test]
 //     async fn test_catalog_all_models_have_required_fields() {
 //         let catalog = HardcodedModelCatalog::new();
 //         let models = catalog.get_all_models().await.unwrap();
-//
 //         for model in models {
 //             assert!(!model.id.is_empty());
 //             assert!(!model.name.is_empty());

@@ -17,6 +17,7 @@
 //! `BackupPort` and `BackupSchedulerPort` stay in `application/ports/`.
 
 pub mod adapter;
+pub mod archive;
 pub mod commands;
 pub mod di;
 pub mod dto;

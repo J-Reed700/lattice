@@ -1,4 +1,4 @@
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use async_trait::async_trait;
 
 #[async_trait]

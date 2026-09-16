@@ -16,10 +16,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// Generate Single Embedding
-// =============================================================================
-
 /// Request to generate an embedding for a single text.
 ///
 /// # Example
@@ -55,10 +51,6 @@ pub struct GenerateSingleEmbeddingResponseDto {
     /// Dimensionality of the embedding (e.g., DEFAULT_EMBEDDING_DIM)
     pub dimension: usize,
 }
-
-// =============================================================================
-// Generate Batch Embeddings
-// =============================================================================
 
 /// Request to generate embeddings for multiple texts.
 ///
@@ -103,10 +95,6 @@ pub struct GenerateBatchEmbeddingsResponseDto {
     /// The generated embeddings (same order as input texts)
     pub embeddings: Vec<Vec<f32>>,
 }
-
-// =============================================================================
-// Get Embedding Model Info
-// =============================================================================
 
 /// Embedding model metadata.
 ///

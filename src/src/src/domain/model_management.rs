@@ -83,10 +83,6 @@ pub enum ModelFormat {
     Safetensors,
 }
 
-// ============================================================================
-// Enumerations - Model Categories and Performance Tiers
-// ============================================================================
-
 /// Category of AI model by primary purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelCategory {
@@ -228,10 +224,6 @@ impl fmt::Display for CompatibilityLevel {
     }
 }
 
-// ============================================================================
-// Value Objects - System Capabilities
-// ============================================================================
-
 /// System hardware capabilities detected from the user's machine.
 ///
 /// This value object represents the result of hardware detection,
@@ -290,10 +282,6 @@ impl SystemCapabilities {
         }
     }
 }
-
-// ============================================================================
-// Value Objects - Model Metadata
-// ============================================================================
 
 /// Complete metadata for an AI model.
 ///
@@ -355,7 +343,11 @@ pub struct ModelMetadata {
     pub supported_quantizations: Vec<String>,
     /// Model capabilities (e.g., "chat", "code", "reasoning")
     pub capabilities: Vec<String>,
-    /// Download URL if available (deprecated - use build_download_url() instead)
+    /// Direct download URL for the model's repository or file.
+    ///
+    /// The shipped catalog sets this for every entry; `build_download_url()`
+    /// prefers `model_id` + `default_filename` when both are present and
+    /// resolves to this URL otherwise.
     pub download_url: Option<String>,
     /// License (e.g., "MIT", "Apache-2.0")
     pub license: String,
@@ -372,7 +364,7 @@ pub struct ModelMetadata {
     pub default_filename: Option<String>,
     /// Files required for this model (for multi-file models like BGE-M3 ONNX)
     /// For single-file models, this will contain one ModelFile
-    /// If empty, falls back to legacy download_url
+    /// If empty, the model is fetched as a single file from `download_url`.
     #[serde(default)]
     pub files: Vec<crate::domain::model_metadata::ModelFileMetadata>,
     /// Total size across all files in bytes
@@ -411,7 +403,7 @@ impl ModelMetadata {
     ///
     /// # Returns
     /// - Ok(url) if model_id and default_filename are valid
-    /// - Ok(legacy download_url) if new fields are not set
+    /// - Ok(download_url) if `model_id` and `default_filename` are not both set
     /// - Err if validation fails
     ///
     /// # Example
@@ -449,12 +441,10 @@ impl ModelMetadata {
     /// ```
     pub fn build_download_url(&self) -> Result<String, String> {
         if let (Some(model_id), Some(filename)) = (&self.model_id, &self.default_filename) {
-            // Validate model_id format (org/repo)
             if !model_id.contains('/') || model_id.contains("..") {
                 return Err(format!("Invalid model_id format: {}", model_id));
             }
 
-            // Validate filename doesn't contain path traversal or directory separators
             if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
                 return Err(format!(
                     "Invalid filename contains path separators: {}",
@@ -481,7 +471,8 @@ impl ModelMetadata {
                 urlencoding::encode(filename)
             ))
         } else {
-            // Fallback to legacy download_url
+            // Multi-file and repo-only entries carry no `default_filename`;
+            // fall back to the catalog's direct URL.
             self.download_url
                 .clone()
                 .ok_or_else(|| "No download URL available for this model".to_string())
@@ -503,10 +494,6 @@ impl ModelMetadata {
         total_ram_gb >= self.recommended_ram_gb
     }
 }
-
-// ============================================================================
-// Value Objects - Compatibility Score
-// ============================================================================
 
 /// Detailed compatibility analysis between a model and system.
 ///
@@ -575,10 +562,6 @@ impl CompatibilityScore {
     }
 }
 
-// ============================================================================
-// Aggregates - Model Recommendation
-// ============================================================================
-
 /// Model recommendation with compatibility analysis.
 ///
 /// This aggregate combines:
@@ -625,10 +608,6 @@ impl ModelRecommendation {
         });
     }
 }
-
-// ============================================================================
-// Domain Service - Compatibility Scorer
-// ============================================================================
 
 /// Domain service for scoring model compatibility with system capabilities.
 ///
@@ -710,11 +689,6 @@ impl CompatibilityScorer {
         let mut blockers = Vec::new();
         let mut recommendations = Vec::new();
 
-        // ========================================================================
-        // Phase 1: Critical Checks (instant fail)
-        // ========================================================================
-
-        // Check RAM requirement
         if !capabilities.has_sufficient_ram(model.minimum_ram_gb) {
             blockers.push(format!(
                 "Insufficient RAM: need {} GB, have {} GB total",
@@ -722,7 +696,6 @@ impl CompatibilityScorer {
             ));
         }
 
-        // Check disk space
         if !capabilities.has_sufficient_disk(model.size_gb) {
             blockers.push(format!(
                 "Insufficient disk space: need {} GB, have {} GB available",
@@ -744,10 +717,6 @@ impl CompatibilityScorer {
                 blockers,
             });
         }
-
-        // ========================================================================
-        // Phase 2: Factor Scores (0-100)
-        // ========================================================================
 
         // RAM Score: percentage of recommended RAM available
         let ram_ratio = capabilities.total_ram_gb / model.recommended_ram_gb;
@@ -789,15 +758,7 @@ impl CompatibilityScorer {
             ));
         }
 
-        // ========================================================================
-        // Phase 3: Overall Score (weighted average)
-        // ========================================================================
-
         let overall_score = (ram_score * 0.5) + (gpu_score * 0.3) + (disk_score * 0.2);
-
-        // ========================================================================
-        // Phase 4: Compatibility Level
-        // ========================================================================
 
         let compatibility_level = if overall_score >= 85.0 {
             CompatibilityLevel::Excellent
@@ -806,10 +767,6 @@ impl CompatibilityScorer {
         } else {
             CompatibilityLevel::Poor
         };
-
-        // ========================================================================
-        // Phase 5: Performance Estimates
-        // ========================================================================
 
         // Estimate tokens/second for LLMs
         let estimated_tokens_per_second = if matches!(model.category, ModelCategory::LLM) {
@@ -965,7 +922,6 @@ mod tests {
 
         let cpu_score = scorer.score_compatibility(&model, &capabilities).unwrap();
 
-        // Get GPU score for comparison
         let gpu_capabilities = create_test_capabilities();
         let gpu_score = scorer
             .score_compatibility(&model, &gpu_capabilities)
@@ -1100,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_download_url_fallback_to_legacy() {
+    fn test_build_download_url_falls_back_to_download_url() {
         let mut model = create_test_model();
         model.model_id = None;
         model.default_filename = None;

@@ -1,6 +1,6 @@
 use crate::features::embedding::service::EmbeddingService;
-use crate::infrastructure::indexing::actor::{IndexingActor, PauseGate};
-use crate::infrastructure::indexing::progress::ProgressTracker;
+use crate::features::indexing::engine::actor::{IndexingActor, PauseGate};
+use crate::features::indexing::engine::progress::ProgressTracker;
 use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::marker::PhantomData;
@@ -106,7 +106,7 @@ impl IndexingServiceBuilder<Ready> {
     pub fn build(
         self,
     ) -> Result<(
-        mpsc::Sender<crate::infrastructure::indexing::queue::IndexTask>,
+        mpsc::Sender<crate::features::indexing::engine::queue::IndexTask>,
         IndexingActor,
     )> {
         let pool = self.pool.ok_or_else(|| {
@@ -151,6 +151,6 @@ mod tests {
 
     #[test]
     fn test_builder_type_safety() {
-        let builder = IndexingServiceBuilder::new();
+        let _builder = IndexingServiceBuilder::new();
     }
 }

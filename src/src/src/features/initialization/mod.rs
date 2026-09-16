@@ -8,12 +8,10 @@
 //! - `crate::features::initialization::dto` — response DTOs
 //! - `crate::features::initialization::use_cases` — initialize_database,
 //!   initialize_models, first_run_setup
-//! - `crate::features::initialization::commands` — Tauri command handlers
 //!
-//! No dedicated plugin — initialization commands are invoked through
-//! the shared plugin infrastructure during app startup.
+//! No dedicated plugin — the `health` and `embedding` plugins expose the
+//! `initialize_database` and `initialize_models` commands during app startup.
 
-pub mod commands;
 pub mod di;
 pub mod dto;
 pub mod use_cases;

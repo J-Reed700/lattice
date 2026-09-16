@@ -3,7 +3,8 @@
 //! Combines vector similarity search with keyword BM25 search using
 //! Reciprocal Rank Fusion for optimal relevance.
 
-use crate::infrastructure::search::recency::{RecencyConfig, RecencyScorer};
+use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
+use crate::features::search::engine::reranker::{blend_rerank_scores, Reranker};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -43,18 +44,31 @@ pub struct SearchConfig {
     pub recency_boost: f32,
     /// Maximum results to fetch before filtering
     pub max_results: usize,
+    /// Run the experimental learned sparse branch when the loaded model supports it.
+    ///
+    /// This remains available for explicit experiments, but defaults off: the
+    /// evaluation found no quality win over weighted vector + BM25 fusion.
+    #[serde(default = "default_sparse_enabled")]
+    pub sparse_enabled: bool,
+}
+
+/// Sparse retrieval is an evaluation-only option. Written as a function because
+/// `serde`'s `default` attribute needs one and old configurations omit the field.
+fn default_sparse_enabled() -> bool {
+    false
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             mode: SearchMode::Hybrid,
-            vector_weight: 0.7,
-            keyword_weight: 0.3,
+            vector_weight: crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
+            keyword_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
             min_score: 0.5,
             enable_reranking: false,
             recency_boost: 0.1,
             max_results: 100,
+            sparse_enabled: default_sparse_enabled(),
         }
     }
 }
@@ -84,9 +98,40 @@ pub struct HybridSearchResult {
     pub vector_rank: Option<usize>,
     /// BM25 search ranking position
     pub bm25_rank: Option<usize>,
+    /// Learned sparse score, when the sparse branch ran and matched this chunk
+    #[serde(default)]
+    pub sparse_score: Option<f32>,
+    /// Learned sparse ranking position
+    #[serde(default)]
+    pub sparse_rank: Option<usize>,
 }
 
-impl From<HybridSearchResult> for crate::infrastructure::search::service::SearchResult {
+/// Per-branch `(rank, score)` for every candidate each branch returned.
+///
+/// Kept separately from the fused result because the fusion helper collapses
+/// its inputs pairwise and cannot report a faithful per-branch rank; these maps
+/// are built from the branch outputs themselves, so `vector_rank` still means
+/// "position in the vector branch" no matter how many branches were fused.
+#[derive(Debug, Default)]
+struct BranchSignals {
+    vector: HashMap<String, (usize, f32)>,
+    bm25: HashMap<String, (usize, f32)>,
+    sparse: HashMap<String, (usize, f32)>,
+}
+
+impl BranchSignals {
+    fn index<'a>(
+        results: impl IntoIterator<Item = (&'a str, f32)>,
+    ) -> HashMap<String, (usize, f32)> {
+        results
+            .into_iter()
+            .enumerate()
+            .map(|(rank, (id, score))| (id.to_owned(), (rank, score)))
+            .collect()
+    }
+}
+
+impl From<HybridSearchResult> for crate::features::search::engine::service::SearchResult {
     fn from(result: HybridSearchResult) -> Self {
         Self {
             id: result.chunk_id.clone(),
@@ -166,6 +211,16 @@ impl HybridSearchResult {
     pub fn bm25_rank(&self) -> Option<usize> {
         self.bm25_rank
     }
+
+    /// Get the learned sparse score
+    pub fn sparse_score(&self) -> Option<f32> {
+        self.sparse_score
+    }
+
+    /// Get the learned sparse ranking position
+    pub fn sparse_rank(&self) -> Option<usize> {
+        self.sparse_rank
+    }
 }
 
 /// Hybrid search service combining vector and keyword search
@@ -175,7 +230,7 @@ impl HybridSearchResult {
 ///
 /// # Architecture
 ///
-/// Following the "bricks and studs" philosophy:
+/// The service composes independent search strategies:
 /// - **Delegates** to SearchServiceTrait (USearch) and BM25Search (composition)
 /// - **Fuses** results using ReciprocalRankFusion algorithm
 /// - **Enriches** results with document metadata from database
@@ -202,10 +257,18 @@ impl HybridSearchResult {
 pub struct HybridSearchService {
     vector_search: Arc<dyn crate::features::search::SearchServiceTrait>,
     bm25_search: Arc<dyn crate::features::search::BM25SearchTrait>,
+    // reason: retained from the public `new`/`with_rrf_k` signature used by DI and
+    // tests/hybrid_search_integration_test.rs; all SQL now runs through the sub-services.
+    #[allow(dead_code)]
     pool: SqlitePool,
     enrichment: Arc<dyn crate::infrastructure::services::traits::SearchEnrichmentServiceTrait>,
     config: SearchConfig,
     rrf_k: f32,
+    reranker: Option<Arc<dyn Reranker>>,
+    /// Learned sparse retrieval, when the composition root wired one. Absent
+    /// (or present but reporting unavailable) means the existing two-way
+    /// vector + BM25 fusion, unchanged.
+    sparse_search: Option<Arc<dyn crate::features::search::SparseSearchTrait>>,
 }
 
 impl HybridSearchService {
@@ -231,7 +294,9 @@ impl HybridSearchService {
             pool,
             enrichment,
             config,
-            rrf_k: 60.0, // Default RRF k parameter
+            rrf_k: crate::shared::constants::DEFAULT_RRF_K,
+            reranker: None,
+            sparse_search: None,
         }
     }
 
@@ -250,20 +315,128 @@ impl HybridSearchService {
             enrichment,
             config: SearchConfig::default(),
             rrf_k,
+            reranker: None,
+            sparse_search: None,
         }
     }
 
-    /// Add reranker to the hybrid search service (placeholder for future)
-    pub fn with_reranker<R>(self, _reranker: R) -> Self
-    where
-        R: std::fmt::Debug,
-    {
+    /// Override the reciprocal-rank-fusion constant after construction.
+    ///
+    /// [`Self::with_rrf_k`] exists but discards the caller's `SearchConfig`;
+    /// this keeps it, so an evaluation can sweep `k` over the same wiring the
+    /// application uses.
+    pub fn rrf_k(mut self, rrf_k: f32) -> Self {
+        self.rrf_k = rrf_k;
         self
+    }
+
+    /// Add the shared reranker used by chat and direct search.
+    pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
+        self.reranker = Some(reranker);
+        self
+    }
+
+    /// Add the learned sparse retrieval branch.
+    ///
+    /// Wiring it is not the same as turning it on: the branch still only runs
+    /// when [`SearchConfig::sparse_enabled`] is set *and* the service reports
+    /// [`SparseSearchTrait::is_available`], which tracks whether the currently
+    /// loaded embedding model has a sparse head. That means the composition
+    /// root can wire this unconditionally and a user switching from BGE-M3 to a
+    /// dense-only model simply goes back to two-way fusion mid-session.
+    ///
+    /// [`SparseSearchTrait::is_available`]: crate::features::search::SparseSearchTrait::is_available
+    #[must_use]
+    pub fn with_sparse_search(
+        mut self,
+        sparse_search: Arc<dyn crate::features::search::SparseSearchTrait>,
+    ) -> Self {
+        self.sparse_search = Some(sparse_search);
+        self
+    }
+
+    /// The sparse branch to run for this query, or `None` to keep two-way
+    /// fusion.
+    fn active_sparse_branch(&self) -> Option<&Arc<dyn crate::features::search::SparseSearchTrait>> {
+        self.sparse_search
+            .as_ref()
+            .filter(|_| self.config.sparse_enabled)
+            .filter(|sparse| sparse.is_available())
+    }
+
+    fn candidate_limit(&self, top_k: usize) -> usize {
+        if top_k == 0 {
+            return 0;
+        }
+        let can_rerank = self.config.enable_reranking
+            && self
+                .reranker
+                .as_ref()
+                .is_some_and(|reranker| reranker.is_available());
+        if !can_rerank {
+            return top_k;
+        }
+        top_k
+            .saturating_mul(2)
+            .min(self.config.max_results.max(top_k))
+    }
+
+    async fn finalize_results(
+        &self,
+        query_text: &str,
+        mut results: Vec<HybridSearchResult>,
+        top_k: usize,
+    ) -> Vec<HybridSearchResult> {
+        let candidate_limit = self.candidate_limit(top_k);
+        results.truncate(candidate_limit);
+        if results.len() <= 1 || query_text.trim().is_empty() {
+            results.truncate(top_k);
+            return results;
+        }
+
+        let Some(reranker) = self
+            .reranker
+            .as_ref()
+            .filter(|_| self.config.enable_reranking)
+            .filter(|reranker| reranker.is_available())
+        else {
+            results.truncate(top_k);
+            return results;
+        };
+
+        let documents: Vec<String> = results
+            .iter()
+            .map(|result| result.content.clone())
+            .collect();
+        let original_scores: Vec<f32> = results.iter().map(|result| result.score).collect();
+        let rerank_result = reranker
+            .rerank(query_text, documents, results.len())
+            .await
+            .and_then(|ranked| blend_rerank_scores(&original_scores, &ranked));
+
+        match rerank_result {
+            Ok(scores) => {
+                for (result, score) in results.iter_mut().zip(scores) {
+                    result.score = score;
+                }
+                results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+                tracing::debug!(
+                    candidate_count = results.len(),
+                    result_count = top_k.min(results.len()),
+                    "Applied shared cross-encoder reranker"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "Cross-encoder reranking failed; preserving first-stage order");
+            }
+        }
+
+        results.truncate(top_k);
+        results
     }
 
     /// Perform hybrid search (legacy method for backward compatibility)
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<HybridSearchResult>> {
-        // Use empty embedding for legacy calls
         let empty_embedding = vec![];
         <Self as crate::features::search::HybridSearchTrait>::search(
             self,
@@ -278,7 +451,7 @@ impl HybridSearchService {
     /// Convert vector search results to chunk IDs and scores
     fn vector_results_to_tuples(
         &self,
-        results: Vec<crate::infrastructure::search::service::SearchResult>,
+        results: Vec<crate::features::search::engine::service::SearchResult>,
     ) -> Vec<(String, f32)> {
         results.into_iter().map(|r| (r.id, r.score)).collect()
     }
@@ -286,7 +459,7 @@ impl HybridSearchService {
     /// Convert BM25 search results to chunk IDs and scores
     fn bm25_results_to_tuples(
         &self,
-        results: Vec<crate::infrastructure::search::bm25::BM25Result>,
+        results: Vec<crate::features::search::engine::bm25::BM25Result>,
     ) -> Vec<(String, f32)> {
         results.into_iter().map(|r| (r.chunk_id, r.score)).collect()
     }
@@ -296,43 +469,51 @@ impl HybridSearchService {
         &self,
         vector_results: Vec<(String, f32)>,
         bm25_results: Vec<(String, f32)>,
-    ) -> Vec<crate::infrastructure::search::fusion::FusionResult> {
-        let rrf = crate::infrastructure::search::fusion::ReciprocalRankFusion::new(self.rrf_k);
-        rrf.fuse(vector_results, bm25_results)
+    ) -> Vec<crate::features::search::engine::fusion::FusionResult> {
+        let rrf = crate::features::search::engine::fusion::ReciprocalRankFusion::new(self.rrf_k);
+        rrf.fuse_weighted(
+            vector_results,
+            bm25_results,
+            self.config.vector_weight,
+            self.config.keyword_weight,
+        )
     }
 
     /// Enrich fused results with document metadata
+    ///
+    /// Per-branch ranks come from `signals`, not from the fusion result: with
+    /// three branches the fusion helper folds vector and BM25 together before
+    /// it ever sees sparse, so its own `vector_rank`/`bm25_rank` describe
+    /// intermediate lists rather than the branches a caller means.
     async fn enrich_fused_results(
         &self,
-        fused_results: Vec<crate::infrastructure::search::fusion::FusionResult>,
-        vector_scores: &HashMap<String, f32>,
-        bm25_scores: &HashMap<String, f32>,
+        fused_results: Vec<crate::features::search::engine::fusion::FusionResult>,
+        signals: &BranchSignals,
     ) -> Result<Vec<HybridSearchResult>> {
         if fused_results.is_empty() {
             return Ok(vec![]);
         }
 
-        // Extract chunk IDs for enrichment
         let chunk_ids: Vec<String> = fused_results.iter().map(|r| r.id.clone()).collect();
 
-        // Fetch metadata
         let metadata_map = self.enrichment.enrich_results(&chunk_ids).await?;
 
-        // Convert to HybridSearchResult with metadata
         let mut enriched = Vec::new();
         for fusion_result in fused_results {
             let metadata = metadata_map.get(&fusion_result.id);
             let document_id = metadata
                 .map(|m| m.document_id.clone())
                 .unwrap_or_else(|| fusion_result.id.clone());
-            let vector_score = vector_scores.get(&fusion_result.id).copied();
-            let keyword_score = bm25_scores.get(&fusion_result.id).copied();
+            let vector = signals.vector.get(&fusion_result.id).copied();
+            let bm25 = signals.bm25.get(&fusion_result.id).copied();
+            let sparse = signals.sparse.get(&fusion_result.id).copied();
+            let keyword_score = bm25.map(|(_, score)| score);
 
             enriched.push(HybridSearchResult {
                 chunk_id: fusion_result.id.clone(),
                 document_id,
                 score: fusion_result.score,
-                vector_score,
+                vector_score: vector.map(|(_, score)| score),
                 keyword_score,
                 content: metadata
                     .map(|m| m.snippet.clone())
@@ -340,8 +521,10 @@ impl HybridSearchService {
                 metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
                 id: fusion_result.id.clone(),
                 bm25_score: keyword_score,
-                vector_rank: fusion_result.vector_rank,
-                bm25_rank: fusion_result.bm25_rank,
+                vector_rank: vector.map(|(rank, _)| rank),
+                bm25_rank: bm25.map(|(rank, _)| rank),
+                sparse_score: sparse.map(|(_, score)| score),
+                sparse_rank: sparse.map(|(rank, _)| rank),
             });
         }
 
@@ -351,7 +534,7 @@ impl HybridSearchService {
     /// Convert vector-only results to HybridSearchResult
     async fn convert_vector_results(
         &self,
-        results: Vec<crate::infrastructure::search::service::SearchResult>,
+        results: Vec<crate::features::search::engine::service::SearchResult>,
     ) -> Result<Vec<HybridSearchResult>> {
         if results.is_empty() {
             return Ok(vec![]);
@@ -381,6 +564,8 @@ impl HybridSearchService {
                 bm25_score: None,
                 vector_rank: Some(rank),
                 bm25_rank: None,
+                sparse_score: None,
+                sparse_rank: None,
             });
         }
 
@@ -390,7 +575,7 @@ impl HybridSearchService {
     /// Convert BM25-only results to HybridSearchResult
     async fn convert_bm25_results(
         &self,
-        results: Vec<crate::infrastructure::search::bm25::BM25Result>,
+        results: Vec<crate::features::search::engine::bm25::BM25Result>,
     ) -> Result<Vec<HybridSearchResult>> {
         if results.is_empty() {
             return Ok(vec![]);
@@ -420,16 +605,14 @@ impl HybridSearchService {
                 bm25_score: Some(result.score),
                 vector_rank: None,
                 bm25_rank: Some(rank),
+                sparse_score: None,
+                sparse_rank: None,
             });
         }
 
         Ok(enriched)
     }
 }
-
-// ============================================================================
-// HybridSearchTrait Implementation
-// ============================================================================
 
 use crate::features::search::HybridSearchTrait;
 
@@ -455,10 +638,11 @@ impl HybridSearchTrait for HybridSearchService {
 
                 let vector_results = self.vector_search.search_with_threshold(
                     query_embedding,
-                    top_k,
+                    self.candidate_limit(top_k),
                     self.config.min_score,
                 )?;
-                self.convert_vector_results(vector_results).await
+                let results = self.convert_vector_results(vector_results).await?;
+                Ok(self.finalize_results(query_text, results, top_k).await)
             }
             SearchMode::Keyword => {
                 // BM25 keyword search only
@@ -470,8 +654,12 @@ impl HybridSearchTrait for HybridSearchService {
                     ));
                 }
 
-                let bm25_results = self.bm25_search.search(query_text, top_k).await?;
-                self.convert_bm25_results(bm25_results).await
+                let bm25_results = self
+                    .bm25_search
+                    .search(query_text, self.candidate_limit(top_k))
+                    .await?;
+                let results = self.convert_bm25_results(bm25_results).await?;
+                Ok(self.finalize_results(query_text, results, top_k).await)
             }
             SearchMode::Hybrid => {
                 // Hybrid search combining both
@@ -484,8 +672,12 @@ impl HybridSearchTrait for HybridSearchService {
                 if query_embedding.is_empty() {
                     // Fall back to keyword-only if no embedding
                     tracing::warn!("No embedding provided, falling back to keyword-only search");
-                    let bm25_results = self.bm25_search.search(query_text, top_k).await?;
-                    return self.convert_bm25_results(bm25_results).await;
+                    let bm25_results = self
+                        .bm25_search
+                        .search(query_text, self.candidate_limit(top_k))
+                        .await?;
+                    let results = self.convert_bm25_results(bm25_results).await?;
+                    return Ok(self.finalize_results(query_text, results, top_k).await);
                 }
 
                 if query_text.trim().is_empty() {
@@ -493,51 +685,108 @@ impl HybridSearchTrait for HybridSearchService {
                     tracing::warn!("No query text provided, falling back to vector-only search");
                     let vector_results = self.vector_search.search_with_threshold(
                         query_embedding,
-                        top_k,
+                        self.candidate_limit(top_k),
                         self.config.min_score,
                     )?;
-                    return self.convert_vector_results(vector_results).await;
+                    let results = self.convert_vector_results(vector_results).await?;
+                    return Ok(self.finalize_results(query_text, results, top_k).await);
                 }
 
-                // Run both searches in parallel (fetch more to allow for fusion)
-                let expanded_limit = top_k * 2;
+                let candidate_limit = self.candidate_limit(top_k);
+                let expanded_limit = candidate_limit
+                    .saturating_mul(2)
+                    .min(self.config.max_results.max(candidate_limit));
 
-                let (vector_results, bm25_results) = tokio::try_join!(
+                // The sparse branch races the other two rather than joining
+                // their `try_join!`: a sparse failure must cost this query its
+                // third branch, never its results. Vector and BM25 keep the
+                // fail-fast semantics they already had.
+                let sparse_branch = self.active_sparse_branch();
+                let (core, sparse_outcome) = tokio::join!(
                     async {
-                        self.vector_search.search_with_threshold(
-                            query_embedding,
-                            expanded_limit,
-                            self.config.min_score,
+                        tokio::try_join!(
+                            async {
+                                self.vector_search.search_with_threshold(
+                                    query_embedding,
+                                    expanded_limit,
+                                    self.config.min_score,
+                                )
+                            },
+                            async { self.bm25_search.search(query_text, expanded_limit).await }
                         )
                     },
-                    async { self.bm25_search.search(query_text, expanded_limit).await }
-                )?;
+                    async {
+                        match sparse_branch {
+                            Some(sparse) => {
+                                sparse
+                                    .search_scoped(query_text, expanded_limit, None, None)
+                                    .await
+                            }
+                            None => Ok(Vec::new()),
+                        }
+                    }
+                );
+                let (vector_results, bm25_results) = core?;
+                let sparse_results = sparse_outcome.unwrap_or_else(|error| {
+                    tracing::warn!(%error, "Sparse retrieval branch failed; fusing the other two");
+                    Vec::new()
+                });
 
                 tracing::debug!(
-                    "Got {} vector results and {} BM25 results, fusing with RRF",
-                    vector_results.len(),
-                    bm25_results.len()
+                    vector_results = vector_results.len(),
+                    bm25_results = bm25_results.len(),
+                    sparse_results = sparse_results.len(),
+                    sparse_branch_active = sparse_branch.is_some(),
+                    "Retrieval branches complete, fusing with RRF"
                 );
 
-                // Convert to tuples for fusion
-                let vector_score_map = self.vector_score_map(&vector_results);
-                let bm25_score_map = self.bm25_score_map(&bm25_results);
+                let signals = BranchSignals {
+                    vector: BranchSignals::index(
+                        vector_results.iter().map(|r| (r.id.as_str(), r.score)),
+                    ),
+                    bm25: BranchSignals::index(
+                        bm25_results.iter().map(|r| (r.chunk_id.as_str(), r.score)),
+                    ),
+                    sparse: BranchSignals::index(
+                        sparse_results
+                            .iter()
+                            .map(|r| (r.chunk_id.as_str(), r.score)),
+                    ),
+                };
                 let vector_tuples = self.vector_results_to_tuples(vector_results);
                 let bm25_tuples = self.bm25_results_to_tuples(bm25_results);
+                let sparse_tuples: Vec<(String, f32)> = sparse_results
+                    .into_iter()
+                    .map(|result| (result.chunk_id, result.score))
+                    .collect();
 
-                // Fuse results using RRF
-                let fused_results = self.fuse_results(vector_tuples, bm25_tuples);
+                // Fuse results using RRF. BM25 stays in the fusion even when
+                // sparse runs: the sparse head can only activate terms that are
+                // in the model's vocabulary, so exact identifiers, code symbols
+                // and quoted strings still need a literal branch.
+                let fused_results = if sparse_tuples.is_empty() {
+                    self.fuse_results(vector_tuples, bm25_tuples)
+                } else {
+                    crate::features::search::engine::fusion::ReciprocalRankFusion::new(self.rrf_k)
+                        .fuse_three_sources(
+                            vector_tuples,
+                            bm25_tuples,
+                            sparse_tuples,
+                            expanded_limit.max(candidate_limit),
+                        )
+                };
 
-                // Take top K and enrich with metadata
-                let top_results: Vec<_> = fused_results.into_iter().take(top_k).collect();
+                // Enrich a wider first-stage pool so the cross-encoder can promote
+                // a candidate that was not already in the final top K.
+                let top_results: Vec<_> = fused_results.into_iter().take(candidate_limit).collect();
 
                 tracing::debug!(
                     "Fusion complete, enriching {} final results",
                     top_results.len()
                 );
 
-                self.enrich_fused_results(top_results, &vector_score_map, &bm25_score_map)
-                    .await
+                let results = self.enrich_fused_results(top_results, &signals).await?;
+                Ok(self.finalize_results(query_text, results, top_k).await)
             }
         }
     }
@@ -617,28 +866,6 @@ impl HybridSearchTrait for HybridSearchService {
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
 
         Ok(results)
-    }
-}
-
-impl HybridSearchService {
-    fn vector_score_map(
-        &self,
-        results: &[crate::infrastructure::search::service::SearchResult],
-    ) -> HashMap<String, f32> {
-        results
-            .iter()
-            .map(|result| (result.id.clone(), result.score))
-            .collect()
-    }
-
-    fn bm25_score_map(
-        &self,
-        results: &[crate::infrastructure::search::bm25::BM25Result],
-    ) -> HashMap<String, f32> {
-        results
-            .iter()
-            .map(|result| (result.chunk_id.clone(), result.score))
-            .collect()
     }
 }
 

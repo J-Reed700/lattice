@@ -111,7 +111,9 @@ macro_rules! profile_metrics {
         let start = std::time::Instant::now();
         let result = $code;
         let duration = start.elapsed();
-        let metrics = $crate::search::profiler::PerformanceMetrics::new($name, duration, $items);
+        let metrics = $crate::features::search::engine::profiler::PerformanceMetrics::new(
+            $name, duration, $items,
+        );
         metrics.print_report();
         result
     }};

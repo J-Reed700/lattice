@@ -127,6 +127,14 @@ impl UpdateSettingsUseCase {
 fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<()> {
     match request.category {
         Some(SettingsCategory::Llm) => {
+            if let Some(url) = request
+                .updates
+                .get("llamaCpp")
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str())
+            {
+                validate_http_url(url).map_err(AppError::InvalidInput)?;
+            }
             if let Some(value) = request.updates.get("ollamaUrl") {
                 if let Some(url) = value.as_str() {
                     validate_http_url(url).map_err(AppError::InvalidInput)?;
@@ -145,6 +153,13 @@ fn validate_security_constraints(request: &UpdateSettingsRequestDto) -> Result<(
         }
         None => {
             if let Some(llm) = request.updates.get("llm") {
+                if let Some(url) = llm
+                    .get("llamaCpp")
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                {
+                    validate_http_url(url).map_err(AppError::InvalidInput)?;
+                }
                 if let Some(url) = llm.get("ollamaUrl").and_then(|v| v.as_str()) {
                     validate_http_url(url).map_err(AppError::InvalidInput)?;
                 }
@@ -235,7 +250,6 @@ async fn probe_vault_writable(root: &std::path::Path) -> Result<()> {
             e
         )));
     }
-    // Cleanup is best-effort.
     if let Err(e) = tokio::fs::remove_file(&sentinel).await {
         tracing::warn!(
             sentinel = %sentinel.display(),
@@ -304,8 +318,6 @@ fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
 
     Ok(())
 }
-
-// ---- Tests ----
 
 #[cfg(test)]
 mod tests {
@@ -384,7 +396,10 @@ mod tests {
         let use_case = UpdateSettingsUseCase::new(repository);
 
         let mut updates = HashMap::new();
-        updates.insert("indexedPaths".to_string(), json!(["/Users/josh/../../etc"]));
+        updates.insert(
+            "indexedPaths".to_string(),
+            json!(["/Users/example/../../etc"]),
+        );
 
         let result = use_case
             .update_category(SettingsCategory::Indexing, updates)
@@ -434,7 +449,7 @@ mod tests {
         let mut updates = HashMap::new();
         updates.insert(
             "indexedPaths".to_string(),
-            json!(["/Users/josh/Documents", "/Users/josh/Projects"]),
+            json!(["/Users/example/Documents", "/Users/example/Projects"]),
         );
 
         let result = use_case
@@ -503,7 +518,10 @@ mod tests {
 
         // Path-traversal payload — rejected before repository write.
         let mut updates = HashMap::new();
-        updates.insert("indexedPaths".to_string(), json!(["/Users/josh/../../etc"]));
+        updates.insert(
+            "indexedPaths".to_string(),
+            json!(["/Users/example/../../etc"]),
+        );
         let request = UpdateSettingsRequestDto {
             category: Some(SettingsCategory::Indexing),
             updates,
@@ -555,7 +573,7 @@ mod tests {
         let mut updates = HashMap::new();
         updates.insert(
             "indexing".to_string(),
-            json!({ "indexedPaths": ["/Users/josh/../../etc"] }),
+            json!({ "indexedPaths": ["/Users/example/../../etc"] }),
         );
 
         let result = use_case.update_global(updates).await;

@@ -47,10 +47,8 @@ impl SqliteAuditSink {
 
         info!("Initializing SQLite audit sink at: {}", db_path.display());
 
-        // Create connection pool
         let pool = SqlitePool::connect(&db_url).await?;
 
-        // Initialize schema
         Self::init_schema(&pool).await?;
 
         Ok(Self { pool })
@@ -96,7 +94,6 @@ impl SqliteAuditSink {
         .execute(pool)
         .await?;
 
-        // Create indexes for common queries
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp)")
             .execute(pool)
             .await?;
@@ -239,11 +236,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test_audit.db");
 
-        // Create the database file first (required for SQLite to open)
         std::fs::File::create(&db_path).unwrap();
 
         let sink = SqliteAuditSink::new(db_path).await?;
-        // Return TempDir to keep it alive for test duration (Rust Drop trait)
         Ok((sink, dir))
     }
 
@@ -272,7 +267,6 @@ mod tests {
     async fn test_query_events() {
         let (sink, _dir) = create_test_sink().await.unwrap();
 
-        // Insert multiple events
         for i in 0..5 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success())
                 .with_resource_id(format!("file{}", i));
@@ -284,7 +278,6 @@ mod tests {
         let events = sink.query(10, 0).await.unwrap();
         assert_eq!(events.len(), 5);
 
-        // Test pagination
         let first_page = sink.query(2, 0).await.unwrap();
         assert_eq!(first_page.len(), 2);
 
@@ -301,7 +294,6 @@ mod tests {
         let count = sink.count().await.unwrap();
         assert_eq!(count, 0);
 
-        // Insert events
         for _ in 0..3 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success());
             sink.log(&event).await.unwrap();
@@ -350,7 +342,6 @@ mod tests {
         let events = sink.query(3, 0).await.unwrap();
         assert_eq!(events.len(), 3);
 
-        // Verify ordering (most recent first)
         for i in 0..2 {
             assert!(events[i].timestamp >= events[i + 1].timestamp);
         }

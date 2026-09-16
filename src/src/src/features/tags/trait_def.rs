@@ -235,10 +235,6 @@ pub trait TagServiceTrait: Send + Sync {
     fn merge_tags(&self, existing: Vec<String>, generated: Vec<String>) -> Vec<String>;
 }
 
-// ============================================================================
-// File Storage Service Trait
-// ============================================================================
-
 /// Trait for file storage operations
 ///
 /// Provides content-addressed file storage with deduplication and reference counting.

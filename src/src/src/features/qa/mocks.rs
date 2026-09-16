@@ -7,15 +7,13 @@ use super::traits::{ConversationalQAServiceTrait, QAEngineTrait};
 #[cfg(test)]
 use crate::features::conversation::ConversationServiceTrait;
 #[cfg(test)]
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 #[cfg(test)]
 use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 #[cfg(test)]
 use tauri::Emitter;
 #[cfg(test)]
@@ -129,15 +127,13 @@ impl QAEngineTrait for MockQAEngine {
         _search_results: Vec<SearchResult>,
         _max_context_tokens: usize,
         _llm_context: Option<crate::infrastructure::services::context_manager::LLMContext>,
-    ) -> Result<String, crate::infrastructure::qa::types::QAError> {
-        // Validate inputs
+    ) -> Result<String, crate::features::qa::engine::types::QAError> {
         if question.trim().is_empty() {
-            return Err(crate::infrastructure::qa::types::QAError::InvalidInput(
+            return Err(crate::features::qa::engine::types::QAError::InvalidInput(
                 "Question cannot be empty".to_string(),
             ));
         }
 
-        // Get mock answer
         let answers = self.answers.read().await;
         let answer = answers
             .get(question)
@@ -157,23 +153,21 @@ impl QAEngineTrait for MockQAEngine {
     ) -> Result<
         std::pin::Pin<
             Box<
-                dyn tokio_stream::Stream<Item = crate::infrastructure::qa::types::StreamChunk>
+                dyn tokio_stream::Stream<Item = crate::features::qa::engine::types::StreamChunk>
                     + Send
                     + '_,
             >,
         >,
-        crate::infrastructure::qa::types::QAError,
+        crate::features::qa::engine::types::QAError,
     > {
-        use crate::infrastructure::qa::types::StreamChunk;
+        use crate::features::qa::engine::types::StreamChunk;
 
-        // Validate inputs
         if question.trim().is_empty() {
-            return Err(crate::infrastructure::qa::types::QAError::InvalidInput(
+            return Err(crate::features::qa::engine::types::QAError::InvalidInput(
                 "Question cannot be empty".to_string(),
             ));
         }
 
-        // Get answer first
         let answer = self
             .answer(question, search_results, max_context_tokens, llm_context)
             .await?;
@@ -184,17 +178,14 @@ impl QAEngineTrait for MockQAEngine {
             .map(|w| format!("{} ", w))
             .collect();
 
-        // Create stream chunks
         let mut chunks: Vec<StreamChunk> = words
             .into_iter()
             .map(|content| StreamChunk::Token { content })
             .collect();
 
-        // Add sources and done
         chunks.push(StreamChunk::Sources { sources: vec![] });
         chunks.push(StreamChunk::Done);
 
-        // Convert to stream
         let stream = tokio_stream::iter(chunks);
         Ok(Box::pin(stream))
     }
@@ -275,19 +266,17 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         question: &str,
         search_results: Vec<crate::features::search::dto::SearchResultDto>,
     ) -> Result<crate::features::qa::conversational_service::ConversationalAnswer> {
-        // Load conversation to verify it exists
         let _aggregate = self
             .conversation_service
             .get_conversation(conversation_id)
             .await?
             .ok_or_else(|| {
-                crate::error::AppError::NotFound(format!(
+                crate::shared::error::AppError::NotFound(format!(
                     "Conversation not found: {}",
                     conversation_id
                 ))
             })?;
 
-        // Get mock answer
         let answers = self.mock_answers.read().await;
         let answer = answers
             .get(question)
@@ -299,7 +288,6 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         let question_tokens = (question.len() / 4) as i64;
         let answer_tokens = (answer.len() / 4) as i64;
 
-        // Save messages
         self.conversation_service
             .add_user_message(conversation_id, question.to_string(), question_tokens)
             .await?;
@@ -308,13 +296,12 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
             .add_assistant_message(conversation_id, answer.clone(), answer_tokens)
             .await?;
 
-        // Get updated conversation
         let updated_aggregate = self
             .conversation_service
             .get_conversation(conversation_id)
             .await?
             .ok_or_else(|| {
-                crate::error::AppError::NotFound(format!(
+                crate::shared::error::AppError::NotFound(format!(
                     "Conversation not found: {}",
                     conversation_id
                 ))
@@ -335,24 +322,22 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         &self,
         conversation_id: &str,
         question: &str,
-        search_results: Vec<crate::features::search::dto::SearchResultDto>,
+        _search_results: Vec<crate::features::search::dto::SearchResultDto>,
         window: tauri::Window,
     ) -> Result<()> {
-        use crate::infrastructure::qa::types::StreamChunk;
+        use crate::features::qa::engine::types::StreamChunk;
 
-        // Load conversation to verify it exists
         let _aggregate = self
             .conversation_service
             .get_conversation(conversation_id)
             .await?
             .ok_or_else(|| {
-                crate::error::AppError::NotFound(format!(
+                crate::shared::error::AppError::NotFound(format!(
                     "Conversation not found: {}",
                     conversation_id
                 ))
             })?;
 
-        // Get mock answer
         let answers = self.mock_answers.read().await;
         let answer = answers
             .get(question)
@@ -360,26 +345,25 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
             .cloned()
             .unwrap_or_else(|| "Mock answer not configured".to_string());
 
-        // Emit streaming chunks (split answer into words for realistic streaming)
         for word in answer.split_whitespace() {
             let chunk = StreamChunk::Token {
                 content: format!("{} ", word),
             };
             window
                 .emit_to(window.label(), "llm-stream", &chunk)
-                .map_err(|e| crate::error::AppError::Other(format!("Failed to emit: {}", e)))?;
+                .map_err(|e| {
+                    crate::shared::error::AppError::Other(format!("Failed to emit: {}", e))
+                })?;
         }
 
-        // Emit done
         window
             .emit_to(window.label(), "llm-stream", &StreamChunk::Done)
-            .map_err(|e| crate::error::AppError::Other(format!("Failed to emit: {}", e)))?;
+            .map_err(|e| crate::shared::error::AppError::Other(format!("Failed to emit: {}", e)))?;
 
         // Estimate tokens
         let question_tokens = (question.len() / 4) as i64;
         let answer_tokens = (answer.len() / 4) as i64;
 
-        // Save messages
         self.conversation_service
             .add_user_message(conversation_id, question.to_string(), question_tokens)
             .await?;
@@ -391,7 +375,3 @@ impl ConversationalQAServiceTrait for MockConversationalQAService {
         Ok(())
     }
 }
-
-// ============================================================================
-// Indexing Service Trait
-// ============================================================================

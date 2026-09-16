@@ -21,7 +21,6 @@ impl GenerateTagsUseCase {
         &self,
         request: GenerateTagsRequestDto,
     ) -> Result<GenerateTagsResponseDto> {
-        // Generate tags using LLM
         let tags = self
             .tag_service
             .generate_tags(&request.document_id, request.max_tags)
@@ -53,7 +52,6 @@ mod tests {
         let response = use_case.execute(request).await.unwrap();
 
         assert_eq!(response.status, "success");
-        // Mock returns default tags
         assert!(!response.tags.is_empty());
     }
 }

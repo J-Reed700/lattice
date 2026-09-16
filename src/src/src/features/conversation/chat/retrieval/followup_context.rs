@@ -84,7 +84,13 @@ pub(super) async fn build_followup_context(
         trimmed_content
     );
 
-    let sources = build_followup_sources(&document, last_ref, highlight_terms, excerpt_chars);
+    let mut sources = build_followup_sources(&document, last_ref, highlight_terms, excerpt_chars);
+    if let Some(source) = sources.first_mut() {
+        source.content = trimmed_content.to_string();
+        source.excerpt = None;
+        source.page_number = None;
+        source.chunk_excerpts = None;
+    }
 
     if let Err(e) = conv_service
         .add_document_reference(
@@ -268,6 +274,7 @@ fn build_followup_sources(
     let category = infer_category(&file_path);
 
     vec![SourceDto {
+        page_number: None,
         document_id: document.id().as_str().to_string(),
         chunk_id,
         content: chunk_content,
@@ -291,19 +298,4 @@ fn build_followup_sources(
         chunk_excerpts: None,
         citation_id: None,
     }]
-}
-
-pub(super) fn source_excerpt_text(source: &SourceDto) -> Option<String> {
-    let excerpt = source
-        .excerpt
-        .as_deref()
-        .unwrap_or(&source.content)
-        .trim()
-        .to_string();
-
-    if excerpt.is_empty() {
-        None
-    } else {
-        Some(safe_truncate(&excerpt, 420))
-    }
 }

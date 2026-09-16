@@ -135,7 +135,6 @@ impl GenerateBatchEmbeddingsUseCase {
 
         // 2. Validate each text
         for (i, text) in request.texts.iter().enumerate() {
-            // Check empty
             if text.trim().is_empty() {
                 return Err(AppError::InvalidInput(format!(
                     "Text at index {} is empty",
@@ -143,7 +142,6 @@ impl GenerateBatchEmbeddingsUseCase {
                 )));
             }
 
-            // Check length
             if text.len() > MAX_TEXT_LENGTH {
                 return Err(AppError::InvalidInput(format!(
                     "Text at index {} exceeds maximum length of {} characters (got {} characters)",
@@ -220,7 +218,6 @@ mod tests {
                 });
             }
 
-            // Generate mock embeddings
             let embeddings = texts
                 .iter()
                 .map(|text| {
@@ -243,7 +240,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_small_batch() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
@@ -253,12 +249,10 @@ mod tests {
             "Third document".to_string(),
         ];
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.embeddings.len(), 3);
@@ -269,21 +263,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_large_batch() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
-        // Create max batch size
         let texts: Vec<String> = (0..MAX_BATCH_SIZE)
             .map(|i| format!("Document number {}", i))
             .collect();
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.embeddings.len(), MAX_BATCH_SIZE);
@@ -291,7 +281,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_too_large() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
@@ -300,12 +289,10 @@ mod tests {
             .map(|i| format!("Document {}", i))
             .collect();
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => {
@@ -318,16 +305,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_empty_batch() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts: vec![] })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => assert!(msg.contains("empty")),
@@ -337,7 +321,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_contains_empty_text() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
@@ -347,12 +330,10 @@ mod tests {
             "Another valid text".to_string(),
         ];
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => {
@@ -365,7 +346,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_contains_too_long_text() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
@@ -375,12 +355,10 @@ mod tests {
             "Another valid text".to_string(),
         ];
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => {
@@ -393,18 +371,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_model_error() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::with_failure());
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
         let texts = vec!["Text 1".to_string(), "Text 2".to_string()];
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::EmbeddingFailed { reason } => assert_eq!(reason, "Batch model error"),
@@ -414,7 +389,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_order_preserved() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
@@ -424,14 +398,12 @@ mod tests {
             "Very long text with many words".to_string(),
         ];
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto {
                 texts: texts.clone(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
 
@@ -443,18 +415,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_batch_embeddings_single_item() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
         let texts = vec!["Single document".to_string()];
 
-        // Act
         let result = use_case
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        // Assert
         assert!(result.is_ok()); // Batch of 1 is valid
         let response = result.unwrap();
         assert_eq!(response.embeddings.len(), 1);

@@ -6,11 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
-
 
 #[cfg(test)]
-// Test code - allow common test patterns
 
 mod circuit_breaker_tests {
     use std::time::Duration;

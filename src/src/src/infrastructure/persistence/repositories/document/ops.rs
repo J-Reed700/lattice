@@ -3,7 +3,6 @@
 //! Generic SQL operations for document persistence that work with any SQLite executor.
 //! These functions can be used with both connection pools and transactions.
 
-use crate::application::ports::Filter;
 use crate::domain::entities::chunk::Chunk;
 use crate::domain::entities::Document as DocumentEntity;
 use crate::infrastructure::persistence::mappers::{
@@ -15,7 +14,7 @@ use sqlx::{QueryBuilder, SqliteConnection, SqlitePool};
 use std::time::Instant;
 use tracing::{info, instrument};
 
-const CHUNK_BATCH_SIZE: usize = 120;
+const CHUNK_BATCH_SIZE: usize = 64;
 const TAG_BATCH_SIZE: usize = 450;
 
 pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<DocumentEntity>> {
@@ -37,7 +36,7 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
             quality_score,
             access_count,
             last_accessed_at,
-            word_count
+            word_count, source_context
         FROM documents
         WHERE id = ?
         "#,
@@ -80,7 +79,7 @@ pub async fn find_by_path(
             quality_score,
             access_count,
             last_accessed_at,
-            word_count
+            word_count, source_context
         FROM documents
         WHERE file_path = ?
         "#,
@@ -123,7 +122,7 @@ pub async fn find_by_path_pattern(
             quality_score,
             access_count,
             last_accessed_at,
-            word_count
+            word_count, source_context
         FROM documents
         WHERE file_path LIKE ?
         ORDER BY file_path DESC
@@ -159,7 +158,7 @@ pub async fn find_by_checksum(
             quality_score,
             access_count,
             last_accessed_at,
-            word_count
+            word_count, source_context
         FROM documents
         WHERE checksum = ?
         "#,
@@ -196,7 +195,7 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>
             quality_score,
             access_count,
             last_accessed_at,
-            word_count
+            word_count, source_context
         FROM documents
         ORDER BY indexed_at DESC
         "#,
@@ -230,7 +229,7 @@ pub async fn find_all_paginated(
             quality_score,
             access_count,
             last_accessed_at,
-            word_count
+            word_count, source_context
         FROM documents
         ORDER BY indexed_at DESC
         LIMIT ?
@@ -426,7 +425,7 @@ pub async fn save_chunks(
         let mut query_builder = QueryBuilder::new(
             "INSERT INTO text_chunks (
                 id, document_id, content, chunk_index,
-                contextualized_content, context_prefix, start_char, end_char
+                contextualized_content, context_prefix, start_char, end_char, language, token_count, word_count, has_code, section, page_number
             ) ",
         );
 
@@ -438,7 +437,13 @@ pub async fn save_chunks(
                 .push_bind(&model.contextualized_content)
                 .push_bind(&model.context_prefix)
                 .push_bind(model.start_char)
-                .push_bind(model.end_char);
+                .push_bind(model.end_char)
+                .push_bind(&model.language)
+                .push_bind(model.token_count)
+                .push_bind(model.word_count)
+                .push_bind(model.has_code)
+                .push_bind(&model.section)
+                .push_bind(model.page_number);
         });
 
         query_builder
@@ -546,7 +551,10 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
         access_count: aggregate.access_count() as i64,
         last_accessed_at: aggregate.last_accessed_at().map(|dt| dt.to_rfc3339()),
         word_count: aggregate.word_count() as i64,
-        content: aggregate.document().content().to_string(),
+        content: aggregate.content().to_string(),
+        source_context: aggregate
+            .source_context()
+            .map(|v| serde_json::json!(v).to_string()),
     };
 
     sqlx::query!(
@@ -597,6 +605,16 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
     .map_err(|e| AppError::Database(format!("Failed to save document: {}", e)))?;
 
     let doc_id = aggregate.id().as_str();
+    sqlx::query("UPDATE documents SET source_context = ? WHERE id = ?")
+        .bind(
+            aggregate
+                .source_context()
+                .map(serde_json::to_string)
+                .transpose()?,
+        )
+        .bind(doc_id)
+        .execute(&mut *conn)
+        .await?;
     save_chunks(&mut *conn, doc_id, aggregate.chunks()).await?;
     save_tags(&mut *conn, doc_id, aggregate.tags()).await?;
 
@@ -620,7 +638,7 @@ pub async fn find_aggregate_by_checksum_pool(
         r#"
         SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at,
                indexed_at, checksum, status, language, category, quality_score,
-               access_count, last_accessed_at, word_count
+               access_count, last_accessed_at, word_count, source_context
         FROM documents
         WHERE checksum = ?
         LIMIT 1
@@ -652,7 +670,7 @@ pub async fn find_aggregate_by_checksum_tx(
         r#"
         SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at,
                indexed_at, checksum, status, language, category, quality_score,
-               access_count, last_accessed_at, word_count
+               access_count, last_accessed_at, word_count, source_context
         FROM documents
         WHERE checksum = ?
         LIMIT 1

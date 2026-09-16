@@ -206,7 +206,6 @@ impl FileAccessConfig {
             }
         };
 
-        // Check if resolved path is within allowed roots
         if self.is_allowed(&resolved_path) {
             Ok(resolved_path)
         } else {
@@ -412,7 +411,6 @@ mod tests {
         let roots = config.get_allowed_roots().unwrap();
         assert_eq!(roots.len(), 1);
 
-        // Add temp2
         config.add_allowed_root(temp2.path().to_path_buf()).unwrap();
 
         let roots = config.get_allowed_roots().unwrap();
@@ -439,7 +437,6 @@ mod tests {
         // Initially can access
         assert!(config.open_file(&test_file).is_ok());
 
-        // Remove root using canonical path
         config.remove_allowed_root(&canonical_temp).unwrap();
 
         // Now cannot access
@@ -449,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_relative_path_in_constructor() {
-        // ORACLE TEST: Verify that NON-CANONICAL paths in constructor are canonicalized
+        // Non-canonical constructor paths are canonicalized.
         // This tests the fix for the canonicalization mismatch bug
         let temp = TempDir::new().unwrap();
         let test_file = temp.path().join("test.txt");
@@ -459,7 +456,6 @@ mod tests {
         // The fix should canonicalize this internally
         let config = FileAccessConfig::new(vec![temp.path().to_path_buf()]);
 
-        // Should be able to access file even though constructor received non-canonical path
         let result = config.open_file(&test_file);
         assert!(
             result.is_ok(),

@@ -10,11 +10,11 @@
 //! - `crate::features::llm::use_cases` — LLM use cases
 //! - `crate::features::llm::commands` — Tauri command handlers
 //!
-//! ## Kept as shared (redirects retained)
+//! ## Engine
 //!
-//! - `crate::infrastructure::llm` (entire engine — clients, catalog,
-//!   inference, system) registered via `infrastructure/mod.rs` #[path]
-//!   redirect. Consumed by model_management, DI, and others.
+//! - `crate::features::llm::engine` — clients, catalog, inference, and
+//!   system capabilities. Owned by this feature; consumed by
+//!   model_management, DI, and others.
 //!
 //! No port (`LLMPort` stays in `application/ports/`). No plugin.
 
@@ -22,3 +22,7 @@ pub mod commands;
 pub mod di;
 pub mod dto;
 pub mod use_cases;
+
+pub mod cloud;
+pub mod engine;
+pub mod llama_cpp;

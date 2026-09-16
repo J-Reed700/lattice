@@ -15,14 +15,14 @@
 //! - `crate::features::download::saga` — DownloadSaga
 //! - `crate::features::download::commands` — Tauri command handlers
 //! - `crate::features::download::plugin::init()` — Tauri plugin
+//! - `crate::features::download::events` — model download domain events
+//!   and outbound UI event payloads
 //!
-//! Domain types remain accessible via the shared `crate::domain::*`
-//! paths (DownloadSession, DownloadError, DownloadedModel, etc.) —
-//! their Strangler Fig redirects in `domain/mod.rs`,
-//! `domain/events/mod.rs`, and `domain/repositories/mod.rs` are kept
-//! because the `domain` namespace is a shared aggregator consumed
-//! broadly across features (shared/error, llm, model_management,
-//! infrastructure/services, interfaces/commands).
+//! Domain types (DownloadSession, DownloadError, DownloadedModel, the
+//! DownloadedModelRepository port) live in the domain layer under
+//! `crate::domain::{download, download_snapshot, downloaded_model,
+//! repositories}` because the application layer and several other
+//! features depend on them.
 //!
 //! No use cases here — download is orchestrated *through* the LLM and
 //! model-management features, which own the model-download use cases.

@@ -4,19 +4,20 @@
 //!
 //! This implementation provides persistent storage for application settings using
 //! JSON files. It ensures data integrity through atomic write operations and
-//! includes validation, default settings, import/export, and migration support.
+//! includes validation, default settings, and import/export.
 //!
 //! # Features
 //!
 //! - **Atomic Writes**: Write to temp file, then rename for atomicity
 //! - **Default Settings**: Factory for sensible defaults
 //! - **Validation**: Integrated validation for all read/write operations
-//! - **Import/Export**: Support for settings backup and migration
+//! - **Import/Export**: Support for settings backup and transfer
 //! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
 use crate::application::ports::{merge_json_update, SettingsRepositoryPort};
 use crate::features::settings::dto::{
-    LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
+    LLMProvider, SettingsCategory, SettingsDto, ValidationResult, VectorIndexCompressionModeDto,
+    MAX_VECTOR_COMPRESSION_DIMS, MIN_VECTOR_COMPRESSION_DIMS,
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
@@ -41,20 +42,6 @@ const SETTINGS_VERSION: u32 = 1;
 struct SettingsFile {
     version: u32,
     settings: SettingsDto,
-}
-
-/// Local mirror of the legacy `AppConfig` shape, used solely to deserialize
-/// a leftover `config.json` from before the AppConfig→Settings unification.
-/// Defined here so we don't have to keep AppConfig the type around just for
-/// reading the legacy file.
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-struct LegacyAppConfig {
-    indexed_paths: Vec<String>,
-    exclude_patterns: Vec<String>,
-    auto_index: bool,
-    ollama_endpoint: String,
-    ollama_model: String,
 }
 
 impl Default for SettingsFile {
@@ -136,34 +123,6 @@ impl SettingsRepository {
         }
 
         let settings_path = app_data_dir.join(SETTINGS_FILE_NAME);
-        let legacy_config_path = app_data_dir.join("config.json");
-
-        // Salvage stale data from a prior DI bug that wrote
-        // settings.json/settings.json instead of settings.json.
-        // repository-barrier-allow: repair a historical malformed settings-file path on disk.
-        if settings_path.is_dir() {
-            tracing::warn!(
-                "Found stray settings.json directory at {}; salvaging",
-                settings_path.display()
-            );
-            let nested = settings_path.join(SETTINGS_FILE_NAME);
-            // repository-barrier-allow: salvage the nested settings file from that malformed path.
-            let salvaged_contents = if nested.is_file() {
-                fs::read_to_string(&nested).await.ok()
-            } else {
-                None
-            };
-
-            if let Err(e) = fs::remove_dir_all(&settings_path).await {
-                tracing::warn!("Could not remove stray dir: {e}; renaming aside");
-                let aside = app_data_dir.join("settings.json.legacy-dir");
-                let _ = fs::rename(&settings_path, &aside).await;
-            }
-
-            if let Some(contents) = salvaged_contents {
-                let _ = fs::write(&settings_path, contents.as_bytes()).await;
-            }
-        }
 
         let repository = Self {
             settings_path,
@@ -178,113 +137,7 @@ impl SettingsRepository {
                 .await?;
         }
 
-        // One-shot migration of the legacy AppConfig (config.json) into the
-        // unified Settings store. Idempotent: deletes config.json on success
-        // so subsequent boots are no-ops. Failure to migrate is logged but
-        // not fatal — better to start with stale config.json than refuse to
-        // boot the app.
-        // repository-barrier-allow: detect the legacy settings file this repository migrates.
-        if legacy_config_path.exists() {
-            if let Err(err) = repository
-                .migrate_legacy_app_config(&legacy_config_path)
-                .await
-            {
-                tracing::warn!(
-                    "Legacy config.json migration failed (non-fatal): {err}. \
-                     The file will remain on disk; settings.json defaults are in use."
-                );
-            }
-        }
-
         Ok(repository)
-    }
-
-    /// Migrate the legacy `config.json` (AppConfig) into the unified
-    /// settings.json store. Maps:
-    ///
-    /// - `indexed_paths`     → `settings.indexing.indexed_paths`
-    /// - `exclude_patterns`  → `settings.indexing.exclude_patterns`
-    /// - `auto_index`        → `settings.indexing.auto_index_new_files`
-    /// - `ollama_endpoint`   → `settings.llm.ollama_url`
-    /// - `ollama_model`      → `settings.llm.model`
-    ///
-    /// Existing settings.json values are preserved if non-default — we only
-    /// fill in the legacy values where the unified store still has its
-    /// startup defaults. This avoids clobbering anything the user already
-    /// set via the new Settings UI.
-    ///
-    /// On success, the legacy `config.json` is deleted so the migration
-    /// runs once and only once.
-    async fn migrate_legacy_app_config(&self, legacy_path: &Path) -> Result<()> {
-        let raw = fs::read_to_string(legacy_path)
-            .await
-            .map_err(|e| AppError::Storage(format!("Failed to read legacy config.json: {e}")))?;
-
-        // Use the same JsonValidator the old ConfigService used for
-        // consistency on size/depth limits.
-        let legacy: LegacyAppConfig =
-            crate::security::json_validator::JsonValidator::safe_deserialize::<LegacyAppConfig>(
-                &raw, 10_000_000, // 10 MB
-                50,         // max depth
-            )
-            .map_err(|e| {
-                AppError::Deserialization(format!("Failed to parse legacy config.json: {e}"))
-            })?;
-
-        let mut settings_file = self.read_settings_file().await?;
-        let defaults = SettingsDto::default();
-
-        // Indexing migration. Always copy `indexed_paths` (this list lived
-        // ONLY in AppConfig — settings.indexing.indexed_paths starts empty).
-        if !legacy.indexed_paths.is_empty()
-            && settings_file.settings.indexing.indexed_paths.is_empty()
-        {
-            settings_file.settings.indexing.indexed_paths = legacy.indexed_paths;
-        }
-
-        // Exclude patterns: only overwrite if settings.json still has the
-        // unmodified default. Avoids clobbering user customizations.
-        if settings_file.settings.indexing.exclude_patterns == defaults.indexing.exclude_patterns
-            && !legacy.exclude_patterns.is_empty()
-        {
-            settings_file.settings.indexing.exclude_patterns = legacy.exclude_patterns;
-        }
-
-        // auto_index: AppConfig default was false, Settings default is true.
-        // Only copy when AppConfig's value is `false` (a non-default in
-        // AppConfig — meaning the user explicitly disabled it). Otherwise
-        // keep settings.json's value.
-        if !legacy.auto_index {
-            settings_file.settings.indexing.auto_index_new_files = false;
-        }
-
-        // LLM endpoint + model: only fill if settings.json still has its
-        // own defaults — same reasoning as above (don't clobber).
-        if settings_file.settings.llm.ollama_url == defaults.llm.ollama_url
-            && !legacy.ollama_endpoint.is_empty()
-        {
-            settings_file.settings.llm.ollama_url = legacy.ollama_endpoint;
-        }
-        if settings_file.settings.llm.model == defaults.llm.model && !legacy.ollama_model.is_empty()
-        {
-            settings_file.settings.llm.model = legacy.ollama_model;
-        }
-
-        self.write_settings_file(&settings_file).await?;
-
-        // Delete the legacy file last — only after the new state is durable.
-        if let Err(e) = fs::remove_file(legacy_path).await {
-            tracing::warn!(
-                "Migrated legacy config.json successfully but failed to delete it: {e}. \
-                 The next boot will retry the (now no-op) migration."
-            );
-        } else {
-            tracing::info!(
-                "Migrated legacy config.json into settings.json and deleted the old file."
-            );
-        }
-
-        Ok(())
     }
 
     /// Read settings file from disk.
@@ -296,20 +149,9 @@ impl SettingsRepository {
             Ok(content) => {
                 match serde_json::from_str::<SettingsFile>(&content) {
                     Ok(settings_file) => {
-                        // Check version and migrate if needed
                         if settings_file.version < SETTINGS_VERSION {
                             self.migrate_settings(settings_file).await
                         } else {
-                            let mut settings_file = settings_file;
-                            let upgraded = Self::upgrade_legacy_low_limit_defaults(
-                                &mut settings_file.settings,
-                            );
-                            if upgraded {
-                                self.write_settings_file(&settings_file).await?;
-                                tracing::info!(
-                                    "Applied legacy low-limit settings upgrade to modern defaults"
-                                );
-                            }
                             Ok(settings_file)
                         }
                     }
@@ -435,93 +277,11 @@ impl SettingsRepository {
             SETTINGS_VERSION
         );
 
-        // Update version
         settings_file.version = SETTINGS_VERSION;
 
-        // Save migrated settings
         self.write_settings_file(&settings_file).await?;
 
         Ok(settings_file)
-    }
-
-    fn upgrade_legacy_low_limit_defaults(settings: &mut SettingsDto) -> bool {
-        let mut changed = false;
-
-        // Preserve explicit user customizations; only bump known legacy defaults.
-        if settings.llm.max_tokens == 2048 && settings.llm.context_window == 4096 {
-            settings.llm.max_tokens = 131072;
-            settings.llm.context_window = 131072;
-            changed = true;
-        }
-        if settings.llm.tool_output.max_chars == 1800 {
-            settings.llm.tool_output.max_chars = 50000;
-            changed = true;
-        }
-        if settings.llm.tool_output.excerpt_chars == 600 {
-            settings.llm.tool_output.excerpt_chars = 4000;
-            changed = true;
-        }
-        if settings.indexing.chunk_size == 250 {
-            settings.indexing.chunk_size = 800;
-            if settings.indexing.chunk_overlap >= settings.indexing.chunk_size
-                || settings.indexing.chunk_overlap < 80
-            {
-                settings.indexing.chunk_overlap = 120;
-            }
-            changed = true;
-        }
-
-        let tuning = &mut settings.search.retrieval_tuning;
-        if tuning.kb_search_min_limit == 12 && tuning.kb_search_max_limit == 30 {
-            tuning.kb_search_min_limit = 16;
-            tuning.kb_search_max_limit = 48;
-            changed = true;
-        }
-        if tuning.doc_shortlist_candidate_min == 36 && tuning.doc_shortlist_candidate_max == 96 {
-            tuning.doc_shortlist_candidate_min = 48;
-            tuning.doc_shortlist_candidate_max = 192;
-            changed = true;
-        }
-        if tuning.doc_shortlist_doc_min == 8 && tuning.doc_shortlist_doc_max == 24 {
-            tuning.doc_shortlist_doc_min = 10;
-            tuning.doc_shortlist_doc_max = 32;
-            changed = true;
-        }
-        if tuning.shortlist_gate_min_candidates == 6 && tuning.shortlist_gate_min_docs == 3 {
-            tuning.shortlist_gate_min_candidates = 8;
-            tuning.shortlist_gate_min_docs = 4;
-            changed = true;
-        }
-        if tuning.rerank_max_candidates == 24 {
-            tuning.rerank_max_candidates = 48;
-            changed = true;
-        }
-        if tuning.wiki_snippet_max_chars == 360 {
-            tuning.wiki_snippet_max_chars = 1200;
-            changed = true;
-        }
-        if tuning.web_snippet_max_chars == 360 {
-            tuning.web_snippet_max_chars = 1200;
-            changed = true;
-        }
-        if tuning.external_search_query_max_chars == 180 {
-            tuning.external_search_query_max_chars = 1200;
-            changed = true;
-        }
-        if tuning.rerank_query_max_chars == 420 {
-            tuning.rerank_query_max_chars = 6000;
-            changed = true;
-        }
-        if tuning.deep_research_depth == 0 {
-            tuning.deep_research_depth = 3;
-            changed = true;
-        }
-        if tuning.deep_research_branch_queries == 0 {
-            tuning.deep_research_branch_queries = 3;
-            changed = true;
-        }
-
-        changed
     }
 
     /// Validate settings and return validation result.
@@ -530,7 +290,6 @@ impl SettingsRepository {
     fn validate_settings(&self, settings: &SettingsDto) -> ValidationResult {
         let mut result = ValidationResult::success();
 
-        // Validate indexing settings
         if settings.indexing.chunk_size == 0 {
             result.add_error("indexing", "chunk_size must be greater than 0".to_string());
         }
@@ -547,7 +306,6 @@ impl SettingsRepository {
             result.add_error("indexing", "batch_size must be greater than 0".to_string());
         }
 
-        // Validate search settings
         if settings.search.max_results == 0 {
             result.add_error("search", "max_results must be greater than 0".to_string());
         }
@@ -563,6 +321,22 @@ impl SettingsRepository {
                 "search",
                 "hybrid_search_alpha must be between 0.0 and 1.0".to_string(),
             );
+        }
+        // Only checked when truncation is on: the numbers are remembered while
+        // the mode is `none`, and rejecting a remembered value the index never
+        // reads would make the whole settings document unsaveable.
+        if settings.search.vector_index_compression.mode == VectorIndexCompressionModeDto::Truncated
+        {
+            let dims = settings.search.vector_index_compression.dims;
+            if !(MIN_VECTOR_COMPRESSION_DIMS..=MAX_VECTOR_COMPRESSION_DIMS).contains(&dims) {
+                result.add_error(
+                    "search",
+                    format!(
+                        "vector_index_compression.dims must be between {} and {}",
+                        MIN_VECTOR_COMPRESSION_DIMS, MAX_VECTOR_COMPRESSION_DIMS
+                    ),
+                );
+            }
         }
         let tuning = &settings.search.retrieval_tuning;
         if tuning.kb_search_min_limit == 0
@@ -644,6 +418,14 @@ impl SettingsRepository {
                 "overlap_min_hits_for_multi_term must be greater than 0".to_string(),
             );
         }
+        if !(0.0..=1.0).contains(&tuning.sufficiency_min_top_score)
+            || !(0.0..=1.0).contains(&tuning.sufficiency_min_term_coverage)
+        {
+            result.add_error(
+                "search",
+                "sufficiency thresholds must be between 0.0 and 1.0".to_string(),
+            );
+        }
         if tuning.doc_support_multi_hit_ratio_factor <= 0.0
             || tuning.doc_support_single_hit_ratio_factor <= 0.0
         {
@@ -673,7 +455,6 @@ impl SettingsRepository {
             );
         }
 
-        // Validate LLM settings
         if settings.llm.temperature < 0.0 || settings.llm.temperature > 2.0 {
             result.add_error("llm", "temperature must be between 0.0 and 2.0".to_string());
         }
@@ -702,6 +483,11 @@ impl SettingsRepository {
             if settings.llm.model.is_empty() {
                 result.add_error("llm", "model cannot be empty".to_string());
             }
+        }
+        if let Err(error) =
+            crate::features::llm::llama_cpp::validate_connection(&settings.llm.llama_cpp)
+        {
+            result.add_error("llm", error.to_string());
         }
         let auth_name = settings.llm.ollama_auth_header_name.trim();
         let auth_value = settings.llm.ollama_auth_header_value.trim();
@@ -1044,7 +830,6 @@ impl SettingsRepository {
             }
         }
 
-        // Validate UI settings
         if settings.ui.font_size < 8 || settings.ui.font_size > 72 {
             result.add_error("ui", "font_size must be between 8 and 72".to_string());
         }
@@ -1058,7 +843,6 @@ impl SettingsRepository {
             );
         }
 
-        // Validate sync settings
         if settings.sync.sync_enabled && settings.sync.sync_url.is_empty() {
             result.add_error(
                 "sync",
@@ -1073,7 +857,6 @@ impl SettingsRepository {
         }
 
         // Validate backup settings.
-        //
         // `backup_path` is intentionally empty: scheduled backups always use
         // the application-owned backups directory. The field is retained for
         // settings-file compatibility, but accepting an arbitrary value here
@@ -1184,7 +967,6 @@ impl SettingsRepositoryPort for SettingsRepository {
 
         match category {
             Some(cat) => {
-                // Update specific category
                 let category_value = match cat {
                     SettingsCategory::Indexing => serde_json::to_value(&settings.indexing)?,
                     SettingsCategory::Search => serde_json::to_value(&settings.search)?,
@@ -1199,7 +981,6 @@ impl SettingsRepositoryPort for SettingsRepository {
 
                 let merged = self.merge_category_updates(category_value, &updates)?;
 
-                // Update the category
                 match cat {
                     SettingsCategory::Indexing => {
                         settings.indexing = serde_json::from_value(merged)?;
@@ -1231,7 +1012,6 @@ impl SettingsRepositoryPort for SettingsRepository {
                 }
             }
             None => {
-                // Update all settings (flat structure)
                 let mut settings_value = serde_json::to_value(&settings)?;
                 let settings_map = settings_value.as_object_mut().ok_or_else(|| {
                     AppError::InvalidInput("Settings is not an object".to_string())
@@ -1250,7 +1030,6 @@ impl SettingsRepositoryPort for SettingsRepository {
             }
         }
 
-        // Save updated settings (includes validation)
         self.save_all(&settings).await?;
 
         Ok(settings)
@@ -1263,27 +1042,22 @@ impl SettingsRepositoryPort for SettingsRepository {
         let mut settings = self.get_all().await?;
 
         match category {
-            Some(cat) => {
-                // Reset specific category to defaults
-                match cat {
-                    SettingsCategory::Indexing => settings.indexing = Default::default(),
-                    SettingsCategory::Search => settings.search = Default::default(),
-                    SettingsCategory::Llm => settings.llm = Default::default(),
-                    SettingsCategory::Ui => settings.ui = Default::default(),
-                    SettingsCategory::Sync => settings.sync = Default::default(),
-                    SettingsCategory::Backup => settings.backup = Default::default(),
-                    SettingsCategory::Privacy => settings.privacy = Default::default(),
-                    SettingsCategory::Vault => settings.vault = Default::default(),
-                    SettingsCategory::Onboarding => settings.onboarding = Default::default(),
-                }
-            }
+            Some(cat) => match cat {
+                SettingsCategory::Indexing => settings.indexing = Default::default(),
+                SettingsCategory::Search => settings.search = Default::default(),
+                SettingsCategory::Llm => settings.llm = Default::default(),
+                SettingsCategory::Ui => settings.ui = Default::default(),
+                SettingsCategory::Sync => settings.sync = Default::default(),
+                SettingsCategory::Backup => settings.backup = Default::default(),
+                SettingsCategory::Privacy => settings.privacy = Default::default(),
+                SettingsCategory::Vault => settings.vault = Default::default(),
+                SettingsCategory::Onboarding => settings.onboarding = Default::default(),
+            },
             None => {
-                // Reset all settings to defaults
                 settings = SettingsDto::default();
             }
         }
 
-        // Save reset settings
         self.save_all(&settings).await?;
 
         Ok(settings)
@@ -1296,7 +1070,6 @@ impl SettingsRepositoryPort for SettingsRepository {
         let json = serde_json::to_string_pretty(&settings)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
 
-        // Write to export path
         fs::write(path, json)
             .await
             .map_err(|e| AppError::Storage(format!("Failed to write export file: {}", e)))?;
@@ -1305,7 +1078,6 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 
     async fn import(&self, path: &str, merge: bool) -> Result<SettingsDto> {
-        // Read import file
         let content = fs::read_to_string(path)
             .await
             .map_err(|e| AppError::Storage(format!("Failed to read import file: {}", e)))?;
@@ -1315,7 +1087,6 @@ impl SettingsRepositoryPort for SettingsRepository {
             AppError::Deserialization(format!("Failed to deserialize settings: {}", e))
         })?;
 
-        // Validate imported settings
         let validation = self.validate_settings(&imported_settings);
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
@@ -1343,7 +1114,6 @@ impl SettingsRepositoryPort for SettingsRepository {
             imported_settings
         };
 
-        // Save merged/replaced settings
         self.save_all(&final_settings).await?;
 
         Ok(final_settings)
@@ -1359,10 +1129,6 @@ impl SettingsRepositoryPort for SettingsRepository {
         path.exists() && path.is_dir()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1565,7 +1331,6 @@ mod tests {
 
         assert_eq!(updated.search.max_results, 30);
 
-        // Verify persistence
         let retrieved = repo.get_all().await.unwrap();
         assert_eq!(retrieved.search.max_results, 30);
     }
@@ -1581,7 +1346,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset
         let reset = repo.reset(Some(SettingsCategory::Search)).await.unwrap();
 
         assert_eq!(reset.search.max_results, 10); // Back to default
@@ -1597,7 +1361,6 @@ mod tests {
         settings.indexing.chunk_size = 1024;
         repo.save_all(&settings).await.unwrap();
 
-        // Reset all
         let reset = repo.reset(None).await.unwrap();
 
         assert_eq!(reset.search.max_results, 10);
@@ -1613,14 +1376,11 @@ mod tests {
         settings.search.max_results = 25;
         repo.save_all(&settings).await.unwrap();
 
-        // Export
         let export_path = temp_dir.path().join("export.json");
         repo.export(export_path.to_str().unwrap()).await.unwrap();
 
-        // Reset to defaults
         repo.reset(None).await.unwrap();
 
-        // Import
         let imported = repo
             .import(export_path.to_str().unwrap(), false)
             .await
@@ -1633,7 +1393,6 @@ mod tests {
     async fn test_import_merge() {
         let (repo, temp_dir) = create_test_repository().await;
 
-        // Create export with modified search settings
         let mut export_settings = SettingsDto::default();
         export_settings.search.max_results = 15;
 
@@ -1646,13 +1405,11 @@ mod tests {
         local_settings.indexing.chunk_size = 1024;
         repo.save_all(&local_settings).await.unwrap();
 
-        // Import with merge
         let merged = repo
             .import(export_path.to_str().unwrap(), true)
             .await
             .unwrap();
 
-        // Should have imported search settings
         assert_eq!(merged.search.max_results, 15);
         // Note: Current implementation replaces categories, so chunk_size will be reset
         // This is expected behavior for category-level merging
@@ -1707,11 +1464,9 @@ mod tests {
         let settings = repo.get_all().await.unwrap();
         repo.save_all(&settings).await.unwrap();
 
-        // Verify settings file exists
         let settings_path = temp_dir.path().join(SETTINGS_FILE_NAME);
         assert!(settings_path.exists());
 
-        // Verify temp file was cleaned up
         let temp_path = settings_path.with_extension(TEMP_SUFFIX);
         assert!(!temp_path.exists());
     }
@@ -1737,7 +1492,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let settings_path = temp_dir.path().join(SETTINGS_FILE_NAME);
 
-        // Write corrupted JSON
         fs::write(&settings_path, "{ corrupted json }")
             .await
             .unwrap();
@@ -1753,9 +1507,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_file_version() {
-        let (repo, temp_dir) = create_test_repository().await;
+        let (_repo, temp_dir) = create_test_repository().await;
 
-        // Read the actual file to check version
         let settings_path = temp_dir.path().join(SETTINGS_FILE_NAME);
         let content = fs::read_to_string(&settings_path).await.unwrap();
         let settings_file: SettingsFile = serde_json::from_str(&content).unwrap();
@@ -1763,277 +1516,31 @@ mod tests {
         assert_eq!(settings_file.version, SETTINGS_VERSION);
     }
 
-    #[test]
-    fn test_upgrade_legacy_low_limit_defaults_migrates_chunk_and_retrieval_profile() {
+    /// The dims are remembered while the mode is `none`, so validation only
+    /// reads them when truncation is actually on. Rejecting a remembered value
+    /// nothing consumes would make the whole settings document unsaveable.
+    #[tokio::test]
+    async fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
+        let (repo, _dir) = create_test_repository().await;
+
         let mut settings = SettingsDto::default();
-        settings.indexing.chunk_size = 250;
-        settings.indexing.chunk_overlap = 50;
+        settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::None;
+        settings.search.vector_index_compression.dims = 1;
+        assert!(repo.validate_settings(&settings).valid);
 
-        settings.search.retrieval_tuning.kb_search_min_limit = 12;
-        settings.search.retrieval_tuning.kb_search_max_limit = 30;
-        settings.search.retrieval_tuning.doc_shortlist_candidate_min = 36;
-        settings.search.retrieval_tuning.doc_shortlist_candidate_max = 96;
-        settings.search.retrieval_tuning.doc_shortlist_doc_min = 8;
-        settings.search.retrieval_tuning.doc_shortlist_doc_max = 24;
-        settings
-            .search
-            .retrieval_tuning
-            .shortlist_gate_min_candidates = 6;
-        settings.search.retrieval_tuning.shortlist_gate_min_docs = 3;
-        settings.search.retrieval_tuning.rerank_max_candidates = 24;
-        settings.search.retrieval_tuning.deep_research_depth = 0;
-        settings
-            .search
-            .retrieval_tuning
-            .deep_research_branch_queries = 0;
+        settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::Truncated;
+        let rejected = repo.validate_settings(&settings);
+        assert!(!rejected.valid);
+        assert!(rejected
+            .errors
+            .values()
+            .flatten()
+            .any(|message| message.contains("vector_index_compression.dims")));
 
-        let upgraded = SettingsRepository::upgrade_legacy_low_limit_defaults(&mut settings);
+        settings.search.vector_index_compression.dims = 512;
+        assert!(repo.validate_settings(&settings).valid);
 
-        assert!(upgraded);
-        assert_eq!(settings.indexing.chunk_size, 800);
-        assert_eq!(settings.indexing.chunk_overlap, 120);
-        assert_eq!(settings.search.retrieval_tuning.kb_search_min_limit, 16);
-        assert_eq!(settings.search.retrieval_tuning.kb_search_max_limit, 48);
-        assert_eq!(
-            settings.search.retrieval_tuning.doc_shortlist_candidate_min,
-            48
-        );
-        assert_eq!(
-            settings.search.retrieval_tuning.doc_shortlist_candidate_max,
-            192
-        );
-        assert_eq!(settings.search.retrieval_tuning.doc_shortlist_doc_min, 10);
-        assert_eq!(settings.search.retrieval_tuning.doc_shortlist_doc_max, 32);
-        assert_eq!(
-            settings
-                .search
-                .retrieval_tuning
-                .shortlist_gate_min_candidates,
-            8
-        );
-        assert_eq!(settings.search.retrieval_tuning.shortlist_gate_min_docs, 4);
-        assert_eq!(settings.search.retrieval_tuning.rerank_max_candidates, 48);
-        assert_eq!(settings.search.retrieval_tuning.deep_research_depth, 3);
-        assert_eq!(
-            settings
-                .search
-                .retrieval_tuning
-                .deep_research_branch_queries,
-            3
-        );
-    }
-
-    #[test]
-    fn test_upgrade_legacy_low_limit_defaults_preserves_non_legacy_values() {
-        let mut settings = SettingsDto::default();
-        settings.indexing.chunk_size = 1024;
-        settings.indexing.chunk_overlap = 160;
-        settings.search.retrieval_tuning.kb_search_min_limit = 20;
-        settings.search.retrieval_tuning.kb_search_max_limit = 60;
-        settings.search.retrieval_tuning.rerank_max_candidates = 64;
-
-        let upgraded = SettingsRepository::upgrade_legacy_low_limit_defaults(&mut settings);
-
-        assert!(!upgraded);
-        assert_eq!(settings.indexing.chunk_size, 1024);
-        assert_eq!(settings.indexing.chunk_overlap, 160);
-        assert_eq!(settings.search.retrieval_tuning.kb_search_min_limit, 20);
-        assert_eq!(settings.search.retrieval_tuning.kb_search_max_limit, 60);
-        assert_eq!(settings.search.retrieval_tuning.rerank_max_candidates, 64);
-    }
-
-    // === AppConfig → Settings migration (Phase 4b/7) ===
-
-    async fn write_legacy_config(dir: &Path, contents: &str) {
-        fs::write(dir.join("config.json"), contents).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_legacy_config_migration_copies_indexed_paths() {
-        let temp_dir = TempDir::new().unwrap();
-        let legacy = serde_json::json!({
-            "indexedPaths": ["/Users/josh/Documents", "/Users/josh/Projects"],
-            "excludePatterns": ["*.tmp", "node_modules"],
-            "autoIndex": true,
-            "ollamaEndpoint": "http://localhost:11434",
-            "ollamaModel": "llama3.2:latest",
-        });
-        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
-
-        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        let settings = repo.get_all().await.unwrap();
-
-        assert_eq!(
-            settings.indexing.indexed_paths,
-            vec!["/Users/josh/Documents", "/Users/josh/Projects"]
-        );
-
-        // Legacy config should be deleted after successful migration.
-        assert!(!temp_dir.path().join("config.json").exists());
-    }
-
-    #[tokio::test]
-    async fn test_legacy_config_migration_overrides_auto_index_only_when_disabled() {
-        let temp_dir = TempDir::new().unwrap();
-        // AppConfig had auto_index=false explicitly. Settings default is true.
-        // We honor the user's explicit opt-out.
-        let legacy = serde_json::json!({
-            "indexedPaths": [],
-            "excludePatterns": [],
-            "autoIndex": false,
-            "ollamaEndpoint": "",
-            "ollamaModel": "",
-        });
-        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
-
-        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        let settings = repo.get_all().await.unwrap();
-        assert!(!settings.indexing.auto_index_new_files);
-    }
-
-    #[tokio::test]
-    async fn test_legacy_config_migration_does_not_clobber_custom_ollama_url() {
-        let temp_dir = TempDir::new().unwrap();
-        // settings.json already has a non-default ollama_url; legacy config
-        // points somewhere else. The legacy value must NOT win.
-        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        let mut settings = repo.get_all().await.unwrap();
-        settings.llm.ollama_url = "https://my-custom-ollama.example.com".to_string();
-        repo.save_all(&settings).await.unwrap();
-
-        // Now drop a legacy config.json with a different URL.
-        let legacy = serde_json::json!({
-            "indexedPaths": [],
-            "excludePatterns": [],
-            "autoIndex": true,
-            "ollamaEndpoint": "http://different-ollama:11434",
-            "ollamaModel": "",
-        });
-        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
-
-        // Re-instantiate the repo to trigger migration.
-        let repo2 = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        let settings2 = repo2.get_all().await.unwrap();
-
-        assert_eq!(
-            settings2.llm.ollama_url, "https://my-custom-ollama.example.com",
-            "user customization must survive the migration"
-        );
-        assert!(!temp_dir.path().join("config.json").exists());
-    }
-
-    #[tokio::test]
-    async fn test_legacy_config_migration_corrupt_file_is_non_fatal() {
-        let temp_dir = TempDir::new().unwrap();
-        write_legacy_config(temp_dir.path(), "{ this is not json").await;
-
-        // Must NOT panic / return an error — corrupt legacy config should
-        // log a warning and proceed with defaults.
-        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .expect("startup must succeed even if legacy config is corrupt");
-        let settings = repo.get_all().await.unwrap();
-
-        // Defaults intact.
-        assert_eq!(settings.indexing.chunk_size, 800);
-        // Corrupt file remains on disk (we only delete on successful migration).
-        assert!(temp_dir.path().join("config.json").exists());
-    }
-
-    #[tokio::test]
-    async fn test_legacy_config_migration_is_idempotent() {
-        let temp_dir = TempDir::new().unwrap();
-        let legacy = serde_json::json!({
-            "indexedPaths": ["/some/path"],
-            "excludePatterns": [],
-            "autoIndex": true,
-            "ollamaEndpoint": "",
-            "ollamaModel": "",
-        });
-        write_legacy_config(temp_dir.path(), &legacy.to_string()).await;
-
-        let _repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        // Second `new()` — config.json is already gone; must not panic or
-        // break.
-        let repo2 = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        let settings = repo2.get_all().await.unwrap();
-        assert_eq!(settings.indexing.indexed_paths, vec!["/some/path"]);
-    }
-
-    // === Self-heal for the legacy DI bug ===
-    //
-    // Pre-fix, `interfaces/di/modules.rs` passed `data_dir/settings.json`
-    // as the dir arg to SettingsRepository::new, which then joined
-    // `settings.json` again. The result on disk was a directory at
-    // `data_dir/settings.json/` containing a nested `settings.json`
-    // file. Once the DI bug is fixed, the constructor still has to
-    // cope with the stale on-disk state from prior runs, otherwise it
-    // crashes startup with `Is a directory (os error 21)`.
-
-    #[tokio::test]
-    async fn test_self_heal_removes_stray_settings_directory() {
-        let temp_dir = TempDir::new().unwrap();
-        let stray = temp_dir.path().join("settings.json");
-        fs::create_dir(&stray).await.unwrap();
-
-        // Constructor must not error out on the stray directory.
-        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .expect("constructor should self-heal stray settings.json directory");
-
-        // Now `settings.json` must be a regular file.
-        let meta = std::fs::metadata(&stray).unwrap();
-        assert!(
-            meta.is_file(),
-            "settings.json must be a file after self-heal"
-        );
-
-        // get_all should work — defaults applied since no salvage was
-        // possible (empty stray dir).
-        let settings = repo.get_all().await.unwrap();
-        assert_eq!(settings.indexing.chunk_size, 800);
-    }
-
-    #[tokio::test]
-    async fn test_self_heal_salvages_nested_settings_json() {
-        let temp_dir = TempDir::new().unwrap();
-        let stray = temp_dir.path().join("settings.json");
-        fs::create_dir(&stray).await.unwrap();
-
-        // Drop a real settings file inside the stray directory — this
-        // is the layout the buggy DI produced. Self-heal should salvage
-        // its contents.
-        let nested = stray.join("settings.json");
-        let mut nested_settings = SettingsDto::default();
-        nested_settings.indexing.batch_size = 99;
-        let nested_file = SettingsFile {
-            version: SETTINGS_VERSION,
-            settings: nested_settings,
-        };
-        let payload = serde_json::to_string_pretty(&nested_file).unwrap();
-        fs::write(&nested, payload).await.unwrap();
-
-        let repo = SettingsRepository::new(temp_dir.path().to_path_buf())
-            .await
-            .expect("self-heal should salvage nested settings.json");
-
-        let meta = std::fs::metadata(&stray).unwrap();
-        assert!(meta.is_file(), "settings.json must be a file after salvage");
-
-        // Salvaged value preserved.
-        let settings = repo.get_all().await.unwrap();
-        assert_eq!(settings.indexing.batch_size, 99);
+        settings.search.vector_index_compression.dims = MAX_VECTOR_COMPRESSION_DIMS + 1;
+        assert!(!repo.validate_settings(&settings).valid);
     }
 }

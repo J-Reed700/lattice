@@ -210,6 +210,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chunk_search_stays_current_without_legacy_document_rewrites() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        initialize_schema(&pool).await.unwrap();
+        sqlx::query("INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes, modified_at, indexed_at, checksum) VALUES ('pdf', '/pdf', 'pdf', 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'checksum')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES ('c1', 'pdf', 'original term', 0), ('c2', 'pdf', 'second term', 1)")
+            .execute(&pool).await.unwrap();
+        let search = |query: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH ?",
+                )
+                .bind(query)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(search("original").await, 1);
+        sqlx::query("UPDATE text_chunks SET content='revised term' WHERE id='c1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(search("original").await, 0);
+        assert_eq!(search("revised").await, 1);
+        sqlx::query("DELETE FROM text_chunks WHERE id='c1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(search("revised").await, 0);
+        assert_eq!(search("second").await, 1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents_fts")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
 
     async fn test_triggers_created() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();

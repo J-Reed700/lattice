@@ -109,7 +109,7 @@ const results = await invoke<SearchResult[]>('search_documents', {
 #### Project Structure
 
 ```
-src/app/
+src/
 ├── src/                    # React frontend
 │   ├── components/        # UI components
 │   ├── hooks/            # Custom hooks

@@ -6,11 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
-
 
 //! # Search Integration Tests
-// Test code - allow common test patterns
 
 //!
 //! Comprehensive tests for semantic and hybrid search functionality.
@@ -32,7 +29,7 @@
 //! - Ranking and scoring
 //! - Performance benchmarks
 
-use lattice::error::Result;
+use lattice::shared::error::Result;
 
 mod helpers;
 use helpers::{
@@ -41,25 +38,18 @@ use helpers::{
     assert_embeddings_similar,
 };
 
-// ============================================================================
-// Basic Search Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_semantic_search_basic() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create documents
     let doc1 = ctx.create_test_document("ml.md", "Machine learning and neural networks").await?;
     let doc2 = ctx.create_test_document("cooking.md", "Recipes and cooking techniques").await?;
     let doc3 = ctx.create_test_document("ai.md", "Artificial intelligence and deep learning").await?;
 
-    // Create chunks
     ctx.create_test_chunks(&doc1.id, 1).await?;
     ctx.create_test_chunks(&doc2.id, 1).await?;
     ctx.create_test_chunks(&doc3.id, 1).await?;
 
-    // Verify documents exist
     let stats = ctx.get_db_stats().await?;
     assert_eq!(stats.documents, 3);
     assert_eq!(stats.chunks, 3);
@@ -72,7 +62,6 @@ async fn test_embedding_similarity_search() -> Result<()> {
     let ctx = TestContext::new().await?;
     let embedder = &ctx.embedder;
 
-    // Generate embeddings for related concepts
     let ml_embedding = embedder.embed_text("machine learning").await?;
     let ai_embedding = embedder.embed_text("artificial intelligence").await?;
     let cooking_embedding = embedder.embed_text("cooking recipes").await?;
@@ -91,35 +80,26 @@ async fn test_embedding_similarity_search() -> Result<()> {
 async fn test_search_with_embeddings() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create documents with embeddings
     let doc = ctx.create_test_document("search-test.md", "Search functionality test").await?;
     let chunks = ctx.create_test_chunks(&doc.id, 2).await?;
 
-    // Create embeddings
     let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.id.as_str()).collect();
     let embeddings = ctx.create_test_embeddings(&chunk_ids).await?;
 
-    // Verify embeddings were created
     assert_eq!(embeddings.len(), 2);
 
     // Query embedding
     let query_embedding = ctx.embedder.embed_text("search test").await?;
 
-    // Verify query embedding is valid
     assert_eq!(query_embedding.len(), 384);
 
     Ok(())
 }
 
-// ============================================================================
-// Full-Text Search Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_full_text_search() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create documents with specific keywords
     let doc1 = ctx.create_test_document(
         "rust.md",
         "Rust programming language with memory safety"
@@ -185,15 +165,10 @@ async fn test_search_multiple_terms() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Hybrid Search Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_hybrid_search_combination() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create documents for hybrid search
     let doc1 = ctx.create_test_document(
         "hybrid1.md",
         "Rust systems programming language"
@@ -209,7 +184,6 @@ async fn test_hybrid_search_combination() -> Result<()> {
         "Rust web development frameworks"
     ).await?;
 
-    // Create chunks
     ctx.create_test_chunks(&doc1.id, 1).await?;
     ctx.create_test_chunks(&doc2.id, 1).await?;
     ctx.create_test_chunks(&doc3.id, 1).await?;
@@ -226,15 +200,10 @@ async fn test_hybrid_search_combination() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Search Ranking and Relevance Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_search_result_ranking() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create documents with varying relevance
     let doc1 = ctx.create_test_document(
         "exact.md",
         "machine learning machine learning machine learning"
@@ -253,15 +222,10 @@ async fn test_search_result_ranking() -> Result<()> {
     let doc_repo = ctx.doc_repo();
     let results = doc_repo.search_documents("machine learning").await?;
 
-    // Should return at least the most relevant docs
     assert!(!results.is_empty());
 
     Ok(())
 }
-
-// ============================================================================
-// Search Edge Cases
-// ============================================================================
 
 #[tokio::test]
 async fn test_empty_query_search() -> Result<()> {
@@ -272,7 +236,6 @@ async fn test_empty_query_search() -> Result<()> {
     let doc_repo = ctx.doc_repo();
     let results = doc_repo.search_documents("").await?;
 
-    // Should handle empty query gracefully
     assert!(results.is_ok());
 
     Ok(())
@@ -287,7 +250,6 @@ async fn test_no_results_search() -> Result<()> {
     let doc_repo = ctx.doc_repo();
     let results = doc_repo.search_documents("nonexistent_unique_query_12345").await?;
 
-    // Should return empty results, not error
     assert!(results.is_empty());
 
     Ok(())
@@ -325,7 +287,6 @@ async fn test_unicode_search() -> Result<()> {
 
     let doc_repo = ctx.doc_repo();
 
-    // Should handle unicode
     let results = doc_repo.search_documents("world").await?;
     assert!(!results.is_empty());
 
@@ -355,15 +316,10 @@ async fn test_case_insensitive_search() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Search Performance Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_search_performance_many_documents() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create many documents
     for i in 0..100 {
         ctx.create_test_document(
             &format!("doc-{}.md", i),
@@ -389,7 +345,6 @@ async fn test_search_performance_many_documents() -> Result<()> {
 async fn test_multiple_concurrent_searches() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create test documents
     for i in 0..20 {
         ctx.create_test_document(
             &format!("concurrent-{}.md", i),
@@ -400,7 +355,6 @@ async fn test_multiple_concurrent_searches() -> Result<()> {
 
     let doc_repo = ctx.doc_repo();
 
-    // Run concurrent searches
     let handles: Vec<_> = (0..10)
         .map(|i| {
             let repo = doc_repo.clone();
@@ -422,10 +376,6 @@ async fn test_multiple_concurrent_searches() -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Search with Filters Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_search_with_document_type_filter() -> Result<()> {
@@ -454,10 +404,6 @@ async fn test_search_with_document_type_filter() -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Embedding Quality Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_embedding_consistency() -> Result<()> {
@@ -489,10 +435,8 @@ async fn test_embedding_normalization() -> Result<()> {
 
     let embedding = ctx.embedder.embed_text("test normalization").await?;
 
-    // Calculate magnitude
     let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
 
-    // Should be approximately normalized (magnitude ≈ 1.0)
     assert!((magnitude - 1.0).abs() < 0.1, "Magnitude: {}", magnitude);
 
     Ok(())
@@ -519,10 +463,6 @@ async fn test_batch_embedding_generation() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Search Result Validation Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_search_result_completeness() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -542,7 +482,6 @@ async fn test_search_result_completeness() -> Result<()> {
 async fn test_search_limit() -> Result<()> {
     let ctx = TestContext::new().await?;
 
-    // Create many documents
     for i in 0..50 {
         ctx.create_test_document(
             &format!("limit-{}.md", i),

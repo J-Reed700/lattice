@@ -16,10 +16,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 /// Global handle to the OTEL tracer provider, used for graceful shutdown.
 static TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
-// ============================================================================
-// Public API
-// ============================================================================
-
 /// Check whether OpenTelemetry export is enabled via environment.
 ///
 /// Returns `true` if either:
@@ -81,7 +77,6 @@ pub fn init_otel_tracing(
         protocol, endpoint
     );
 
-    // Build OTLP span exporter
     let exporter = if protocol == "grpc" {
         SpanExporter::builder()
             .with_tonic()
@@ -106,7 +101,6 @@ pub fn init_otel_tracing(
 
     global::set_tracer_provider(provider.clone());
 
-    // Store provider for graceful shutdown (flush pending spans)
     let _ = TRACER_PROVIDER.set(provider.clone());
 
     let tracer = provider.tracer("lattice-desktop");
@@ -195,10 +189,6 @@ pub fn shutdown_tracing() {
     }
 }
 
-// ============================================================================
-// Internal helpers
-// ============================================================================
-
 /// Create a non-blocking file writer with daily rotation.
 ///
 /// Logs are written to `<data_local_dir>/lattice/logs/lattice.log`.
@@ -230,10 +220,6 @@ fn log_directory() -> std::path::PathBuf {
         .join("lattice")
         .join("logs")
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

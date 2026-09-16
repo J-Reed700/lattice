@@ -3,9 +3,7 @@ use sha2::{Digest, Sha256};
 
 /// SECURITY: Basic authentication for single-user desktop app
 /// While this is a single-user app, we implement basic security measures
-pub struct AuthManager {
-    app_token: Option<String>,
-}
+pub struct AuthManager;
 
 impl Default for AuthManager {
     fn default() -> Self {
@@ -15,7 +13,7 @@ impl Default for AuthManager {
 
 impl AuthManager {
     pub fn new() -> Self {
-        Self { app_token: None }
+        Self
     }
 
     /// Generate a session token for the app
@@ -117,12 +115,10 @@ mod tests {
     fn test_file_access() {
         let auth = AuthManager::new();
 
-        // Should allow normal files
         assert!(auth
             .check_file_access("/home/user/documents/file.txt")
             .is_ok());
 
-        // Should block system files
         assert!(auth.check_file_access("/etc/passwd").is_err());
         assert!(auth
             .check_file_access(r"C:\Windows\System32\config")

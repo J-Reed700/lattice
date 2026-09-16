@@ -12,10 +12,6 @@
 
 use super::{AppError, ErrorResponse, Result, ResultExt};
 
-// ============================================================================
-// Example 1: Model Download Error Handling
-// ============================================================================
-
 /// Example showing error handling for model download operations
 pub async fn model_download_example() -> Result<()> {
     let model_id = "llama-3";
@@ -26,7 +22,6 @@ pub async fn model_download_example() -> Result<()> {
             .with_suggestion("Use 'list-models' command to see available models"));
     }
 
-    // Check disk space with structured error
     let required_space = 5_000_000_000; // 5GB
     let available_space = get_available_space()?;
 
@@ -52,7 +47,6 @@ pub async fn model_download_example() -> Result<()> {
         return Err(AppError::rate_limited(Some(60)));
     }
 
-    // Simulate download with progress
     download_model_with_progress(model_id)
         .await
         .context("Failed to download model")?;
@@ -77,10 +71,6 @@ pub async fn download_with_retry(model_id: &str, max_retries: u32) -> Result<Str
     }
 }
 
-// ============================================================================
-// Example 2: File Indexing Error Handling
-// ============================================================================
-
 /// Example showing comprehensive file indexing error handling
 pub async fn file_indexing_example(file_path: &str) -> Result<Vec<String>> {
     // File existence check
@@ -88,12 +78,10 @@ pub async fn file_indexing_example(file_path: &str) -> Result<Vec<String>> {
         return Err(AppError::file_not_found(file_path));
     }
 
-    // Get file metadata
     let metadata = tokio::fs::metadata(file_path)
         .await
         .context("Failed to read file metadata")?;
 
-    // Check file size
     let file_size = metadata.len();
     let max_size = 50_000_000; // 50MB
 
@@ -105,7 +93,6 @@ pub async fn file_indexing_example(file_path: &str) -> Result<Vec<String>> {
         });
     }
 
-    // Check file type
     let extension = std::path::Path::new(file_path)
         .extension()
         .and_then(|s| s.to_str())
@@ -118,7 +105,6 @@ pub async fn file_indexing_example(file_path: &str) -> Result<Vec<String>> {
         });
     }
 
-    // Extract content with error handling
     let content =
         extract_file_content(file_path)
             .await
@@ -127,7 +113,6 @@ pub async fn file_indexing_example(file_path: &str) -> Result<Vec<String>> {
                 reason: e.to_string(),
             })?;
 
-    // Generate embeddings
     generate_embeddings(&content)
         .await
         .map_err(|e| AppError::EmbeddingFailed {
@@ -170,10 +155,6 @@ pub async fn batch_indexing_example(files: Vec<String>) -> Result<Vec<String>> {
     Ok(successful)
 }
 
-// ============================================================================
-// Example 3: Web Ingestion Error Handling
-// ============================================================================
-
 /// Example showing web ingestion error handling
 pub async fn web_ingestion_example(url: &str) -> Result<String> {
     // URL validation
@@ -183,10 +164,8 @@ pub async fn web_ingestion_example(url: &str) -> Result<String> {
         ));
     }
 
-    // Parse URL
     let parsed_url = url::Url::parse(url).map_err(|e| AppError::InvalidUrl(e.to_string()))?;
 
-    // Check if domain is allowed
     if !is_domain_allowed(parsed_url.host_str().unwrap_or("")) {
         return Err(AppError::validation_failed(
             "domain",
@@ -194,7 +173,6 @@ pub async fn web_ingestion_example(url: &str) -> Result<String> {
         ));
     }
 
-    // Fetch with timeout
     let content = fetch_with_timeout(url, 30).await.map_err(|e| {
         if e.to_string().contains("timeout") {
             AppError::network("Request timed out")
@@ -205,7 +183,6 @@ pub async fn web_ingestion_example(url: &str) -> Result<String> {
         }
     })?;
 
-    // Extract text content
     extract_web_content(&content).context("Failed to extract content from webpage")
 }
 
@@ -227,10 +204,6 @@ pub async fn web_fetch_with_redirects(url: &str, max_redirects: u32) -> Result<S
     }
 }
 
-// ============================================================================
-// Example 4: Vector Search Error Handling
-// ============================================================================
-
 /// Example showing vector search error handling
 pub async fn vector_search_example(query: &str) -> Result<Vec<SearchResult>> {
     // Query validation
@@ -248,7 +221,6 @@ pub async fn vector_search_example(query: &str) -> Result<Vec<SearchResult>> {
         ));
     }
 
-    // Check if embedding service is ready
     if !is_embedding_service_ready().await {
         return Err(AppError::service_unavailable(
             "EmbeddingService",
@@ -257,7 +229,6 @@ pub async fn vector_search_example(query: &str) -> Result<Vec<SearchResult>> {
         .with_suggestion("Wait a few seconds for the model to load"));
     }
 
-    // Generate query embedding
     let embedding =
         generate_query_embedding(query)
             .await
@@ -294,10 +265,6 @@ pub async fn hybrid_search_example(query: &str) -> Result<Vec<SearchResult>> {
     }
 }
 
-// ============================================================================
-// Example 5: Chat/Q&A Error Handling
-// ============================================================================
-
 /// Example showing chat/Q&A error handling
 pub async fn chat_qa_example(question: &str) -> Result<String> {
     // Input validation
@@ -316,7 +283,6 @@ pub async fn chat_qa_example(question: &str) -> Result<String> {
         .with_suggestion("Please shorten your question"));
     }
 
-    // Check if model is installed
     if !is_chat_model_installed().await {
         return Err(
             AppError::AiModelsNotInstalled("Default chat model not installed".to_string())
@@ -324,7 +290,6 @@ pub async fn chat_qa_example(question: &str) -> Result<String> {
         );
     }
 
-    // Check if model is loaded
     if !is_chat_model_loaded().await {
         return Err(
             AppError::ModelLoadFailed("Chat model is not loaded in memory".to_string())
@@ -332,18 +297,15 @@ pub async fn chat_qa_example(question: &str) -> Result<String> {
         );
     }
 
-    // Check rate limiting
     if is_user_rate_limited().await {
         return Err(AppError::rate_limited(Some(30)));
     }
 
-    // Check queue capacity
     if is_processing_queue_full().await {
         return Err(AppError::QueueFull
             .with_suggestion("The system is busy. Please try again in a moment."));
     }
 
-    // Generate answer with timeout
     generate_chat_response(question).await.map_err(|e| {
         if e.to_string().contains("timeout") {
             AppError::internal("Request timed out after 30 seconds")
@@ -363,7 +325,6 @@ pub async fn conversation_example(
     let mut context_size = 0;
 
     for message in messages {
-        // Check context size
         context_size += message.len();
         if context_size > max_context_size {
             return Err(AppError::validation_failed(
@@ -376,14 +337,12 @@ pub async fn conversation_example(
             .with_suggestion("Start a new conversation to continue"));
         }
 
-        // Process message
         match chat_qa_example(&message).await {
             Ok(response) => {
                 context_size += response.len();
                 responses.push(response);
             }
             Err(e) if e.error_code() == "RATE_LIMIT_EXCEEDED" => {
-                // Handle rate limiting gracefully
                 return Err(e.with_suggestion(
                     "You've sent too many messages. Please wait before continuing.",
                 ));
@@ -395,15 +354,10 @@ pub async fn conversation_example(
     Ok(responses)
 }
 
-// ============================================================================
-// Example 6: Using ErrorResponse for Frontend Communication
-// ============================================================================
-
 /// Example showing how to convert errors for frontend consumption
 pub fn frontend_error_example() -> String {
     use serde_json;
 
-    // Create various types of errors
     let errors = vec![
         AppError::validation_failed("email", "Invalid email format"),
         AppError::not_found("Document", "doc-123"),
@@ -442,21 +396,14 @@ pub async fn indexed_search(query: String) -> std::result::Result<Vec<String>, S
             // Log full error for debugging
             tracing::error!("Search failed: {:?}", e);
 
-            // Return user-friendly message
             e.to_user_friendly_message()
         })
 }
 
-// ============================================================================
-// Example 7: Error Propagation and Context
-// ============================================================================
-
 /// Example showing error propagation with context
 pub async fn complex_operation_example(config_path: &str) -> Result<()> {
-    // Load configuration with context
     let config = load_config(config_path).context("Failed to load configuration")?;
 
-    // Initialize services with context
     initialize_services(&config).await.with_context(|| {
         format!(
             "Failed to initialize services with config from {}",
@@ -464,7 +411,6 @@ pub async fn complex_operation_example(config_path: &str) -> Result<()> {
         )
     })?;
 
-    // Process data with context
     process_data()
         .await
         .context("Failed during data processing phase")?;
@@ -495,10 +441,6 @@ pub async fn layered_operation_example(user_id: u64, doc_id: &str) -> Result<Str
         })
 }
 
-// ============================================================================
-// Example 8: Error Categorization and Handling
-// ============================================================================
-
 /// Example showing how to handle errors based on their properties
 pub async fn categorized_error_handling(operation: impl Fn() -> Result<String>) {
     match operation() {
@@ -509,7 +451,6 @@ pub async fn categorized_error_handling(operation: impl Fn() -> Result<String>) 
             eprintln!("Code: {}", e.error_code());
             eprintln!("HTTP Status: {}", e.http_status_code());
 
-            // Handle based on category
             if e.is_recoverable() {
                 eprintln!("This error is recoverable. Retrying might help.");
                 // Implement retry logic
@@ -527,7 +468,6 @@ pub async fn categorized_error_handling(operation: impl Fn() -> Result<String>) 
                 // Trigger graceful shutdown or recovery
             }
 
-            // Get structured context for logging
             let context = e.get_context();
             if !context.is_empty() {
                 eprintln!("Context:");
@@ -538,10 +478,6 @@ pub async fn categorized_error_handling(operation: impl Fn() -> Result<String>) 
         }
     }
 }
-
-// ============================================================================
-// Mock Helper Functions
-// ============================================================================
 
 #[derive(Debug)]
 pub struct SearchResult {
@@ -687,10 +623,6 @@ struct Config {}
 #[derive(Debug)]
 struct Document {}
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,7 +699,6 @@ mod tests {
         assert_eq!(response.status_code, 400);
         assert!(!response.recoverable);
 
-        // Verify it serializes properly
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("VALIDATION_FAILED"));
     }

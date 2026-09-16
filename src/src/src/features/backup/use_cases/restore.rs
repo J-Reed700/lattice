@@ -120,7 +120,6 @@ mod tests {
 
             let path_str = path.to_string_lossy().to_string();
 
-            // Check if backup file exists
             if !self.valid_backups.lock().unwrap().contains(&path_str)
                 && !self.corrupted_backups.lock().unwrap().contains(&path_str)
             {
@@ -129,7 +128,6 @@ mod tests {
                 });
             }
 
-            // Check if backup is corrupted
             if self.corrupted_backups.lock().unwrap().contains(&path_str) {
                 return Err(AppError::BackupCorrupted(format!(
                     "Backup file is corrupted: {}",
@@ -153,15 +151,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_backup_success() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         let use_case = RestoreBackupUseCase::new(mock_backup.clone());
         let backup_path = PathBuf::from("/valid/backup.db");
 
-        // Act
         let result = use_case.execute(backup_path.clone()).await;
 
-        // Assert
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.success);
@@ -171,21 +166,17 @@ mod tests {
             Some("Backup restored successfully".to_string())
         );
 
-        // Verify backup was restored
         assert!(mock_backup.was_restored("/valid/backup.db"));
     }
 
     #[tokio::test]
     async fn test_restore_backup_validates_file_exists() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         let use_case = RestoreBackupUseCase::new(mock_backup);
         let nonexistent_path = PathBuf::from("/nonexistent/backup.db");
 
-        // Act
         let result = use_case.execute(nonexistent_path).await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::FileNotFound { path } => {
@@ -197,15 +188,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_backup_validates_integrity() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         let use_case = RestoreBackupUseCase::new(mock_backup);
         let corrupted_path = PathBuf::from("/corrupted/backup.db");
 
-        // Act
         let result = use_case.execute(corrupted_path).await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BackupCorrupted(msg) => {
@@ -218,31 +206,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_backup_handles_corruption() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         mock_backup.add_corrupted_backup("/bad/backup.db");
         let use_case = RestoreBackupUseCase::new(mock_backup);
         let corrupted_path = PathBuf::from("/bad/backup.db");
 
-        // Act
         let result = use_case.execute(corrupted_path).await;
 
-        // Assert
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::BackupCorrupted(_)));
     }
 
     #[tokio::test]
     async fn test_restore_backup_handles_generic_failure() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::with_restore_failure());
         let use_case = RestoreBackupUseCase::new(mock_backup);
         let backup_path = PathBuf::from("/any/backup.db");
 
-        // Act
         let result = use_case.execute(backup_path).await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BackupRestoreFailed(msg) => {
@@ -254,16 +236,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_backup_with_different_valid_paths() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         mock_backup.add_valid_backup("/custom/path/backup.db");
         let use_case = RestoreBackupUseCase::new(mock_backup.clone());
         let backup_path = PathBuf::from("/custom/path/backup.db");
 
-        // Act
         let result = use_case.execute(backup_path).await;
 
-        // Assert
         assert!(result.is_ok());
         assert!(mock_backup.was_restored("/custom/path/backup.db"));
     }

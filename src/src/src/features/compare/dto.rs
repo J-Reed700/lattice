@@ -1,4 +1,4 @@
-//! Wire types for comparison tables. Contract: GROUND-RULES §4.10.
+//! Wire types for comparison tables.
 
 use serde::{Deserialize, Serialize};
 

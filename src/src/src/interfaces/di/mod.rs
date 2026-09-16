@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! Following the "bricks and studs" philosophy:
+//! Dependencies are exposed through small, composable interfaces:
 //! - **Container**: Pure DDD unified DI container (RECOMMENDED - use this!)
 //! - **ServiceContainer**: Legacy DI container (DEPRECATED - being removed)
 //! - **AppContainer**: Legacy repository-focused container (DEPRECATED)
@@ -76,15 +76,13 @@
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-// ============================================================================
-// Module Exports
-// ============================================================================
-
 // DDD Container - Unified DI container for DDD architecture
 pub mod container;
 pub use container::Container;
 
 // Domain Modules - Modular replacement for ServiceContainer (2026-01-21)
+#[cfg(test)]
+mod file_preview_tests;
 pub mod modules;
 pub use modules::{
     AIModule, CoreModule, FileOpsModule, IndexingModule, LibraryModule, SearchModule, SystemModule,
@@ -92,41 +90,34 @@ pub use modules::{
 
 // Legacy exports (for backward compatibility)
 #[cfg(test)]
+use crate::application::ports::{
+    ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
+};
+#[cfg(test)]
 use crate::features::embedding::mocks::MockEmbeddingService;
+#[cfg(test)]
+use crate::features::embedding::EmbeddingServiceTrait;
 #[cfg(test)]
 use crate::features::mentions::mocks::MockMentionRepository;
 #[cfg(test)]
 use crate::features::search::mocks::MockSearchService;
 #[cfg(test)]
 use crate::features::tags::mocks::MockTagRepository;
-use crate::infrastructure::persistence::repositories::mocks::*;
-use crate::shared::error::{AppError, Result};
-// MockDocumentRepository is in infrastructure/persistence/repositories::mocks (imported via line 89)
-// Note: MockChunkRepository is in infrastructure::persistence::repositories::mocks, not services::mocks
 #[cfg(test)]
-use crate::infrastructure::persistence::repositories::mocks::MockEmbeddingRepository;
-// Removed: use crate::shared::traits (god object eliminated - traits migrated to infrastructure/services/traits/)
-use crate::application::ports::{
-    ChunkRepositoryPort, EmbeddingRepositoryPort, MentionRepositoryPort,
-};
-use crate::features::embedding::service::EmbeddingService;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::search::SearchServiceTrait;
 use crate::features::tags::TagRepositoryTrait;
-use crate::infrastructure::persistence::repositories::traits::{
-    DocumentRepositoryTrait,
-    /* ChunkRepositoryTrait removed - DDD */
-    /* MentionRepositoryTrait removed - DDD */
-    /* EmbeddingRepositoryTrait removed - DDD */
+#[cfg(test)]
+use crate::infrastructure::persistence::repositories::mocks::{
+    MockChunkRepository, MockDocumentRepository, MockEmbeddingRepository,
 };
+#[cfg(test)]
+use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
+use crate::shared::error::{AppError, Result};
+// Removed: use crate::shared::traits (god object eliminated - traits migrated to infrastructure/services/traits/)
+use crate::features::embedding::service::EmbeddingService;
+use crate::features::search::SearchServiceTrait;
 use crate::infrastructure::persistence::repositories::{
     ChunkRepository, DocumentRepository, EmbeddingRepository, MentionRepository, TagRepository,
 };
-use crate::infrastructure::services::traits::*;
-
-// ============================================================================
-// Production Container
-// ============================================================================
 
 /// Production dependency injection container
 ///
@@ -318,10 +309,6 @@ impl AppContainer {
     }
 }
 
-// ============================================================================
-// Mock Container
-// ============================================================================
-
 /// Mock dependency injection container for testing
 ///
 /// Contains in-memory mock implementations. No database or ML models required.
@@ -349,14 +336,12 @@ impl AppContainer {
 /// ```
 #[cfg(test)]
 pub struct MockAppContainer {
-    // Mock Repositories
     document_repo: Arc<MockDocumentRepository>,
     chunk_repo: Arc<MockChunkRepository>,
     embedding_repo: Arc<MockEmbeddingRepository>,
     tag_repo: Arc<MockTagRepository>,
     mention_repo: Arc<MockMentionRepository>,
 
-    // Mock Services
     embedding_service: Arc<MockEmbeddingService>,
     search_service: Arc<MockSearchService>,
 }
@@ -496,10 +481,6 @@ impl Default for MockAppContainer {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests_basic {
     use super::*;
@@ -508,7 +489,6 @@ mod tests_basic {
     async fn test_mock_container_basic_workflow() {
         let container = MockAppContainer::new();
 
-        // Create a document
         let doc = container
             .documents()
             .create(
@@ -527,7 +507,6 @@ mod tests_basic {
         use crate::domain::entities::document::DocumentStatus;
         assert_eq!(doc.status(), DocumentStatus::Indexed);
 
-        // Find it by ID
         let found = container
             .documents()
             .find_by_id(doc.id().as_str())
@@ -536,7 +515,6 @@ mod tests_basic {
         assert!(found.is_some());
         assert_eq!(found.unwrap().file_name(), "test.txt");
 
-        // Find it by path
         let found_by_path = container
             .documents()
             .find_by_path("/test.txt")
@@ -550,7 +528,6 @@ mod tests_basic {
     async fn test_mock_container_chunk_workflow() {
         let container = MockAppContainer::new();
 
-        // Create a document first
         let doc = container
             .documents()
             .create(
@@ -564,8 +541,7 @@ mod tests_basic {
             .await
             .unwrap();
 
-        // Create chunks
-        let chunk1 = container
+        let _chunk1 = container
             .chunks()
             .create(
                 doc.id().as_str(),
@@ -579,7 +555,7 @@ mod tests_basic {
             .await
             .unwrap();
 
-        let chunk2 = container
+        let _chunk2 = container
             .chunks()
             .create(
                 doc.id().as_str(),
@@ -593,7 +569,6 @@ mod tests_basic {
             .await
             .unwrap();
 
-        // Find chunks by document
         let chunks = container
             .chunks()
             .find_by_document(doc.id().as_str())
@@ -608,7 +583,6 @@ mod tests_basic {
     async fn test_mock_container_embedding_workflow() -> Result<(), Box<dyn std::error::Error>> {
         let container = MockAppContainer::new();
 
-        // Create document and chunk
         let doc = container
             .documents()
             .create(
@@ -628,7 +602,6 @@ mod tests_basic {
             .await
             .unwrap();
 
-        // Generate embedding using service
         let embedding = container
             .embedding_service()
             .embed_single("Test content")
@@ -639,8 +612,7 @@ mod tests_basic {
             crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM
         );
 
-        // Store embedding
-        let emb_id = container
+        let _emb_id = container
             .embeddings()
             .create(chunk.id().as_str(), &embedding, "mock-model")
             .await
@@ -662,7 +634,6 @@ mod tests_basic {
     async fn test_mock_container_tag_workflow() {
         let container = MockAppContainer::new();
 
-        // Create document
         let doc = container
             .documents()
             .create(
@@ -676,7 +647,6 @@ mod tests_basic {
             .await
             .unwrap();
 
-        // Create tag
         let tag = container
             .tags()
             .as_ref()
@@ -687,14 +657,12 @@ mod tests_basic {
         assert_eq!(tag.name().as_str(), "important");
         assert_eq!(tag.color(), "#ff0000");
 
-        // Add tag to document
         container
             .tags()
             .add_tag_to_document(doc.id().as_str(), tag.id().as_str())
             .await
             .unwrap();
 
-        // Get tags for document
         let doc_tags = container
             .tags()
             .get_tags_for_document(doc.id().as_str())
@@ -703,7 +671,6 @@ mod tests_basic {
         assert_eq!(doc_tags.len(), 1);
         assert_eq!(doc_tags[0].name().as_str(), "important");
 
-        // Get documents by tag
         let tagged_docs = container
             .tags()
             .find_documents_by_tag(tag.id().as_str())
@@ -717,7 +684,6 @@ mod tests_basic {
     async fn test_mock_container_mention_workflow() {
         let container = MockAppContainer::new();
 
-        // Create document
         let doc = container
             .documents()
             .create(
@@ -731,7 +697,6 @@ mod tests_basic {
             .await
             .unwrap();
 
-        // Extract mentions from text
         let text = "I met @[Alice] and discussed [[Project X]] with her.";
         let mentions = container
             .mentions()
@@ -741,7 +706,6 @@ mod tests_basic {
 
         assert_eq!(mentions.len(), 2);
 
-        // Verify mentions were stored
         let doc_mentions = container
             .mentions()
             .get_mentions_for_document(doc.id().as_str())
@@ -757,8 +721,7 @@ mod tests_basic {
     async fn test_mock_container_search_workflow() {
         let container = MockAppContainer::new();
 
-        // Get mutable access to search service to add test data
-        let search_service = container.search_service_concrete();
+        let _search_service = container.search_service_concrete();
 
         // This test demonstrates the limitation: MockSearchService wrapped in Arc
         // can't be mutated easily. In practice, you'd populate the index differently.
@@ -775,7 +738,6 @@ mod tests_basic {
     async fn test_mock_container_clear_all() {
         let container = MockAppContainer::new();
 
-        // Add some data
         container
             .documents()
             .create(
@@ -799,7 +761,6 @@ mod tests_basic {
         // Clear all
         container.clear_all();
 
-        // Verify data is cleared
         let docs = container.documents().list_all().await.unwrap();
         assert_eq!(docs.len(), 0);
 

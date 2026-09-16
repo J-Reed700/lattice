@@ -173,7 +173,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     async fn test_store_and_retrieve_api_key() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     async fn test_has_api_key() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");

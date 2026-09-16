@@ -1,3 +1,6 @@
+mod document_progress;
+mod scoped_document_tools;
+
 use crate::features::function_calling::dto::{
     FetchUrlContentOutput, WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
@@ -22,8 +25,9 @@ use super::retrieval::{
     build_web_source_citations, deduplicate_sources, format_tool_result,
     record_tool_document_references,
 };
+use super::ChatStreamEventDto;
 
-#[derive(Debug, Serialize, Clone, Default)]
+#[derive(Debug, Serialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolLoopTimingMetrics {
     pub total_ms: u64,
@@ -76,32 +80,21 @@ impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
         }
     }
 
-    pub(super) fn request_id(&self) -> &str {
-        &self.request_id
-    }
-
     /// Emit a content chunk.
     pub(super) fn content(&self, chunk: &str) -> Result<()> {
-        self.emit(serde_json::json!({
-            "conversationId": self.conversation_id,
-            "requestId": self.request_id,
-            "content": chunk,
-            "done": false,
-        }))
+        self.emit(ChatStreamEventDto {
+            content: Some(chunk.to_owned()),
+            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
+        })
     }
 
     /// Emit a non-fatal status update (e.g. a retry notice).
-    pub(super) fn status(&self, status: &str, attempt: usize) {
-        if let Err(e) = self.emit(serde_json::json!({
-            "conversationId": self.conversation_id,
-            "requestId": self.request_id,
-            "content": "",
-            "done": false,
-            "status": status,
-            "attempt": attempt,
-        })) {
-            warn!(error = %e, "Failed to emit stream status");
-        }
+    pub(super) fn status(&self, status: &str, attempt: usize) -> Result<()> {
+        self.emit(ChatStreamEventDto {
+            status: Some(status.to_owned()),
+            attempt: Some(attempt),
+            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
+        })
     }
 
     /// Emit the terminal event. Idempotent, so belt-and-braces calls on
@@ -111,16 +104,15 @@ impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
             return;
         }
         self.done_sent = true;
-        if let Err(e) = self.emit(serde_json::json!({
-            "conversationId": self.conversation_id,
-            "requestId": self.request_id,
-            "done": true,
-        })) {
+        if let Err(e) = self.emit(ChatStreamEventDto {
+            done: true,
+            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
+        }) {
             warn!(error = %e, "Failed to emit stream completion");
         }
     }
 
-    fn emit(&self, payload: serde_json::Value) -> Result<()> {
+    fn emit(&self, payload: ChatStreamEventDto) -> Result<()> {
         self.window
             .emit("llm-stream", payload)
             .map_err(|e| AppError::InvalidState(format!("Frontend disconnected: {}", e)))
@@ -152,8 +144,10 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     highlight_terms: &[String],
     tool_output_settings: &ToolOutputSettingsDto,
     sources: &mut Vec<SourceDto>,
+    retrieval_trace: &mut Option<super::RetrievalTraceDto>,
     tools_ref: Option<&[crate::application::ports::ToolDefinition]>,
 ) -> Result<ToolLoopOutcome> {
+    use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
 
     const MAX_TOOL_ITERATIONS: usize = 5;
@@ -173,10 +167,20 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // Owns the terminal `done` event via Drop, so no error path can leave the
     // UI generating forever.
     let mut emitter = StreamEmitter::new(window, conv_id, request_id);
+    let mut document_progress = document_progress::DocumentProgress::new(sources);
 
     let base_prompt = enhanced_message.to_string();
     let mut tool_context = context.to_vec();
     let mut current_prompt = base_prompt.clone();
+    let mut native_request = CompletionRequest {
+        input: crate::application::services::completion_input::from_context(
+            &prompt_settings.system_prompt,
+            context,
+            &base_prompt,
+        ),
+        tools: tools_ref.unwrap_or(&[]).to_vec(),
+        ..Default::default()
+    };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -191,9 +195,101 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         );
 
         let llm_iteration_start = Instant::now();
-        let stream_result = llm
-            .generate_streaming_with_tools(&current_prompt, &tool_context, None, tools_ref)
-            .await;
+        let native_progress = llm.supports_typed_completions()
+            && (llm.provider_name() == "llamacpp"
+                || tools_ref.is_some_and(|tools| !tools.is_empty()));
+        let stream_result = if native_progress {
+            let response = {
+                let first_text_received = std::sync::atomic::AtomicBool::new(false);
+                let on_text = |text: String| {
+                    if !text.is_empty()
+                        && !first_text_received.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        info!(
+                            iteration,
+                            first_text_ms = llm_iteration_start.elapsed().as_millis() as u64,
+                            "LLM first answer text received"
+                        );
+                    }
+                    emitter.content(&text)
+                };
+                let on_retry = |attempt| emitter.status("retrying", attempt);
+                let completion = timeout(
+                    timeout_duration,
+                    llm.complete_with_retry_progress(&native_request, &on_text, &on_retry),
+                );
+                tokio::pin!(completion);
+                loop {
+                    tokio::select! {
+                        result = &mut completion => break result.map_err(|_| AppError::ServiceNotAvailable(
+                            "LLM generation timed out. The model may be overloaded.".into(),
+                        ))?,
+                        _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
+                            if is_cancel_requested(request_id) { return Err(cancellation_error()); }
+                        }
+                    }
+                }
+            }?;
+            if matches!(
+                response.finish_reason.as_str(),
+                "incomplete" | "max_tokens" | "length" | "failed"
+            ) {
+                return Err(AppError::InvalidState(format!(
+                    "Model stopped before completion: {}",
+                    response.finish_reason
+                )));
+            }
+            if response.text.trim().is_empty() && response.tool_calls.is_empty() {
+                return Err(AppError::InvalidState(
+                    "Model returned no answer or tool calls".into(),
+                ));
+            }
+            tracing::info!(input_tokens = response.input_tokens, output_tokens = response.output_tokens, finish_reason = %response.finish_reason, "Native LLM completion");
+            if llm.provider_name() == "openai" {
+                if let Some(items) = response.provider_output.as_array() {
+                    native_request.input.extend(
+                        items
+                            .iter()
+                            .cloned()
+                            .map(|value| CompletionInput::Native { value }),
+                    );
+                }
+            } else if llm.provider_name() == "llamacpp" {
+                native_request.input.push(CompletionInput::Native {
+                    value: response.provider_output,
+                });
+            } else {
+                native_request.input.push(CompletionInput::Native { value: serde_json::json!({"role":"assistant","content":response.provider_output}) });
+            }
+            let calls = response
+                .tool_calls
+                .into_iter()
+                .filter_map(|call| match call {
+                    CompletionInput::ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    } => Some(crate::application::ports::ToolCall {
+                        id: Some(id),
+                        name,
+                        arguments,
+                    }),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let chunks = vec![
+                Ok(StreamChunk::Content(response.text)),
+                Ok(StreamChunk::ToolCalls(calls)),
+                Ok(StreamChunk::Done),
+            ];
+            Ok(Box::new(futures::stream::iter(chunks))
+                as Box<
+                    dyn futures::Stream<Item = Result<StreamChunk>> + Send + Unpin,
+                >)
+        } else {
+            llm.generate_streaming_with_tools(&current_prompt, &tool_context, None, tools_ref)
+                .await
+        };
 
         match stream_result {
             Ok(mut stream) => {
@@ -223,7 +319,11 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                         match chunk_result {
                             Ok(StreamChunk::Content(chunk)) => {
                                 full_response.push_str(&chunk);
-                                if let Err(e) = emitter.content(&chunk) {
+                                if let Err(e) = if native_progress {
+                                    Ok(())
+                                } else {
+                                    emitter.content(&chunk)
+                                } {
                                     error!("Failed to emit stream chunk: {}", e);
                                     return Err(e);
                                 }
@@ -259,7 +359,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 );
                                 timings.empty_response_retries =
                                     timings.empty_response_retries.saturating_add(1);
-                                emitter.status("retrying", iteration + 2);
+                                emitter.status("retrying", iteration + 2)?;
                                 tool_context
                                     .push(format!("System: [{}]", EMPTY_RESPONSE_RETRY_HINT));
                                 let retry_prompt = render_tool_followup_prompt(
@@ -269,6 +369,11 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 );
                                 current_prompt = format!("{base_prompt}\n\n{retry_prompt}");
                                 continue;
+                            }
+                            if response_text.trim().is_empty() {
+                                return Err(AppError::InvalidState(
+                                    "Model returned no answer after repeated attempts".into(),
+                                ));
                             }
                             emitter.done();
                             tracing::info!(
@@ -292,7 +397,6 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             });
                         }
 
-                        let executor = container.function_executor();
                         for tc in &tool_calls {
                             let tool_call_start = Instant::now();
                             timings.tool_call_count = timings.tool_call_count.saturating_add(1);
@@ -302,6 +406,12 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             }
                             let resolved_tool = canonical_tool_name(tc.name.as_str());
                             if !is_tool_allowed(resolved_tool, tools_ref) {
+                                if let Some(id) = &tc.id {
+                                    native_request.input.push(CompletionInput::ToolResult {
+                                        id: id.clone(),
+                                        output: "Requested tool is unavailable".into(),
+                                    });
+                                }
                                 let available_tools = available_tool_names(tools_ref);
                                 warn!(
                                     requested_function = tc.name.as_str(),
@@ -327,7 +437,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 resolved_tool,
                                 tc.arguments.clone(),
                             );
-                            match executor.execute(call).await {
+                            match scoped_document_tools::execute(container, conv_id, call).await {
                                 Ok(result) => {
                                     timings.tool_success_count =
                                         timings.tool_success_count.saturating_add(1);
@@ -337,10 +447,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         highlight_terms,
                                         tool_output_settings,
                                     );
+                                    let tool_chunk_ids: std::collections::HashSet<_> =
+                                        tool_sources.iter().map(|s| s.chunk_id.clone()).collect();
                                     if !tool_sources.is_empty() {
                                         let added = tool_sources.len();
                                         sources.extend(tool_sources);
                                         *sources = deduplicate_sources(std::mem::take(sources));
+                                        super::retrieval::assign_citation_ids(sources);
                                         info!(
                                             requested_function = tc.name.as_str(),
                                             resolved_function = resolved_tool,
@@ -350,12 +463,46 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         );
                                     }
 
-                                    let result_text = format_tool_result(
+                                    if document_progress.record(resolved_tool, &result) {
+                                        let trace = retrieval_trace.get_or_insert_with(|| {
+                                            super::RetrievalTraceDto {
+                                                scope: "vault".to_string(),
+                                                ..Default::default()
+                                            }
+                                        });
+                                        document_progress.update_trace(trace);
+                                        if let Err(error) = emitter.emit(ChatStreamEventDto {
+                                            status: Some("retrieval".to_owned()),
+                                            retrieval: Some(trace.clone()),
+                                            ..ChatStreamEventDto::new(conv_id, request_id)
+                                        }) {
+                                            warn!(%error, "Failed to update retrieval trace after tool search");
+                                        }
+                                    }
+
+                                    let mut result_text = format_tool_result(
                                         resolved_tool,
                                         &result,
                                         highlight_terms,
                                         tool_output_settings,
                                     );
+                                    for source in sources
+                                        .iter()
+                                        .filter(|s| tool_chunk_ids.contains(&s.chunk_id))
+                                    {
+                                        if let Some(number) = source.citation_id {
+                                            result_text.push_str(&format!(
+                                                "\n\nCitable passage [{number}] — {}\n{}",
+                                                source.file_name, source.content
+                                            ));
+                                        }
+                                    }
+                                    if let Some(id) = &tc.id {
+                                        native_request.input.push(CompletionInput::ToolResult {
+                                            id: id.clone(),
+                                            output: result_text.clone(),
+                                        });
+                                    }
                                     if let Err(e) = record_tool_document_references(
                                         conv_service,
                                         conv_id,
@@ -397,6 +544,12 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         error = %e,
                                         "Tool call failed"
                                     );
+                                    if let Some(id) = &tc.id {
+                                        native_request.input.push(CompletionInput::ToolResult {
+                                            id: id.clone(),
+                                            output: format!("Tool failed: {e}"),
+                                        });
+                                    }
                                     tool_context.push(format!(
                                         "System: [Tool '{}' failed: {}]",
                                         resolved_tool, e
@@ -516,6 +669,7 @@ fn collect_tool_sources(
                     Some(highlight_terms.to_vec())
                 };
                 return vec![SourceDto {
+                    page_number: None,
                     document_id: format!("web:{}", output.url),
                     chunk_id: "web-content-1".to_string(),
                     content: content.clone(),
@@ -579,6 +733,7 @@ fn collect_tool_sources(
                     Some(highlight_terms.to_vec())
                 };
                 return vec![SourceDto {
+                    page_number: None,
                     document_id: format!("wiki:{}", output.title.replace(' ', "_")),
                     chunk_id: "wiki-summary-1".to_string(),
                     content: content.clone(),
@@ -650,12 +805,11 @@ fn emit_cancelled_stream<R: tauri::Runtime>(
 ) {
     if let Err(e) = window.emit(
         "llm-stream",
-        serde_json::json!({
-            "conversationId": conversation_id,
-            "requestId": request_id,
-            "done": true,
-            "status": "cancelled"
-        }),
+        ChatStreamEventDto {
+            done: true,
+            status: Some("cancelled".to_owned()),
+            ..ChatStreamEventDto::new(conversation_id, request_id)
+        },
     ) {
         warn!("Failed to emit cancellation event: {}", e);
     }

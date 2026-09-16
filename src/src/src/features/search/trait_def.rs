@@ -2,7 +2,7 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 
@@ -84,10 +84,6 @@ pub trait SearchServiceTrait: Send + Sync {
     ) -> Result<Vec<Vec<SearchResult>>>;
 }
 
-// ============================================================================
-// BM25 Search Trait
-// ============================================================================
-
 /// Trait for BM25 text-based search services
 ///
 /// Provides keyword-based search using BM25 ranking algorithm.
@@ -127,7 +123,7 @@ pub trait BM25SearchTrait: Send + Sync {
         &self,
         query: &str,
         top_k: usize,
-    ) -> Result<Vec<crate::search::bm25::BM25Result>>;
+    ) -> Result<Vec<crate::features::search::engine::bm25::BM25Result>>;
 
     /// Perform BM25 search with minimum score filter
     ///
@@ -151,7 +147,7 @@ pub trait BM25SearchTrait: Send + Sync {
         query: &str,
         top_k: usize,
         min_score: f32,
-    ) -> Result<Vec<crate::search::bm25::BM25Result>>;
+    ) -> Result<Vec<crate::features::search::engine::bm25::BM25Result>>;
 
     /// Optimize the FTS5 index for better performance
     ///
@@ -183,10 +179,6 @@ pub trait BM25SearchTrait: Send + Sync {
     /// ```
     async fn rebuild_index(&self) -> Result<()>;
 }
-
-// ============================================================================
-// Tag Service Trait
-// ============================================================================
 
 /// Trait for tag management operations
 ///
@@ -226,8 +218,8 @@ pub trait HybridSearchTrait: Send + Sync {
         query_text: &str,
         query_embedding: &[f32],
         top_k: usize,
-        mode: crate::search::hybrid::SearchMode,
-    ) -> Result<Vec<crate::search::hybrid::HybridSearchResult>>;
+        mode: crate::features::search::engine::hybrid::SearchMode,
+    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>;
 
     /// Perform batch hybrid search for multiple queries
     ///
@@ -253,8 +245,8 @@ pub trait HybridSearchTrait: Send + Sync {
         &self,
         queries: Vec<(String, Vec<f32>)>,
         top_k: usize,
-        mode: crate::search::hybrid::SearchMode,
-    ) -> Result<Vec<Vec<crate::search::hybrid::HybridSearchResult>>>;
+        mode: crate::features::search::engine::hybrid::SearchMode,
+    ) -> Result<Vec<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>>;
 
     /// Search with recency weighting
     ///
@@ -291,5 +283,37 @@ pub trait HybridSearchTrait: Send + Sync {
         top_k: usize,
         recency_weight: f32,
         max_age_days: i64,
-    ) -> Result<Vec<crate::search::hybrid::HybridSearchResult>>;
+    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>;
+}
+
+/// Learned sparse retrieval — the third fusion branch beside dense vectors and
+/// BM25.
+///
+/// Implementations embed the query with the loaded model's sparse head and
+/// score stored per-chunk term postings by dot product. When the loaded model
+/// has no sparse head, [`SparseSearchTrait::is_available`] is `false` and the
+/// branch is never started; calling `search_scoped` anyway returns the port's
+/// "not supported" error, which callers must treat as a missing capability
+/// rather than a failed search.
+#[async_trait]
+pub trait SparseSearchTrait: Send + Sync {
+    /// True when the loaded embedding model can produce sparse term weights.
+    ///
+    /// This is the flag every caller checks before spending a branch on it, so
+    /// switching from BGE-M3 to a dense-only model silently drops back to
+    /// two-way fusion instead of erroring on every query.
+    fn is_available(&self) -> bool;
+
+    /// Sparse search under the same hard scope the BM25 branch uses.
+    ///
+    /// `space_id` restricts to a space's document memberships and
+    /// `allowed_document_ids` to an explicit set; an empty set allows nothing.
+    /// Both are applied before the limit.
+    async fn search_scoped(
+        &self,
+        query: &str,
+        top_k: usize,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&std::collections::HashSet<String>>,
+    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>>;
 }

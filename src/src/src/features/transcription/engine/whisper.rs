@@ -1,9 +1,8 @@
 //! On-device whisper transcription via candle.
 //!
-//! Model presence and location come from `DownloadedModelRepository` — the SSOT
-//! for downloaded models (`CLAUDE.md`, Repository Barrier). Nothing is loaded
-//! until the first `transcribe` call, so app startup does no extra work, and the
-//! model is dropped again after [`TRANSCRIPTION_IDLE_TTL`] of inactivity.
+//! Model presence and location come from `DownloadedModelRepository`. Nothing
+//! is loaded until the first `transcribe` call, and the model is dropped after
+//! [`TRANSCRIPTION_IDLE_TTL`] of inactivity.
 //!
 //! Inference runs on `spawn_blocking` behind a semaphore of one: whisper is the
 //! heaviest thing this process runs, and Metal can crash on parallel kernel
@@ -30,7 +29,7 @@ use crate::shared::error::AppError;
 /// How long a loaded model is kept resident after the last transcription.
 pub const TRANSCRIPTION_IDLE_TTL: Duration = Duration::from_secs(300);
 
-/// Longest recording accepted, in seconds (contract §4.16).
+/// Longest recording accepted, in seconds.
 pub const MAX_AUDIO_SECS: u64 = 2 * 60 * 60;
 
 /// Mel bin count of the base/small models this engine supports.
@@ -68,7 +67,6 @@ struct LoadedWhisper {
 /// One decoding attempt over a single 30 s mel window.
 struct DecodeResult {
     tokens: Vec<u32>,
-    text: String,
     avg_logprob: f64,
     no_speech_prob: f64,
     compression_ratio: f64,
@@ -157,10 +155,6 @@ impl WhisperTranscriptionService {
     }
 }
 
-// ============================================================================
-// Model loading
-// ============================================================================
-
 fn read_json_config(dir: &Path, model_id: &str) -> Result<Config, AppError> {
     let path = dir.join("config.json");
     let bytes = std::fs::read(&path).map_err(|e| {
@@ -235,8 +229,8 @@ fn collect_language_tokens(tokenizer: &Tokenizer) -> Vec<(u32, String)> {
         .into_iter()
         .filter_map(|(token, id)| {
             let tag = token.strip_prefix("<|")?.strip_suffix("|>")?;
-            let is_language_tag = (2..=3).contains(&tag.len())
-                && tag.chars().all(|c| c.is_ascii_lowercase());
+            let is_language_tag =
+                (2..=3).contains(&tag.len()) && tag.chars().all(|c| c.is_ascii_lowercase());
             is_language_tag.then(|| (id, tag.to_string()))
         })
         .collect();
@@ -351,10 +345,6 @@ fn load_whisper(resolved: &ResolvedModel) -> Result<LoadedWhisper, AppError> {
     })
 }
 
-// ============================================================================
-// Decoding
-// ============================================================================
-
 fn inference_error(e: candle_core::Error) -> AppError {
     AppError::Other(format!("whisper inference failed: {e}"))
 }
@@ -418,7 +408,8 @@ fn mel_window(
 /// Detect the spoken language from the first window.
 fn detect_language(loaded: &mut LoadedWhisper, mel: &Tensor) -> Result<(u32, String), AppError> {
     let language_ids: Vec<u32> = loaded.language_tokens.iter().map(|(id, _)| *id).collect();
-    let ids_tensor = Tensor::new(language_ids.as_slice(), &loaded.device).map_err(inference_error)?;
+    let ids_tensor =
+        Tensor::new(language_ids.as_slice(), &loaded.device).map_err(inference_error)?;
 
     loaded.model.reset_kv_cache();
     let audio = loaded
@@ -554,7 +545,6 @@ fn decode_window(
     Ok(DecodeResult {
         compression_ratio: compression_ratio(&text),
         tokens,
-        text,
         avg_logprob,
         no_speech_prob,
     })
@@ -606,12 +596,13 @@ fn segments_from_tokens(
             return Ok(());
         }
         let end_ms = end_ms.min(window_end_ms);
-        let text = loaded
-            .tokenizer
-            .decode(tokens, true)
-            .map_err(|e| AppError::TokenizationError {
-                reason: format!("could not decode whisper tokens: {e}"),
-            })?;
+        let text =
+            loaded
+                .tokenizer
+                .decode(tokens, true)
+                .map_err(|e| AppError::TokenizationError {
+                    reason: format!("could not decode whisper tokens: {e}"),
+                })?;
         let text = text.trim();
         if !text.is_empty() {
             segments.push(TranscriptSegment {
@@ -630,8 +621,7 @@ fn segments_from_tokens(
         }
         if token > loaded.no_timestamps {
             // Timestamp tokens count in 20 ms steps from the window start.
-            let relative_ms =
-                u64::from(token - loaded.no_timestamps - 1).saturating_mul(1000) / 50;
+            let relative_ms = u64::from(token - loaded.no_timestamps - 1).saturating_mul(1000) / 50;
             let absolute_ms = time_offset_ms.saturating_add(relative_ms);
 
             match segment_start_ms {
@@ -657,7 +647,10 @@ fn segments_from_tokens(
 }
 
 /// Transcribe already-decoded PCM. Runs on a blocking thread.
-fn transcribe_pcm(loaded: &mut LoadedWhisper, pcm: &[f32]) -> Result<(Vec<TranscriptSegment>, String), AppError> {
+fn transcribe_pcm(
+    loaded: &mut LoadedWhisper,
+    pcm: &[f32],
+) -> Result<(Vec<TranscriptSegment>, String), AppError> {
     let content_frames = pcm.len() / whisper::HOP_LENGTH;
     if content_frames == 0 {
         return Ok((Vec::new(), "en".to_string()));
@@ -678,8 +671,7 @@ fn transcribe_pcm(loaded: &mut LoadedWhisper, pcm: &[f32]) -> Result<(Vec<Transc
 
     while seek < content_frames {
         let segment_frames = (content_frames - seek).min(whisper::N_FRAMES);
-        let time_offset_ms =
-            (seek * whisper::HOP_LENGTH * 1000 / whisper::SAMPLE_RATE) as u64;
+        let time_offset_ms = (seek * whisper::HOP_LENGTH * 1000 / whisper::SAMPLE_RATE) as u64;
         let window_end_ms =
             ((seek + segment_frames) * whisper::HOP_LENGTH * 1000 / whisper::SAMPLE_RATE) as u64;
 
@@ -763,7 +755,6 @@ impl TranscriptionPort for WhisperTranscriptionService {
 }
 
 #[cfg(test)]
-#[path = "tests_e2e.rs"]
 mod tests_e2e;
 
 #[cfg(test)]

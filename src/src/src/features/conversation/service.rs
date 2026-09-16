@@ -17,11 +17,11 @@
 //!
 //! ```rust,no_run
 //! use lattice::services::ConversationService;
-//! use sqlx::SqlitePool;
+//! use std::sync::Arc;
+//! use lattice::application::ports::conversation_repository::ConversationRepositoryPort;
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let pool = SqlitePool::connect("sqlite::memory:").await?;
-//! let service = ConversationService::new(pool);
+//! # async fn example(repository: Arc<dyn ConversationRepositoryPort>) -> Result<(), Box<dyn std::error::Error>> {
+//! let service = ConversationService::new(repository);
 //!
 //! // Create conversation
 //! let conversation = service.create_conversation(
@@ -41,30 +41,28 @@
 //! # }
 //! ```
 
+use crate::application::ports::conversation_repository::ConversationRepositoryPort;
 use crate::domain::conversation::{
     Conversation, ConversationAggregate, ConversationMessage, MessageRole,
 };
-use crate::infrastructure::persistence::repositories::ConversationRepository;
 use crate::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Service for conversation management
 ///
 /// Provides high-level operations for managing conversations,
 /// coordinating between domain logic and repository persistence.
 pub struct ConversationService {
-    repository: ConversationRepository,
+    repository: Arc<dyn ConversationRepositoryPort>,
 }
 
 impl ConversationService {
     /// Create a new conversation service
     ///
     /// # Arguments
-    /// * `pool` - SQLite connection pool
-    pub fn new(pool: SqlitePool) -> Self {
-        Self {
-            repository: ConversationRepository::new(pool),
-        }
+    /// * `repository` - Conversation persistence adapter
+    pub fn new(repository: Arc<dyn ConversationRepositoryPort>) -> Self {
+        Self { repository }
     }
 
     /// Create a new conversation
@@ -99,7 +97,6 @@ impl ConversationService {
         model_name: String,
         system_prompt: Option<String>,
     ) -> Result<Conversation> {
-        // Validate using domain logic first
         let _aggregate =
             ConversationAggregate::new(title.clone(), model_name.clone(), system_prompt.clone())?;
 
@@ -180,14 +177,11 @@ impl ConversationService {
     /// - `AppError::InvalidInput` if new_title is empty
     /// - `AppError::Database` if update fails
     pub async fn rename_conversation(&self, id: &str, new_title: String) -> Result<()> {
-        // Validate using domain logic
         if new_title.trim().is_empty() {
             return Err(AppError::InvalidInput("Title cannot be empty".into()));
         }
 
-        self.repository
-            .update(id, Some(&new_title), None, None, None)
-            .await
+        self.repository.update_title(id, &new_title).await
     }
 
     /// Update the system prompt of a conversation
@@ -205,7 +199,7 @@ impl ConversationService {
         system_prompt: Option<String>,
     ) -> Result<()> {
         self.repository
-            .update(id, None, Some(system_prompt.as_deref()), None, None)
+            .update_system_prompt(id, system_prompt.as_deref())
             .await
     }
 
@@ -242,7 +236,6 @@ impl ConversationService {
         content: String,
         tokens: i64,
     ) -> Result<ConversationMessage> {
-        // Validate content
         if content.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Message content cannot be empty".into(),
@@ -274,7 +267,6 @@ impl ConversationService {
         content: String,
         tokens: i64,
     ) -> Result<ConversationMessage> {
-        // Validate content
         if content.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Message content cannot be empty".into(),
@@ -314,7 +306,6 @@ impl ConversationService {
         tokens: i64,
         metadata: Option<String>,
     ) -> Result<ConversationMessage> {
-        // Validate content
         if content.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Message content cannot be empty".into(),
@@ -366,7 +357,6 @@ impl ConversationService {
             ));
         }
 
-        // Load full aggregate to perform domain logic
         let mut aggregate = self
             .repository
             .load_aggregate(conversation_id)
@@ -379,7 +369,6 @@ impl ConversationService {
         let before_ids: std::collections::HashSet<String> =
             aggregate.messages().iter().map(|m| m.id.clone()).collect();
 
-        // Use domain method to prune (maintains invariants)
         aggregate.prune_to_token_limit(max_tokens)?;
 
         // Collect IDs of messages that were kept
@@ -390,7 +379,6 @@ impl ConversationService {
         let messages_to_delete: Vec<String> = before_ids.difference(&after_ids).cloned().collect();
 
         if !messages_to_delete.is_empty() {
-            // Delete removed messages from database
             self.repository
                 .delete_messages(conversation_id, &messages_to_delete)
                 .await?;
@@ -490,7 +478,6 @@ impl ConversationService {
         tokens: i64,
         status: String,
     ) -> Result<ConversationMessage> {
-        // Validate content
         if content.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Message content cannot be empty".into(),
@@ -498,7 +485,7 @@ impl ConversationService {
         }
 
         self.repository
-            .add_message_with_status_repo(conversation_id, role, &content, tokens, None, &status)
+            .add_message_with_status(conversation_id, role, &content, tokens, None, &status)
             .await
     }
 
@@ -523,17 +510,33 @@ impl ConversationService {
     /// ```
     pub async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         self.repository
-            .update_message_status_repo(message_id, &status)
+            .update_message_status(message_id, &status)
             .await
     }
 }
 
-// ============================================================================
-// ConversationServiceTrait Implementation
-// ============================================================================
-
 #[async_trait::async_trait]
 impl crate::features::conversation::ConversationServiceTrait for ConversationService {
+    async fn fail_pending_turn(&self, user_message_id: &str) -> Result<()> {
+        self.repository.fail_pending_turn(user_message_id).await
+    }
+    async fn complete_turn(
+        &self,
+        conversation_id: &str,
+        user_message_id: &str,
+        content: String,
+        tokens: i64,
+        metadata: Option<String>,
+    ) -> Result<ConversationMessage> {
+        if content.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "Message content cannot be empty".into(),
+            ));
+        }
+        self.repository
+            .complete_turn(conversation_id, user_message_id, content, tokens, metadata)
+            .await
+    }
     async fn create_conversation(
         &self,
         title: String,
@@ -646,16 +649,77 @@ impl crate::application::ports::ConversationHistoryPort for ConversationService 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::conversation::repository::ConversationRepository;
+    use sqlx::SqlitePool;
 
-    // ============================================================================
-    // Test Helpers
-    // ============================================================================
+    #[tokio::test]
+    async fn invalid_input_never_reaches_repository() {
+        use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+        // An unexpected call fails: validation must happen before persistence.
+        let service = ConversationService::new(Arc::new(MockConversationRepositoryPort::new()));
+        assert!(matches!(
+            service.rename_conversation("chat", " ".into()).await,
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            service.add_user_message("chat", " ".into(), 1).await,
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            service.prune_conversation_to_limit("chat", 0).await,
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn clearing_prompt_is_forwarded_as_none() {
+        use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+        let mut repository = MockConversationRepositoryPort::new();
+        repository
+            .expect_update_system_prompt()
+            .withf(|id, prompt| id == "chat" && prompt.is_none())
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let service = ConversationService::new(Arc::new(repository));
+        service.update_system_prompt("chat", None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repository_failure_is_preserved() {
+        use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+        let mut repository = MockConversationRepositoryPort::new();
+        repository
+            .expect_update_message_status()
+            .withf(|id, status| id == "message" && status == "failed")
+            .times(1)
+            .returning(|_, _| Err(AppError::Database("write failed".into())));
+        let service = ConversationService::new(Arc::new(repository));
+        assert!(
+            matches!(service.update_message_status("message", "failed".into()).await,
+            Err(AppError::Database(message)) if message == "write failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_conversation_stops_pruning_before_write() {
+        use crate::application::ports::conversation_repository::MockConversationRepositoryPort;
+        let mut repository = MockConversationRepositoryPort::new();
+        repository
+            .expect_load_aggregate()
+            .withf(|id| id == "missing")
+            .times(1)
+            .returning(|_| Ok(None));
+        let service = ConversationService::new(Arc::new(repository));
+        assert!(matches!(
+            service.prune_conversation_to_limit("missing", 10).await,
+            Err(AppError::NotFound(_))
+        ));
+    }
 
     /// Create test database pool with schema
     async fn create_test_pool() -> SqlitePool {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
 
-        // Run migrations
         sqlx::query(
             r#"
             CREATE TABLE conversations (
@@ -689,6 +753,12 @@ mod tests {
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE conversation_message_bookmarks (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                message_id TEXT NOT NULL
+            );
+
             CREATE TABLE conversation_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id TEXT NOT NULL,
@@ -718,8 +788,80 @@ mod tests {
     /// Create test service with fresh database
     async fn create_test_service() -> (ConversationService, SqlitePool) {
         let pool = create_test_pool().await;
-        let service = ConversationService::new(pool.clone());
+        let service = ConversationService::new(Arc::new(ConversationRepository::new(pool.clone())));
         (service, pool)
+    }
+
+    #[tokio::test]
+    async fn complete_turn_is_atomic_and_rejects_replays() {
+        use crate::features::conversation::ConversationServiceTrait;
+        let (service, pool) = create_test_service().await;
+        let conversation = service
+            .create_conversation("Chat".into(), "model".into(), None)
+            .await
+            .unwrap();
+        let id = conversation.id.to_string();
+        let user = service
+            .add_message_with_status(
+                &id,
+                MessageRole::User,
+                "question".into(),
+                2,
+                "pending".into(),
+            )
+            .await
+            .unwrap();
+        sqlx::query("CREATE TRIGGER fail_assistant BEFORE INSERT ON conversation_messages WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+            .execute(&pool).await.unwrap();
+        assert!(service
+            .complete_turn(&id, &user.id, "answer".into(), 3, None)
+            .await
+            .is_err());
+        let snapshot = service.get_conversation(&id).await.unwrap().unwrap();
+        assert_eq!(snapshot.messages().len(), 1);
+        assert_eq!(snapshot.messages()[0].status, "pending");
+        assert_eq!(snapshot.conversation().total_tokens, 2);
+        sqlx::query("DROP TRIGGER fail_assistant")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let assistant = service
+            .complete_turn(&id, &user.id, "answer".into(), 3, Some("{}".into()))
+            .await
+            .unwrap();
+        assert_eq!(assistant.metadata.as_deref(), Some("{}"));
+        let snapshot = service.get_conversation(&id).await.unwrap().unwrap();
+        assert_eq!(snapshot.messages().len(), 2);
+        assert!(snapshot.messages().iter().all(|m| m.status == "completed"));
+        // A late transport/read failure must not undo the committed turn.
+        service.fail_pending_turn(&user.id).await.unwrap();
+        assert_eq!(
+            service
+                .get_conversation(&id)
+                .await
+                .unwrap()
+                .unwrap()
+                .messages()[0]
+                .status,
+            "completed"
+        );
+        assert_eq!(snapshot.conversation().total_tokens, 5);
+        assert!(matches!(
+            service
+                .complete_turn(&id, &user.id, "duplicate".into(), 3, None)
+                .await,
+            Err(AppError::InvalidState(_))
+        ));
+        assert_eq!(
+            service
+                .get_conversation(&id)
+                .await
+                .unwrap()
+                .unwrap()
+                .messages()
+                .len(),
+            2
+        );
     }
 
     /// Count messages for a conversation (for CASCADE DELETE verification)
@@ -744,16 +886,10 @@ mod tests {
         .unwrap_or(0)
     }
 
-    // ============================================================================
-    // Category 1: Conversation Lifecycle (P0)
-    // ============================================================================
-
     #[tokio::test]
     async fn test_create_conversation_with_system_prompt() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
         let result = service
             .create_conversation(
                 "Test Chat".to_string(),
@@ -762,7 +898,6 @@ mod tests {
             )
             .await;
 
-        // ASSERT
         let conversation = result.expect("create_conversation should succeed");
         assert_eq!(conversation.title, "Test Chat");
         assert_eq!(conversation.model_name, "claude-sonnet-4-5-20250929");
@@ -777,10 +912,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_conversation_rejects_empty_title() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
         let result = service
             .create_conversation(
                 "".to_string(),
@@ -789,7 +922,6 @@ mod tests {
             )
             .await;
 
-        // ASSERT
         assert!(result.is_err());
         match result {
             Err(AppError::InvalidInput(msg)) => {
@@ -801,7 +933,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_conversation_loads_aggregate() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -813,16 +944,13 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // Add a message
         service
             .add_user_message(&conversation.id.to_string(), "Hello!".to_string(), 10)
             .await
             .expect("add_user_message should succeed");
 
-        // ACT
         let result = service.get_conversation(&conversation.id.to_string()).await;
 
-        // ASSERT
         let aggregate = result
             .expect("get_conversation should succeed")
             .expect("Conversation should exist");
@@ -836,23 +964,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_conversation_returns_none_for_missing() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
         let result = service.get_conversation("nonexistent-id").await;
 
-        // ASSERT
         let option = result.expect("get_conversation should succeed");
         assert!(option.is_none());
     }
 
     #[tokio::test]
     async fn test_list_conversations_with_pagination() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // Create 5 conversations
         for i in 0..5 {
             service
                 .create_conversation(
@@ -864,7 +987,6 @@ mod tests {
                 .expect("create should succeed");
         }
 
-        // ACT
         let page1 = service
             .list_conversations(Some(3), Some(0))
             .await
@@ -874,11 +996,9 @@ mod tests {
             .await
             .expect("list should succeed");
 
-        // ASSERT
         assert_eq!(page1.len(), 3);
         assert_eq!(page2.len(), 2);
 
-        // Verify no overlap
         let page1_ids: Vec<_> = page1.iter().map(|c| c.id.clone()).collect();
         let page2_ids: Vec<_> = page2.iter().map(|c| c.id.clone()).collect();
         assert!(page1_ids.iter().all(|id| !page2_ids.contains(id)));
@@ -886,7 +1006,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_rename_conversation() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -898,13 +1017,11 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         service
             .rename_conversation(&conversation.id.to_string(), "New Title".to_string())
             .await
             .expect("rename should succeed");
 
-        // ASSERT
         let updated = service
             .get_conversation(&conversation.id.to_string())
             .await
@@ -914,13 +1031,8 @@ mod tests {
         assert_eq!(updated.conversation().title, "New Title");
     }
 
-    // ============================================================================
-    // Category 2: Message Management (P0)
-    // ============================================================================
-
     #[tokio::test]
     async fn test_add_user_message() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -932,12 +1044,10 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         let result = service
             .add_user_message(&conversation.id.to_string(), "Hello!".to_string(), 10)
             .await;
 
-        // ASSERT
         let message = result.expect("add_user_message should succeed");
         assert_eq!(message.content, "Hello!");
         assert_eq!(message.tokens, 10);
@@ -947,7 +1057,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_assistant_message() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -959,12 +1068,10 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         let result = service
             .add_assistant_message(&conversation.id.to_string(), "Hi there!".to_string(), 20)
             .await;
 
-        // ASSERT
         let message = result.expect("add_assistant_message should succeed");
         assert_eq!(message.content, "Hi there!");
         assert_eq!(message.tokens, 20);
@@ -973,7 +1080,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_assistant_message_with_metadata() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -987,7 +1093,6 @@ mod tests {
 
         let metadata = r#"{"sources": [{"title": "doc1", "score": 0.9}]}"#;
 
-        // ACT
         let result = service
             .add_assistant_message_with_metadata(
                 &conversation.id.to_string(),
@@ -997,7 +1102,6 @@ mod tests {
             )
             .await;
 
-        // ASSERT
         let message = result.expect("add_assistant_message_with_metadata should succeed");
         assert_eq!(message.content, "Answer with sources");
         assert_eq!(message.tokens, 50);
@@ -1007,7 +1111,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_message_rejects_empty_content() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1019,12 +1122,10 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         let result = service
             .add_user_message(&conversation.id.to_string(), "".to_string(), 0)
             .await;
 
-        // ASSERT
         assert!(result.is_err());
         match result {
             Err(AppError::InvalidInput(msg)) => {
@@ -1036,17 +1137,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_message_to_nonexistent_conversation() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
         let result = service
             .add_user_message("fake-conversation-id", "Orphan message".to_string(), 10)
             .await;
 
-        // ASSERT
         assert!(result.is_err());
-        // Should be Database error or NotFound due to foreign key constraint
         match result {
             Err(AppError::Database(_)) | Err(AppError::NotFound(_)) => {}
             _ => panic!("Expected AppError::Database or AppError::NotFound"),
@@ -1055,7 +1152,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_conversation_to_token_limit() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1067,7 +1163,6 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // Add 5 messages (100 tokens each)
         for i in 0..5 {
             service
                 .add_user_message(&conversation.id.to_string(), format!("Message {}", i), 100)
@@ -1075,13 +1170,11 @@ mod tests {
                 .expect("add message should succeed");
         }
 
-        // ACT
         service
             .prune_conversation_to_limit(&conversation.id.to_string(), 250)
             .await
             .expect("prune should succeed");
 
-        // ASSERT
         let aggregate = service
             .get_conversation(&conversation.id.to_string())
             .await
@@ -1094,7 +1187,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_rejects_invalid_token_limit() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1106,12 +1198,10 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         let result = service
             .prune_conversation_to_limit(&conversation.id.to_string(), 0)
             .await;
 
-        // ASSERT
         assert!(result.is_err());
         match result {
             Err(AppError::InvalidInput(msg)) => {
@@ -1121,13 +1211,8 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // Category 3: CASCADE DELETE Testing (P0 - CRITICAL)
-    // ============================================================================
-
     #[tokio::test]
     async fn test_delete_conversation_cascades_to_messages() {
-        // ARRANGE
         let (service, pool) = create_test_service().await;
 
         let conversation = service
@@ -1141,7 +1226,6 @@ mod tests {
 
         let conv_id = conversation.id.to_string();
 
-        // Add 3 messages
         service
             .add_user_message(&conv_id, "msg1".to_string(), 10)
             .await
@@ -1155,18 +1239,14 @@ mod tests {
             .await
             .expect("add message should succeed");
 
-        // Verify messages exist
         let before_count = count_messages(&pool, &conv_id).await;
         assert_eq!(before_count, 3);
 
-        // ACT
         service
             .delete_conversation(&conv_id)
             .await
             .expect("delete should succeed");
 
-        // ASSERT
-        // 1. Conversation deleted
         let conv_result = service
             .get_conversation(&conv_id)
             .await
@@ -1180,7 +1260,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_conversation_cascades_to_document_references() {
-        // ARRANGE
         let (service, pool) = create_test_service().await;
 
         let conversation = service
@@ -1194,7 +1273,6 @@ mod tests {
 
         let conv_id = conversation.id.to_string();
 
-        // Add 2 document references
         service
             .add_document_reference(
                 &conv_id,
@@ -1214,18 +1292,14 @@ mod tests {
             .await
             .expect("add reference should succeed");
 
-        // Verify refs exist
         let before_count = count_document_refs(&pool, &conv_id).await;
         assert_eq!(before_count, 2);
 
-        // ACT
         service
             .delete_conversation(&conv_id)
             .await
             .expect("delete should succeed");
 
-        // ASSERT
-        // **CRITICAL**: Verify document references cascade deleted
         let after_count = count_document_refs(&pool, &conv_id).await;
         assert_eq!(
             after_count, 0,
@@ -1235,13 +1309,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_nonexistent_conversation() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
         let result = service.delete_conversation("nonexistent-id").await;
 
-        // ASSERT
         assert!(result.is_err());
         match result {
             Err(AppError::NotFound(_)) => {}
@@ -1251,11 +1322,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_orphaned_messages_prevented_by_foreign_key() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
-        // Attempt to add message to nonexistent conversation
         let result = service
             .add_user_message(
                 "fake-conversation-id",
@@ -1264,9 +1332,7 @@ mod tests {
             )
             .await;
 
-        // ASSERT
         assert!(result.is_err());
-        // Should be Database error due to foreign key constraint
         match result {
             Err(AppError::Database(msg)) | Err(AppError::NotFound(msg)) => {
                 let msg_lower = msg.to_lowercase();
@@ -1282,13 +1348,8 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // Category 4: System Prompt and Metadata (P1)
-    // ============================================================================
-
     #[tokio::test]
     async fn test_update_system_prompt() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1300,13 +1361,11 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         service
             .update_system_prompt(&conversation.id.to_string(), Some("New prompt".to_string()))
             .await
             .expect("update should succeed");
 
-        // ASSERT
         let updated = service
             .get_conversation(&conversation.id.to_string())
             .await
@@ -1321,7 +1380,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_system_prompt_to_none() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1333,13 +1391,11 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         service
             .update_system_prompt(&conversation.id.to_string(), None)
             .await
             .expect("update should succeed");
 
-        // ASSERT
         let updated = service
             .get_conversation(&conversation.id.to_string())
             .await
@@ -1349,13 +1405,8 @@ mod tests {
         assert_eq!(updated.conversation().system_prompt, None);
     }
 
-    // ============================================================================
-    // Category 5: Document References (P1)
-    // ============================================================================
-
     #[tokio::test]
     async fn test_add_document_reference() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1367,7 +1418,6 @@ mod tests {
             .await
             .expect("create should succeed");
 
-        // ACT
         service
             .add_document_reference(
                 &conversation.id.to_string(),
@@ -1378,7 +1428,6 @@ mod tests {
             .await
             .expect("add reference should succeed");
 
-        // ASSERT
         let aggregate = service
             .get_conversation(&conversation.id.to_string())
             .await
@@ -1394,7 +1443,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_conversation_includes_document_references() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1408,7 +1456,6 @@ mod tests {
 
         let conv_id = conversation.id.to_string();
 
-        // Add 2 document references
         service
             .add_document_reference(
                 &conv_id,
@@ -1428,10 +1475,8 @@ mod tests {
             .await
             .expect("add reference should succeed");
 
-        // ACT
         let result = service.get_conversation(&conv_id).await;
 
-        // ASSERT
         let aggregate = result
             .expect("get should succeed")
             .expect("Conversation should exist");
@@ -1439,13 +1484,8 @@ mod tests {
         assert_eq!(aggregate.document_context().len(), 2);
     }
 
-    // ============================================================================
-    // Category 6: Two-Phase Commit (P2)
-    // ============================================================================
-
     #[tokio::test]
     async fn test_two_phase_commit_pattern() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1459,8 +1499,6 @@ mod tests {
 
         let conv_id = conversation.id.to_string();
 
-        // ACT
-        // Phase 1: Add message with "pending" status
         let result = service
             .add_message_with_status(
                 &conv_id,
@@ -1474,15 +1512,11 @@ mod tests {
         let message = result.expect("add_message_with_status should succeed");
         assert_eq!(message.status, "pending");
 
-        // Simulate LLM processing...
-
-        // Phase 2: Update status to "completed"
         service
             .update_message_status(&message.id.to_string(), "completed".to_string())
             .await
             .expect("update_message_status should succeed");
 
-        // ASSERT
         let aggregate = service
             .get_conversation(&conv_id)
             .await
@@ -1495,7 +1529,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_phase_commit_failure() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
         let conversation = service
@@ -1509,7 +1542,6 @@ mod tests {
 
         let conv_id = conversation.id.to_string();
 
-        // Phase 1: Add message with "pending" status
         let message = service
             .add_message_with_status(
                 &conv_id,
@@ -1521,16 +1553,11 @@ mod tests {
             .await
             .expect("add_message_with_status should succeed");
 
-        // Simulate LLM failure...
-
-        // ACT
-        // Phase 2: Update status to "failed"
         service
             .update_message_status(&message.id.to_string(), "failed".to_string())
             .await
             .expect("update_message_status should succeed");
 
-        // ASSERT
         let aggregate = service
             .get_conversation(&conv_id)
             .await
@@ -1543,15 +1570,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_message_status_nonexistent_message() {
-        // ARRANGE
         let (service, _pool) = create_test_service().await;
 
-        // ACT
         let result = service
             .update_message_status("fake-message-id", "completed".to_string())
             .await;
 
-        // ASSERT
         assert!(result.is_err());
         match result {
             Err(AppError::NotFound(_)) => {}

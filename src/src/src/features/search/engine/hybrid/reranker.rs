@@ -1,12 +1,7 @@
-//! Search Reranker Implementation
-//!
-//! This module implements reranking for search results.
-//!
-//! # Migration Status
-//! - [ ] To be moved from `search/reranker.rs`
-//!
-//! # Algorithm
-//! - Cross-encoder reranking
-//! - Improves relevance of top results
+//! Compatibility namespace for the shared search reranker.
 
-// Placeholder - implementation will be migrated in Phase 3
+pub use crate::features::search::engine::reranker::{
+    blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
+    Reranker, RerankerService,
+};
+pub use crate::features::search::engine::Qwen3RerankerService;

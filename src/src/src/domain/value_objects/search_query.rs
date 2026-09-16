@@ -67,14 +67,12 @@ impl SearchQuery {
         // Trim whitespace
         let trimmed = query.trim();
 
-        // Check if empty
         if trimmed.is_empty() {
             return Err(AppError::InvalidInput(
                 "Search query cannot be empty".into(),
             ));
         }
 
-        // Check length constraints
         if trimmed.len() < MIN_QUERY_LENGTH {
             return Err(AppError::InvalidInput(format!(
                 "Search query must be at least {} character(s)",
@@ -182,10 +180,6 @@ impl AsRef<str> for SearchQuery {
         &self.0
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

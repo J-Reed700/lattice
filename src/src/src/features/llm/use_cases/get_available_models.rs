@@ -34,7 +34,6 @@ impl GetAvailableModelsUseCase {
     }
 
     pub async fn execute(&self) -> Result<AvailableModelsDto, AppError> {
-        // Get all models from catalog (search with empty query to get all)
         let external_models = self.catalog.search_models("", 100).await?;
 
         // Convert to domain models and keep only directly downloadable entries
@@ -44,14 +43,12 @@ impl GetAvailableModelsUseCase {
             .filter(|model| model.default_filename.is_some() || !model.files.is_empty())
             .collect();
 
-        // Sort by size (smallest first)
         models.sort_by(|a, b| {
             a.size_gb
                 .partial_cmp(&b.size_gb)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Convert to DTOs
         let model_dtos = models
             .into_iter()
             .map(|m| ModelInfoDto {
@@ -95,8 +92,6 @@ mod tests {
         assert!(result.is_ok());
         let available = result.unwrap();
 
-        // Verify sorted by size (smallest first)
-        // Size estimation is heuristic-based, so we just verify ordering is correct
         let sizes: Vec<f64> = available.models.iter().map(|m| m.size_gb).collect();
         let mut sorted_sizes = sizes.clone();
         sorted_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -105,7 +100,6 @@ mod tests {
             "Models should be sorted by size (smallest first)"
         );
 
-        // Verify we got all 6 models
         assert_eq!(available.models.len(), 6);
     }
 
@@ -119,7 +113,6 @@ mod tests {
         assert!(result.is_ok());
         let available = result.unwrap();
 
-        // Find phi-3-mini and verify DTO fields are present and valid
         let phi3 = available
             .models
             .iter()
@@ -160,7 +153,6 @@ mod tests {
         assert!(result.is_ok());
         let available = result.unwrap();
 
-        // Filter for small models (< 2GB)
         let small_models: Vec<_> = available
             .models
             .iter()
@@ -169,7 +161,6 @@ mod tests {
 
         assert_eq!(small_models.len(), 2, "Should have 2 models < 2GB");
 
-        // Verify all filtered models are indeed < 2GB
         for model in small_models {
             assert!(model.size_gb < 2.0);
         }

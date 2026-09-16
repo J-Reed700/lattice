@@ -45,7 +45,6 @@ mod tests {
 
         let response = use_case.execute(request).await.unwrap();
 
-        // Mock service returns 0 for auto-tag
         assert_eq!(response.tagged_count, 0);
         assert!(response.status.contains("0 documents"));
     }

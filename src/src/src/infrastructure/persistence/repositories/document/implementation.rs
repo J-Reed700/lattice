@@ -167,7 +167,6 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        // Use optimized bulk insert operation
         ops::save_batch_optimized(&mut tx, entities).await?;
 
         tx.commit()
@@ -193,7 +192,6 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        // Use optimized bulk delete operation
         ops::delete_batch_optimized(&mut tx, ids).await?;
 
         tx.commit()

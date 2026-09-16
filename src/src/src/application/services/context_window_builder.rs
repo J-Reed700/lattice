@@ -4,7 +4,7 @@
 //!
 //! # Architecture
 //!
-//! This service follows the "bricks and studs" philosophy:
+//! The service is split into small, composable operations:
 //! - **Self-contained**: All logic for context building is here
 //! - **Token-aware**: Respects model token limits (75% for context, 25% for generation)
 //! - **Chronological**: Returns messages in oldest-to-newest order
@@ -120,6 +120,14 @@ impl ContextWindowBuilder {
                 AppError::NotFound(format!("Conversation not found: {}", conversation_id))
             })?;
 
+        Ok(self.build_from_aggregate(&aggregate))
+    }
+
+    /// Assemble a window from an already loaded snapshot without a second read.
+    pub fn build_from_aggregate(
+        &self,
+        aggregate: &crate::domain::conversation::ConversationAggregate,
+    ) -> Vec<String> {
         let mut context_rev = Vec::new();
         let mut total_tokens = 0;
 
@@ -148,9 +156,7 @@ impl ContextWindowBuilder {
         }
 
         context_rev.reverse();
-        let context = context_rev;
-
-        Ok(context)
+        context_rev
     }
 }
 

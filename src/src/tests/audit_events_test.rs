@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 use insta::assert_json_snapshot;
 use lattice::audit::event::{AuditAction, AuditEvent, AuditResult};

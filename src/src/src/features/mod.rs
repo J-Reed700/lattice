@@ -36,8 +36,11 @@ pub mod references;
 pub mod search;
 pub mod settings;
 pub mod stats;
+pub mod summaries;
 pub mod tags;
 pub mod transcription;
 pub mod updates;
 pub mod vault;
 pub mod web;
+
+pub mod study;

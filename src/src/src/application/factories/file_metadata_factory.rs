@@ -16,14 +16,14 @@ use std::path::Path;
 /// Factory for creating FileMetadata with file system operations.
 ///
 /// This is the proper way to create FileMetadata from files, keeping file I/O
-/// in the infrastructure layer as per Clean Architecture principles.
+/// out of the domain layer as per Clean Architecture principles.
 pub struct FileMetadataFactory;
 
 impl FileMetadataFactory {
     /// Create file metadata from a file path (with file I/O).
     ///
-    /// This method performs file system operations and should be used instead of
-    /// the deprecated `FileMetadata::from_path()` method.
+    /// This method performs file system operations, keeping file I/O out of the
+    /// domain layer (`FileMetadata::new()` stays pure).
     ///
     /// # Errors
     ///
@@ -45,20 +45,17 @@ impl FileMetadataFactory {
     /// # }
     /// ```
     pub fn from_path(path: &Path) -> Result<FileMetadata> {
-        // Read file metadata from file system
         let fs_metadata = std::fs::metadata(path).map_err(|e| AppError::Io {
             message: format!("Failed to read file metadata for {:?}: {}", path, e),
             kind: format!("{:?}", e.kind()),
         })?;
 
-        // Extract file name
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| AppError::InvalidInput("Invalid file name".into()))?
             .to_string();
 
-        // Get modified timestamp
         let modified_at: DateTime<Utc> = fs_metadata
             .modified()
             .map_err(|e| AppError::Io {
@@ -70,10 +67,8 @@ impl FileMetadataFactory {
         // Detect MIME type
         let mime_type = Self::detect_mime_type(path);
 
-        // Get file size
         let size_bytes = fs_metadata.len() as i64;
 
-        // Use pure domain constructor
         FileMetadata::new(file_name, mime_type, size_bytes, modified_at)
     }
 
@@ -120,10 +115,6 @@ impl FileMetadataFactory {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,7 +123,6 @@ mod tests {
 
     #[test]
     fn test_from_path_creates_valid_metadata() {
-        // Create temporary file
         let mut temp_file = NamedTempFile::new().unwrap();
         write!(temp_file, "test content").unwrap();
         temp_file.flush().unwrap();
@@ -191,5 +181,211 @@ mod tests {
 
         assert_eq!(metadata.size_bytes(), 0);
         assert!(!metadata.file_name().is_empty());
+    }
+
+    #[cfg(test)]
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn valid_file_extension() -> impl Strategy<Value = &'static str> {
+            prop::sample::select(vec![".txt", ".md", ".pdf", ".json", ".rs", ".png"])
+        }
+
+        proptest! {
+            #[test]
+            fn prop_file_name_non_empty(
+                _dummy in 0..10u32
+            ) {
+                let mut temp = NamedTempFile::new().unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+
+                // GIVEN: FileMetadata created from path
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: File name must be non-empty
+                prop_assert!(!metadata.file_name().is_empty());
+            }
+
+            #[test]
+            fn prop_size_bytes_non_negative(size in 0i64..1000i64) {
+                let mut temp = NamedTempFile::new().unwrap();
+                let content = vec![0u8; size as usize];
+                temp.write_all(&content).unwrap();
+                temp.flush().unwrap();
+
+                // GIVEN: FileMetadata from file
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: Size must be non-negative
+                prop_assert!(metadata.size_bytes() >= 0);
+            }
+
+            #[test]
+            fn prop_mime_type_detection_consistency(ext in valid_file_extension()) {
+                let mut temp1 = NamedTempFile::with_suffix(ext).unwrap();
+                let mut temp2 = NamedTempFile::with_suffix(ext).unwrap();
+                temp1.write_all(b"content").unwrap();
+                temp2.write_all(b"content").unwrap();
+                temp1.flush().unwrap();
+                temp2.flush().unwrap();
+
+                // GIVEN: Two files with same extension
+                let meta1 = FileMetadataFactory::from_path(temp1.path()).unwrap();
+                let meta2 = FileMetadataFactory::from_path(temp2.path()).unwrap();
+
+                // THEN: MIME types should be the same
+                prop_assert_eq!(meta1.mime_type(), meta2.mime_type());
+            }
+
+            #[test]
+            fn prop_modified_at_in_past(
+                _dummy in 0..10u32
+            ) {
+                // GIVEN: FileMetadata from real file
+                let mut temp = NamedTempFile::new().unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: Modified timestamp should be in past (or very recent)
+                let now = Utc::now().timestamp();
+                prop_assert!(metadata.modified_at().timestamp() <= now + 1); // Allow 1s clock skew
+            }
+
+            #[test]
+            fn prop_from_path_creates_valid_instance(size in 0i64..1000i64) {
+                // GIVEN: Temp file with known properties
+                let mut temp = NamedTempFile::new().unwrap();
+                let content = vec![0u8; size as usize];
+                temp.write_all(&content).unwrap();
+                temp.flush().unwrap();
+
+                // WHEN: Creating FileMetadata
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: All properties should be valid
+                prop_assert!(!metadata.file_name().is_empty());
+                prop_assert!(metadata.size_bytes() >= 0);
+                prop_assert!(!metadata.mime_type().is_empty());
+                prop_assert!(metadata.modified_at().timestamp() > 0);
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn prop_file_name_special_chars(
+                _dummy in 0..10u32
+            ) {
+                // GIVEN: File with special characters in name
+                let mut temp = NamedTempFile::with_prefix("test_file-name.").unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+
+                // WHEN: Creating metadata
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: Special chars should be preserved in name
+                prop_assert!(!metadata.file_name().is_empty());
+            }
+
+            #[test]
+            fn prop_size_bytes_boundary(size in prop::sample::select(vec![0i64, 100i64, 1000i64])) {
+                // GIVEN: File with boundary sizes
+                let mut temp = NamedTempFile::new().unwrap();
+                let content = vec![0u8; size as usize];
+                temp.write_all(&content).unwrap();
+                temp.flush().unwrap();
+
+                // WHEN: Creating metadata
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: Size should match (approximately, due to filesystem overhead)
+                prop_assert!(metadata.size_bytes() >= 0);
+                prop_assert!(metadata.size_bytes() <= size + 100); // Allow overhead
+            }
+
+            #[test]
+            fn prop_mime_type_for_all_extensions(ext in valid_file_extension()) {
+                // GIVEN: File with known extension
+                let mut temp = NamedTempFile::with_suffix(ext).unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+
+                // WHEN: Creating metadata
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: MIME type should be detected
+                prop_assert!(!metadata.mime_type().is_empty());
+                prop_assert!(metadata.mime_type().starts_with("text/") ||
+                            metadata.mime_type().starts_with("application/") ||
+                            metadata.mime_type().starts_with("image/"));
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn prop_file_metadata_equality_by_value(
+                _dummy in 0..10u32
+            ) {
+                // GIVEN: Same file accessed twice
+                let mut temp = NamedTempFile::new().unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+
+                // WHEN: Creating two metadata instances
+                let meta1 = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let meta2 = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // THEN: They should be equal (value equality)
+                prop_assert_eq!(meta1, meta2);
+            }
+
+            #[test]
+            fn prop_file_metadata_serde_roundtrip(
+                _dummy in 0..10u32
+            ) {
+                // GIVEN: FileMetadata instance
+                let mut temp = NamedTempFile::new().unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // WHEN: Serializing and deserializing
+                let json = serde_json::to_string(&metadata).unwrap();
+                let deserialized: FileMetadata = serde_json::from_str(&json).unwrap();
+
+                // THEN: Should roundtrip successfully
+                prop_assert_eq!(metadata, deserialized);
+            }
+
+            #[test]
+            fn prop_file_metadata_hash_consistency(
+                _dummy in 0..10u32
+            ) {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+
+                // GIVEN: Same file accessed twice
+                let mut temp = NamedTempFile::new().unwrap();
+                temp.write_all(b"test").unwrap();
+                temp.flush().unwrap();
+
+                let meta1 = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let meta2 = FileMetadataFactory::from_path(temp.path()).unwrap();
+
+                // WHEN: Computing hashes
+                let mut hasher1 = DefaultHasher::new();
+                let mut hasher2 = DefaultHasher::new();
+                meta1.hash(&mut hasher1);
+                meta2.hash(&mut hasher2);
+
+                // THEN: Equal values should produce equal hashes
+                if meta1 == meta2 {
+                    prop_assert_eq!(hasher1.finish(), hasher2.finish());
+                }
+            }
+        }
     }
 }

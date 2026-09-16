@@ -1,4 +1,4 @@
-//! Corpus-shape domain entities (Phase 5.3).
+//! Corpus-shape domain entities.
 //!
 //! Clustering runs over document embeddings, producing stable, LLM-labeled
 //! clusters that act as a read-only overlay on the lattice.
@@ -37,13 +37,21 @@ impl LabelSource {
 
     /// Parse from storage form. Unknown values round-trip to `Fallback`
     /// so old data never crashes the UI.
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_storage(s: &str) -> Self {
         match s {
             "llm" => LabelSource::Llm,
             "inherited_exact" => LabelSource::InheritedExact,
             "inherited_jaccard" => LabelSource::InheritedJaccard,
             _ => LabelSource::Fallback,
         }
+    }
+}
+
+impl std::str::FromStr for LabelSource {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_storage(value))
     }
 }
 
@@ -84,4 +92,25 @@ pub struct ClusterMember {
     pub document_id: String,
     pub membership_probability: f32,
     pub is_representative: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LabelSource;
+
+    #[test]
+    fn standard_parser_preserves_storage_fallback() {
+        for value in [
+            "llm",
+            "inherited_exact",
+            "inherited_jaccard",
+            "fallback",
+            "future_value",
+        ] {
+            assert_eq!(
+                value.parse::<LabelSource>().unwrap(),
+                LabelSource::from_storage(value)
+            );
+        }
+    }
 }

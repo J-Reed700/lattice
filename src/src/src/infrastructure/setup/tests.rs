@@ -1,9 +1,5 @@
-use super::*;
-
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
-
     // Note: Full integration tests for setup functions require Tauri AppHandle
     // which is not available in unit test context. These tests focus on
     // verifying error message formatting and structure.

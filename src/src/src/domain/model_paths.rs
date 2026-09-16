@@ -1,14 +1,14 @@
 //! Model Paths Value Object
 //!
-//! Centralized path management for model storage with automatic migration.
+//! Centralized path management for model storage.
 
 use crate::shared::error::AppError;
 use std::path::{Path, PathBuf};
 
 /// Value object for model storage paths.
 ///
-/// Provides a unified location (`~/.cache/lattice/models/`) with
-/// automatic detection and migration from legacy locations.
+/// Every model lives under the single unified location
+/// (`~/.cache/lattice/models/`).
 ///
 /// # Security
 ///
@@ -22,17 +22,12 @@ use std::path::{Path, PathBuf};
 ///
 /// let paths = ModelPaths::new("phi-3-mini")?;
 /// println!("Unified path: {}", paths.unified_path().display());
-///
-/// if let Some(legacy) = paths.legacy_path() {
-///     println!("Legacy path exists: {}", legacy.display());
-/// }
 /// # Ok::<(), lattice::shared::error::AppError>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct ModelPaths {
     model_id: String,
     unified_path: PathBuf,
-    legacy_path: Option<PathBuf>,
 }
 
 impl ModelPaths {
@@ -57,12 +52,10 @@ impl ModelPaths {
         Self::validate_model_id(model_id)?;
 
         let unified_path = Self::build_unified_path(model_id)?;
-        let legacy_path = Self::detect_legacy_path(model_id)?;
 
         Ok(Self {
             model_id: model_id.to_string(),
             unified_path,
-            legacy_path,
         })
     }
 
@@ -74,21 +67,9 @@ impl ModelPaths {
         &self.unified_path
     }
 
-    /// Get the legacy storage path if it exists.
-    ///
-    /// Returns `Some(path)` if the old `~/.lattice/models/{model_id}/` exists.
-    pub fn legacy_path(&self) -> Option<&Path> {
-        self.legacy_path.as_deref()
-    }
-
     /// Get the model ID.
     pub fn model_id(&self) -> &str {
         &self.model_id
-    }
-
-    /// Check if migration is needed (legacy location exists).
-    pub fn needs_migration(&self) -> bool {
-        self.legacy_path.is_some()
     }
 
     /// Get the full path for a model file.
@@ -122,7 +103,7 @@ impl ModelPaths {
     /// This is fallible on purpose. `filename` reaches here as the
     /// base64url-decoded second segment of a frontend-supplied download id,
     /// and `Path::join` **discards the base when the joined component is
-    /// absolute** — so `paths.file_path("/Users/josh/.zshenv")` used to
+    /// absolute** — so `paths.file_path("/Users/example/.zshenv")` used to
     /// return exactly that path, dropping the models root entirely and
     /// letting a download write anywhere the user can write.
     pub fn file_path(&self, filename: &str) -> Result<PathBuf, AppError> {
@@ -214,20 +195,6 @@ impl ModelPaths {
     fn build_unified_path(model_id: &str) -> Result<PathBuf, AppError> {
         Ok(Self::models_root()?.join(model_id))
     }
-
-    /// Detect if legacy path exists: `~/.lattice/models/{model_id}`
-    fn detect_legacy_path(model_id: &str) -> Result<Option<PathBuf>, AppError> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| AppError::InvalidInput("Home directory not found".to_string()))?;
-
-        let legacy_path = home.join(".lattice").join("models").join(model_id);
-
-        if legacy_path.exists() && legacy_path.is_dir() {
-            Ok(Some(legacy_path))
-        } else {
-            Ok(None)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -242,7 +209,7 @@ mod tests {
     fn file_path_rejects_absolute_filename() {
         let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
         assert!(
-            paths.file_path("/Users/josh/.zshenv").is_err(),
+            paths.file_path("/Users/example/.zshenv").is_err(),
             "an absolute filename must not escape the models root"
         );
     }

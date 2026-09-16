@@ -1,5 +1,5 @@
 //! Test helpers for inference tests
-use lattice::infrastructure::llm::traits::GenerationConfig;
+use lattice::features::llm::engine::traits::GenerationConfig;
 
 pub struct GenerationConfigFixture;
 

@@ -24,13 +24,15 @@ pub fn get_user_synonyms_path() -> PathBuf {
 /// Returns an empty HashMap if the file doesn't exist.
 /// Returns an error if the file exists but cannot be parsed.
 pub fn load_user_synonyms() -> Result<HashMap<String, Vec<String>>> {
-    let config_path = get_user_synonyms_path();
+    load_user_synonyms_from(&get_user_synonyms_path())
+}
 
+fn load_user_synonyms_from(config_path: &std::path::Path) -> Result<HashMap<String, Vec<String>>> {
     if !config_path.exists() {
         return Ok(HashMap::new());
     }
 
-    let content = fs::read_to_string(&config_path)?;
+    let content = fs::read_to_string(config_path)?;
     let synonyms: HashMap<String, Vec<String>> = serde_json::from_str(&content)?;
 
     Ok(synonyms)
@@ -66,8 +68,8 @@ mod tests {
 
     #[test]
     fn test_load_nonexistent_file() {
-        env::set_var("HOME", "/nonexistent_test_dir_12345");
-        let result = load_user_synonyms();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = load_user_synonyms_from(&temp_dir.path().join("missing.json"));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), HashMap::new());
     }

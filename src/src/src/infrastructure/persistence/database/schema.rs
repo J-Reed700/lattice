@@ -9,9 +9,6 @@ pub const SCHEMA_VERSION: i32 = 18;
 /// Initialize database schema
 /// Note: This now runs migrations instead of creating tables directly
 pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
-    use sqlx::migrate::MigrateDatabase;
-
-    // Run all migrations
     sqlx::migrate!("./migrations")
         .run(pool)
         .await

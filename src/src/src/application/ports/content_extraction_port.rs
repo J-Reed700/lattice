@@ -16,6 +16,8 @@ pub struct ExtractedContentData {
     pub mime_type: String,
     /// Number of pages (if applicable)
     pub page_count: Option<usize>,
+    /// One-based physical PDF page and UTF-8 byte offsets into text.
+    pub page_ranges: Vec<(usize, usize, usize)>,
     /// Word count
     pub word_count: usize,
     /// Character count

@@ -20,7 +20,7 @@ use std::sync::Arc;
 ///
 /// # Architecture
 ///
-/// Following the "bricks and studs" philosophy:
+/// Implementations keep URL retrieval behind a small service boundary:
 /// - **Stud**: Trait defines public contract
 /// - **Brick**: Concrete implementation handles orchestration
 /// - **Regeneratable**: Can swap implementations (real vs mock)
@@ -173,7 +173,6 @@ impl BatchUrlImportServiceTrait for MockBatchUrlImportService {
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        // Create mock status
         let status = BatchJobStatus {
             id: job_id.clone(),
             job_type: "url_import".to_string(),
@@ -223,7 +222,6 @@ impl BatchUrlImportServiceTrait for MockBatchUrlImportService {
             return Err(AppError::NotFound("Mock job not found".to_string()));
         }
 
-        // Update mock status to cancelled
         let mut statuses = self.mock_statuses.lock();
         if let Some(status) = statuses.get_mut(job_id) {
             status.status = "cancelled".to_string();

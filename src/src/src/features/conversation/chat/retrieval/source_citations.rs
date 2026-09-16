@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 
 use crate::features::function_calling::dto::WebSearchResult;
-use crate::features::qa::dto::{SourceChunkExcerptDto, SourceDto};
+use crate::features::qa::dto::SourceDto;
 use crate::features::search::dto::SearchResultDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::build_excerpt;
@@ -16,91 +16,36 @@ use crate::shared::text_utils::build_excerpt;
 /// appending tool/web sources). Numbering in two places is what made
 /// footnotes open the wrong document.
 pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
-    for (index, source) in sources.iter_mut().enumerate() {
-        source.citation_id = Some((index + 1) as u32);
+    let mut next = sources
+        .iter()
+        .filter_map(|s| s.citation_id)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    for source in sources {
+        if source.citation_id.is_none() {
+            source.citation_id = Some(next);
+            next += 1;
+        }
     }
 }
 
-/// Map each document id to the citation number the model was given.
-pub(super) fn citation_ids_by_document(sources: &[SourceDto]) -> HashMap<String, u32> {
+/// Map each chunk id to the citation number the model was given.
+pub(super) fn citation_ids_by_chunk(sources: &[SourceDto]) -> HashMap<String, u32> {
     sources
         .iter()
-        .filter_map(|source| {
-            source
-                .citation_id
-                .map(|id| (source.document_id.clone(), id))
-        })
+        .filter_map(|source| source.citation_id.map(|id| (source.chunk_id.clone(), id)))
         .collect()
 }
 
 pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
-    let mut grouped_by_doc: HashMap<String, Vec<SourceDto>> = HashMap::new();
-
-    for source in sources {
-        grouped_by_doc
-            .entry(source.document_id.clone())
-            .or_default()
-            .push(source);
-    }
-
-    let mut deduped: Vec<SourceDto> = Vec::with_capacity(grouped_by_doc.len());
-
-    for mut doc_sources in grouped_by_doc.into_values() {
-        doc_sources.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let mut representative = doc_sources.remove(0);
-
-        let mut seen_chunks: HashSet<String> = HashSet::new();
-        let mut chunk_excerpts: Vec<SourceChunkExcerptDto> = Vec::new();
-
-        for source in std::iter::once(&representative).chain(doc_sources.iter()) {
-            let Some(excerpt) = super::source_excerpt_text(source) else {
-                continue;
-            };
-
-            let dedupe_key = format!("{}:{}", source.chunk_id, excerpt);
-            if !seen_chunks.insert(dedupe_key) {
-                continue;
-            }
-
-            chunk_excerpts.push(SourceChunkExcerptDto {
-                chunk_id: source.chunk_id.clone(),
-                excerpt,
-                section: source.section.clone(),
-                chunk_index: source.chunk_index,
-                score: source.score,
-                highlights: source.highlights.clone(),
-            });
-        }
-
-        chunk_excerpts.sort_by(|a, b| match (a.chunk_index, b.chunk_index) {
-            (Some(left), Some(right)) => left.cmp(&right),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => b
-                .score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal),
-        });
-
-        representative.chunk_excerpts = if chunk_excerpts.is_empty() {
-            None
-        } else {
-            Some(chunk_excerpts)
-        };
-
-        deduped.push(representative);
-    }
-
-    deduped.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    deduped
+    // Keep separate passages from the same file and preserve numbers already
+    // exposed to the model when tool calls append evidence.
+    let mut seen = HashSet::new();
+    sources
+        .into_iter()
+        .filter(|source| seen.insert((source.document_id.clone(), source.chunk_id.clone())))
+        .collect()
 }
 
 pub(super) async fn build_source_citations(
@@ -204,6 +149,7 @@ pub(super) async fn build_source_citations(
         };
 
         sources.push(SourceDto {
+            page_number: chunk_meta.and_then(|c| c.page_number()),
             document_id: doc_id.to_string(),
             chunk_id: result.id.clone(),
             content: result.content.clone(),
@@ -277,6 +223,7 @@ pub(super) fn build_web_source_citations(
         };
 
         sources.push(SourceDto {
+            page_number: None,
             document_id: format!("web:{}", url),
             chunk_id: format!("web-result-{}", idx + 1),
             content,

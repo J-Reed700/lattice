@@ -29,7 +29,11 @@ struct RawCell {
 
 /// Lowercased, whitespace-collapsed form used for column-name matching.
 pub fn normalize_column(column: &str) -> String {
-    column.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    column
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 const NULL_LIKE: [&str; 7] = [
@@ -66,11 +70,7 @@ fn normalize_text(raw: &str, max_chars: usize) -> Option<String> {
     Some(truncate_chars(trimmed, max_chars))
 }
 
-fn absorb(
-    parsed: &mut ParsedRow,
-    lookup: &HashMap<String, String>,
-    map: HashMap<String, RawCell>,
-) {
+fn absorb(parsed: &mut ParsedRow, lookup: &HashMap<String, String>, map: HashMap<String, RawCell>) {
     for (key, cell) in map {
         let Some(canonical) = lookup.get(&normalize_column(&key)) else {
             continue;
@@ -144,8 +144,6 @@ fn salvage_column(raw: &str, column: &str) -> Option<(Option<String>, Option<Str
     let tail = &raw[key_position + needle.len()..];
     let tail_lower = &haystack[key_position + needle.len()..];
 
-    // Stop at the next column-looking boundary so we do not steal a later
-    // column's value. `},` is the object separator the model emits.
     let bounded = match tail.find("},") {
         Some(end) => &tail[..end + 1],
         None => tail,

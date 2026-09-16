@@ -1,5 +1,5 @@
+use crate::application::ports::unit_of_work::ModelFileRepositoryPort;
 use crate::domain::entities::model_file::ModelFile;
-use crate::domain::repositories::unit_of_work::ModelFileRepositoryPort;
 use crate::domain::value_objects::model_status::FileStatus;
 use crate::shared::error::Result;
 use async_trait::async_trait;

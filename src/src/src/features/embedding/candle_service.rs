@@ -1,16 +1,17 @@
 //! Candle-backed embedding service.
 //!
 //! Pure-Rust ONNX-free embedding inference. Replaces `OnnxEmbeddingService` for
-//! the full-cutover migration. Loads BERT-family `safetensors` checkpoints
-//! directly via `candle_transformers`. Falls back from Metal → CPU if the GPU
-//! device is unavailable.
+//! the full-cutover migration. Loads BERT-family checkpoints directly via
+//! `candle_transformers`, from `model.safetensors` when the repository
+//! publishes one and from the `pytorch_model.bin` pickle when it does not.
+//! Falls back from Metal → CPU if the GPU device is unavailable.
 //!
 //! # Architecture
 //!
 //! - `ModelArchitecture`: enum dispatch for the BERT variants we support today
 //!   (vanilla BERT, DistilBERT, XLM-RoBERTa, MPNet, Jina v2, Nomic, ModernBERT).
-//!   Decoder-style models (Gemma3, Qwen3, Llama) are explicitly rejected at
-//!   load time and surfaced via `LoadError::UnsupportedArchitecture`.
+//!   Qwen3 uses a separate causal forward pass with last-token pooling.
+//!   Other unsupported decoder families fail clearly at load time.
 //!
 //! - `PoolingStrategy`: read from `1_Pooling/config.json` when present.
 //!   Defaults to CLS for BGE/mxbai/etc. and Mean for sentence-transformers.
@@ -23,15 +24,14 @@
 //! - Dimension: read from `config.json::hidden_size`. Exposed via `dimension()`
 //!   so the USearch index can be sized to match (and re-built on mismatch).
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig, HiddenAct};
 use candle_transformers::models::distilbert::{Config as DistilBertConfig, DistilBertModel};
-use candle_transformers::models::gemma3::{Config as Gemma3Config, Model as GemmaModel};
 use candle_transformers::models::jina_bert::{
     BertModel as JinaBertModel, Config as JinaBertConfig,
 };
@@ -39,21 +39,22 @@ use candle_transformers::models::modernbert::{Config as ModernBertConfig, Modern
 use candle_transformers::models::nomic_bert::{Config as NomicBertConfig, NomicBertModel};
 use candle_transformers::models::xlm_roberta::{Config as XlmRobertaConfig, XLMRobertaModel};
 use serde::Deserialize;
-use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams, TruncationStrategy};
+use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer};
 use tokio::sync::Mutex;
 
+use crate::application::ports::embedding_port::{span_chunk_texts, sparse_not_supported};
 use crate::application::ports::EmbeddingPort;
+use crate::domain::value_objects::SparseEmbedding;
+use crate::features::embedding::late_chunking::{
+    l2_normalize_in_place, mean_pool_rows, pooling_token_indices, strategy_identity,
+    validate_chunk_ranges, EmbeddingStrategy, LateChunkingError,
+};
+use crate::features::embedding::sparse_head::{SparseHead, MAX_PASSAGE_TERMS, MAX_QUERY_TERMS};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 
-/// Maximum sequence length used during tokenization. Most BERT-family
-/// embedding models are trained on 512 tokens; longer text is truncated.
-const MAX_SEQUENCE_LENGTH: usize = 512;
-
-/// BERT-family architectures supported by this service. Decoder-style
-/// architectures (Gemma3, Qwen3, Llama) are intentionally absent — those are
-/// planned for a follow-up PR with last-token pooling.
+/// Encoder families and the Qwen3 decoder supported by the local runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelArchitecture {
     /// `model_type: "bert"` — BGE, all-MiniLM, mxbai, UAE, Granite, etc.
@@ -70,6 +71,7 @@ pub enum ModelArchitecture {
     NomicBert,
     /// `model_type: "modernbert"` — ModernBERT (RoPE + GeGLU).
     ModernBert,
+    Qwen3,
 }
 
 impl ModelArchitecture {
@@ -82,6 +84,7 @@ impl ModelArchitecture {
             "jina_bert" | "jina_bert_v2" => Some(Self::JinaBert),
             "nomic_bert" => Some(Self::NomicBert),
             "modernbert" => Some(Self::ModernBert),
+            "qwen3" => Some(Self::Qwen3),
             _ => None,
         }
     }
@@ -127,9 +130,34 @@ enum ModelVariant {
     JinaBert(JinaBertModel),
     NomicBert(NomicBertModel),
     ModernBert(ModernBert),
-    /// Decoder-style placeholder — not yet wired into `forward()`. Loading
-    /// is rejected upstream until last-token pooling is implemented.
-    Gemma3(GemmaModel),
+    Qwen3(candle_transformers::models::qwen3::Model),
+}
+
+/// The weights file Candle prefers: a memory-mappable safetensors archive.
+pub const WEIGHTS_SAFETENSORS: &str = "model.safetensors";
+
+/// The PyTorch pickle accepted when a repository never published a safetensors
+/// conversion. `BAAI/bge-m3` is that case in the curated catalog — its only
+/// root-level weights file is `pytorch_model.bin`, so requiring safetensors
+/// made the model impossible to download or load at all.
+pub const WEIGHTS_PYTORCH_BIN: &str = "pytorch_model.bin";
+
+/// The weights file to load out of `model_dir`, or `None` when it holds
+/// neither candidate.
+///
+/// Safetensors wins when both are present: it mmaps instead of materializing
+/// every tensor, and it is the format every existing model identity was
+/// computed over.
+pub fn weights_path(model_dir: &Path) -> Option<PathBuf> {
+    [WEIGHTS_SAFETENSORS, WEIGHTS_PYTORCH_BIN]
+        .into_iter()
+        .map(|name| model_dir.join(name))
+        .find(|path| path.is_file())
+}
+
+/// Whether `model_dir` holds weights the Candle runtime can load.
+pub fn has_loadable_weights(model_dir: &Path) -> bool {
+    weights_path(model_dir).is_some()
 }
 
 /// Errors specific to model loading. Surfaced through `AppError::EmbeddingFailed`
@@ -140,9 +168,9 @@ pub enum LoadError {
     MissingConfig(PathBuf),
     #[error("tokenizer.json not found at {0}")]
     MissingTokenizer(PathBuf),
-    #[error("model.safetensors not found at {0}")]
+    #[error("neither model.safetensors nor pytorch_model.bin found in {0}")]
     MissingWeights(PathBuf),
-    #[error("unsupported architecture: {0} (only BERT-family is supported)")]
+    #[error("unsupported embedding architecture: {0}")]
     UnsupportedArchitecture(String),
     #[error("config.json parse error: {0}")]
     BadConfig(String),
@@ -168,21 +196,40 @@ pub struct CandleEmbeddingService {
     dimension: usize,
     pooling: PoolingStrategy,
     architecture: ModelArchitecture,
+    input_policy: super::input_policy::InputPolicy,
+    /// Digest of the model artifacts. The public identity also folds in the
+    /// embedding strategy, which is what actually decides vector comparability.
+    identity: String,
+    strategy: EmbeddingStrategy,
+    /// BGE-M3's learned sparse head, when this checkpoint ships one. `None`
+    /// for every other model, which is what makes `supports_sparse()` false
+    /// and keeps the sparse retrieval branch from ever starting.
+    sparse_head: Option<SparseHead>,
 }
 
 impl CandleEmbeddingService {
     /// Load a model from a directory containing `config.json`,
-    /// `tokenizer.json`, and `model.safetensors`.
+    /// `tokenizer.json`, and either `model.safetensors` or `pytorch_model.bin`.
     ///
     /// Tries Metal first on macOS, falls back to CPU on failure. Reads the
     /// model dimension from `config.json::hidden_size` and the pooling
     /// strategy from `1_Pooling/config.json` if present (defaults to CLS).
+    ///
+    /// Embedding strategy defaults to [`EmbeddingStrategy::ChunkFirst`]. Use
+    /// [`CandleEmbeddingService::with_strategy`] to opt a freshly loaded
+    /// service into late chunking.
+    ///
+    /// TODO(settings): there is no user-facing switch for the embedding
+    /// strategy yet — `application/contracts/settings.rs` is owned elsewhere.
+    /// When a setting lands, read it where the model is loaded
+    /// (`infrastructure/embedding_loading.rs`) and call `with_strategy`.
+    /// Flipping it re-generates every vector, because `model_identity()`
+    /// changes with the strategy.
     pub fn new(model_dir: impl AsRef<Path>) -> Result<Self> {
         let dir = model_dir.as_ref();
 
         let config_path = dir.join("config.json");
         let tokenizer_path = dir.join("tokenizer.json");
-        let weights_path = dir.join("model.safetensors");
 
         if !config_path.exists() {
             return Err(LoadError::MissingConfig(config_path).into());
@@ -190,9 +237,9 @@ impl CandleEmbeddingService {
         if !tokenizer_path.exists() {
             return Err(LoadError::MissingTokenizer(tokenizer_path).into());
         }
-        if !weights_path.exists() {
-            return Err(LoadError::MissingWeights(weights_path).into());
-        }
+        let Some(weights_path) = weights_path(dir) else {
+            return Err(LoadError::MissingWeights(dir.to_path_buf()).into());
+        };
 
         let config_bytes = std::fs::read(&config_path).map_err(|e| AppError::FileRead {
             path: config_path.display().to_string(),
@@ -204,17 +251,15 @@ impl CandleEmbeddingService {
         let architecture = ModelArchitecture::from_model_type(&config.model_type)
             .ok_or_else(|| LoadError::UnsupportedArchitecture(config.model_type.clone()))?;
 
-        // Decoder-style architectures (Gemma3, Qwen3, Llama) need last-token
-        // pooling and a different KV-cache-aware forward path. Reject them
-        // here until that scaffolding lands. MPNet has no Candle loader at
-        // all today — same outcome.
+        // Reject known architectures without a working Candle runner.
         match architecture {
             ModelArchitecture::Bert
             | ModelArchitecture::DistilBert
             | ModelArchitecture::XlmRoberta
             | ModelArchitecture::JinaBert
             | ModelArchitecture::NomicBert
-            | ModelArchitecture::ModernBert => {}
+            | ModelArchitecture::ModernBert
+            | ModelArchitecture::Qwen3 => {}
             ModelArchitecture::Mpnet => {
                 return Err(LoadError::UnsupportedArchitecture(format!(
                     "MPNet (model_type='{}') — Candle has no MPNet loader; planned",
@@ -226,7 +271,7 @@ impl CandleEmbeddingService {
 
         let pooling = read_pooling_strategy(dir);
 
-        let device = best_device();
+        let device = crate::shared::utils::best_available_compute_device("embedding");
         tracing::info!(
             device = ?device,
             model_type = %config.model_type,
@@ -235,35 +280,57 @@ impl CandleEmbeddingService {
             "Loading Candle embedding model"
         );
 
-        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
+        let mut tokenizer = super::input_policy::load_tokenizer(&tokenizer_path)?;
 
-        // Configure padding + truncation to match the model's expected sequence
-        // length. Padding to the longest in the batch (not max) keeps inference
-        // fast for short inputs.
+        let input_policy = super::input_policy::InputPolicy::new(
+            tokenizer.clone(),
+            super::input_policy::model_token_limit(dir)?.min(2048),
+        )?;
+        // Preserve model-specific padding IDs (RoBERTa uses 1, BERT usually 0).
+        let padding = tokenizer.get_padding().cloned().unwrap_or_else(|| {
+            let pad_id = tokenizer
+                .token_to_id("[PAD]")
+                .or_else(|| tokenizer.token_to_id("<pad>"))
+                .unwrap_or(0);
+            PaddingParams {
+                pad_id,
+                pad_token: tokenizer
+                    .id_to_token(pad_id)
+                    .unwrap_or_else(|| "[PAD]".into()),
+                ..Default::default()
+            }
+        });
         tokenizer.with_padding(Some(PaddingParams {
             strategy: PaddingStrategy::BatchLongest,
-            pad_token: "[PAD]".to_string(),
-            pad_id: 0,
-            ..Default::default()
+            ..padding
         }));
         tokenizer
-            .with_truncation(Some(TruncationParams {
-                max_length: MAX_SEQUENCE_LENGTH,
-                strategy: TruncationStrategy::LongestFirst,
-                ..Default::default()
-            }))
+            .with_truncation(None)
             .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
+        let identity = artifact_identity(dir)?;
 
-        // SAFETY: we mmap a model file that we own and never mutate after
-        // download. Candle's loader is built around mmap; the alternative
-        // (`VarBuilder::from_buffered_safetensors`) reads the entire 100MB-1GB
-        // file into RAM, which is wasteful for model weights we'll mostly
-        // stream into GPU buffers anyway.
-        #[allow(unsafe_code)]
-        let var_builder = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
-                .map_err(|e| LoadError::Candle(format!("safetensors load: {}", e)))?
+        let var_builder = if weights_path
+            .file_name()
+            .is_some_and(|name| name == WEIGHTS_PYTORCH_BIN)
+        {
+            // `torch.save` pickle, read through `candle_core::pickle` — the
+            // same reader `sparse_head` already uses for `sparse_linear.pt`.
+            // It cannot be mmapped (tensors are pickled, not laid out flat),
+            // so this materializes the weights once at load time.
+            VarBuilder::from_pth(&weights_path, DType::F32, &device)
+                .map_err(|e| LoadError::Candle(format!("pytorch_model.bin load: {}", e)))?
+        } else {
+            // SAFETY: we mmap a model file that we own and never mutate after
+            // download. Candle's loader is built around mmap; the alternative
+            // (`VarBuilder::from_buffered_safetensors`) reads the entire 100MB-1GB
+            // file into RAM, which is wasteful for model weights we'll mostly
+            // stream into GPU buffers anyway.
+            #[allow(unsafe_code)]
+            let mmaped = unsafe {
+                VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
+                    .map_err(|e| LoadError::Candle(format!("safetensors load: {}", e)))?
+            };
+            mmaped
         };
 
         // Each architecture has a different Candle module + Config struct.
@@ -315,8 +382,41 @@ impl CandleEmbeddingService {
                     .map_err(|e| LoadError::Candle(format!("ModernBert::load: {}", e)))?;
                 ModelVariant::ModernBert(m)
             }
+            ModelArchitecture::Qwen3 => {
+                let cfg: candle_transformers::models::qwen3::Config =
+                    serde_json::from_slice(&config_bytes)
+                        .map_err(|e| LoadError::BadConfig(e.to_string()))?;
+                let vb = if var_builder.contains_tensor("embed_tokens.weight") {
+                    var_builder
+                        .rename_f(|name| name.strip_prefix("model.").unwrap_or(name).to_owned())
+                } else {
+                    var_builder
+                };
+                ModelVariant::Qwen3(
+                    candle_transformers::models::qwen3::Model::new(&cfg, vb)
+                        .map_err(|e| LoadError::Candle(e.to_string()))?,
+                )
+            }
             ModelArchitecture::Mpnet => unreachable!("rejected above"),
         };
+
+        // BGE-M3 is the one checkpoint we support that ships a learned sparse
+        // head, and it is XLM-RoBERTa based. Gating on the architecture *and*
+        // the file means an unrelated XLM-R embedder without the head simply
+        // reports `supports_sparse() == false`, while a BGE-M3 directory whose
+        // head cannot be read fails loudly instead of indexing a corpus with
+        // silently empty sparse rows.
+        let sparse_head = if architecture == ModelArchitecture::XlmRoberta {
+            SparseHead::load(dir, config.hidden_size, &device, &tokenizer)?
+        } else {
+            None
+        };
+        if sparse_head.is_some() {
+            tracing::info!(
+                model_type = %config.model_type,
+                "Learned sparse head loaded; sparse retrieval is available for this model"
+            );
+        }
 
         Ok(Self {
             model: Mutex::new(model),
@@ -325,7 +425,32 @@ impl CandleEmbeddingService {
             dimension: config.hidden_size,
             pooling,
             architecture,
+            input_policy,
+            identity,
+            strategy: EmbeddingStrategy::default(),
+            sparse_head,
         })
+    }
+
+    /// Opt this service into a different [`EmbeddingStrategy`]. Off by default.
+    ///
+    /// ```ignore
+    /// let service = CandleEmbeddingService::new(model_dir)?
+    ///     .with_strategy(EmbeddingStrategy::LateChunking);
+    /// ```
+    ///
+    /// The returned service reports a different `model_identity()`, so its
+    /// vectors live in their own generation and are never mixed with
+    /// chunk-first vectors of the same model.
+    #[must_use]
+    pub fn with_strategy(mut self, strategy: EmbeddingStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    /// The active embedding strategy.
+    pub fn embedding_strategy(&self) -> EmbeddingStrategy {
+        self.strategy
     }
 
     /// The model's output dimension (`hidden_size` from config.json).
@@ -342,7 +467,7 @@ impl CandleEmbeddingService {
     /// `embed_batch` — we just unwrap the contextualized text first.
     pub async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::infrastructure::indexing::chunker::ContextualizedChunk],
+        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         if chunks.is_empty() {
             return Ok(vec![]);
@@ -354,11 +479,227 @@ impl CandleEmbeddingService {
         <Self as EmbeddingPort>::embed_batch(self, &texts).await
     }
 
+    /// Embed every chunk of one structure span from a single forward pass —
+    /// "late chunking".
+    ///
+    /// `span_text` is the whole span *including* its leading
+    /// "[Document: title | Page | Section]" context prefix, and
+    /// `chunk_char_ranges` are the UTF-8 byte ranges of the individual chunks
+    /// inside it. The span is tokenized once with offsets and run through the
+    /// model once; each chunk vector is the mean of the final hidden states of
+    /// the tokens that start inside that chunk's range, L2-normalized. Prefix
+    /// tokens and the special tokens ([CLS]/[SEP], BOS/EOS) condition the pass
+    /// but are pooled into nothing — the prefix informs every chunk without
+    /// polluting any chunk's vector with its own literal text.
+    ///
+    /// Qwen3 normally pools the *last* token of a sequence, because its causal
+    /// attention only lets that position see the whole input. There is no
+    /// per-chunk position with that property here, so — like every other
+    /// architecture — we mean-pool the chunk's token states. Mean pooling over
+    /// the chunk span is the late-chunking convention (Günther et al., 2024);
+    /// it produces a different vector space than last-token pooling, which is
+    /// exactly why [`CandleEmbeddingService::model_identity`] carries the
+    /// `late-chunking-v1` marker whenever this path is active.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LateChunkingError::SpanTooLong`] when the span does not fit
+    /// the model window, and [`LateChunkingError::EmptyChunkSpan`] /
+    /// [`LateChunkingError::InvalidRange`] when the ranges cannot be pooled.
+    /// All three satisfy [`LateChunkingError::allows_fallback`]: the caller
+    /// re-embeds that span with the ordinary per-chunk path.
+    pub async fn embed_late_chunked(
+        &self,
+        span_text: &str,
+        chunk_char_ranges: &[Range<usize>],
+    ) -> std::result::Result<Vec<Vec<f32>>, LateChunkingError> {
+        if chunk_char_ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+        validate_chunk_ranges(span_text, chunk_char_ranges)?;
+
+        // Padding would add tokens with meaningless offsets; a span is a single
+        // sequence, so there is nothing to pad to.
+        let mut tokenizer = self.tokenizer.clone();
+        tokenizer.with_padding(None);
+        let encoding = tokenizer.encode(span_text, true).map_err(|e| {
+            LateChunkingError::Embedding(LoadError::Tokenizer(e.to_string()).into())
+        })?;
+        let token_count = encoding.get_ids().len();
+        if token_count == 0 {
+            return Err(LateChunkingError::EmptyChunkSpan { chunk: 0 });
+        }
+        if token_count > self.input_policy.max_tokens {
+            return Err(LateChunkingError::SpanTooLong {
+                tokens: token_count,
+                limit: self.input_policy.max_tokens,
+            });
+        }
+
+        let groups = pooling_token_indices(
+            encoding.get_offsets(),
+            encoding.get_special_tokens_mask(),
+            chunk_char_ranges,
+        )?;
+
+        let hidden = self.span_hidden_states(&encoding).await?;
+        let mut vectors = Vec::with_capacity(groups.len());
+        for (chunk, group) in groups.iter().enumerate() {
+            let mut pooled = mean_pool_rows(&hidden, group)
+                .ok_or(LateChunkingError::EmptyChunkSpan { chunk })?;
+            l2_normalize_in_place(&mut pooled);
+            vectors.push(pooled);
+        }
+        Ok(vectors)
+    }
+
+    /// Late chunk when the strategy is on and the span is eligible; otherwise
+    /// embed each chunk on its own. This is what the port and service traits
+    /// expose, so callers never have to handle the fallback themselves.
+    async fn embed_span(
+        &self,
+        span_text: &str,
+        chunk_ranges: &[Range<usize>],
+    ) -> Result<Vec<Vec<f32>>> {
+        if self.strategy.is_late_chunking() && !chunk_ranges.is_empty() {
+            match self.embed_late_chunked(span_text, chunk_ranges).await {
+                Ok(vectors) => return Ok(vectors),
+                Err(error) if error.allows_fallback() => {
+                    tracing::debug!(
+                        chunks = chunk_ranges.len(),
+                        reason = %error,
+                        "Span is not late chunkable; embedding its chunks individually"
+                    );
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let texts = span_chunk_texts(span_text, chunk_ranges)?;
+        <Self as EmbeddingPort>::embed_batch(self, &texts).await
+    }
+
+    /// One forward pass over one already-tokenized sequence, returned as
+    /// (seq, hidden) rows. Only late chunking needs per-token states.
+    async fn span_hidden_states(&self, encoding: &tokenizers::Encoding) -> Result<Vec<Vec<f32>>> {
+        let ids = encoding.get_ids();
+        let length = ids.len();
+        let guard = self.model.lock().await;
+        let hidden_states = match &*guard {
+            // A fresh lightweight clone shares weights but starts with an empty
+            // KV cache, exactly as the batch path does.
+            ModelVariant::Qwen3(template) => {
+                let mut model = template.clone();
+                let input = Tensor::new(ids, &self.device)
+                    .and_then(|t| t.unsqueeze(0))
+                    .map_err(|e| LoadError::Candle(e.to_string()))?;
+                model
+                    .forward(&input, 0)
+                    .map_err(|e| LoadError::Candle(e.to_string()))?
+            }
+            model => {
+                let to_i64 = |values: &[u32]| values.iter().map(|&v| v as i64).collect::<Vec<_>>();
+                let tensor = |values: Vec<i64>| {
+                    Tensor::from_vec(values, (1, length), &self.device).map_err(|e| {
+                        AppError::EmbeddingFailed {
+                            reason: format!("span tensor: {}", e),
+                        }
+                    })
+                };
+                let input_ids_t = tensor(to_i64(ids))?;
+                let attention_mask_t = tensor(to_i64(encoding.get_attention_mask()))?;
+                let token_type_ids_t = tensor(to_i64(encoding.get_type_ids()))?;
+                run_encoder(model, &input_ids_t, &attention_mask_t, &token_type_ids_t)?
+            }
+        };
+        drop(guard);
+
+        hidden_states
+            .squeeze(0)
+            .and_then(|t| t.to_dtype(DType::F32))
+            .and_then(|t| t.contiguous())
+            .and_then(|t| t.to_vec2::<f32>())
+            .map_err(|e| AppError::EmbeddingFailed {
+                reason: format!("hidden states → rows: {}", e),
+            })
+    }
+
     /// Run a forward pass + pool + L2-normalize for a batch of texts.
     /// Single hot path used by both `embed_single` and `embed_batch`.
     async fn forward(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        Ok(self.forward_with_sparse(texts, None).await?.0)
+    }
+
+    /// The dense forward pass, optionally also reading the learned sparse head
+    /// off the *same* hidden states.
+    ///
+    /// `sparse_terms` is the per-passage term budget; `None` skips the sparse
+    /// head entirely. When it is `Some`, the encoder runs exactly once and
+    /// both representations come out of one set of hidden states — the whole
+    /// reason `embed_batch_with_sparse` exists rather than two calls.
+    ///
+    /// The returned sparse vector is empty (never absent) for a passage whose
+    /// every token was special or scored zero, so the two returned vectors are
+    /// always the same length and stay aligned with `texts`.
+    async fn forward_with_sparse(
+        &self,
+        texts: Vec<String>,
+        sparse_terms: Option<usize>,
+    ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
         if texts.is_empty() {
-            return Ok(vec![]);
+            return Ok((vec![], vec![]));
+        }
+        let sparse_head = match sparse_terms {
+            Some(_) => Some(
+                self.sparse_head
+                    .as_ref()
+                    .ok_or_else(|| sparse_not_supported(&self.identity))?,
+            ),
+            None => None,
+        };
+
+        for text in &texts {
+            self.input_policy.validate(text)?;
+        }
+
+        // A fresh lightweight clone per input shares weights but starts with an empty KV
+        // cache. No padding enters causal attention and no state leaks between passages.
+        {
+            let guard = self.model.lock().await;
+            if let ModelVariant::Qwen3(template) = &*guard {
+                let mut tokenizer = self.tokenizer.clone();
+                tokenizer.with_padding(None);
+                let mut result = Vec::with_capacity(texts.len());
+                for text in &texts {
+                    let encoding = tokenizer
+                        .encode(text.as_str(), true)
+                        .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
+                    let ids = encoding.get_ids();
+                    if ids.is_empty() {
+                        return Err(AppError::InvalidInput(
+                            "Cannot embed an empty token sequence".into(),
+                        ));
+                    }
+                    let mut model = template.clone();
+                    let input = Tensor::new(ids, &self.device)
+                        .and_then(|t| t.unsqueeze(0))
+                        .map_err(|e| LoadError::Candle(e.to_string()))?;
+                    let hidden = model
+                        .forward(&input, 0)
+                        .map_err(|e| LoadError::Candle(e.to_string()))?;
+                    let pooled = hidden
+                        .narrow(1, ids.len() - 1, 1)
+                        .and_then(|t| t.squeeze(1))
+                        .map_err(|e| LoadError::Candle(e.to_string()))?;
+                    let normalized =
+                        l2_normalize(&pooled).map_err(|e| LoadError::Candle(e.to_string()))?;
+                    result.extend(
+                        tensor_to_vec_of_vec(&normalized)
+                            .map_err(|e| LoadError::Candle(e.to_string()))?,
+                    );
+                }
+                let sparse = vec![SparseEmbedding::empty(); result.len()];
+                return Ok((result, sparse));
+            }
         }
 
         let encodings = self
@@ -404,60 +745,35 @@ impl CandleEmbeddingService {
 
         let guard = self.model.lock().await;
 
-        let hidden_states = match &*guard {
-            ModelVariant::Bert(model) => model
-                .forward(&input_ids_t, &token_type_ids_t, Some(&attention_mask_t))
-                .map_err(|e| AppError::EmbeddingFailed {
-                    reason: format!("BertModel forward: {}", e),
-                })?,
-            ModelVariant::DistilBert(model) => model
-                .forward(&input_ids_t, &attention_mask_t)
-                .map_err(|e| AppError::EmbeddingFailed {
-                    reason: format!("DistilBertModel forward: {}", e),
-                })?,
-            ModelVariant::XlmRoberta(model) => model
-                .forward(
-                    &input_ids_t,
-                    &attention_mask_t,
-                    &token_type_ids_t,
-                    None,
-                    None,
-                    None,
-                )
-                .map_err(|e| AppError::EmbeddingFailed {
-                    reason: format!("XLMRobertaModel forward: {}", e),
-                })?,
-            ModelVariant::JinaBert(model) => {
-                model
-                    .forward(&input_ids_t)
-                    .map_err(|e| AppError::EmbeddingFailed {
-                        reason: format!("JinaBertModel forward: {}", e),
-                    })?
-            }
-            ModelVariant::NomicBert(model) => model
-                .forward(
-                    &input_ids_t,
-                    Some(&token_type_ids_t),
-                    Some(&attention_mask_t),
-                )
-                .map_err(|e| AppError::EmbeddingFailed {
-                    reason: format!("NomicBertModel forward: {}", e),
-                })?,
-            ModelVariant::ModernBert(model) => model
-                .forward(&input_ids_t, &attention_mask_t)
-                .map_err(|e| AppError::EmbeddingFailed {
-                    reason: format!("ModernBert forward: {}", e),
-                })?,
-            ModelVariant::Gemma3(_model) => {
-                return Err(AppError::EmbeddingFailed {
-                    reason:
-                        "Gemma3 not wired yet — needs last-token pooling + decoder-style runner"
-                            .into(),
-                })
-            }
-        };
+        let hidden_states =
+            run_encoder(&guard, &input_ids_t, &attention_mask_t, &token_type_ids_t)?;
 
         drop(guard);
+
+        // Read the sparse head off the hidden states we already have. Padding
+        // is dropped by trimming each row back to its own token count before
+        // aggregation, so a short passage in a long batch cannot pick up terms
+        // from the pad token.
+        let sparse_vectors = match (sparse_head, sparse_terms) {
+            (Some(head), Some(max_terms)) => {
+                let rows = head.token_weights(&hidden_states)?;
+                encodings
+                    .iter()
+                    .zip(rows.iter())
+                    .map(|(encoding, row)| {
+                        let ids = encoding.get_ids();
+                        let usable = row.len().min(ids.len());
+                        head.aggregate(
+                            ids.get(..usable).unwrap_or_default(),
+                            row.get(..usable).unwrap_or_default(),
+                            encoding.get_special_tokens_mask(),
+                            max_terms,
+                        )
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
 
         let pooled = match pooling {
             PoolingStrategy::Cls => cls_pool(&hidden_states),
@@ -475,7 +791,37 @@ impl CandleEmbeddingService {
             reason: format!("tensor → Vec<Vec<f32>>: {}", e),
         })?;
 
-        Ok(vectors)
+        Ok((vectors, sparse_vectors))
+    }
+
+    /// Dense vectors and learned sparse term weights from a single forward
+    /// pass per batch.
+    ///
+    /// This is the indexing path for a model with a sparse head: running
+    /// `embed_batch` and `embed_sparse_batch` separately would double the
+    /// encoder work for identical hidden states.
+    ///
+    /// # Errors
+    ///
+    /// Returns the "not supported" error when this model has no sparse head.
+    /// Check [`EmbeddingPort::supports_sparse`] first.
+    pub async fn embed_batch_with_sparse(
+        &self,
+        texts: &[String],
+    ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
+        if self.sparse_head.is_none() {
+            return Err(sparse_not_supported(&self.identity));
+        }
+        let mut dense = Vec::with_capacity(texts.len());
+        let mut sparse = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(16) {
+            let (batch_dense, batch_sparse) = self
+                .forward_with_sparse(batch.to_vec(), Some(MAX_PASSAGE_TERMS))
+                .await?;
+            dense.extend(batch_dense);
+            sparse.extend(batch_sparse);
+        }
+        Ok((dense, sparse))
     }
 }
 
@@ -491,8 +837,72 @@ impl EmbeddingPort for CandleEmbeddingService {
         })
     }
 
+    async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        let query = if self.architecture == ModelArchitecture::Qwen3 {
+            format!("Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:{text}")
+        } else {
+            text.to_owned()
+        };
+        <Self as EmbeddingPort>::embed_single(self, &query).await
+    }
+
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.forward(texts.to_vec()).await
+        let mut result = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(16) {
+            result.extend(self.forward(batch.to_vec()).await?);
+        }
+        Ok(result)
+    }
+
+    fn split_text(
+        &self,
+        text: &str,
+        prefix: &str,
+    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+        self.input_policy.split(text, prefix)
+    }
+
+    fn uses_late_chunking(&self) -> bool {
+        self.strategy.is_late_chunking()
+    }
+
+    async fn embed_span_chunks(
+        &self,
+        span_text: &str,
+        chunk_ranges: &[Range<usize>],
+    ) -> Result<Vec<Vec<f32>>> {
+        self.embed_span(span_text, chunk_ranges).await
+    }
+
+    fn supports_sparse(&self) -> bool {
+        self.sparse_head.is_some()
+    }
+
+    async fn embed_sparse_batch(&self, texts: &[String]) -> Result<Vec<SparseEmbedding>> {
+        Ok(self.embed_batch_with_sparse(texts).await?.1)
+    }
+
+    async fn embed_batch_with_sparse(
+        &self,
+        texts: &[String],
+    ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
+        CandleEmbeddingService::embed_batch_with_sparse(self, texts).await
+    }
+
+    async fn embed_sparse_query(&self, text: &str) -> Result<SparseEmbedding> {
+        if self.sparse_head.is_none() {
+            return Err(sparse_not_supported(&self.identity));
+        }
+        // A query is pruned much harder than a passage: every surviving term
+        // becomes a row in the scoring join.
+        let (_, mut sparse) = self
+            .forward_with_sparse(vec![text.to_owned()], Some(MAX_QUERY_TERMS))
+            .await?;
+        Ok(sparse.pop().unwrap_or_default())
+    }
+
+    fn model_identity(&self) -> String {
+        strategy_identity(&self.identity, self.strategy)
     }
 
     fn dimension(&self) -> usize {
@@ -506,6 +916,21 @@ impl EmbeddingPort for CandleEmbeddingService {
 
 #[async_trait]
 impl EmbeddingServiceTrait for CandleEmbeddingService {
+    fn model_identity(&self) -> String {
+        <Self as EmbeddingPort>::model_identity(self)
+    }
+    fn split_text(
+        &self,
+        text: &str,
+        prefix: &str,
+    ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+        <Self as EmbeddingPort>::split_text(self, text, prefix)
+    }
+
+    async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        <Self as EmbeddingPort>::embed_query(self, text).await
+    }
+
     async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
         <Self as EmbeddingPort>::embed_single(self, text).await
     }
@@ -516,32 +941,41 @@ impl EmbeddingServiceTrait for CandleEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::infrastructure::indexing::chunker::ContextualizedChunk],
+        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         self.embed_contextualized_chunks(chunks).await
     }
-}
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Try Metal first on macOS, fall back to CPU.
-fn best_device() -> Device {
-    #[cfg(target_os = "macos")]
-    {
-        match Device::new_metal(0) {
-            Ok(d) => return d,
-            Err(e) => tracing::warn!(error = %e, "Metal unavailable"),
-        }
+    fn uses_late_chunking(&self) -> bool {
+        self.strategy.is_late_chunking()
     }
 
-    let device = Device::cuda_if_available(0).unwrap_or_else(|e| {
-        eprintln!("CUDA not available, falling back to CPU: {:?}", e);
-        Device::Cpu
-    });
+    async fn embed_span_chunks(
+        &self,
+        span_text: &str,
+        chunk_ranges: &[Range<usize>],
+    ) -> Result<Vec<Vec<f32>>> {
+        self.embed_span(span_text, chunk_ranges).await
+    }
 
-    device
+    fn supports_sparse(&self) -> bool {
+        <Self as EmbeddingPort>::supports_sparse(self)
+    }
+
+    async fn embed_sparse_batch(&self, texts: &[String]) -> Result<Vec<SparseEmbedding>> {
+        <Self as EmbeddingPort>::embed_sparse_batch(self, texts).await
+    }
+
+    async fn embed_batch_with_sparse(
+        &self,
+        texts: &[String],
+    ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
+        CandleEmbeddingService::embed_batch_with_sparse(self, texts).await
+    }
+
+    async fn embed_sparse_query(&self, text: &str) -> Result<SparseEmbedding> {
+        <Self as EmbeddingPort>::embed_sparse_query(self, text).await
+    }
 }
 
 /// Read pooling strategy. Tries in order:
@@ -572,6 +1006,7 @@ fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
                 .to_ascii_lowercase();
             if name.contains("sentence-transformers")
                 || name.contains("all-minilm")
+                || name == "nreimers/minilm-l6-h384-uncased"
                 || name.contains("all-mpnet")
                 || name.contains("paraphrase-")
                 || name.contains("multi-qa-")
@@ -586,6 +1021,57 @@ fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
     }
 
     PoolingStrategy::Cls
+}
+
+/// Run the encoder for one padded batch, returning (batch, seq, hidden).
+/// Shared by the pooled batch path and by late chunking, which needs the
+/// per-token states rather than a pooled vector.
+fn run_encoder(
+    model: &ModelVariant,
+    input_ids: &Tensor,
+    attention_mask: &Tensor,
+    token_type_ids: &Tensor,
+) -> Result<Tensor> {
+    let hidden_states = match model {
+        ModelVariant::Bert(model) => model
+            .forward(input_ids, token_type_ids, Some(attention_mask))
+            .map_err(|e| AppError::EmbeddingFailed {
+                reason: format!("BertModel forward: {}", e),
+            })?,
+        ModelVariant::DistilBert(model) => {
+            model
+                .forward(input_ids, attention_mask)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("DistilBertModel forward: {}", e),
+                })?
+        }
+        ModelVariant::XlmRoberta(model) => model
+            .forward(input_ids, attention_mask, token_type_ids, None, None, None)
+            .map_err(|e| AppError::EmbeddingFailed {
+                reason: format!("XLMRobertaModel forward: {}", e),
+            })?,
+        ModelVariant::JinaBert(model) => {
+            model
+                .forward(input_ids)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("JinaBertModel forward: {}", e),
+                })?
+        }
+        ModelVariant::NomicBert(model) => model
+            .forward(input_ids, Some(token_type_ids), Some(attention_mask))
+            .map_err(|e| AppError::EmbeddingFailed {
+                reason: format!("NomicBertModel forward: {}", e),
+            })?,
+        ModelVariant::ModernBert(model) => {
+            model
+                .forward(input_ids, attention_mask)
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("ModernBert forward: {}", e),
+                })?
+        }
+        ModelVariant::Qwen3(_) => unreachable!("Qwen runs its own causal forward pass"),
+    };
+    Ok(hidden_states)
 }
 
 /// CLS pooling: take token at index 0 from each row of (batch, seq, hidden).
@@ -646,6 +1132,64 @@ fn tensor_to_vec_of_vec(t: &Tensor) -> std::result::Result<Vec<Vec<f32>>, candle
 // Tensor indexing helper trait (candle uses an extension-trait pattern for `i`).
 use candle_core::IndexOp;
 
+/// Stream a file's bytes into `hash` so a multi-gigabyte weights file never
+/// lands in memory whole.
+fn fold_file_contents(hash: &mut sha2::Sha256, path: &Path) -> Result<()> {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| AppError::InvalidConfig(e.to_string()))?;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let n = file
+            .read(&mut buffer)
+            .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
+        if n == 0 {
+            break;
+        }
+        hash.update(
+            buffer
+                .get(..n)
+                .ok_or_else(|| AppError::InvalidState("Invalid model read length".into()))?,
+        );
+    }
+    Ok(())
+}
+
+/// Content-address the complete model and preprocessing, not merely its output dimension.
+pub fn artifact_identity(dir: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"lattice-embedding-input-v2");
+    for name in [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "sentence_bert_config.json",
+        "1_Pooling/config.json",
+        WEIGHTS_SAFETENSORS,
+    ] {
+        hash.update(name.as_bytes());
+        let path = dir.join(name);
+        if !path.exists() {
+            hash.update(b"absent");
+            continue;
+        }
+        fold_file_contents(&mut hash, &path)?;
+    }
+    // The pickle is folded in only when it is actually on disk. Appending it
+    // to the list above would have hashed an `absent` marker for every
+    // safetensors model and changed every identity already written into a
+    // vault's index filenames; contributing nothing when the file is missing
+    // keeps those byte-for-byte while still covering the weights of a
+    // checkpoint that ships only `pytorch_model.bin`.
+    let pickle = dir.join(WEIGHTS_PYTORCH_BIN);
+    if pickle.exists() {
+        hash.update(WEIGHTS_PYTORCH_BIN.as_bytes());
+        fold_file_contents(&mut hash, &pickle)?;
+    }
+    Ok(format!("sha256:{:x}", hash.finalize()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +1244,114 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_pooling_strategy(dir.path()), PoolingStrategy::Cls);
+    }
+
+    #[test]
+    fn weights_path_prefers_safetensors_and_accepts_the_pickle() {
+        let dir = TempDir::new().unwrap();
+        assert!(weights_path(dir.path()).is_none());
+        assert!(!has_loadable_weights(dir.path()));
+
+        std::fs::write(dir.path().join(WEIGHTS_PYTORCH_BIN), b"pickle").unwrap();
+        assert_eq!(
+            weights_path(dir.path()),
+            Some(dir.path().join(WEIGHTS_PYTORCH_BIN))
+        );
+        assert!(has_loadable_weights(dir.path()));
+
+        std::fs::write(dir.path().join(WEIGHTS_SAFETENSORS), b"tensors").unwrap();
+        assert_eq!(
+            weights_path(dir.path()),
+            Some(dir.path().join(WEIGHTS_SAFETENSORS)),
+            "safetensors wins when both are present"
+        );
+    }
+
+    #[test]
+    fn missing_weights_error_names_both_candidates() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type":"bert","hidden_size":8}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+
+        let message = match CandleEmbeddingService::new(dir.path()) {
+            Ok(_) => panic!("a directory with no weights must not load"),
+            Err(error) => error.to_string(),
+        };
+        assert!(message.contains("model.safetensors"), "{message}");
+        assert!(message.contains("pytorch_model.bin"), "{message}");
+        assert!(
+            message.contains(&dir.path().display().to_string()),
+            "{message}"
+        );
+    }
+
+    /// Identities are baked into on-disk index filenames, so the digest for a
+    /// safetensors checkpoint must not move when the loader learns a new
+    /// weights format. This is the value the hash produced before
+    /// `pytorch_model.bin` was accepted.
+    #[test]
+    fn artifact_identity_for_safetensors_models_is_unchanged() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("config.json"), b"{}").unwrap();
+        std::fs::write(dir.path().join(WEIGHTS_SAFETENSORS), b"weights").unwrap();
+        assert_eq!(
+            artifact_identity(dir.path()).unwrap(),
+            "sha256:ca19a491bee769f6c8e7a8a9bc8d1e3a6846116a4e1915e5e999a999cdc7d3e3"
+        );
+    }
+
+    #[test]
+    fn artifact_identity_covers_the_pickle_when_it_is_the_only_weights_file() {
+        let safetensors_dir = TempDir::new().unwrap();
+        std::fs::write(safetensors_dir.path().join("config.json"), b"{}").unwrap();
+        std::fs::write(safetensors_dir.path().join(WEIGHTS_SAFETENSORS), b"weights").unwrap();
+
+        let pickle_dir = TempDir::new().unwrap();
+        std::fs::write(pickle_dir.path().join("config.json"), b"{}").unwrap();
+        std::fs::write(pickle_dir.path().join(WEIGHTS_PYTORCH_BIN), b"weights").unwrap();
+
+        let pickle_identity = artifact_identity(pickle_dir.path()).unwrap();
+        assert_ne!(
+            pickle_identity,
+            artifact_identity(safetensors_dir.path()).unwrap(),
+            "a pickle checkpoint is a different artifact set than a safetensors one"
+        );
+
+        // And the pickle's bytes are actually hashed, not just its name.
+        std::fs::write(pickle_dir.path().join(WEIGHTS_PYTORCH_BIN), b"other").unwrap();
+        assert_ne!(
+            pickle_identity,
+            artifact_identity(pickle_dir.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn token_limit_and_pooling_do_not_depend_on_the_weights_file_name() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type":"xlm-roberta","hidden_size":1024,"max_position_embeddings":8194}"#,
+        )
+        .unwrap();
+        let pooling = read_pooling_strategy(dir.path());
+        let limit = super::super::input_policy::model_token_limit(dir.path()).unwrap();
+
+        std::fs::write(dir.path().join(WEIGHTS_PYTORCH_BIN), b"pickle").unwrap();
+        assert_eq!(read_pooling_strategy(dir.path()), pooling);
+        assert_eq!(
+            super::super::input_policy::model_token_limit(dir.path()).unwrap(),
+            limit
+        );
+
+        std::fs::write(dir.path().join(WEIGHTS_SAFETENSORS), b"tensors").unwrap();
+        assert_eq!(read_pooling_strategy(dir.path()), pooling);
+        assert_eq!(
+            super::super::input_policy::model_token_limit(dir.path()).unwrap(),
+            limit
+        );
     }
 }

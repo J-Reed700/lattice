@@ -6,15 +6,12 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
-
 
 #[cfg(test)]
-// Test code - allow common test patterns
 
 mod error_context_tests {
     use std::io;
-    use lattice::error::{AppError, ResultExt};
+    use lattice::shared::error::{AppError, ResultExt};
 
     #[test]
     fn test_result_context() {

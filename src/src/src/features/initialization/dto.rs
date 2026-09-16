@@ -15,10 +15,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// Model Initialization
-// =============================================================================
-
 /// Response from initialize_models use case.
 ///
 /// Contains the outcome of model initialization including download and setup.
@@ -43,10 +39,6 @@ pub struct InitializeModelsResponseDto {
     pub was_cached: bool,
 }
 
-// =============================================================================
-// Database Initialization
-// =============================================================================
-
 /// Response from initialize_database use case.
 ///
 /// Contains the outcome of database schema creation and migration.
@@ -66,10 +58,6 @@ pub struct InitializeDatabaseResponseDto {
     #[serde(default)]
     pub is_new_database: bool,
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

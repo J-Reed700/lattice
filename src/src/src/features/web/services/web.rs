@@ -49,7 +49,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use url::{form_urlencoded, Url};
 
 /// Web service implementation
@@ -59,9 +59,6 @@ use url::{form_urlencoded, Url};
 pub struct WebService {
     /// HTTP client with cookie jar and optional proxy
     client: Client,
-
-    /// Maximum content length to fetch (50MB)
-    max_content_length: usize,
 }
 
 impl WebService {
@@ -72,10 +69,7 @@ impl WebService {
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self {
-            client,
-            max_content_length: 50 * 1024 * 1024, // 50MB
-        })
+        Ok(Self { client })
     }
 
     /// Create with custom timeout
@@ -85,10 +79,7 @@ impl WebService {
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self {
-            client,
-            max_content_length: 50 * 1024 * 1024,
-        })
+        Ok(Self { client })
     }
 
     /// Extract main text content from HTML
@@ -921,7 +912,6 @@ impl WebService {
                 ipv6.is_loopback()
                     || ipv6.is_multicast()
                     || ipv6.is_unspecified()
-                    // Check for private IPv6 ranges
                     || ipv6.segments()[0] & 0xfe00 == 0xfc00 // fc00::/7 (Unique Local Addresses)
                     || ipv6.segments()[0] & 0xffc0 == 0xfe80 // fe80::/10 (Link-Local)
                     // AWS IPv6 metadata
@@ -984,7 +974,6 @@ impl WebService {
             )));
         }
 
-        // Validate all resolved IPs
         let blocked_ips: Vec<String> = resolved
             .iter()
             .filter(|ip| self.is_private_ip(**ip))
@@ -1154,7 +1143,6 @@ impl WebServiceTrait for WebService {
         let profile = stealth::random_profile();
         let headers = stealth::browser_headers(profile, None);
 
-        // Fetch URL with timeout and browser-like headers
         let response = self
             .client
             .get(url)
@@ -1163,7 +1151,6 @@ impl WebServiceTrait for WebService {
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
 
-        // Check status
         if !response.status().is_success() {
             warn!("URL fetch failed with status: {}", response.status());
             return Err(AppError::Network(format!(
@@ -1182,14 +1169,12 @@ impl WebServiceTrait for WebService {
             self.validate_url(&final_url)?;
         }
 
-        // Get content type
         let content_type = response
             .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        // Read body
         let html = response
             .text()
             .await
@@ -1197,7 +1182,6 @@ impl WebServiceTrait for WebService {
 
         let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-        // Extract content
         let title = self.extract_title(&html);
         let content = self.extract_article_text(&html);
 
@@ -1228,7 +1212,6 @@ impl WebServiceTrait for WebService {
     }
 
     fn validate_url(&self, url: &str) -> Result<()> {
-        // Parse URL
         let parsed =
             Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
 
@@ -1243,12 +1226,10 @@ impl WebServiceTrait for WebService {
             }
         }
 
-        // Check host
         let host = parsed
             .host_str()
             .ok_or_else(|| AppError::InvalidUrl("URL must have a host".to_string()))?;
 
-        // Get port (default to 80/443 based on scheme)
         let port = parsed
             .port()
             .unwrap_or_else(|| if parsed.scheme() == "https" { 443 } else { 80 });
@@ -1269,9 +1250,10 @@ mod tests {
     fn test_validate_url() {
         let service = WebService::new().unwrap();
 
-        // Valid URLs
-        assert!(service.validate_url("https://www.rust-lang.org").is_ok());
-        assert!(service.validate_url("http://example.com").is_ok());
+        // Public IP literals exercise URL validation without making this unit
+        // test depend on external DNS availability.
+        assert!(service.validate_url("https://1.1.1.1").is_ok());
+        assert!(service.validate_url("http://8.8.8.8").is_ok());
 
         // Invalid: localhost
         assert!(service.validate_url("http://localhost:8000").is_err());

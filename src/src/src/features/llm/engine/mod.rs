@@ -39,10 +39,6 @@ pub use system::{detect_capabilities, GPUInfo, GPUVendor, Platform, SystemCapabi
 pub use traits::{GenerationConfig, LLMClient};
 pub use types::*;
 
-// ============================================================================
-// Model Download Utilities
-// ============================================================================
-
 use crate::application::ports::model_storage::ModelStoragePort;
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::features::llm::use_cases::DownloadModelUseCase;

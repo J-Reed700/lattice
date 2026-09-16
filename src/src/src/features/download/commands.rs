@@ -1,4 +1,3 @@
-use crate::audit::AuditAction;
 use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
 use crate::domain::model_paths::ModelPaths;
 use crate::features::download::manager::{DownloadManager, DownloadRequest};
@@ -476,7 +475,6 @@ pub async fn retry_download(
         return Err("Download ID cannot be empty".to_string());
     }
 
-    // Execute
     match state.manager.retry_download(&id).await {
         Ok(_) => {
             info!(id = %id, "Download retried");

@@ -1,4 +1,4 @@
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use sqlx::SqliteConnection;
 use tracing::{debug, error, info};
 

@@ -4,12 +4,10 @@
 //!
 //! - `cluster_vault_debug`  — runs the pipeline end-to-end and writes a
 //!   human-readable JSON report into the user's Documents folder (or a
-//!   fallback). Returns the file path. This is the 5.3 milestone — Josh
-//!   eyeballs the output before any UI work.
+//!   fallback). Returns the file path for diagnostics.
 //! - `cluster_vault_run`    — runs + persists. Returns a summary DTO.
-//!   Foundation for Phase 5.4.
 //! - `list_clusters`        — returns the most recent run's cluster list.
-//!   Cheap read-only surface that Phase 5.4 will lean on.
+//!   This is a cheap, read-only operation.
 //!
 //! All three are explicit / user-triggered. Nothing here runs on ingest or
 //! a timer.
@@ -23,22 +21,14 @@ use tauri::State;
 
 use crate::application::ports::{ChunkRepositoryPort, LLMPort};
 use crate::features::corpus_shape::entity::{Cluster, ClusterRun, LabelSource};
-use crate::features::corpus_shape::labeling::{
-    RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS,
-};
-use crate::features::corpus_shape::repository::{
-    ClusterRepositoryPort, SqliteClusterRepository,
-};
+use crate::features::corpus_shape::labeling::{RepresentativeDoc, REP_CONTENT_PREVIEW_CHARS};
+use crate::features::corpus_shape::repository::{ClusterRepositoryPort, SqliteClusterRepository};
 use crate::features::corpus_shape::use_cases::{
     run_clustering::DocumentContentPreviewPort, ProgressSink, RunClusteringOutcome,
     RunClusteringUseCase,
 };
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-
-// ============================================================================
-// DTOs — what crosses the Tauri boundary.
-// ============================================================================
 
 /// Summary of a cluster run for UI consumption.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -69,11 +59,6 @@ pub struct ClusterDto {
     /// second round trip.
     pub member_document_ids: Vec<String>,
 }
-
-// ============================================================================
-// Debug report JSON structure. Lives here because it's user-visible —
-// changes here need to be intentional.
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize)]
 struct DebugReport {
@@ -120,10 +105,6 @@ struct DebugNoiseBlock {
     sample_doc_ids: Vec<String>,
 }
 
-// ============================================================================
-// Command 1 — `cluster_vault_debug`
-// ============================================================================
-
 #[tauri::command]
 #[specta::specta]
 pub async fn cluster_vault_debug(container: State<'_, Container>) -> Result<String> {
@@ -132,10 +113,6 @@ pub async fn cluster_vault_debug(container: State<'_, Container>) -> Result<Stri
     let path = write_debug_report(&container, &outcome).await?;
     Ok(path.display().to_string())
 }
-
-// ============================================================================
-// Command 2 — `cluster_vault_run`
-// ============================================================================
 
 #[tauri::command]
 #[specta::specta]
@@ -154,10 +131,6 @@ pub async fn cluster_vault_run<R: tauri::Runtime>(
     Ok(run_to_dto(&outcome.run))
 }
 
-// ============================================================================
-// Command 3 — `list_clusters`
-// ============================================================================
-
 #[tauri::command]
 #[specta::specta]
 pub async fn list_clusters(container: State<'_, Container>) -> Result<Vec<ClusterDto>> {
@@ -174,33 +147,21 @@ pub async fn list_clusters(container: State<'_, Container>) -> Result<Vec<Cluste
 
     let mut dtos = Vec::with_capacity(clusters.len());
     for cluster in clusters {
-        let sample_titles = gather_sample_titles(
-            &chunk_repo,
-            &document_repo,
-            &cluster,
-        )
-        .await;
+        let sample_titles = gather_sample_titles(&chunk_repo, &document_repo, &cluster).await;
         dtos.push(cluster_to_dto(&cluster, sample_titles));
     }
     Ok(dtos)
 }
 
-// ============================================================================
-// Internal helpers
-// ============================================================================
-
 async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
     let pool = container.db_pool().clone();
-    let cluster_repo: Arc<dyn ClusterRepositoryPort> =
-        Arc::new(SqliteClusterRepository::new(pool));
+    let cluster_repo: Arc<dyn ClusterRepositoryPort> = Arc::new(SqliteClusterRepository::new(pool));
 
-    // Build the content-preview adapter on top of chunk + document repos.
-    let content_preview: Arc<dyn DocumentContentPreviewPort> = Arc::new(
-        ChunkBackedContentPreview::new(
+    let content_preview: Arc<dyn DocumentContentPreviewPort> =
+        Arc::new(ChunkBackedContentPreview::new(
             container.chunk_repository(),
             container.document_repository(),
-        ),
-    );
+        ));
 
     // LLM is best-effort — if loading fails (e.g. no utility model set),
     // the pipeline still runs with fallback labels.
@@ -264,12 +225,7 @@ async fn write_debug_report(
         });
     }
 
-    let noise_sample: Vec<String> = outcome
-        .noise_doc_ids
-        .iter()
-        .take(20)
-        .cloned()
-        .collect();
+    let noise_sample: Vec<String> = outcome.noise_doc_ids.iter().take(20).cloned().collect();
 
     let report = DebugReport {
         schema_version: "corpus-shape-debug-v1",
@@ -372,12 +328,6 @@ fn cluster_to_dto(cluster: &Cluster, sample_titles: Vec<String>) -> ClusterDto {
         member_document_ids: cluster.member_doc_ids.clone(),
     }
 }
-
-// ============================================================================
-// DocumentContentPreviewPort adapter backed by chunk + document repos.
-// Kept inside `commands.rs` because it's a thin wiring layer — if the need
-// grows it can move to its own file.
-// ============================================================================
 
 struct ChunkBackedContentPreview {
     chunk_repo: Arc<dyn ChunkRepositoryPort>,

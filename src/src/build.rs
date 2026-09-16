@@ -144,6 +144,7 @@ fn main() {
             .plugin(
                 "settings",
                 tauri_build::InlinedPlugin::new().commands(&[
+                    "set_cloud_api_key",
                     "get_settings",
                     "get_settings_category",
                     "update_settings",
@@ -153,6 +154,7 @@ fn main() {
                     "get_system_theme",
                     "validate_folder_path",
                     "test_ollama_connection",
+                    "test_llama_cpp_connection",
                     "test_custom_tool",
                     "add_watch_folder",
                     "remove_watch_folder",
@@ -280,11 +282,6 @@ fn main() {
                     "get_batch_status",
                     "cancel_batch",
                     "get_batch_history",
-                    "start_batch_file_import",
-                    "start_batch_url_import",
-                    "get_batch_job_status",
-                    "cancel_batch_job",
-                    "list_batch_jobs",
                     "delete_batch_job",
                     "retry_failed_items",
                 ]),
@@ -336,6 +333,16 @@ fn main() {
                     "plugin_export_json",
                     "plugin_export_csv",
                     "plugin_export_html",
+                    "plugin_get_archive_status",
+                    "plugin_begin_archive_setup",
+                    "plugin_confirm_archive_setup",
+                    "plugin_choose_archive_destination",
+                    "plugin_set_archive_keep_count",
+                    "plugin_set_archive_passphrase",
+                    "plugin_rotate_recovery_code",
+                    "plugin_disable_archive",
+                    "plugin_create_archive_now",
+                    "plugin_restore_archive",
                 ]),
             )
             .plugin(
@@ -345,6 +352,18 @@ fn main() {
                     "list_passage_references",
                     "update_passage_reference",
                     "delete_passage_reference",
+                ]),
+            )
+            .plugin(
+                "study",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "list_study_decks",
+                    "get_study_deck",
+                    "generate_study_deck",
+                    "generate_conversation_study_deck",
+                    "review_study_card",
+                    "update_study_card",
+                    "delete_study_deck",
                 ]),
             )
             .plugin(

@@ -25,7 +25,7 @@ impl DatabaseUtils {
     /// Issue #6: Fix Unbounded IN Clauses (P0 - Crashes)
     /// Query with IN clause, automatically batching to avoid SQLite 999 parameter limit
     pub async fn query_in_batches<T, F, Fut>(
-        pool: &SqlitePool,
+        _pool: &SqlitePool,
         ids: Vec<String>,
         batch_size: usize,
         query_fn: F,
@@ -60,10 +60,8 @@ impl DatabaseUtils {
 
     /// Run periodic maintenance tasks
     pub async fn run_maintenance(pool: &SqlitePool) -> Result<()> {
-        // Update statistics
         sqlx::query("ANALYZE").execute(pool).await?;
 
-        // Check if vacuum is needed
         let size: (i64, i64) = sqlx::query_as(
             "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",
         )
@@ -129,11 +127,9 @@ impl SafeQueryBuilder {
             // 3. Actual values are bound via .bind() in execute() method (line 201)
             // 4. This follows SQLx parameterized query pattern - SQL structure is built,
             //    but data is kept separate and properly escaped by the database driver
-            //
             // Example: If column="user_id" and values=["1", "2"], this creates:
             //   Query: "WHERE user_id IN (?, ?)"
             //   Params: ["1", "2"]  <- bound separately
-            //
             // NOT vulnerable to SQL injection because user data never enters SQL string.
             self.query
                 .push_str(&format!(" WHERE {} IN ({})", column, placeholders));

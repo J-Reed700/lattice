@@ -1,5 +1,5 @@
 use crate::application::ports::batch_job_repository_port::{
-    BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus, BatchJobSummary,
+    BatchJobItem, BatchJobRepositoryPort, BatchJobStatus, BatchJobSummary,
 };
 use crate::shared::error::AppError;
 use async_trait::async_trait;
@@ -18,6 +18,25 @@ impl BatchJobRepository {
 
 #[async_trait]
 impl BatchJobRepositoryPort for BatchJobRepository {
+    async fn requeue_failed_files(
+        &self,
+        job_id: &str,
+        item_id: Option<&str>,
+        replacement_path: Option<&str>,
+    ) -> Result<usize, AppError> {
+        let mut tx = self.pool.begin().await?;
+        let count =
+            super::batch_job::ops::requeue_failed_files(&mut tx, job_id, item_id, replacement_path)
+                .await?;
+        tx.commit().await?;
+        Ok(count)
+    }
+
+    async fn get_job_options(&self, job_id: &str) -> Result<Option<String>, AppError> {
+        let mut conn = self.pool.acquire().await?;
+        super::batch_job::ops::get_job_options(&mut conn, job_id).await
+    }
+
     async fn create_batch_job(
         &self,
         job_id: &str,
@@ -152,77 +171,23 @@ impl BatchJobRepositoryPort for BatchJobRepository {
     }
 
     async fn get_batch_job(&self, job_id: &str) -> Result<BatchJobStatus, AppError> {
-        // Get job
-        let job_row = sqlx::query(
-            r#"
-            SELECT id, job_type, status, total_items, completed_items, failed_items, progress,
-                   created_at, started_at, completed_at, error_message
-            FROM batch_jobs
-            WHERE id = ?1
-            "#,
-        )
-        .bind(job_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to fetch batch job: {}", e)))?
-        .ok_or_else(|| AppError::NotFound(format!("Batch job not found: {}", job_id)))?;
-
-        // Get items
-        let items = sqlx::query!(
-            r#"
-            SELECT id, item_url, document_id, status, error_message
-            FROM batch_job_items
-            WHERE job_id = ?1
-            ORDER BY created_at ASC
-            "#,
-            job_id
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to fetch batch items: {}", e)))?
-        .into_iter()
-        .map(|row| BatchJobItemStatus {
-            id: row.id,
-            url: row.item_url,
-            document_id: row.document_id,
-            status: row.status,
-            error_message: row.error_message,
-        })
-        .collect();
-
-        Ok(BatchJobStatus {
-            id: job_row.get("id"),
-            job_type: job_row.get("job_type"),
-            status: job_row.get("status"),
-            total_items: job_row.get("total_items"),
-            completed_items: job_row.get("completed_items"),
-            failed_items: job_row.get("failed_items"),
-            progress: job_row.get("progress"),
-            created_at: job_row.get("created_at"),
-            started_at: job_row.get("started_at"),
-            completed_at: job_row.get("completed_at"),
-            error_message: job_row.get("error_message"),
-            items,
-        })
+        // A retry changes the job and its items together. Read both from one
+        // SQLite snapshot so a completed heading cannot accompany retrying rows.
+        let mut tx = self.pool.begin().await?;
+        let job = super::batch_job::ops::get_batch_job(&mut tx, job_id).await?;
+        tx.commit().await?;
+        Ok(job)
     }
 
     async fn get_pending_items(&self, job_id: &str) -> Result<Vec<BatchJobItem>, AppError> {
-        let items = sqlx::query!(
-            r#"
-            SELECT id, item_url
-            FROM batch_job_items
-            WHERE job_id = ?1 AND status = 'pending'
-            ORDER BY created_at ASC
-            "#,
-            job_id
-        )
+        let items = sqlx::query_as::<_, (String, String)>("SELECT id, item_url FROM batch_job_items WHERE job_id = ? AND status = 'pending' ORDER BY created_at ASC, rowid ASC").bind(job_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch pending items: {}", e)))?
         .into_iter()
         .map(|row| BatchJobItem {
-            id: row.id,
-            url: row.item_url,
+            id: row.0,
+            url: row.1,
         })
         .collect();
 

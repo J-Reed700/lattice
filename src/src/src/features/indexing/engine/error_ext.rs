@@ -14,7 +14,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use crate::infrastructure::indexing::error_ext::IndexingResultExt;
+//! use crate::features::indexing::engine::error_ext::IndexingResultExt;
 //! use std::path::Path;
 //!
 //! async fn index_file(path: &Path) -> Result<(), IndexingError> {
@@ -39,7 +39,7 @@
 //! - **Maintainable**: Change logging format in one place
 //! - **Type-safe**: Generic over error types that implement `Display + Into<IndexingError>`
 
-use crate::infrastructure::indexing::error::IndexingError;
+use crate::features::indexing::engine::error::IndexingError;
 use std::fmt::Display;
 use std::path::Path;
 
@@ -62,7 +62,7 @@ use std::path::Path;
 /// # Examples
 ///
 /// ```rust
-/// use crate::infrastructure::indexing::error_ext::IndexingResultExt;
+/// use crate::features::indexing::engine::error_ext::IndexingResultExt;
 /// use std::path::Path;
 ///
 /// // In an async function

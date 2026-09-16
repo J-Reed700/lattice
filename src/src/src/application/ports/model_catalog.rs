@@ -1,4 +1,4 @@
-//! # Model Catalog Port (Phase 2: External Catalogs)
+//! # External model catalog port
 //!
 //! Port for accessing external model catalogs (e.g., Hugging Face).
 //!
@@ -233,7 +233,6 @@ impl ExternalModelMetadata {
         let minimum_ram_gb = (size_gb * 1.5).max(4.0);
         let recommended_ram_gb = (size_gb * 2.0).max(8.0);
 
-        // Extract context length from name/description or default
         let context_length = self.extract_context_length();
 
         // Infer performance tier from size
@@ -245,10 +244,8 @@ impl ExternalModelMetadata {
             PerformanceTier::Accurate
         };
 
-        // Extract quantization formats
         let supported_quantizations = self.extract_quantizations();
 
-        // Extract capabilities from tags
         let capabilities = self.extract_capabilities();
 
         let is_hf_repo_id = self.id.contains('/');
@@ -297,7 +294,7 @@ impl ExternalModelMetadata {
             // Default to GGUF here. Catalog DTOs from external sources
             // don't carry a format field today; the curated entries set
             // it explicitly. Detection at download time can override.
-            format: crate::llm::models::ModelFormat::Gguf,
+            format: crate::domain::model_management::ModelFormat::Gguf,
         })
     }
 
@@ -361,8 +358,6 @@ impl ExternalModelMetadata {
             return 1.5;
         }
 
-        // Extract size hints from text
-        // Pattern: "7b", "13b", "70b" (billions of parameters)
         if let Some(size) = Self::extract_param_count(&text) {
             return Self::estimate_size_from_params(size);
         }
@@ -769,10 +764,8 @@ impl ModelCatalogPort for MockModelCatalogPort {
             .cloned()
             .collect();
 
-        // Sort by downloads (popularity)
         matching.sort_by_key(|model| std::cmp::Reverse(model.downloads));
 
-        // Apply limit
         matching.truncate(limit);
 
         Ok(matching)
@@ -796,7 +789,6 @@ mod tests {
         let catalog = MockModelCatalogPort::new();
         let results = catalog.search_models("llama", 10).await.unwrap();
 
-        // Should find 3 models: tinyllama, llama-3.2-3b, llama-3.2-7b
         assert_eq!(results.len(), 3);
         assert!(results[0].id.contains("llama"));
     }

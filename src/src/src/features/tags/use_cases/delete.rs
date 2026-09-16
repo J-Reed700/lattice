@@ -42,7 +42,6 @@ mod tests {
 
         use_case.execute(request).await.unwrap();
 
-        // Verify tag is deleted
         let tags = mock_service.get_all_tags().await.unwrap();
         assert!(tags.is_empty());
     }

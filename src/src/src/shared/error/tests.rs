@@ -11,25 +11,18 @@
 use super::enhanced::{EnhancedError, EnhancedResultExt, ErrorCategory, ErrorContext, Result};
 use std::error::Error;
 
-// ============================================================================
-// Error Chain Preservation Tests
-// ============================================================================
-
 #[test]
 fn test_io_error_chain_preserved() {
     let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file.txt not found");
     let enhanced: EnhancedError = io_err.into();
 
-    // Verify the error can be displayed
     let error_string = enhanced.to_string();
     assert!(error_string.contains("I/O operation failed"));
 
-    // Verify source is preserved
     assert!(enhanced.source().is_some());
     let source = enhanced.source().unwrap();
     assert!(source.to_string().contains("file.txt not found"));
 
-    // Verify we can get the root cause
     assert_eq!(source.source(), None); // This is the root
 }
 
@@ -38,10 +31,8 @@ fn test_database_error_chain_preserved() {
     let db_err = sqlx::Error::RowNotFound;
     let enhanced: EnhancedError = db_err.into();
 
-    // Verify error type
     assert!(matches!(enhanced, EnhancedError::Database { .. }));
 
-    // Verify source is preserved
     assert!(enhanced.source().is_some());
     let source = enhanced.source().unwrap();
     assert!(source.to_string().contains("no rows returned"));
@@ -54,10 +45,8 @@ fn test_json_error_chain_preserved() {
         serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
     let enhanced: EnhancedError = json_err.into();
 
-    // Verify error type
     assert!(matches!(enhanced, EnhancedError::Json { .. }));
 
-    // Verify source is preserved
     assert!(enhanced.source().is_some());
     assert!(enhanced.to_string().contains("JSON"));
 }
@@ -74,10 +63,8 @@ fn test_wrapped_error_chain() {
     assert!(wrapped.is_err());
     let err = wrapped.unwrap_err();
 
-    // Verify it's wrapped
     assert!(matches!(err, EnhancedError::Wrapped { .. }));
 
-    // Verify the chain
     assert!(err.to_string().contains("initialize_app"));
     assert!(err.source().is_some());
 }
@@ -108,14 +95,12 @@ fn test_multi_layer_error_chain() {
 
     let err = result.unwrap_err();
 
-    // Verify the chain is preserved
     let chain_str = err.chain_to_string();
     assert!(chain_str.contains("startup_initialization"));
     assert!(chain_str.contains("Failed to load configuration"));
     assert!(chain_str.contains("config.toml not found"));
     assert!(chain_str.contains("caused by"));
 
-    // Verify tags are preserved
     assert_eq!(
         err.context().tags.get("phase"),
         Some(&"bootstrap".to_string())
@@ -133,19 +118,13 @@ fn test_error_chain_to_string_format() {
 
     let chain = enhanced.chain_to_string();
 
-    // Verify format
     assert!(chain.contains("I/O operation failed: wrapped error"));
     assert!(chain.contains("caused by:"));
     assert!(chain.contains("original error"));
 
-    // Verify it's a single string with proper formatting
     let lines: Vec<&str> = chain.split('\n').collect();
     assert!(lines.len() >= 2);
 }
-
-// ============================================================================
-// Context Propagation Tests
-// ============================================================================
 
 #[test]
 fn test_context_tags_preserved() {
@@ -222,10 +201,6 @@ fn test_multiple_context_additions() {
     assert_eq!(err.category(), ErrorCategory::UserFixable);
     assert!(err.context().tags.contains_key("context"));
 }
-
-// ============================================================================
-// Error Categorization Tests
-// ============================================================================
 
 #[test]
 fn test_retriable_errors() {
@@ -342,10 +317,6 @@ fn test_custom_category() {
     assert_eq!(err.category(), ErrorCategory::Fatal);
 }
 
-// ============================================================================
-// User-Friendly Message Tests
-// ============================================================================
-
 #[test]
 fn test_default_user_friendly_messages() {
     let test_cases = vec![
@@ -408,10 +379,6 @@ fn test_custom_user_friendly_message() {
     );
 }
 
-// ============================================================================
-// Conversion Tests
-// ============================================================================
-
 #[test]
 fn test_io_error_conversion() {
     let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
@@ -451,10 +418,6 @@ fn test_to_string_conversion() {
     let error_string: String = err.into();
     assert!(!error_string.is_empty());
 }
-
-// ============================================================================
-// Extension Trait Tests
-// ============================================================================
 
 #[test]
 fn test_with_context_on_result() {
@@ -544,10 +507,6 @@ fn test_option_with_context_fn() {
         .contains("Missing required field: username"));
 }
 
-// ============================================================================
-// Macro Tests
-// ============================================================================
-
 #[test]
 fn test_bail_with_context_macro() {
     fn test_function(value: i32) -> Result<()> {
@@ -584,10 +543,6 @@ fn test_ensure_with_context_macro() {
         .contains("Value 15 exceeds maximum 10"));
 }
 
-// ============================================================================
-// Integration Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_async_error_propagation() {
     async fn level3() -> std::io::Result<String> {
@@ -614,12 +569,10 @@ async fn test_async_error_propagation() {
     let err = result.unwrap_err();
     let chain = err.chain_to_string();
 
-    // Verify chain includes all levels
     assert!(chain.contains("initialize"));
     assert!(chain.contains("Failed to load data"));
     assert!(chain.contains("file.txt not found"));
 
-    // Verify tags from both levels
     assert_eq!(err.context().tags.get("level"), Some(&"1".to_string()));
 }
 
@@ -673,13 +626,8 @@ fn test_backward_compatibility_with_legacy() {
     assert!(matches!(enhanced, EnhancedError::InvalidInput { .. }));
 }
 
-// ============================================================================
-// Enhanced Error Chain Tests (for parking_lot and improvements)
-// ============================================================================
-
 #[test]
 fn test_error_source_method_works() {
-    // Create a multi-level error
     let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "root cause: file missing");
     let enhanced = EnhancedError::Io {
         message: "first level".to_string(),
@@ -687,14 +635,12 @@ fn test_error_source_method_works() {
         context: ErrorContext::new(),
     };
 
-    // Verify source() method returns Some
     let source = enhanced.source();
     assert!(
         source.is_some(),
         "source() should return Some for IO errors"
     );
 
-    // Verify source content
     let source_str = source.unwrap().to_string();
     assert!(
         source_str.contains("root cause: file missing"),
@@ -705,7 +651,6 @@ fn test_error_source_method_works() {
 
 #[test]
 fn test_multi_level_error_source_chain() {
-    // Create a deep error chain
     fn layer_4() -> std::io::Result<()> {
         Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
@@ -754,7 +699,6 @@ fn test_multi_level_error_source_chain() {
         chain_depth
     );
 
-    // Verify root cause is accessible
     let chain_str = err.chain_to_string();
     assert!(
         chain_str.contains("layer 4: permission denied"),
@@ -780,7 +724,6 @@ fn test_context_preserved_through_source_chain() {
     assert!(enhanced.is_err());
     let err = enhanced.unwrap_err();
 
-    // Verify context is preserved at the top level
     assert_eq!(
         err.context().tags.get("request_id"),
         Some(&"req-12345".to_string())
@@ -790,7 +733,6 @@ fn test_context_preserved_through_source_chain() {
         Some(&"user-789".to_string())
     );
 
-    // Verify we can still access the source
     assert!(err.source().is_some());
 }
 
@@ -803,10 +745,8 @@ fn test_database_error_source_preservation() {
         context: ErrorContext::new(),
     };
 
-    // Verify source exists
     assert!(enhanced.source().is_some());
 
-    // Verify source type
     let source = enhanced.source().unwrap();
     assert!(
         source.to_string().contains("no rows returned"),
@@ -819,7 +759,6 @@ fn test_wrapped_error_preserves_complete_chain() {
     // Original error
     let json_err: serde_json::Error = serde_json::from_str::<i32>("not a number").unwrap_err();
 
-    // Convert and wrap
     let result: std::result::Result<(), _> = Err(json_err);
     let enhanced = result
         .with_context("Failed to parse configuration")
@@ -829,16 +768,13 @@ fn test_wrapped_error_preserves_complete_chain() {
     assert!(enhanced.is_err());
     let err = enhanced.unwrap_err();
 
-    // Verify it's wrapped
     assert!(matches!(err, EnhancedError::Wrapped { .. }));
 
-    // Verify the entire chain is accessible
     let chain = err.chain_to_string();
     assert!(chain.contains("load_settings"));
     assert!(chain.contains("Failed to parse configuration"));
     assert!(chain.contains("expected"));
 
-    // Verify tags are preserved
     assert_eq!(
         err.context().tags.get("config_file"),
         Some(&"settings.json".to_string())
@@ -900,7 +836,6 @@ fn test_error_chain_with_multiple_wrapping_layers() {
 
     let err = result.unwrap_err();
 
-    // Test source chain depth
     let mut depth = 0;
     let mut current: Option<&dyn Error> = Some(&err);
 
@@ -911,14 +846,12 @@ fn test_error_chain_with_multiple_wrapping_layers() {
 
     assert!(depth >= 2, "Should have multiple levels in chain");
 
-    // Test that all context is preserved
     assert_eq!(err.category(), ErrorCategory::UserFixable);
     assert_eq!(
         err.context().tags.get("component"),
         Some(&"config_loader".to_string())
     );
 
-    // Verify complete chain in string representation
     let chain_str = err.chain_to_string();
     assert!(chain_str.contains("application_initialization"));
     assert!(chain_str.contains("Configuration file could not be loaded"));
@@ -943,7 +876,6 @@ fn test_source_chain_iteration() {
         current = e.source();
     }
 
-    // Should have at least 2 entries: the enhanced error and the IO error
     assert!(chain.len() >= 2, "Chain should have multiple entries");
     assert!(chain[0].contains("I/O operation failed"));
     assert!(chain.last().unwrap().contains("disk full"));
@@ -953,7 +885,6 @@ fn test_source_chain_iteration() {
 fn test_parking_lot_compatible_error_sharing() {
     use std::sync::Arc;
 
-    // Create an error that will be shared across threads
     let err = Arc::new(EnhancedError::Database {
         message: "connection pool exhausted".to_string(),
         source: sqlx::Error::PoolTimedOut,
@@ -967,16 +898,13 @@ fn test_parking_lot_compatible_error_sharing() {
     let err2 = Arc::clone(&err);
     let err3 = Arc::clone(&err);
 
-    // Verify all clones access the same error data
     assert_eq!(err1.to_string(), err2.to_string());
     assert_eq!(err2.to_string(), err3.to_string());
 
-    // Verify source is accessible from all clones
     assert!(err1.source().is_some());
     assert!(err2.source().is_some());
     assert!(err3.source().is_some());
 
-    // Verify tags are accessible
     assert_eq!(
         err1.context().tags.get("pool_size"),
         Some(&"10".to_string())
@@ -998,7 +926,6 @@ fn test_error_downcast_chain() {
         let source_str = source.to_string();
         assert!(source_str.contains("not found"));
 
-        // Verify we can check error kind through chain
         if let Some(io_source) = source.downcast_ref::<std::io::Error>() {
             assert_eq!(io_source.kind(), std::io::ErrorKind::NotFound);
         } else {

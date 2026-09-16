@@ -238,8 +238,33 @@ pub fn redact_log(input: &str) -> String {
     }
 }
 
+/// Largest byte index `<= index` that sits on a char boundary of `text`, so a
+/// byte-budgeted prefix can be sliced without panicking inside a multibyte
+/// character. `std::str::floor_char_boundary` is still unstable.
+pub fn floor_char_boundary(text: &str, index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    (0..=index)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn floor_char_boundary_never_splits_a_character() {
+        let text = "ab時cd"; // '時' spans bytes 2..5
+        assert_eq!(super::floor_char_boundary(text, 0), 0);
+        assert_eq!(super::floor_char_boundary(text, 2), 2);
+        assert_eq!(super::floor_char_boundary(text, 3), 2);
+        assert_eq!(super::floor_char_boundary(text, 4), 2);
+        assert_eq!(super::floor_char_boundary(text, 5), 5);
+        assert_eq!(super::floor_char_boundary(text, 99), text.len());
+        assert!(text.get(..super::floor_char_boundary(text, 4)).is_some());
+    }
+
     use super::*;
 
     #[test]

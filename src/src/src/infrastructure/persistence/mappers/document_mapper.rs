@@ -14,7 +14,7 @@
 use crate::domain::entities::document::{
     Category, Document as DomainDocument, DocumentStatus, Language,
 };
-use crate::domain_types::{DocumentId, ValidatedFilePath};
+use crate::shared::domain_types::{DocumentId, ValidatedFilePath};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ pub struct DocumentModel {
     pub status: String,
     #[sqlx(default)]
     pub error_message: Option<String>,
-    // Rich metadata fields (Phase 2)
+    // Extended metadata
     // SQLite types: TEXT, REAL (f64), INTEGER (i64)
     pub language: String,
     pub category: String,
@@ -50,7 +50,9 @@ pub struct DocumentModel {
     pub last_accessed_at: Option<String>,
     pub word_count: i64, // SQLite INTEGER = i64
     #[sqlx(default)]
-    pub content: String, // Document content (Oracle Step 1)
+    pub content: String,
+    #[sqlx(default)]
+    pub source_context: Option<String>,
 }
 
 /// Mapper for Document entity and database model.
@@ -97,7 +99,10 @@ impl DocumentMapper {
             access_count: entity.access_count() as i64,   // Convert i32 -> i64 for SQLite
             last_accessed_at: entity.last_accessed_at().map(|dt| dt.to_rfc3339()),
             word_count: entity.word_count() as i64, // Convert i32 -> i64 for SQLite
-            content: entity.content().to_string(),  // Oracle Step 1: Content field
+            source_context: entity
+                .source_context()
+                .map(|value| serde_json::json!(value).to_string()),
+            content: entity.content().to_string(),
         }
     }
 
@@ -204,14 +209,12 @@ impl DocumentMapper {
             e
         })?;
 
-        // Parse document ID
         let id = DocumentId::from_string(model.id.clone()).map_err(|e| {
             let err_msg = format!("Invalid document ID: {} (value: {})", e, model.id);
             tracing::error!("{}", err_msg);
             AppError::InvalidData(err_msg)
         })?;
 
-        // Parse file path
         let file_path = ValidatedFilePath::new(PathBuf::from(&model.file_path)).map_err(|e| {
             let err_msg = format!(
                 "Invalid file path for doc {}: {} (value: {})",
@@ -221,7 +224,6 @@ impl DocumentMapper {
             AppError::InvalidData(err_msg)
         })?;
 
-        // Parse status
         let status = model.status.parse::<DocumentStatus>().map_err(|e| {
             let err_msg = format!(
                 "Invalid status for doc {}: {} (value: {})",
@@ -231,31 +233,26 @@ impl DocumentMapper {
             AppError::InvalidData(err_msg)
         })?;
 
-        // Parse language
         let language = model
             .language
             .parse::<Language>()
             .unwrap_or(Language::Unknown);
 
-        // Parse category
         let category = model
             .category
             .parse::<Category>()
             .unwrap_or(Category::Uncategorized);
 
-        // Parse last_accessed_at
         let last_accessed_at = model
             .last_accessed_at
             .as_ref()
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
-        // Convert checksum String to Checksum value object
         let checksum =
             crate::domain::value_objects::checksum::Checksum::new(model.checksum.clone())?;
 
-        // Create domain entity (convert SQLite types back to domain types)
-        let entity = DomainDocument::with_id(
+        let mut entity = DomainDocument::with_id(
             id,
             file_path,
             model.file_name.clone(),
@@ -273,7 +270,7 @@ impl DocumentMapper {
             model.access_count as i32,  // Convert i64 -> i32 for domain
             last_accessed_at,
             model.word_count as i32, // Convert i64 -> i32 for domain
-            model.content.clone(),   // Oracle Step 1: Content field
+            model.content.clone(),
         );
 
         tracing::debug!(
@@ -282,6 +279,13 @@ impl DocumentMapper {
             model.file_name
         );
 
+        entity.set_source_context(
+            model
+                .source_context
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?,
+        );
         Ok(entity)
     }
 
@@ -364,7 +368,3 @@ impl DocumentMapper {
         entities.iter().map(Self::to_model).collect()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================

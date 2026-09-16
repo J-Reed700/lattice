@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 #[cfg(feature = "test-utils")]
 use lattice::features::download::download_repository::mock::MockDownloadRepository;

@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn bare_filename_rejects_escapes() {
         // The SEC-2 case: an absolute filename makes `join` drop the base.
-        assert!(validate_bare_filename("/Users/josh/.zshenv").is_err());
+        assert!(validate_bare_filename("/Users/example/.zshenv").is_err());
         assert!(validate_bare_filename("../../.zshenv").is_err());
         assert!(validate_bare_filename("sub/dir.bin").is_err());
         assert!(validate_bare_filename("..").is_err());

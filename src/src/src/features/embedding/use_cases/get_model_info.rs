@@ -106,7 +106,6 @@ impl GetEmbeddingModelInfoUseCase {
 mod tests {
     use super::*;
     use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
-    use crate::shared::error::AppError;
     use async_trait::async_trait;
 
     /// Mock embedding service for testing
@@ -141,14 +140,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_model_info_standard_dimension() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(DEFAULT_EMBEDDING_DIM));
         let use_case = GetEmbeddingModelInfoUseCase::new(mock_service);
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let info = result.unwrap();
         assert_eq!(info.dimension, DEFAULT_EMBEDDING_DIM);
@@ -158,14 +154,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_model_info_large_dimension() {
-        // Arrange - Larger model like DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME
         let mock_service = Arc::new(MockEmbeddingService::new(DEFAULT_EMBEDDING_DIM));
         let use_case = GetEmbeddingModelInfoUseCase::new(mock_service);
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let info = result.unwrap();
         assert_eq!(info.dimension, DEFAULT_EMBEDDING_DIM);
@@ -173,14 +166,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_model_info_openai_dimension() {
-        // Arrange - OpenAI text-embedding-3-small
         let mock_service = Arc::new(MockEmbeddingService::new(1536));
         let use_case = GetEmbeddingModelInfoUseCase::new(mock_service);
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let info = result.unwrap();
         assert_eq!(info.dimension, 1536);
@@ -188,14 +178,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_model_info_returns_all_fields() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(DEFAULT_EMBEDDING_DIM));
         let use_case = GetEmbeddingModelInfoUseCase::new(mock_service);
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let info = result.unwrap();
 
@@ -207,15 +194,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_model_info_multiple_calls_consistent() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(DEFAULT_EMBEDDING_DIM));
         let use_case = GetEmbeddingModelInfoUseCase::new(mock_service);
 
-        // Act - Call multiple times
         let result1 = use_case.execute().await.unwrap();
         let result2 = use_case.execute().await.unwrap();
 
-        // Assert - Results should be identical
         assert_eq!(result1.dimension, result2.dimension);
         assert_eq!(result1.model_name, result2.model_name);
         assert_eq!(result1.max_tokens, result2.max_tokens);
@@ -223,7 +207,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_model_info_dimension_correctness() {
-        // Test various common embedding dimensions
         let test_cases = vec![
             512,                   // some custom models
             DEFAULT_EMBEDDING_DIM, // DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, BERT-base

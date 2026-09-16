@@ -10,7 +10,7 @@ use super::{
 };
 use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 /// File storage service with content-addressed storage and deduplication.
@@ -86,10 +86,8 @@ impl FileStorageService {
         mime_type: &str,
         metadata: Option<serde_json::Value>,
     ) -> Result<FileRecord> {
-        // Extract validated path for internal use
         let path = source_path.as_path();
 
-        // Validate file exists and get size
         let file_metadata = tokio::fs::metadata(path)
             .await
             .map_err(|e| AppError::FileStorage(format!("Failed to read file metadata: {}", e)))?;
@@ -110,13 +108,10 @@ impl FileStorageService {
             });
         }
 
-        // Compute content hash
         let content_hash = hash::compute_hash(path).await?;
         hash::validate_hash(&content_hash)?;
 
-        // Check for existing file with same hash
         if let Some(mut existing) = queries::get_file_by_hash(&self.pool, &content_hash).await? {
-            // Verify sizes match (detect hash collisions)
             if existing.size_bytes as u64 == size_bytes {
                 queries::increment_ref_count(&self.pool, &existing.id).await?;
                 existing.ref_count += 1; // Update local copy to match database
@@ -136,7 +131,6 @@ impl FileStorageService {
             }
         }
 
-        // Extract file metadata
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -155,7 +149,6 @@ impl FileStorageService {
             .as_ref()
             .and_then(|m| serde_json::to_string(m).ok());
 
-        // Insert database record
         queries::insert_file_record(
             &self.pool,
             &file_id,
@@ -285,13 +278,11 @@ impl FileStorageService {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        // Get file record
         let file_record = queries::get_file_by_id(&self.pool, file_id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("File not found: {}", file_id)))?;
 
         if file_record.ref_count <= 1 {
-            // Delete physical file
             let full_path = self.vault_path.join(&file_record.storage_path);
             if full_path.exists() {
                 tokio::fs::remove_file(&full_path).await.map_err(|e| {
@@ -299,7 +290,6 @@ impl FileStorageService {
                 })?;
             }
 
-            // Delete database record
             sqlx::query("DELETE FROM files WHERE id = ?1")
                 .bind(file_id)
                 .execute(&mut *tx)
@@ -340,7 +330,6 @@ impl FileStorageService {
         let count = orphaned_files.len();
 
         for (id, storage_path) in orphaned_files {
-            // Delete from disk
             let full_path = self.vault_path.join(&storage_path);
             if full_path.exists() {
                 if let Err(e) = tokio::fs::remove_file(&full_path).await {
@@ -352,7 +341,6 @@ impl FileStorageService {
                 }
             }
 
-            // Delete from database
             queries::delete_file_record(&self.pool, &id).await?;
         }
 
@@ -375,12 +363,10 @@ impl FileStorageService {
             Some(file_record) => {
                 let full_path = self.vault_path.join(&file_record.storage_path);
 
-                // Check file exists
                 if !full_path.exists() {
                     return Ok(false);
                 }
 
-                // Verify hash
                 let current_hash = hash::compute_hash(&full_path).await?;
                 Ok(current_hash == file_record.content_hash)
             }
@@ -398,10 +384,6 @@ impl FileStorageService {
     }
 }
 
-// =============================================================================
-// Trait Implementation
-// =============================================================================
-
 use crate::infrastructure::services::traits::FileStorageServiceTrait;
 use async_trait::async_trait;
 
@@ -413,10 +395,8 @@ impl FileStorageServiceTrait for FileStorageService {
         mime_type: &str,
         metadata: Option<serde_json::Value>,
     ) -> Result<crate::infrastructure::services::traits::FileRecord> {
-        // Call the existing method and convert the result
         let record = FileStorageService::store_file(self, source_path, mime_type, metadata).await?;
 
-        // Convert from internal FileRecord to trait FileRecord
         Ok(crate::infrastructure::services::traits::FileRecord {
             id: record.id,
             content_hash: record.content_hash,

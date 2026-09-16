@@ -24,7 +24,8 @@
 //! }
 //! ```
 
-#[cfg(test)]
+#![cfg(test)]
+
 use mockall::mock;
 
 #[cfg(test)]
@@ -35,14 +36,13 @@ use crate::shared::result::Result;
 
 #[cfg(test)]
 use crate::application::ports::{
+    unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
     BatchJobRepositoryPort, ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
 #[cfg(test)]
 use crate::domain::repositories::{
-    model_repository::ModelRepository,
-    unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
-    SearchRepository, SystemRepository,
+    model_repository::ModelRepository, SearchRepository, SystemRepository,
 };
 
 #[cfg(test)]
@@ -63,10 +63,6 @@ use crate::domain::repositories::search_repository::SearchResult;
 use crate::application::ports::repository_port::Filter;
 #[cfg(test)]
 use crate::application::ports::repository_port::RepositoryPort;
-
-// ============================================================================
-// Mock Repository Implementations
-// ============================================================================
 
 #[cfg(test)]
 pub struct MockChunkRepository;
@@ -499,10 +495,6 @@ mock! {
     }
 }
 
-// ============================================================================
-// Mock UnitOfWork
-// ============================================================================
-
 #[cfg(test)]
 mock! {
     /// Mock implementation of UnitOfWork trait
@@ -533,7 +525,7 @@ mock! {
     pub UnitOfWork {}
 
     #[async_trait]
-    impl crate::domain::repositories::unit_of_work::UnitOfWork for UnitOfWork {
+    impl crate::application::ports::unit_of_work::UnitOfWork for UnitOfWork {
         fn chunk_repository<'a>(&'a self) -> Result<Box<dyn ChunkRepositoryPort + Send + 'a>>;
         fn document_repository<'a>(&'a self) -> Result<Box<dyn DocumentRepositoryPort + Send + 'a>>;
         fn embedding_repository<'a>(&'a self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + 'a>>;
@@ -546,10 +538,6 @@ mock! {
         async fn rollback(&mut self) -> Result<()>;
     }
 }
-
-// ============================================================================
-// Mock UnitOfWorkFactory
-// ============================================================================
 
 #[cfg(test)]
 mock! {
@@ -582,14 +570,10 @@ mock! {
     pub UnitOfWorkFactory {}
 
     #[async_trait]
-    impl crate::domain::repositories::unit_of_work::UnitOfWorkFactory for UnitOfWorkFactory {
-        async fn create(&self) -> Result<Box<dyn crate::domain::repositories::unit_of_work::UnitOfWork + Send>>;
+    impl crate::application::ports::unit_of_work::UnitOfWorkFactory for UnitOfWorkFactory {
+        async fn create(&self) -> Result<Box<dyn crate::application::ports::unit_of_work::UnitOfWork + Send>>;
     }
 }
-
-// ============================================================================
-// Helper Functions for Common Mock Scenarios
-// ============================================================================
 
 #[cfg(test)]
 /// Create a default MockUnitOfWork with basic expectations set
@@ -616,9 +600,8 @@ pub fn create_default_mock_uow() -> MockUnitOfWork {
 pub fn create_failing_commit_mock_uow() -> MockUnitOfWork {
     let mut mock = MockUnitOfWork::new();
 
-    // Simulate commit failure
     mock.expect_commit().returning(|| {
-        Err(crate::error::AppError::Database(
+        Err(crate::shared::error::AppError::Database(
             "Commit failed".to_string(),
         ))
     });
@@ -631,9 +614,8 @@ pub fn create_failing_commit_mock_uow() -> MockUnitOfWork {
 pub fn create_failing_rollback_mock_uow() -> MockUnitOfWork {
     let mut mock = MockUnitOfWork::new();
 
-    // Simulate rollback failure
     mock.expect_rollback().returning(|| {
-        Err(crate::error::AppError::Database(
+        Err(crate::shared::error::AppError::Database(
             "Rollback failed".to_string(),
         ))
     });
@@ -644,7 +626,7 @@ pub fn create_failing_rollback_mock_uow() -> MockUnitOfWork {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::repositories::unit_of_work::UnitOfWork;
+    use crate::application::ports::unit_of_work::UnitOfWork;
 
     #[tokio::test]
     async fn test_mock_uow_commit() {

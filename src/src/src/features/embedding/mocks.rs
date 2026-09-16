@@ -8,12 +8,6 @@ use super::trait_def::EmbeddingServiceTrait;
 use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
-#[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, RwLock};
-
-// ============================================================================
 
 #[cfg(test)]
 /// Mock embedding service that returns deterministic embeddings
@@ -41,7 +35,6 @@ impl MockEmbeddingService {
         text.hash(&mut hasher);
         let hash = hasher.finish();
 
-        // Generate deterministic embedding from hash
         let mut embedding = vec![0.0; self.dimension];
         for (i, val) in embedding.iter_mut().enumerate() {
             let shifted = hash.wrapping_add(i as u64);
@@ -80,7 +73,7 @@ impl EmbeddingServiceTrait for MockEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::infrastructure::indexing::chunker::ContextualizedChunk],
+        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         Ok(chunks
             .iter()

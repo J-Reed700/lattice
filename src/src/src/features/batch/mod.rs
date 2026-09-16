@@ -25,6 +25,5 @@ pub mod plugin;
 pub mod services;
 pub mod use_cases;
 
-// Re-export public traits at the feature root.
 pub use services::file_import_trait::{BatchFileImportServiceTrait, ProcessedFileInfo};
 pub use services::url_import_trait::BatchUrlImportServiceTrait;

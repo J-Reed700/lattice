@@ -13,7 +13,6 @@ impl JsonValidator {
         max_size: usize,
         max_depth: usize,
     ) -> Result<T> {
-        // Check size limit
         if json_str.len() > max_size {
             return Err(AppError::InvalidInput(format!(
                 "JSON too large: {} bytes (max: {} bytes)",
@@ -25,7 +24,6 @@ impl JsonValidator {
         // First parse to Value to check structure
         let value: Value = serde_json::from_str(json_str)?;
 
-        // Check depth
         let depth = Self::calculate_depth(&value);
         if depth > max_depth {
             return Err(AppError::InvalidInput(format!(
@@ -34,7 +32,6 @@ impl JsonValidator {
             )));
         }
 
-        // Check for dangerous patterns
         Self::check_dangerous_patterns(&value)?;
 
         // Now deserialize to target type
@@ -66,7 +63,6 @@ impl JsonValidator {
         match value {
             Value::Object(map) => {
                 for (key, val) in map {
-                    // Check for dangerous keys
                     if Self::is_dangerous_key(key) {
                         return Err(AppError::InvalidInput(format!(
                             "Dangerous JSON key detected: {}",
@@ -77,7 +73,6 @@ impl JsonValidator {
                 }
             }
             Value::Array(arr) => {
-                // Check array size
                 if arr.len() > 10000 {
                     return Err(AppError::InvalidInput(format!(
                         "Array too large: {} elements",
@@ -89,14 +84,12 @@ impl JsonValidator {
                 }
             }
             Value::String(s) => {
-                // Check string size
                 if s.len() > 1_000_000 {
                     return Err(AppError::InvalidInput(format!(
                         "String value too large: {} bytes",
                         s.len()
                     )));
                 }
-                // Check for code injection attempts
                 if Self::contains_code_pattern(s) {
                     return Err(AppError::InvalidInput(
                         "Potentially dangerous string content".to_string(),
@@ -137,7 +130,6 @@ impl JsonValidator {
     fn contains_code_pattern(s: &str) -> bool {
         let s_lower = s.to_lowercase();
 
-        // Check for HTML/JavaScript injection patterns
         if s_lower.contains("<script") && s_lower.contains(">") {
             return true;
         }
@@ -154,7 +146,6 @@ impl JsonValidator {
             return true;
         }
 
-        // Check for HTML event handlers
         let event_handlers = ["onload=", "onerror=", "onclick=", "onmouseover="];
         for pattern in &event_handlers {
             if s_lower.contains(pattern) {
@@ -190,8 +181,6 @@ impl JsonValidator {
                         // Real paths: "/home/user/eval()/documents" (4 components)
                         // Malicious: "eval(hack)/etc/passwd" (3 components) or "eval(x)/" (1-2 components)
                         if components.len() >= 3 {
-                            // Check if any component is JUST the pattern with empty/simple parens
-                            // like "eval()" or "setTimeout" - not "eval(alert(1))"
                             let has_legitimate_component = components.iter().any(|comp| {
                                 let comp_lower = comp.to_lowercase();
                                 if comp_lower.contains(pattern) {
@@ -271,11 +260,9 @@ mod tests {
     fn test_depth_limit() {
         let deep_json = r#"{"a":{"b":{"c":{"d":{"e":"f"}}}}}"#;
 
-        // Should fail with depth limit 3
         let result: Result<Value> = JsonValidator::safe_deserialize(deep_json, 1024, 3);
         assert!(result.is_err());
 
-        // Should pass with depth limit 10
         let result: Result<Value> = JsonValidator::safe_deserialize(deep_json, 1024, 10);
         assert!(result.is_ok());
     }
@@ -298,7 +285,6 @@ mod tests {
 
     #[test]
     fn test_legitimate_paths_allowed() {
-        // Test file paths containing function-like patterns
         let legitimate_cases = vec![
             r#"{"path": "/home/user/eval()/documents"}"#,
             r#"{"path": "C:\\Users\\setTimeout\\file.txt"}"#,
@@ -320,7 +306,6 @@ mod tests {
 
     #[test]
     fn test_actual_code_patterns_rejected() {
-        // Test actual code injection attempts
         let dangerous_cases = vec![
             r#"{"code": "eval(alert(1))"}"#,
             r#"{"script": "<script>alert(1)</script>"}"#,
@@ -345,7 +330,6 @@ mod tests {
 
     #[test]
     fn test_word_boundary_detection() {
-        // Test that function patterns as part of larger words are allowed
         let legitimate_words = vec![
             r#"{"status": "evaluation in progress"}"#,
             r#"{"type": "medieval history"}"#,
@@ -366,7 +350,6 @@ mod tests {
     fn test_contains_code_pattern_directly() {
         // Direct tests of the contains_code_pattern function
 
-        // Should NOT be flagged (legitimate values)
         assert!(!JsonValidator::contains_code_pattern(
             "/home/user/eval()/documents"
         ));
@@ -380,7 +363,6 @@ mod tests {
         ));
         assert!(!JsonValidator::contains_code_pattern("medieval"));
 
-        // SHOULD be flagged (actual code injection)
         assert!(JsonValidator::contains_code_pattern("eval(alert(1))"));
         assert!(JsonValidator::contains_code_pattern(
             "<script>alert(1)</script>"

@@ -131,7 +131,7 @@ impl SemanticSearchUseCase {
         let start = std::time::Instant::now();
 
         // 1. Generate query embedding
-        let query_embedding = self.embedding_service.embed_single(&request.query).await?;
+        let query_embedding = self.embedding_service.embed_query(&request.query).await?;
 
         // 2. Perform vector search (returns port DTOs)
         let limit = request.limit.unwrap_or(10);
@@ -155,17 +155,12 @@ impl SemanticSearchUseCase {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::features::search::dto::SearchModeDto;
     use async_trait::async_trait;
 
-    // Mock embedding service for testing
     struct MockEmbedder;
 
     #[async_trait]
@@ -187,7 +182,6 @@ mod tests {
         }
     }
 
-    // Mock vector search service for testing
     struct MockVectorSearch;
 
     impl VectorSearchPort for MockVectorSearch {
@@ -197,7 +191,6 @@ mod tests {
             limit: usize,
             _threshold: f32,
         ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
-            // Return mock port DTOs
             Ok((0..limit.min(3))
                 .map(|i| crate::features::search::dto::SearchResultPortDto {
                     doc_id: format!("doc-{}", i),
@@ -206,6 +199,21 @@ mod tests {
                     content: format!("Content {}", i),
                 })
                 .collect())
+        }
+
+        fn search_scoped(
+            &self,
+            query_embedding: &[f32],
+            top_k: usize,
+            threshold: f32,
+            allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+            let mut results = self.search(query_embedding, top_k, threshold)?;
+            if let Some(scope) = allowed_document_ids {
+                results.retain(|result| scope.contains(&result.doc_id));
+                results.truncate(top_k);
+            }
+            Ok(results)
         }
 
         fn add_embedding(&self, _id: String, _embedding: Vec<f32>) -> Result<()> {

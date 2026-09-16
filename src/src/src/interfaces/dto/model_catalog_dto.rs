@@ -5,10 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Enum DTOs
-// ============================================================================
-
 /// Model category DTO for frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum ModelCategoryDto {
@@ -101,10 +97,6 @@ impl From<crate::domain::model_catalog::ModelSource> for ModelSourceDto {
         }
     }
 }
-
-// ============================================================================
-// Struct DTOs
-// ============================================================================
 
 /// Model file metadata DTO for frontend.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

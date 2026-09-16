@@ -2,7 +2,7 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 use crate::infrastructure::services::context_manager::LLMContext;
 use crate::shared::error::Result;
 use async_trait::async_trait;
@@ -41,7 +41,7 @@ pub trait QAEngineTrait: Send + Sync {
         search_results: Vec<SearchResult>,
         max_context_tokens: usize,
         llm_context: Option<LLMContext>,
-    ) -> Result<String, crate::infrastructure::qa::types::QAError>;
+    ) -> Result<String, crate::features::qa::engine::types::QAError>;
 
     /// Answer a question with streaming response
     ///
@@ -83,12 +83,12 @@ pub trait QAEngineTrait: Send + Sync {
     ) -> Result<
         std::pin::Pin<
             Box<
-                dyn tokio_stream::Stream<Item = crate::infrastructure::qa::types::StreamChunk>
+                dyn tokio_stream::Stream<Item = crate::features::qa::engine::types::StreamChunk>
                     + Send
                     + '_,
             >,
         >,
-        crate::infrastructure::qa::types::QAError,
+        crate::features::qa::engine::types::QAError,
     >;
 
     /// Check if LLM client is available
@@ -103,10 +103,6 @@ pub trait QAEngineTrait: Send + Sync {
     /// Model name string (e.g., "llama3.1:8b", "claude-sonnet-4")
     fn model_name(&self) -> &str;
 }
-
-// ============================================================================
-// Conversational Q&A Service Trait
-// ============================================================================
 
 /// Trait for conversational question-answering operations
 ///

@@ -81,18 +81,17 @@ impl ExportSettingsUseCase {
     /// Returns error if path is empty or parent directory doesn't exist
     fn validate_export_path(&self, path: &str) -> Result<()> {
         if path.is_empty() {
-            return Err(crate::error::AppError::InvalidInput(
+            return Err(crate::shared::error::AppError::InvalidInput(
                 "Export path cannot be empty".to_string(),
             ));
         }
 
         let path_buf = PathBuf::from(path);
 
-        // Check if parent directory exists
         if let Some(parent) = path_buf.parent() {
             // repository-barrier-allow: export targets a user-selected filesystem resource.
             if !parent.exists() {
-                return Err(crate::error::AppError::InvalidInput(format!(
+                return Err(crate::shared::error::AppError::InvalidInput(format!(
                     "Parent directory does not exist: {}",
                     parent.display()
                 )));
@@ -102,10 +101,6 @@ impl ExportSettingsUseCase {
         Ok(())
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

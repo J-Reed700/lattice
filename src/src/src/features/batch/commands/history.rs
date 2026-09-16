@@ -246,10 +246,16 @@ pub async fn delete_batch_job(
 /// Pure delegation to `RetryFailedItemsUseCase`
 pub async fn retry_failed_items(
     job_id: String,
+    item_id: Option<String>,
+    replacement_path: Option<String>,
     container: State<'_, Container>,
 ) -> Result<RetryFailedItemsResponseDto, AppError> {
     let use_case = container.retry_failed_items_use_case();
     use_case
-        .execute(RetryFailedItemsRequestDto { job_id })
+        .execute(RetryFailedItemsRequestDto {
+            job_id,
+            item_id,
+            replacement_path,
+        })
         .await
 }

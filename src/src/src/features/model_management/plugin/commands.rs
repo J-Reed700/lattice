@@ -4,11 +4,10 @@
 //! NO GATEWAY WRAPPER - calls *_impl functions directly like search plugin does
 
 use crate::interfaces::di::Container;
-use crate::shared::api_result::{ApiError, ApiResult, ErrorCode};
+use crate::shared::api_result::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-// Import the real implementation functions
 use crate::features::model_management::commands::get_all_recommended_models as get_all_recommended_models_impl;
 use crate::features::model_management::commands_extra::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
@@ -22,13 +21,11 @@ use crate::interfaces::commands::model_setup::{
     check_first_run_status_impl, download_default_embedding_model_impl,
 };
 
-// Import LLM command for download delegation
 use crate::domain::download::DownloadOperationState;
 use crate::features::llm::commands::download_model as download_model_impl;
 use crate::shared::path_confinement::confine_to_root;
 use std::path::Path;
 
-// Re-export DownloadedModelResponse for TypeScript generation
 pub use crate::features::model_management::commands_extra::DownloadedModelResponse;
 
 /// Download a model by ID
@@ -45,7 +42,7 @@ pub async fn download_model(
     match download_model_impl(model_id.clone(), container).await {
         Ok(response) => {
             // Map DownloadModelResponseDto to DownloadModelResponse
-            // Use model_id as download_id (Oracle pattern: resource identity)
+            // The model id is also the stable download id.
             let status = match response.state {
                 DownloadOperationState::DownloadStarted { .. } => "started",
                 DownloadOperationState::AlreadyDownloaded { .. } => "already_downloaded",
@@ -568,10 +565,6 @@ pub async fn refresh_model_cache(container: State<'_, Container>) -> Result<(), 
     container.invalidate_embedding_cache();
     Ok(())
 }
-
-// ============================================================================
-// DTOs (all derive specta::Type for TypeScript generation)
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DownloadModelResponse {

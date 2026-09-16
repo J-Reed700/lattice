@@ -1,4 +1,4 @@
-//! # Domain Module (Phase 1: Pure Domain Layer)
+//! # Domain module
 //!
 //! Rich domain models implementing Domain-Driven Design (DDD) patterns.
 //!
@@ -53,51 +53,30 @@
 //! # }
 //! ```
 
-// Directory-based domain modules
 pub mod entities;
-pub mod events;
 pub mod ports;
-// Vertical-slice migration (qa): domain models live in features/qa/domain/.
-#[path = "../features/qa/domain/mod.rs"]
 pub mod qa;
 pub mod repositories;
 pub mod services;
 pub mod value_objects;
 
-// Single-file domain modules moved under modules/ for filesystem organization
-// Vertical-slice migration (conversation): domain modules live in features/conversation/domain/.
-#[path = "../features/conversation/domain/conversation.rs"]
 pub mod conversation;
-#[path = "modules/curated_models.rs"]
 pub mod curated_models;
-// Vertical-slice migration (download): domain modules live in features/download/domain/.
-#[path = "../features/download/domain/download.rs"]
 pub mod download;
-#[path = "../features/download/domain/snapshot.rs"]
 pub mod download_snapshot;
-#[path = "modules/downloaded_model.rs"]
 pub mod downloaded_model;
-#[path = "modules/embedding_constants.rs"]
 pub mod embedding_constants;
-#[path = "modules/error.rs"]
 pub mod error;
-#[path = "modules/metadata.rs"]
 pub mod metadata;
-#[path = "modules/model_catalog.rs"]
 pub mod model_catalog;
-#[path = "modules/model_file_validator.rs"]
 pub mod model_file_validator;
-#[path = "modules/model_management.rs"]
 pub mod model_management;
-#[path = "modules/model_metadata.rs"]
 pub mod model_metadata;
-#[path = "modules/model_paths.rs"]
 pub mod model_paths;
-#[path = "modules/model_type_classifier.rs"]
 pub mod model_type_classifier;
 
 // ============================================================================
-// Phase 1: New DDD Structure (Pure Domain Layer)
+// Domain entities and value objects
 // ============================================================================
 
 // Re-export aggregates
@@ -199,11 +178,6 @@ pub use model_type_classifier::{
 // Re-export model paths and validator
 pub use model_file_validator::ModelFileValidator;
 pub use model_paths::ModelPaths;
-
-// ============================================================================
-// Test Modules
-// ============================================================================
-// Test modules deleted - Oracle Phase 1 Safety Net stabilization
 
 // ============================================================================
 // Verify Zero External Dependencies

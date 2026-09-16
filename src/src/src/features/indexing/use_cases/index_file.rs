@@ -32,31 +32,41 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::application::factories::{ChecksumFactory, FileMetadataFactory};
+use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
-    ContentAddressedStoragePort, ContentExtractionPort, DocumentRepositoryPort, EmbeddingPort,
-    EmbeddingRepositoryPort, FileStoragePort, VectorSearchPort,
+    ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort, DocumentRepositoryPort,
+    EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, SparseTermStorePort, VectorSearchPort,
 };
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::domain::entities::Document;
-use crate::domain::repositories::UnitOfWorkFactory;
+use crate::domain::value_objects::SparseEmbedding;
 use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::mapper::IndexingMapper;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
-use tracing::{info, instrument};
+use tracing::instrument;
 
 // Type aliases for complex return types
 /// Type alias for embedding with its vector representation.
 pub type EmbeddingWithVector = (Embedding, Vec<f32>);
 
 /// Type alias for prepared document ready for indexing.
-/// (document, embeddings, library_path, imported_new)
-pub type PreparedDocument = (Document, Vec<EmbeddingWithVector>, String, bool);
+/// (document, embeddings, library_path, imported_new, sparse_terms)
+///
+/// `sparse_terms` is one [`SparseEmbedding`] per chunk, in chunk order, and is
+/// empty whenever the loaded model has no learned sparse head or no sparse
+/// term store is wired. It travels with the dense vectors because both come
+/// out of the same forward pass and must be committed for the same chunk ids.
+pub type PreparedDocument = (
+    Document,
+    Vec<EmbeddingWithVector>,
+    String,
+    bool,
+    Vec<SparseEmbedding>,
+);
 
 pub enum PrepareForIndexingOutcome {
     Prepared(Box<PreparedDocument>),
@@ -90,6 +100,9 @@ pub struct IndexFileUseCase {
     /// When new embeddings are persisted, they are also added here
     /// so that newly indexed documents are immediately searchable.
     vector_search: Option<Arc<dyn VectorSearchPort>>,
+    /// Learned sparse term postings, written alongside the dense vectors.
+    /// `None` leaves indexing byte-for-byte as it was.
+    sparse_term_store: Option<Arc<dyn SparseTermStorePort>>,
 }
 
 impl IndexFileUseCase {
@@ -121,6 +134,7 @@ impl IndexFileUseCase {
             embedding_repo,
             uow_factory,
             vector_search: None,
+            sparse_term_store: None,
         }
     }
 
@@ -131,6 +145,23 @@ impl IndexFileUseCase {
     pub fn with_vector_search(mut self, vs: Arc<dyn VectorSearchPort>) -> Self {
         self.vector_search = Some(vs);
         self
+    }
+
+    /// Persist learned sparse term weights beside the dense vectors.
+    ///
+    /// Wiring the store is not the same as producing rows: the sparse head is
+    /// only read when the loaded embedding model actually has one
+    /// (`EmbeddingPort::supports_sparse`), so this can be wired
+    /// unconditionally and simply does nothing for a dense-only model.
+    #[must_use]
+    pub fn with_sparse_term_store(mut self, store: Arc<dyn SparseTermStorePort>) -> Self {
+        self.sparse_term_store = Some(store);
+        self
+    }
+
+    /// True when this indexing run should also produce sparse postings.
+    fn sparse_indexing_enabled(&self) -> bool {
+        self.sparse_term_store.is_some() && self.embedding_service.supports_sparse()
     }
 
     /// Execute file indexing.
@@ -172,70 +203,44 @@ impl IndexFileUseCase {
     /// ```
     #[instrument(skip(self, request), fields(file_path = %request.path))]
     pub async fn execute(&self, request: IndexFileRequestDto) -> Result<IndexFileResponseDto> {
-        let mut uow = self.uow_factory.create().await?;
-        let result = self.execute_with_uow(&mut uow, request).await;
-        match result {
-            Ok(response) => {
-                uow.commit().await?;
-                Ok(response)
+        match self.prepare_for_indexing(request).await? {
+            PrepareForIndexingOutcome::Duplicate { document_id } => {
+                let document = self
+                    .document_repo
+                    .find_by_id(&document_id)
+                    .await?
+                    .ok_or_else(|| {
+                        AppError::NotFound(format!("Saved document {document_id} not found"))
+                    })?;
+                Ok(IndexFileResponseDto {
+                    document_id,
+                    chunks_created: document.chunks().len(),
+                    status: "already_indexed".into(),
+                    error: None,
+                    file_path: document.file_path().display().to_string(),
+                })
             }
-            Err(err) => {
-                if let Err(rollback_err) = uow.rollback().await {
-                    return Err(AppError::Database(format!(
-                        "Indexing failed: {}; rollback failed: {}",
-                        err, rollback_err
-                    )));
-                }
-                Err(err)
+            PrepareForIndexingOutcome::Prepared(prepared) => {
+                let chunks_created = prepared.0.chunks().len();
+                let file_path = prepared.2.clone();
+                let document_id = self
+                    .commit_prepared(*prepared, self.uow_factory.as_ref())
+                    .await?;
+                Ok(IndexFileResponseDto {
+                    document_id,
+                    chunks_created,
+                    file_path,
+                    status: "imported".into(),
+                    error: None,
+                })
             }
         }
     }
 
-    /// Execute file indexing with Unit of Work (single atomic transaction).
-    ///
-    /// This variant wraps both document and embedding saves in a single
-    /// transaction for atomicity. The caller must commit the transaction.
-    ///
-    /// # Purpose
-    ///
-    /// Provides atomic file indexing where both document metadata and embeddings
-    /// are committed together. If either operation fails, both are rolled back.
-    ///
-    /// # Arguments
-    ///
-    /// * `uow` - Mutable reference to Unit of Work (manages transaction)
-    /// * `request` - Index request with file path and chunking strategy
-    ///
-    /// # Returns
-    ///
-    /// Response with document ID and statistics
-    ///
-    /// # Errors
-    ///
-    /// Same as `execute()` plus transaction errors
-    ///
-    /// # Transaction Semantics
-    ///
-    /// - Does NOT commit the transaction (caller's responsibility)
-    /// - Allows batch operations to share one transaction across multiple files
-    /// - If this method returns Ok, changes are staged but not committed
-    /// - If this method returns Err, changes should be rolled back by caller
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice_desktop::application::use_cases::indexing::index_file::IndexFileUseCase;
-    /// # use lattice_desktop::domain::repositories::UnitOfWorkFactory;
-    /// # async fn example(use_case: IndexFileUseCase, factory: impl UnitOfWorkFactory) {
-    /// let mut uow = factory.create().await.unwrap();
-    /// let response = use_case.execute_with_uow(&mut uow, request).await.unwrap();
-    /// uow.commit().await.unwrap(); // Commit after success
-    /// # }
-    /// ```
     /// Prepare file for indexing (extraction + embeddings) WITHOUT opening transaction.
     /// Returns prepared aggregate and embeddings ready to be saved.
     ///
-    /// This is Phase 1 of the "Prepare-Then-Commit" pattern for batch operations.
+    /// This is the preparation step of the batch operation.
     /// Call this to prepare files, then save all at once in a single fast transaction.
     #[instrument(skip(self, request), fields(file_path = %request.path))]
     pub async fn prepare_for_indexing(
@@ -250,15 +255,38 @@ impl IndexFileUseCase {
             .await?;
         let content_checksum = crate::domain::value_objects::Checksum::new(content_hash.clone())?;
 
-        // Check for duplicates using pool-based repo (fast query, no transaction)
-        if let Some(existing) = self
+        let requested_context: Option<crate::domain::value_objects::source_context::SourceContext> =
+            request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("source_context"))
+                .map(|s| serde_json::from_str(s))
+                .transpose()?;
+        if let Some(context) = &requested_context {
+            context.group.validate()?;
+        }
+        let rebuild = request
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("rebuild_existing"))
+            .is_some_and(|s| s == "true");
+        let existing = self
             .document_repo
             .find_by_checksum(&content_checksum)
-            .await?
-        {
-            return Ok(PrepareForIndexingOutcome::Duplicate {
-                document_id: existing.id().to_string(),
-            });
+            .await?;
+        if let Some(existing) = &existing {
+            if !rebuild
+                && requested_context
+                    .as_ref()
+                    .is_none_or(|context| Some(context) == existing.source_context())
+            {
+                // The previous attempt may have committed SQLite and then failed
+                // while publishing to runtime search. Finish that step on retry.
+                self.publish_stored_document(existing.id().as_str()).await?;
+                return Ok(PrepareForIndexingOutcome::Duplicate {
+                    document_id: existing.id().to_string(),
+                });
+            }
         }
 
         let already_in_library = self.content_storage.exists_by_hash(&content_hash).await?;
@@ -275,6 +303,7 @@ impl IndexFileUseCase {
             .content_extractor
             .extract_content(library_path.as_path())
             .await?;
+        let page_ranges = extracted.page_ranges;
         let content = extracted.text;
         self.validate_text_content(source_path.as_path(), &content)?;
 
@@ -290,7 +319,13 @@ impl IndexFileUseCase {
             chunking_strategy,
         )?;
 
-        // Set metadata
+        if let Some(mut saved) = existing {
+            saved.reindex(content.clone(), chunking_strategy)?;
+            document = saved;
+        }
+        if let Some(context) = requested_context {
+            document.set_source_context(Some(context));
+        }
         let metadata_extractor = MetadataExtractor::new();
         let file_ext = document
             .file_path()
@@ -327,13 +362,78 @@ impl IndexFileUseCase {
             document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
         }
 
-        // Generate embeddings
-        let chunk_texts: Vec<String> = document
-            .chunks()
-            .iter()
-            .map(|c| c.content().to_string())
-            .collect();
-        let embeddings = self.embedding_service.embed_batch(&chunk_texts).await?;
+        let (document, spans) = super::embedding_input::prepare_structured_with_spans(
+            document,
+            self.embedding_service.as_ref(),
+            &page_ranges,
+        )?;
+        let model_identity = self.embedding_service.model_identity();
+        // With late chunking each structure span is embedded once and pooled
+        // per chunk; otherwise this is the per-chunk batch as before. Either
+        // way it yields one vector per chunk, in chunk order.
+        //
+        // When the model has a sparse head and is *not* late chunking, both
+        // representations come from one forward pass over exactly the texts
+        // `embed_prepared_chunks` would have used, so the dense vectors are
+        // unchanged. Late chunking pools dense vectors over a whole span and
+        // has no equivalent pooling for term weights, so there the sparse head
+        // is read from the per-chunk texts in a second pass instead.
+        let (embeddings, sparse_terms) = if self.sparse_indexing_enabled() {
+            let chunk_texts: Vec<String> = document
+                .chunks()
+                .iter()
+                .map(|chunk| chunk.embedding_text())
+                .collect();
+            if self.embedding_service.uses_late_chunking() {
+                let dense = super::embedding_input::embed_prepared_chunks(
+                    &document,
+                    self.embedding_service.as_ref(),
+                    &spans,
+                )
+                .await?;
+                (
+                    dense,
+                    self.embedding_service
+                        .embed_sparse_batch(&chunk_texts)
+                        .await?,
+                )
+            } else {
+                self.embedding_service
+                    .embed_batch_with_sparse(&chunk_texts)
+                    .await?
+            }
+        } else {
+            (
+                super::embedding_input::embed_prepared_chunks(
+                    &document,
+                    self.embedding_service.as_ref(),
+                    &spans,
+                )
+                .await?,
+                Vec::new(),
+            )
+        };
+        if self.embedding_service.model_identity() != model_identity
+            || embeddings.len() != document.chunks().len()
+        {
+            return Err(AppError::InvalidState(
+                "Embedding model changed or returned an incomplete batch; retry indexing".into(),
+            ));
+        }
+        // A short sparse batch would silently key one chunk's terms to another
+        // chunk's id, which is worse than having no sparse rows at all.
+        let sparse_terms = if sparse_terms.len() == document.chunks().len() {
+            sparse_terms
+        } else {
+            if !sparse_terms.is_empty() {
+                tracing::warn!(
+                    expected = document.chunks().len(),
+                    received = sparse_terms.len(),
+                    "Sparse head returned an incomplete batch; indexing this document without sparse terms"
+                );
+            }
+            Vec::new()
+        };
 
         // Prepare embedding entries
         let embedding_entries: Vec<(Embedding, Vec<f32>)> = document
@@ -341,11 +441,8 @@ impl IndexFileUseCase {
             .iter()
             .zip(embeddings.iter())
             .map(|(chunk, vec)| {
-                let embedding = Embedding::new(
-                    chunk.id().clone(),
-                    DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
-                    vec.len(),
-                );
+                let embedding =
+                    Embedding::new(chunk.id().clone(), model_identity.clone(), vec.len());
                 (embedding, vec.clone())
             })
             .collect();
@@ -355,7 +452,148 @@ impl IndexFileUseCase {
             embedding_entries,
             library_path.to_str().unwrap_or("").to_string(),
             imported_new,
+            sparse_terms,
         ))))
+    }
+
+    /// Commit a prepared document atomically, then publish it to runtime search.
+    /// Preparation never holds a database transaction or another file's data.
+    pub async fn commit_prepared(
+        &self,
+        prepared: PreparedDocument,
+        factory: &dyn UnitOfWorkFactory,
+    ) -> Result<String> {
+        let (mut document, embeddings, _library_path, _imported_new, sparse_terms) = prepared;
+        // Status and the complete chunk/vector set commit in the same transaction.
+        document.mark_indexed();
+        let document_id = document.id().to_string();
+        let stale_chunk_ids: Vec<_> = self
+            .embedding_repo
+            .find_by_document_id(&document_id)
+            .await?
+            .into_iter()
+            .map(|(embedding, _)| embedding.chunk_id().to_string())
+            .collect();
+        let mut uow = factory.create().await?;
+        let save_result: Result<()> = async {
+            let documents = uow.document_repository()?;
+            let vectors = uow.embedding_repository()?;
+            documents.save(&document).await?;
+            vectors.save_batch(embeddings.clone()).await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = save_result {
+            uow.rollback().await?;
+            return Err(error);
+        }
+        uow.commit().await?;
+        // After the commit, never inside it: the postings reference
+        // `text_chunks(id)`, so the chunk rows have to exist first. A failure
+        // here costs this document its sparse branch and nothing else — the
+        // dense vectors are already durable and the other two branches still
+        // find it.
+        self.store_sparse_terms(&document, &sparse_terms).await;
+        if let Some(search) = self.vector_search.clone() {
+            let stale_keys: Vec<_> = stale_chunk_ids
+                .iter()
+                .map(|id| crate::features::embedding::encoding::vector_key(id))
+                .collect();
+            tokio::task::spawn_blocking(move || search.remove_embeddings(&stale_keys))
+                .await
+                .map_err(|e| AppError::Other(format!("Search cleanup task failed: {e}")))??;
+        }
+        self.publish_document(&document, embeddings).await?;
+        crate::features::cache::query_cache::invalidate_query_cache();
+        // Summaries are a background tier: this returns before the model is
+        // even consulted, and does nothing at all while the tier is off.
+        crate::features::summaries::notify_document_indexed(&document_id);
+        Ok(document_id)
+    }
+
+    /// Write this document's learned sparse postings, replacing whatever the
+    /// previous indexing run left behind for the same chunks.
+    ///
+    /// Deliberately infallible. Sparse retrieval is one of three branches; a
+    /// store that is unavailable must degrade the ranking, not fail an import
+    /// whose document, chunks and vectors have already been committed.
+    async fn store_sparse_terms(&self, document: &Document, sparse_terms: &[SparseEmbedding]) {
+        let Some(store) = self.sparse_term_store.as_ref() else {
+            return;
+        };
+        if sparse_terms.is_empty() {
+            return;
+        }
+        let entries: Vec<ChunkSparseTerms> = document
+            .chunks()
+            .iter()
+            .zip(sparse_terms.iter())
+            .map(|(chunk, sparse)| (chunk.id().to_string(), sparse.clone()))
+            .collect();
+        let model_identity = self.embedding_service.model_identity();
+        if let Err(error) = store.replace_chunk_terms(&model_identity, &entries).await {
+            tracing::warn!(
+                document_id = %document.id(),
+                %error,
+                "Could not persist learned sparse terms; this document will be found by the dense and BM25 branches only"
+            );
+        }
+    }
+
+    async fn publish_stored_document(&self, document_id: &str) -> Result<()> {
+        if self.vector_search.is_none() {
+            return Ok(());
+        }
+        let document = self
+            .document_repo
+            .find_by_id(document_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Saved document {document_id} not found")))?;
+        let embeddings = self.embedding_repo.find_by_document_id(document_id).await?;
+        self.publish_document(&document, embeddings).await?;
+        crate::features::cache::query_cache::invalidate_query_cache();
+        Ok(())
+    }
+
+    async fn publish_document(
+        &self,
+        document: &Document,
+        embeddings: Vec<EmbeddingWithVector>,
+    ) -> Result<()> {
+        let Some(search) = self.vector_search.clone() else {
+            return Ok(());
+        };
+        // Match by ID: repository ordering need not match chunk order.
+        let mut vectors: std::collections::HashMap<_, _> = embeddings
+            .into_iter()
+            .map(|(embedding, vector)| (embedding.chunk_id().to_string(), vector))
+            .collect();
+        let entries: Result<Vec<_>> = document
+            .chunks()
+            .iter()
+            .map(|chunk| {
+                let embedding = vectors.remove(chunk.id().as_str()).ok_or_else(|| {
+                    AppError::InvalidState(format!(
+                        "Saved document is missing an embedding for chunk {}",
+                        chunk.id()
+                    ))
+                })?;
+                Ok(
+                    crate::application::ports::vector_search_port::VectorIndexEntry {
+                        id: format!("emb_{}", chunk.id()),
+                        embedding,
+                        content: chunk.content().to_owned(),
+                        chunk_id: chunk.id().to_string(),
+                        document_id: document.id().to_string(),
+                    },
+                )
+            })
+            .collect();
+        let entries = entries?;
+        // HNSW updates and disk serialization must not block async DB/chat work.
+        tokio::task::spawn_blocking(move || search.publish_embeddings(entries)).await
+            .map_err(|error| AppError::Other(format!("Search indexing task failed: {error}")))?
+            .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))
     }
 
     pub async fn cleanup_library_file(&self, path: &str) -> Result<()> {
@@ -392,231 +630,23 @@ impl IndexFileUseCase {
             path.display()
         )))
     }
-
-    #[instrument(skip(self, uow, request), fields(file_path = %request.path))]
-    pub async fn execute_with_uow(
-        &self,
-        uow: &mut Box<dyn crate::domain::repositories::UnitOfWork + Send>,
-        request: IndexFileRequestDto,
-    ) -> Result<IndexFileResponseDto> {
-        let total_start = Instant::now();
-
-        // 1. Validate and import file (no transaction needed yet)
-        let source_path = ValidatedFilePath::new(PathBuf::from(&request.path))?;
-        self.validate_supported_file(source_path.as_path())?;
-        let (library_path, content_hash) = self
-            .content_storage
-            .import_file(source_path.as_path())
-            .await?;
-
-        // 2. Get repositories from UoW (all share same transaction)
-        let document_repo = uow.document_repository()?;
-        let embedding_repo = uow.embedding_repository()?;
-
-        // 3. Check for duplicates (uses UoW transaction)
-        let content_checksum = crate::domain::value_objects::Checksum::new(content_hash.clone())?;
-        if let Some(existing_doc) = document_repo.find_by_checksum(&content_checksum).await? {
-            return Ok(IndexFileResponseDto {
-                document_id: existing_doc.id().to_string(),
-                chunks_created: existing_doc.chunks().len(),
-                status: "already_indexed".to_string(),
-                error: None,
-                file_path: library_path.to_str().unwrap_or("").to_string(),
-            });
-        }
-
-        // 4-10. File processing (same as execute())
-        let metadata = FileMetadataFactory::from_path(library_path.as_path())?;
-        let checksum = ChecksumFactory::from_path(library_path.as_path())?;
-
-        let extraction_start = Instant::now();
-        let extracted = self
-            .content_extractor
-            .extract_content(library_path.as_path())
-            .await?;
-        let content = extracted.text;
-        let extraction_duration = extraction_start.elapsed();
-
-        let chunking_strategy =
-            IndexingMapper::chunking_strategy_to_domain(request.chunking_strategy)
-                .adapt_for_content(&content);
-        let library_path_validated = ValidatedFilePath::new(library_path.clone())?;
-        let mut document = Document::from_file(
-            library_path_validated,
-            metadata.clone(),
-            checksum,
-            content.clone(),
-            chunking_strategy,
-        )?;
-
-        // 11. Set document and chunk metadata
-        let metadata_extractor = MetadataExtractor::new();
-        let file_ext = document
-            .file_path()
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-
-        document.set_language(metadata_extractor.detect_language(&content, file_ext));
-        document.set_category(metadata_extractor.categorize(
-            &content,
-            metadata.file_name(),
-            metadata.mime_type(),
-        ));
-        document.set_quality_score(metadata_extractor.calculate_quality_score(
-            &content,
-            metadata.size_bytes(),
-            metadata.modified_at(),
-        ));
-        document.set_word_count(metadata_extractor.count_words(&content));
-
-        for index in 0..document.chunks().len() {
-            let chunk = document.chunks().get(index).ok_or_else(|| {
-                AppError::InvalidInput(format!(
-                    "Chunk index {} out of bounds in index_file_no_persist",
-                    index
-                ))
-            })?;
-            let chunk_content = chunk.content().to_string();
-            document.set_chunk_token_count(index, metadata_extractor.count_tokens(chunk.content()));
-            document.set_chunk_word_count(
-                index,
-                metadata_extractor.count_words(&chunk_content) as usize,
-            );
-            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
-            document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
-        }
-
-        // 12. Generate embeddings (no transaction needed)
-        let chunk_texts: Vec<String> = document
-            .chunks()
-            .iter()
-            .map(|c| c.content().to_string())
-            .collect();
-
-        let embedding_start = Instant::now();
-        let embeddings = self.embedding_service.embed_batch(&chunk_texts).await?;
-        let embedding_duration = embedding_start.elapsed();
-
-        // 13. Save document (PART 1 of atomic transaction)
-        let db_save_start = Instant::now();
-        document_repo.save(&document).await?;
-        let db_save_duration = db_save_start.elapsed();
-
-        // 14. Prepare and save embeddings (PART 2 of atomic transaction)
-        let embedding_entries: Vec<(Embedding, Vec<f32>)> = document
-            .chunks()
-            .iter()
-            .zip(embeddings.iter())
-            .map(|(chunk, vec)| {
-                (
-                    Embedding::new(
-                        chunk.id().clone(),
-                        DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
-                        vec.len(),
-                    ),
-                    vec.clone(),
-                )
-            })
-            .collect();
-
-        let embedding_save_start = Instant::now();
-        embedding_repo.save_batch(embedding_entries).await?;
-        let embedding_save_duration = embedding_save_start.elapsed();
-
-        // Update the shared in-memory vector index so newly indexed documents
-        // are immediately searchable without requiring an app restart.
-        if let Some(ref vs) = self.vector_search {
-            let doc_id = document.document().id().to_string();
-            let mut vs_added = 0usize;
-            for (chunk, vec) in document.chunks().iter().zip(embeddings.iter()) {
-                let embedding_id = format!("emb_{}", chunk.id().as_str());
-                let content = chunk.content().to_string();
-                let chunk_id = chunk.id().as_str().to_string();
-                if vs
-                    .add_embedding_with_content(
-                        embedding_id,
-                        vec.clone(),
-                        content,
-                        chunk_id,
-                        doc_id.clone(),
-                    )
-                    .is_ok()
-                {
-                    vs_added += 1;
-                }
-            }
-            tracing::debug!(
-                vs_added,
-                total_chunks = document.chunks().len(),
-                "Updated in-memory vector index with new embeddings"
-            );
-        }
-
-        // Both saves succeeded - caller must now commit the UoW transaction
-
-        // Log performance metrics
-        let total_duration = total_start.elapsed();
-        info!(
-            total_duration_ms = total_duration.as_millis(),
-            extraction_pct = format!(
-                "{:.1}%",
-                (extraction_duration.as_secs_f64() / total_duration.as_secs_f64()) * 100.0
-            ),
-            embedding_generation_pct = format!(
-                "{:.1}%",
-                (embedding_duration.as_secs_f64() / total_duration.as_secs_f64()) * 100.0
-            ),
-            db_save_pct = format!(
-                "{:.1}%",
-                (db_save_duration.as_secs_f64() / total_duration.as_secs_f64()) * 100.0
-            ),
-            embedding_save_pct = format!(
-                "{:.1}%",
-                (embedding_save_duration.as_secs_f64() / total_duration.as_secs_f64()) * 100.0
-            ),
-            chunk_count = document.chunks().len(),
-            transaction_mode = "single_uow",
-            "File indexing completed (UoW) - awaiting commit"
-        );
-
-        // New content must be visible to the next search, not after the
-        // cache TTL expires.
-        crate::features::cache::query_cache::invalidate_query_cache();
-
-        Ok(IndexFileResponseDto {
-            document_id: document.document().id().to_string(),
-            chunks_created: document.chunks().len(),
-            status: "imported".to_string(),
-            error: None,
-            file_path: library_path.to_str().unwrap_or("").to_string(),
-        })
-    }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{
-        ContentAddressedStoragePort, EmbeddingRepositoryPort, FileMetadata, Filter, NoFilter,
-    };
+    use crate::application::ports::UnitOfWorkFactory;
+    use crate::application::ports::{ContentAddressedStoragePort, EmbeddingRepositoryPort};
     use crate::domain::entities::Document;
-    use crate::domain::repositories::UnitOfWorkFactory;
     use crate::features::embedding::entity::Embedding;
     use async_trait::async_trait;
     use std::path::Path;
 
-    // Mock content-addressed storage
     struct MockContentStorage;
 
     #[async_trait]
     impl ContentAddressedStoragePort for MockContentStorage {
         async fn import_file(&self, source_path: &Path) -> Result<(std::path::PathBuf, String)> {
-            // Return source path and valid SHA-256 hex string (64 characters)
             Ok((source_path.to_path_buf(), "a".repeat(64)))
         }
 
@@ -629,7 +659,6 @@ mod tests {
         }
     }
 
-    // Mock file storage
     struct MockFileStorage;
 
     #[async_trait]
@@ -655,7 +684,6 @@ mod tests {
         }
 
         async fn compute_hash(&self, _path: &Path) -> Result<String> {
-            // Return valid SHA-256 hex string (64 characters)
             Ok("a".repeat(64))
         }
 
@@ -678,7 +706,6 @@ mod tests {
         }
     }
 
-    // Mock content extractor
     struct MockContentExtractor;
 
     #[async_trait]
@@ -688,7 +715,6 @@ mod tests {
             path: &Path,
         ) -> Result<crate::application::ports::ExtractedContentData> {
             use crate::application::ports::ExtractedContentData;
-            // Read actual file content to support chunking tests
             let text = std::fs::read_to_string(path).unwrap_or_else(|_| {
                 "This is test file content for indexing and chunking.".to_string()
             });
@@ -699,6 +725,7 @@ mod tests {
                 text,
                 mime_type: "text/plain".to_string(),
                 page_count: None,
+                page_ranges: Vec::new(),
                 word_count,
                 char_count,
             })
@@ -709,7 +736,6 @@ mod tests {
         }
     }
 
-    // Mock embedder
     struct MockEmbedder;
 
     #[async_trait]
@@ -731,7 +757,60 @@ mod tests {
         }
     }
 
-    // Mock embedding repository
+    /// Embedder with a real input budget: it splits a passage into fixed-width
+    /// windows. `embedding_input::prepare_structured_with_spans` rebuilds the chunk list
+    /// from `EmbeddingPort::split_text`, so this is what actually decides how
+    /// many chunks an indexed document ends up with.
+    struct MockSplittingEmbedder {
+        window: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingPort for MockSplittingEmbedder {
+        async fn embed_single(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(vec![0.1, 0.2, 0.3])
+        }
+
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+        }
+
+        fn split_text(
+            &self,
+            text: &str,
+            _prefix: &str,
+        ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
+            use crate::application::ports::embedding_port::EmbeddingTextChunk;
+
+            let mut parts = Vec::new();
+            let mut start = 0usize;
+            while start < text.len() {
+                let mut end = (start + self.window).min(text.len());
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                parts.push(EmbeddingTextChunk {
+                    text: text[start..end].to_string(),
+                    start,
+                    end,
+                    // Keeps the context-prefix budget loop in `prepare_structured_with_spans`
+                    // from shrinking the prefix.
+                    token_count: 0,
+                });
+                start = end;
+            }
+            Ok(parts)
+        }
+
+        fn dimension(&self) -> usize {
+            3
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
     struct MockEmbeddingRepo;
 
     #[async_trait]
@@ -780,7 +859,6 @@ mod tests {
         }
     }
 
-    // Mock repository
     struct MockDocumentRepo;
 
     #[async_trait]
@@ -866,7 +944,7 @@ mod tests {
     struct MockUnitOfWork;
 
     #[async_trait]
-    impl crate::domain::repositories::UnitOfWork for MockUnitOfWork {
+    impl crate::application::ports::UnitOfWork for MockUnitOfWork {
         fn chunk_repository(
             &self,
         ) -> Result<Box<dyn crate::application::ports::ChunkRepositoryPort + Send + '_>> {
@@ -910,7 +988,7 @@ mod tests {
 
         fn model_repository(
             &self,
-        ) -> Result<Box<dyn crate::domain::repositories::unit_of_work::ModelRepositoryPort + '_>>
+        ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelRepositoryPort + '_>>
         {
             Err(AppError::InvalidState(
                 "Model repository not used in test".to_string(),
@@ -919,7 +997,7 @@ mod tests {
 
         fn model_file_repository(
             &self,
-        ) -> Result<Box<dyn crate::domain::repositories::unit_of_work::ModelFileRepositoryPort + '_>>
+        ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort + '_>>
         {
             Err(AppError::InvalidState(
                 "Model file repository not used in test".to_string(),
@@ -939,18 +1017,16 @@ mod tests {
 
     #[async_trait]
     impl UnitOfWorkFactory for MockUnitOfWorkFactory {
-        async fn create(&self) -> Result<Box<dyn crate::domain::repositories::UnitOfWork + Send>> {
+        async fn create(&self) -> Result<Box<dyn crate::application::ports::UnitOfWork + Send>> {
             Ok(Box::new(MockUnitOfWork))
         }
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Modernize for RC2 (Refactor Drift)
     async fn test_index_file_execution() {
         use std::fs;
         use tempfile::TempDir;
 
-        // Create temp file
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         fs::write(&file_path, "Test content").unwrap();
@@ -978,15 +1054,17 @@ mod tests {
         let response = use_case.execute(request).await.unwrap();
 
         assert!(!response.document_id.is_empty());
-        // Mocks don't create real chunks - that's tested in integration tests
-        assert_eq!(response.chunks_created, 0);
+        // `prepare_structured_with_spans` discards the strategy-produced chunks and rebuilds
+        // them from `EmbeddingPort::split_text`. `MockEmbedder` keeps the port's
+        // default, which returns the whole passage as a single part, and this
+        // short unstructured file is one structure span, so exactly one chunk.
+        assert_eq!(response.chunks_created, 1);
         assert_eq!(response.status, "imported");
         assert!(response.error.is_none());
         assert!(!response.file_path.is_empty());
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Modernize for RC2 (Refactor Drift)
     async fn test_index_file_with_chunking() {
         use std::fs;
         use tempfile::TempDir;
@@ -999,7 +1077,7 @@ mod tests {
             Arc::new(MockContentStorage),
             Arc::new(MockFileStorage),
             Arc::new(MockContentExtractor),
-            Arc::new(MockEmbedder),
+            Arc::new(MockSplittingEmbedder { window: 100 }),
             Arc::new(MockDocumentRepo),
             Arc::new(MockEmbeddingRepo),
             Arc::new(MockUnitOfWorkFactory),
@@ -1017,7 +1095,8 @@ mod tests {
 
         let response = use_case.execute(request).await.unwrap();
 
-        // Mocks don't create real chunks - that's tested in integration tests
-        assert_eq!(response.chunks_created, 0);
+        // The 1000-byte file has no headings, so it is one structure span that the
+        // embedder splits into 1000 / 100 windows.
+        assert_eq!(response.chunks_created, 10);
     }
 }

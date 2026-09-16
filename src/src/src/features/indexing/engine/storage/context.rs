@@ -2,8 +2,8 @@
 
 use super::checksum::calculate_checksum;
 use crate::features::embedding::service::MODEL_NAME;
-use crate::infrastructure::indexing::chunker::ContextualizedChunk;
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::chunker::ContextualizedChunk;
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;
 use serde::Deserialize;
@@ -71,7 +71,6 @@ async fn insert_document_metadata(
     path: &Path,
     mime_type: &str,
 ) -> Result<String> {
-    // Extract file_name - use title for web articles
     let file_name = if is_web_article(path) {
         // Web article: extract title from metadata.json
         match get_web_article_title(path).await {
@@ -100,7 +99,6 @@ async fn insert_document_metadata(
         reason: format!("Invalid path encoding: {}", e),
     })?;
 
-    // Read filesystem metadata
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| IndexingError::FileRead {

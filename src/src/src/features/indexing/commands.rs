@@ -4,18 +4,12 @@
 //! These commands apply cross-cutting concerns (rate limiting, validation, audit logging)
 //! and delegate business logic to dedicated use cases for testability and separation of concerns.
 
-use crate::application::ports::EmbeddingPort;
 use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto, IndexFileResponseDto,
     IndexingStatsDto,
 };
-use crate::features::indexing::use_cases::{
-    IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase, RenameDocumentUseCase,
-};
 use crate::interfaces::di::Container;
 use crate::shared::api_result::{ApiResult, ErrorCode};
-use chrono::Utc;
-use sqlx::Executor;
 use tauri::State;
 
 async fn ensure_embedding_ready(container: &Container) -> Result<(), String> {
@@ -75,17 +69,14 @@ fn normalize_space_id(space_id: Option<&str>) -> Option<String> {
 }
 
 async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<(), String> {
-    // repository-barrier-allow: legacy validation query pending routing through SpaceRepository.
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
-        .bind(space_id)
-        .fetch_one(container.db_pool())
+    let exists = container
+        .document_scope()
+        .space_exists(space_id)
         .await
         .map_err(|e| format!("Failed to verify target space '{}': {}", space_id, e))?;
-
-    if exists == 0 {
+    if !exists {
         return Err(format!("Space not found: {}", space_id));
     }
-
     Ok(())
 }
 
@@ -94,43 +85,11 @@ async fn assign_document_memberships(
     document_ids: &[String],
     space_id: &str,
 ) -> Result<(), String> {
-    if document_ids.is_empty() {
-        return Ok(());
-    }
-
-    let now = Utc::now().to_rfc3339();
-    let mut tx = container
-        .db_pool()
-        .begin()
+    container
+        .document_scope()
+        .assign_documents(document_ids, space_id)
         .await
-        .map_err(|e| format!("Failed to begin document scope transaction: {}", e))?;
-
-    for document_id in document_ids {
-        // repository-barrier-allow: legacy batched membership transaction pending a shared repository.
-        sqlx::query(
-            r#"
-            INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
-            VALUES (?, ?, ?)
-            "#,
-        )
-        .bind(document_id)
-        .bind(space_id)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            format!(
-                "Failed to assign document '{}' to space '{}': {}",
-                document_id, space_id, e
-            )
-        })?;
-    }
-
-    tx.commit()
-        .await
-        .map_err(|e| format!("Failed to commit document scope transaction: {}", e))?;
-
-    Ok(())
+        .map_err(|e| format!("Failed to assign documents to space '{}': {}", space_id, e))
 }
 
 /// Core implementation - Indexes a single file (DDD use case)
@@ -408,7 +367,6 @@ pub async fn get_indexing_stats(
 /// * `ApiResult::success(IndexingStatsDto)` - Statistics with document and chunk counts
 /// * `ApiResult::error(...)` - If database query fails
 pub async fn get_indexing_stats_impl(container: &Container) -> ApiResult<IndexingStatsDto> {
-    // Get repository from container
     let repo = container.document_repository();
 
     // Query actual counts from database
@@ -496,7 +454,6 @@ pub async fn index_file_ddd(
 
     let (chunk_tokens, _) = resolve_indexing_defaults(&container).await;
 
-    // Create request DTO with defaults
     let request = IndexFileRequestDto {
         path,
         chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::Semantic {
@@ -526,7 +483,6 @@ pub async fn index_directory_ddd(
 
     let (chunk_tokens, include_extensions) = resolve_indexing_defaults(&container).await;
 
-    // Create request DTO with defaults
     let request = IndexDirectoryRequestDto {
         path,
         recursive,
@@ -559,7 +515,7 @@ pub struct IndexProgress {
     /// True while a run is paused; drives Pause vs Resume in the UI.
     pub paused: bool,
     /// Newest first, capped at `MAX_TRACKED_FAILURES`, cleared on each new run.
-    pub failures: Vec<crate::infrastructure::indexing::state::IndexingFailure>,
+    pub failures: Vec<crate::features::indexing::engine::state::IndexingFailure>,
 }
 
 /// Core implementation - Retrieves current indexing progress
@@ -574,7 +530,6 @@ pub struct IndexProgress {
 ///
 /// * `ApiResult::success(IndexProgress)` - Current indexing status
 pub async fn get_index_progress_impl(container: &Container) -> ApiResult<IndexProgress> {
-    // Get state from indexing module
     let state = container.indexing.indexing_state();
     let snapshot = state.get_snapshot();
 

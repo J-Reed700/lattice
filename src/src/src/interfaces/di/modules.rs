@@ -22,7 +22,6 @@
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::RwLock;
 
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 
@@ -79,9 +78,6 @@ use crate::features::file::use_cases::{
 };
 
 // Application Use Cases - Extraction
-use crate::features::extraction::use_cases::extract_and_resolve_links::{
-    ParseWikilinksPort, ResolveWikilinkPort,
-};
 use crate::features::extraction::use_cases::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
     ResolveWikilinkUseCase,
@@ -115,7 +111,6 @@ use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVers
 use crate::features::metrics::use_cases::GetMetricsUseCase;
 
 // Application Use Cases - Stats
-use crate::domain::embedding_constants::{DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME};
 use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUseCase};
 use crate::infrastructure::observability::metrics::Metrics;
 
@@ -125,21 +120,17 @@ use crate::features::credentials::use_cases::{
 };
 
 // Application Ports
-use crate::application::ports::BackupSchedulerPort;
 use crate::application::ports::{
-    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort, ContentAddressedStoragePort,
-    ContentExtractionPort, CredentialsPort, DocumentRepository, EmbeddingPort,
-    EmbeddingRepositoryPort, FavoritesRepositoryPort, FileStoragePort, FileSystemPort,
-    MentionRepositoryPort, MetricsPort, ModelCatalogPort, ModelStoragePort,
-    RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort, SystemInfoPort,
-    TextSearchPort, UpdateCheckerPort, VectorSearchPort,
+    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort, CredentialsPort, DocumentRepository,
+    FavoritesRepositoryPort, FileStoragePort, FileSystemPort, MentionRepositoryPort,
+    ModelCatalogPort, RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort,
+    SystemInfoPort, VectorSearchPort,
 };
 
 // Service Traits
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::{IndexStorageTrait, IndexingServiceTrait};
+use crate::features::indexing::IndexingServiceTrait;
 use crate::features::qa::ConversationalQAServiceTrait;
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
@@ -150,12 +141,8 @@ use crate::infrastructure::services::traits::{
     ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
 };
 
-use crate::application::ports::LLMPort;
+use crate::application::ports::LoadedChatModelPort;
 use crate::infrastructure::services::model_manager::ModelManager;
-
-// ==============================================================================
-// 1. CoreModule - Shared Infrastructure
-// ==============================================================================
 
 /// Core shared infrastructure used by all modules
 ///
@@ -186,16 +173,21 @@ impl CoreModule {
     ) -> crate::shared::error::Result<Self> {
         let security_context = Arc::new(SecurityContext::new());
 
-        // Start with only the app's own data directory readable. This used to
-        // be the entire home directory, which meant `get_file_content` over
-        // IPC could read `~/.ssh/id_rsa`, `~/.aws/credentials`, and browser
-        // cookie stores — the confinement logic was sound, the policy was
-        // simply far too broad.
-        //
-        // The user's vault and indexed folders are added by
-        // `refresh_allowed_roots` once settings are readable, and again
-        // whenever those settings change.
-        let file_access_config = Arc::new(FileAccessConfig::new(vec![data_dir.clone()]));
+        // Imported documents live outside data_dir. Create their root before
+        // canonicalizing the policy, including on the first launch before any
+        // import. Otherwise a policy refresh would discard the missing root.
+        let library_root =
+            crate::infrastructure::storage::ContentAddressedStorage::default_library_root()?;
+        tokio::fs::create_dir_all(&library_root)
+            .await
+            .map_err(|error| {
+                crate::shared::error::AppError::FileStorage(format!(
+                    "Failed to create library directory: {error}"
+                ))
+            })?;
+        // The user's vault and indexed folders are added by refresh_allowed_roots.
+        let file_access_config =
+            Arc::new(FileAccessConfig::new(vec![data_dir.clone(), library_root]));
 
         let credentials_path = data_dir.join("credentials.json");
         let credentials = crate::features::credentials::di::build(credentials_path);
@@ -255,10 +247,6 @@ impl CoreModule {
     }
 }
 
-// ==============================================================================
-// 2. SearchModule - All Search Functionality
-// ==============================================================================
-
 /// Search module for semantic, hybrid, and file search
 ///
 /// **Fields**: ~15
@@ -270,6 +258,10 @@ impl CoreModule {
 #[derive(Clone)]
 pub struct SearchModule {
     search: crate::features::search::di::SearchDi,
+    /// The strategy the index was opened for. The embedding loader reads it so
+    /// the model it publishes produces vectors in the same space the index was
+    /// keyed on — anything else silently mixes two generations.
+    embedding_strategy: crate::features::embedding::late_chunking::EmbeddingStrategy,
 }
 
 impl SearchModule {
@@ -283,21 +275,41 @@ impl SearchModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
-        embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+        model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     ) -> crate::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
+        let models_path = core.data_dir().join("models");
         let active_dim = resolve_active_embedding_dimension(&db_pool).await;
-        let search = crate::features::search::di::build(
+        let search_settings = read_search_settings(core.data_dir()).await;
+        let embedding_strategy = resolve_embedding_strategy(&search_settings);
+        let compression = resolve_vector_compression(&db_pool, &search_settings, active_dim).await;
+        let search = crate::features::search::di::build_with_compression(
             db_pool,
             usearch_index_path,
-            embedding_cache,
+            models_path,
+            model_provider,
             active_dim,
+            compression,
+            embedding_strategy,
         )
         .await?;
-        Ok(Self { search })
+        Ok(Self {
+            search,
+            embedding_strategy,
+        })
     }
 
-    // Use case getters
+    /// The embedding strategy this index's vector space was keyed on.
+    pub fn embedding_strategy(
+        &self,
+    ) -> crate::features::embedding::late_chunking::EmbeddingStrategy {
+        self.embedding_strategy
+    }
+
+    pub fn embedding_identity(&self) -> Option<&str> {
+        self.search.embedding_identity.as_deref()
+    }
+
     pub fn semantic_search_use_case(&self) -> &Arc<SemanticSearchUseCase> {
         &self.search.semantic_search_use_case
     }
@@ -318,12 +330,12 @@ impl SearchModule {
         &self.search.hybrid_search_service
     }
 
-    pub fn search_enrichment_service(&self) -> &Arc<dyn SearchEnrichmentServiceTrait> {
-        &self.search.search_enrichment_service
+    pub fn reranker(&self) -> &Arc<dyn crate::features::search::engine::reranker::Reranker> {
+        &self.search.reranker
     }
 
-    pub fn embedding_cache(&self) -> &Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>> {
-        &self.search.embedding_cache
+    pub fn search_enrichment_service(&self) -> &Arc<dyn SearchEnrichmentServiceTrait> {
+        &self.search.search_enrichment_service
     }
 
     pub fn vector_search(&self) -> &Arc<dyn VectorSearchPort> {
@@ -333,6 +345,113 @@ impl SearchModule {
     pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
         &self.search.document_repo
     }
+}
+
+/// Read the stored search settings, or fall back to the defaults.
+///
+/// Opening the index is a startup step that must not be blocked by a settings
+/// file this process cannot read: the defaults reproduce the historical
+/// behaviour exactly, so falling back costs nothing but a log line.
+async fn read_search_settings(
+    data_dir: &std::path::Path,
+) -> crate::features::settings::dto::SearchSettingsDto {
+    use crate::application::ports::SettingsRepositoryPort;
+    use crate::infrastructure::persistence::repositories::SettingsRepository;
+
+    match SettingsRepository::new(data_dir.to_path_buf()).await {
+        Ok(repository) => match repository.get_all().await {
+            Ok(settings) => settings.search,
+            Err(e) => {
+                tracing::warn!(error = %e, "Could not read search settings; opening the vector index with defaults");
+                Default::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "Could not open the settings repository; opening the vector index with defaults");
+            Default::default()
+        }
+    }
+}
+
+fn resolve_embedding_strategy(
+    settings: &crate::features::settings::dto::SearchSettingsDto,
+) -> crate::features::embedding::late_chunking::EmbeddingStrategy {
+    use crate::features::embedding::late_chunking::EmbeddingStrategy;
+    use crate::features::settings::dto::EmbeddingStrategySettingDto;
+
+    match settings.embedding_strategy {
+        EmbeddingStrategySettingDto::ChunkFirst => EmbeddingStrategy::ChunkFirst,
+        EmbeddingStrategySettingDto::LateChunking => EmbeddingStrategy::LateChunking,
+    }
+}
+
+/// Map the stored compression setting onto the index configuration, refusing
+/// truncation the active model cannot survive.
+///
+/// Matryoshka truncation is only meaningful for a model trained for it. Asking
+/// for it on any other model does not fail loudly — it quietly produces a worse
+/// index — so the request is logged and dropped rather than honoured. Same for
+/// a `dims` the model cannot satisfy: the setting is a preference, and a
+/// preference must never leave the app unable to open its index.
+async fn resolve_vector_compression(
+    db_pool: &SqlitePool,
+    settings: &crate::features::settings::dto::SearchSettingsDto,
+    active_embedding_dimension: Option<usize>,
+) -> crate::features::search::engine::vector_search::VectorIndexCompression {
+    use crate::features::search::engine::vector_search::{
+        VectorIndexCompression, VectorQuantization,
+    };
+    use crate::features::settings::dto::{VectorIndexCompressionModeDto, VectorQuantizationDto};
+
+    let requested = settings.vector_index_compression;
+    if requested.mode == VectorIndexCompressionModeDto::None {
+        return VectorIndexCompression::None;
+    }
+
+    let Some(model_id) = active_embedding_model_id(db_pool).await else {
+        tracing::info!(
+            "Vector compression is set to truncated but no embedding model is active; \
+             storing full-precision vectors until one is"
+        );
+        return VectorIndexCompression::None;
+    };
+    if !crate::domain::curated_models::embedding_model_supports_matryoshka(&model_id) {
+        tracing::warn!(
+            model_id = %model_id,
+            "Ignoring truncated vector compression: this embedding model does not advertise \
+             Matryoshka support, and truncating it would degrade search without any error"
+        );
+        return VectorIndexCompression::None;
+    }
+
+    let quantization = match requested.quantization {
+        VectorQuantizationDto::F32 => VectorQuantization::F32,
+        VectorQuantizationDto::I8 => VectorQuantization::I8,
+    };
+    let compression = VectorIndexCompression::truncated(requested.dims as usize, quantization);
+    let Some(dimension) = active_embedding_dimension else {
+        // Without a known dimension there is nothing to validate against, and
+        // guessing one would either wipe a good index or accept a bad config.
+        tracing::info!(
+            "Vector compression is set to truncated but the active model's dimension is unknown; \
+             storing full-precision vectors until it is"
+        );
+        return VectorIndexCompression::None;
+    };
+    if let Err(e) = compression.validate(dimension) {
+        tracing::warn!(error = %e, "Ignoring truncated vector compression: invalid for the active model");
+        return VectorIndexCompression::None;
+    }
+    compression
+}
+
+/// The catalog id of the active embedding model, when there is one.
+async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
+    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+
+    let repo = DownloadedModelRepository::new(db_pool.clone());
+    let active = repo.get_active_embedding_model().await.ok().flatten()?;
+    Some(active.model_id().to_owned())
 }
 
 /// Read the active embedding model's expected output dimension from disk.
@@ -359,10 +478,6 @@ async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usiz
     json.get("hidden_size")?.as_u64().map(|n| n as usize)
 }
 
-// ==============================================================================
-// 3. IndexingModule - Document Ingestion and Processing
-// ==============================================================================
-
 /// Indexing module — hollow composition root over the indexing, web, and
 /// batch feature slices. Shares `vector_search` with [`SearchModule`] so
 /// index-time writes reach the same USearch instance queried at search time.
@@ -371,6 +486,11 @@ pub struct IndexingModule {
     indexing: crate::features::indexing::di::IndexingDi,
     web: crate::features::web::di::WebDi,
     batch: crate::features::batch::di::BatchDi,
+    /// Page OCR for scanned PDFs. `NoopOcr` until a vision adapter exists:
+    /// scanned pages are reported in `ExtractedContent::needs_ocr` and the
+    /// rest of every document is still indexed. Swap this one binding for a
+    /// real provider to turn OCR on everywhere it is consumed.
+    ocr: Arc<dyn crate::application::ports::OcrPort>,
 }
 
 impl IndexingModule {
@@ -378,28 +498,30 @@ impl IndexingModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
-        embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+        model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,
     ) -> crate::shared::error::Result<Self> {
         let indexing = crate::features::indexing::di::build(
             db_pool.clone(),
-            embedding_cache.clone(),
+            model_provider.clone(),
             vector_search,
         )?;
         let model_dir = core.data_dir().join("models");
-        let web = crate::features::web::di::build(db_pool, &model_dir, embedding_cache)?;
+        let web = crate::features::web::di::build(db_pool.clone(), &model_dir, model_provider)?;
         let batch = crate::features::batch::di::build(
             indexing.batch_job_repo.clone(),
             indexing.index_file_use_case.clone(),
             web.ingest_web_url_use_case.clone(),
             web.web_ingestion_service.clone(),
             indexing.uow_factory.clone(),
+            Arc::new(crate::infrastructure::document_scope::SqliteDocumentScope::new(db_pool)),
         );
 
         Ok(Self {
             indexing,
             web,
             batch,
+            ocr: Arc::new(crate::application::ports::NoopOcr),
         })
     }
 
@@ -425,10 +547,14 @@ impl IndexingModule {
     }
 
     /// On-device speech-to-text, shared with the content-extraction adapter.
-    pub fn transcription_port(
-        &self,
-    ) -> &Arc<dyn crate::application::ports::TranscriptionPort> {
+    pub fn transcription_port(&self) -> &Arc<dyn crate::application::ports::TranscriptionPort> {
         &self.indexing.transcription
+    }
+
+    /// Page OCR for scanned PDFs. Hand this to
+    /// `ContentExtractor::with_ocr` once a vision adapter replaces `NoopOcr`.
+    pub fn ocr_port(&self) -> &Arc<dyn crate::application::ports::OcrPort> {
+        &self.ocr
     }
 
     // Web use case getters
@@ -470,7 +596,7 @@ impl IndexingModule {
     }
 
     // Service getters
-    pub fn indexing_state(&self) -> &Arc<crate::infrastructure::indexing::IndexingState> {
+    pub fn indexing_state(&self) -> &Arc<crate::features::indexing::engine::IndexingState> {
         &self.indexing.indexing_state
     }
 
@@ -515,10 +641,6 @@ impl IndexingModule {
     }
 }
 
-// ==============================================================================
-// 4. AIModule - LLM, Q&A, Conversations
-// ==============================================================================
-
 /// AI module for LLM operations, Q&A, and conversations
 ///
 /// **Fields**: ~25
@@ -543,7 +665,7 @@ impl AIModule {
     pub async fn new(
         db_pool: SqlitePool,
         core: Arc<CoreModule>,
-        llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
+        model_provider: Arc<dyn LoadedChatModelPort>,
         _llm_endpoint: &str,
         _llm_model: &str,
     ) -> crate::shared::error::Result<Self> {
@@ -554,10 +676,9 @@ impl AIModule {
             core.db_conn().clone(),
             core.data_dir().clone(),
             core.credentials().clone(),
-            llm_cache.clone(),
         )
         .await?;
-        let ai_tags = crate::features::tags::di::build_ai(db_pool, llm_cache);
+        let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);
 
         Ok(Self {
             conversation,
@@ -624,6 +745,24 @@ impl AIModule {
         &self.conversation.conversation_service
     }
 
+    pub fn document_scope(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
+        &self.conversation.document_scope
+    }
+
+    pub fn conversation_history(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::ConversationHistoryPort> {
+        &self.conversation.conversation_history
+    }
+
+    pub fn conversation_context(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
+        &self.conversation.conversation_context
+    }
+
     pub fn conversational_qa_service(&self) -> &Arc<dyn ConversationalQAServiceTrait> {
         &self.qa.conversational_qa_service
     }
@@ -632,11 +771,6 @@ impl AIModule {
         &self,
     ) -> &Arc<crate::infrastructure::persistence::repositories::DownloadedModelRepository> {
         &self.llm.downloaded_model_repo
-    }
-
-    // Cache getters (for Container lazy loading)
-    pub fn llm_cache(&self) -> &Arc<RwLock<Option<Arc<dyn LLMPort>>>> {
-        &self.llm.llm_cache
     }
 
     pub fn model_catalog(&self) -> &Arc<dyn ModelCatalogPort> {
@@ -660,10 +794,6 @@ impl AIModule {
         &self.credentials
     }
 }
-
-// ==============================================================================
-// 5. LibraryModule - Tags, Favorites, Mentions
-// ==============================================================================
 
 /// Library module for document organization (tags, favorites, mentions)
 ///
@@ -775,10 +905,6 @@ impl LibraryModule {
     }
 }
 
-// ==============================================================================
-// 6. FileOpsModule - File System Operations
-// ==============================================================================
-
 /// File operations module for opening files, metadata, wikilinks
 ///
 /// **Fields**: ~10
@@ -787,11 +913,15 @@ impl LibraryModule {
 /// - Document repository (read-only for paths)
 #[derive(Clone)]
 pub struct FileOpsModule {
+    library: Arc<dyn crate::application::ports::file_library::FileLibraryPort>,
     file: crate::features::file::di::FileDi,
     extraction: crate::features::extraction::di::ExtractionDi,
 }
 
 impl FileOpsModule {
+    pub fn library(&self) -> &Arc<dyn crate::application::ports::file_library::FileLibraryPort> {
+        &self.library
+    }
     /// Build FileOpsModule by composing the file + extraction feature builders.
     pub async fn new(
         db_pool: SqlitePool,
@@ -815,6 +945,9 @@ impl FileOpsModule {
             Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
         let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
 
+        let library = Arc::new(crate::infrastructure::file_library::SqliteFileLibrary::new(
+            db_pool.clone(),
+        ));
         let file = crate::features::file::di::build(
             document_repo.clone(),
             file_system,
@@ -828,7 +961,11 @@ impl FileOpsModule {
             document_repo as Arc<dyn RepositoryPort<crate::domain::entities::Document>>,
         );
 
-        Ok(Self { file, extraction })
+        Ok(Self {
+            file,
+            extraction,
+            library,
+        })
     }
 
     // File operation use case getters
@@ -886,10 +1023,6 @@ impl FileOpsModule {
     }
 }
 
-// ==============================================================================
-// 7. SystemModule - Settings, Health, Backup
-// ==============================================================================
-
 /// System module for application-wide operations
 ///
 /// Cache used to live here as a feature DI; it has been removed because
@@ -924,6 +1057,7 @@ impl SystemModule {
         let backup = crate::features::backup::di::build(
             db_pool.clone(),
             db_path,
+            core.data_dir().to_path_buf(),
             settings.settings_repo.clone(),
         );
 
@@ -1020,6 +1154,14 @@ impl SystemModule {
     /// (`plugin_list_backups`).
     pub fn backup_port(&self) -> &Arc<dyn BackupPort> {
         &self.backup.backup
+    }
+
+    /// Encrypted off-device archive orchestration. Single instance: it holds
+    /// the setup wizard's in-memory key until the user confirms it.
+    pub fn archive_service(
+        &self,
+    ) -> &Arc<crate::features::backup::archive::service::ArchiveService> {
+        &self.backup.archive_service
     }
 
     // Updates use case getters

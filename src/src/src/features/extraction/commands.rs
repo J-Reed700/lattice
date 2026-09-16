@@ -12,7 +12,6 @@ use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-// Re-export for plugin layer visibility
 pub use crate::features::extraction::dto::ExtractAndResolveResponseDto;
 
 /// Response for wikilink parsing (for frontend compatibility).
@@ -316,7 +315,7 @@ pub async fn extract_document_title(
 /// Thin controller delegating to ResolveWikilinkUseCase (DDD pattern)
 pub async fn resolve_wikilink(
     target: String,
-    source_path: String,
+    _source_path: String,
     available_documents: Vec<DocumentRefDto>,
     container: State<'_, Container>,
 ) -> Result<ResolveLinkResponse, AppError> {
@@ -400,4 +399,4 @@ pub async fn extract_and_resolve_links(
 }
 
 // NOTE: Command tests removed - use case tests provide coverage.
-// Integration tests will be added in Phase 5 with Container test utilities.
+// Command integration tests require container test utilities.

@@ -463,7 +463,6 @@ pub async fn rescan_vault(
     // Ghost-note sweep — anything left in `sql_rows` had its file
     // deleted while Lattice wasn't watching. Skip newly-created rows
     // whose vault writeback hasn't flushed yet.
-    //
     // Before deleting anything, demand positive evidence that the vault is
     // actually intact. A present-but-empty `notes/` directory is NOT proof
     // the user deleted their notes — it is the normal appearance of a

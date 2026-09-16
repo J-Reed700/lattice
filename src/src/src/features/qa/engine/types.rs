@@ -37,8 +37,8 @@ impl From<QAError> for String {
 }
 
 /// Auto-convert from LLMError to QAError
-impl From<crate::infrastructure::llm::types::LLMError> for QAError {
-    fn from(e: crate::infrastructure::llm::types::LLMError) -> Self {
+impl From<crate::features::llm::engine::types::LLMError> for QAError {
+    fn from(e: crate::features::llm::engine::types::LLMError) -> Self {
         QAError::OllamaUnavailable(e.to_string())
     }
 }

@@ -17,7 +17,7 @@ use async_trait::async_trait;
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 /// Mock web ingestion service for testing
@@ -118,7 +118,6 @@ impl WebIngestionServiceTrait for MockWebIngestionService {
             .expect("Mock lock poisoned")
             .push(url.to_string());
 
-        // Return configured result or default
         let results = self.mock_results.read().expect("Mock lock poisoned");
         if let Some(result) = results.get(url) {
             Ok(result.clone())
@@ -236,9 +235,8 @@ impl WebServiceTrait for MockWebService {
     }
 
     fn validate_url(&self, url: &str) -> Result<()> {
-        // Mock validation - block obvious bad URLs
         if url.contains("localhost") || url.contains("127.0.0.1") {
-            return Err(crate::error::AppError::InvalidUrl(
+            return Err(crate::shared::error::AppError::InvalidUrl(
                 "localhost not allowed".to_string(),
             ));
         }

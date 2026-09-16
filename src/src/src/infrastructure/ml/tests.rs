@@ -44,13 +44,10 @@ mod integration_tests {
         assert!(result.is_ok());
         let embedding = result.unwrap();
 
-        // Check dimension
         assert_eq!(embedding.len(), DEFAULT_EMBEDDING_DIM);
 
-        // Check that not all values are zero
         assert!(embedding.iter().any(|&x| x != 0.0));
 
-        // Check L2 normalization (norm should be ~1.0)
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!(
             (norm - 1.0).abs() < 1e-5,
@@ -77,7 +74,6 @@ mod integration_tests {
         for embedding in &embeddings {
             assert_eq!(embedding.len(), DEFAULT_EMBEDDING_DIM);
 
-            // Check normalization
             let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
             assert!((norm - 1.0).abs() < 1e-5);
         }

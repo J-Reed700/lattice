@@ -2,9 +2,9 @@
 
 use super::checksum::calculate_checksum;
 use crate::features::embedding::service::MODEL_NAME;
+use crate::features::indexing::engine::chunker::TextChunk;
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::features::mentions::repository::MentionRepository;
-use crate::infrastructure::indexing::chunker::TextChunk;
-use crate::infrastructure::indexing::error::{IndexingError, Result};
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -163,7 +163,6 @@ pub async fn store_document(
     tx.commit().await?;
 
     // Mentions are written *after* the commit, deliberately.
-    //
     // `MentionRepository` works through the pool, i.e. on a different pooled
     // connection. Calling it while the transaction above was still open meant
     // a second connection asking for SQLite's single writer lock that this
@@ -172,7 +171,6 @@ pub async fn store_document(
     // SQLITE_BUSY and dropped the mentions via a warning nobody reads.
     // Indexing a 500-file folder spent ~42 minutes purely waiting on a lock
     // it could never acquire.
-    //
     // Never open a second connection inside a write transaction on SQLite.
     // Mentions are derived data, so recomputing them outside the transaction
     // costs only that they aren't atomic with the document — far better than

@@ -1,7 +1,7 @@
 //! HTML and code file extraction.
 
 use super::types::{ContentMetadata, ExtractedContent};
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
 use tokio::io::{AsyncReadExt, BufReader};
 
@@ -63,6 +63,7 @@ pub async fn extract_code_file(
         mime_type: mime_type.to_string(),
         metadata,
         page_ranges: vec![],
+        needs_ocr: Vec::new(),
     })
 }
 

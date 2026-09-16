@@ -14,6 +14,7 @@
 //! - `crate::features::embedding::onnx_service` — OnnxEmbeddingService
 //! - `crate::features::embedding::remote_service` — RemoteEmbeddingService
 //! - `crate::features::embedding::generator` — EmbeddingGenerator, ModelConfig
+//! - `crate::features::embedding::late_chunking` — late-chunking strategy + pooling rules
 //! - `crate::features::embedding::validator` — validation utilities
 //! - `crate::features::embedding::persistence_mapper` — EmbeddingMapper, EmbeddingDTO
 //! - `crate::features::embedding::repository` — Embedding, EmbeddingRepository (port impl)
@@ -29,16 +30,20 @@
 pub mod candle_service;
 pub mod commands;
 pub mod compatibility;
+pub mod di;
 pub mod dto;
 pub mod encoding;
 pub mod entity;
 pub mod generator;
+pub mod input_policy;
+pub mod late_chunking;
 pub mod persistence_mapper;
 pub mod plugin;
 pub mod remote_service;
 pub mod repository;
 pub mod repository_tx;
 pub mod service;
+pub mod sparse_head;
 pub mod trait_def;
 pub mod use_cases;
 pub mod validator;
@@ -47,3 +52,5 @@ pub mod validator;
 pub mod mocks;
 
 pub use trait_def::EmbeddingServiceTrait;
+
+pub mod generation;

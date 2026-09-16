@@ -9,7 +9,6 @@ use tauri::{
 
 use crate::features::cache::commands as cache_commands;
 
-// Re-export types and commands from the cache command module.
 pub use crate::features::cache::commands::{
     cache_operation, clear_cache, clear_search_cache, get_cache_metrics, get_cache_stats,
     CacheMetrics, SearchCacheStats,

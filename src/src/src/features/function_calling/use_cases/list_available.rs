@@ -33,10 +33,6 @@ use crate::shared::result::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-// =============================================================================
-// DTOs
-// =============================================================================
-
 /// Available functions response DTO.
 ///
 /// Contains all registered functions with their metadata and schemas.
@@ -74,10 +70,6 @@ impl FunctionDefinitionDto {
         }
     }
 }
-
-// =============================================================================
-// Use Case
-// =============================================================================
 
 /// List available functions use case.
 ///
@@ -126,10 +118,6 @@ impl ListAvailableFunctionsUseCase {
     }
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,7 +126,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_functions_returns_all_registered() {
-        // Arrange
         let registry = FunctionRegistry::new();
 
         // Register test functions
@@ -161,16 +148,13 @@ mod tests {
 
         let use_case = ListAvailableFunctionsUseCase::new(Arc::new(registry));
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.total, 2);
         assert_eq!(response.functions.len(), 2);
 
-        // Verify function names
         let names: Vec<&str> = response.functions.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"search"));
         assert!(names.contains(&"fetch_url"));
@@ -178,7 +162,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_functions_correct_schema_format() {
-        // Arrange
         let registry = FunctionRegistry::new();
 
         let tool = ToolDefinition::new(
@@ -198,10 +181,8 @@ mod tests {
         registry.register(tool).unwrap();
         let use_case = ListAvailableFunctionsUseCase::new(Arc::new(registry));
 
-        // Act
         let result = use_case.execute().await.unwrap();
 
-        // Assert
         assert_eq!(result.functions.len(), 1);
         let func = &result.functions[0];
 
@@ -211,7 +192,6 @@ mod tests {
             "Search documents using semantic similarity"
         );
 
-        // Verify schema structure
         assert_eq!(func.input_schema["type"], "object");
         assert!(func.input_schema["properties"].is_object());
         assert!(func.input_schema["required"].is_array());
@@ -219,14 +199,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_functions_empty_registry() {
-        // Arrange
         let registry = FunctionRegistry::new();
         let use_case = ListAvailableFunctionsUseCase::new(Arc::new(registry));
 
-        // Act
         let result = use_case.execute().await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.total, 0);
@@ -235,7 +212,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_function_dto_from_domain() {
-        // Arrange
         let tool = ToolDefinition::new(
             "test_function",
             "A test function",
@@ -243,10 +219,8 @@ mod tests {
         )
         .unwrap();
 
-        // Act
         let dto = FunctionDefinitionDto::from_domain(tool);
 
-        // Assert
         assert_eq!(dto.name, "test_function");
         assert_eq!(dto.description, "A test function");
         assert_eq!(dto.input_schema["type"], "object");

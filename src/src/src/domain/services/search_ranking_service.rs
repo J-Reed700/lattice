@@ -37,9 +37,11 @@ pub struct SearchRankingService {
 impl SearchRankingService {
     /// Create a new search ranking service with default RRF K parameter.
     ///
-    /// The default K value of 60.0 is commonly used in literature.
+    /// The default is calibrated against the repository's multilingual corpus.
     pub fn new() -> Self {
-        Self { rrf_k: 60.0 }
+        Self {
+            rrf_k: crate::shared::constants::DEFAULT_RRF_K,
+        }
     }
 
     /// Create a new search ranking service with custom RRF K parameter.
@@ -88,17 +90,14 @@ impl SearchRankingService {
         text: Vec<SearchResult>,
         limit: usize,
     ) -> Vec<SearchResult> {
-        // Build score map using RRF
         let mut scores: HashMap<String, (f32, SearchResult)> = HashMap::new();
 
-        // Add scores from vector search
         for (rank, result) in vector.into_iter().enumerate() {
             let rrf_score = 1.0 / (self.rrf_k + (rank + 1) as f32);
             let id = result.id().to_string();
             scores.insert(id, (rrf_score, result));
         }
 
-        // Add scores from text search
         for (rank, result) in text.into_iter().enumerate() {
             let rrf_score = 1.0 / (self.rrf_k + (rank + 1) as f32);
             let id = result.id().to_string();
@@ -109,7 +108,6 @@ impl SearchRankingService {
                 .or_insert((rrf_score, result));
         }
 
-        // Sort by combined RRF score and take top-k
         let mut merged: Vec<(f32, SearchResult)> = scores.into_values().collect();
 
         merged.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -118,8 +116,6 @@ impl SearchRankingService {
             .into_iter()
             .take(limit)
             .map(|(rrf_score, result)| {
-                // Update result score to be the RRF score
-                // RRF score is 1/(k+rank), mathematically guaranteed finite for k>=0, rank>=1
                 SearchResult::with_metadata(
                     result.id().to_string(),
                     rrf_score,
@@ -166,7 +162,6 @@ mod tests {
 
         let merged = service.merge_with_rrf(vector, text, 10);
 
-        // Should have 3 unique results (a, b, c)
         assert_eq!(merged.len(), 3);
 
         // Result 'b' appears in both sets, so should have higher RRF score

@@ -68,14 +68,12 @@ impl ValidatedMetadata {
     /// # Ok::<(), lattice::shared::errors::AppError>(())
     /// ```
     pub fn new(json: String) -> Result<Self, AppError> {
-        // Validate non-empty
         if json.is_empty() {
             return Err(AppError::InvalidInput(
                 "Metadata JSON cannot be empty".to_string(),
             ));
         }
 
-        // Validate size first (fast check)
         let size_bytes = json.len();
         if size_bytes > MAX_METADATA_SIZE_BYTES {
             return Err(AppError::InvalidInput(format!(
@@ -85,7 +83,6 @@ impl ValidatedMetadata {
             )));
         }
 
-        // Validate it's valid JSON (ensures no corruption)
         serde_json::from_str::<serde_json::Value>(&json)
             .map_err(|e| AppError::InvalidInput(format!("Invalid JSON in metadata: {}", e)))?;
 
@@ -136,7 +133,6 @@ mod tests {
 
     #[test]
     fn test_oversized_metadata() {
-        // Create oversized JSON (70KB of data)
         let large_json = format!(r#"{{"data": "{}"}}"#, "x".repeat(70_000));
         let result = ValidatedMetadata::new(large_json);
 
@@ -184,14 +180,12 @@ mod tests {
 
     #[test]
     fn test_boundary_size() {
-        // Test at exactly the limit (should fail due to overhead)
         let boundary = format!(
             r#"{{"data": "{}"}}"#,
             "x".repeat(MAX_METADATA_SIZE_BYTES - 15)
         );
         let result = ValidatedMetadata::new(boundary);
 
-        // Should succeed if under limit
         match result {
             Ok(metadata) => {
                 assert!(metadata.size_bytes() <= MAX_METADATA_SIZE_BYTES);
@@ -234,7 +228,6 @@ mod tests {
 
     #[test]
     fn test_realistic_search_results() {
-        // Simulate realistic search results metadata
         let search_result = r#"{
             "sources": [
                 {

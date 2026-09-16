@@ -24,9 +24,14 @@ pub async fn batch_import_files(
     request: StartBatchFileImportRequestDto,
     container: State<'_, Container>,
 ) -> Result<StartBatchFileImportResponseDto, ApiError> {
-    let job_id = batch_file_import::start_batch_file_import(request.file_paths, container)
-        .await
-        .map_err(ApiError::from)?;
+    let job_id = batch_file_import::start_batch_file_import(
+        request.file_paths,
+        request.space_id,
+        request.indexing,
+        container,
+    )
+    .await
+    .map_err(ApiError::from)?;
 
     Ok(StartBatchFileImportResponseDto { job_id })
 }
@@ -92,70 +97,6 @@ pub async fn get_batch_history(
     Ok(response)
 }
 
-// Legacy compatibility commands (frontend expects these names)
-#[tauri::command]
-#[specta::specta]
-pub async fn start_batch_file_import(
-    file_paths: Vec<String>,
-    container: State<'_, Container>,
-) -> Result<String, ApiError> {
-    batch_file_import::start_batch_file_import(file_paths, container)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn start_batch_url_import(
-    urls: Vec<String>,
-    extract_article: Option<bool>,
-    container: State<'_, Container>,
-) -> Result<String, ApiError> {
-    let request = crate::features::batch::commands::url_import::StartBatchImportRequest {
-        urls,
-        options: Some(
-            crate::features::batch::commands::url_import::BatchImportOptions { extract_article },
-        ),
-    };
-    batch_url_import::start_batch_url_import(request, container)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_batch_job_status(
-    job_id: String,
-    container: State<'_, Container>,
-) -> Result<BatchJobStatusDto, ApiError> {
-    batch_url_import::get_batch_job_status(job_id, container)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn cancel_batch_job(
-    job_id: String,
-    container: State<'_, Container>,
-) -> Result<usize, ApiError> {
-    batch_url_import::cancel_batch_job(job_id, container)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn list_batch_jobs(
-    limit: Option<i64>,
-    offset: Option<i64>,
-    container: State<'_, Container>,
-) -> Result<ListBatchJobsResponseDto, ApiError> {
-    batch_history::list_batch_jobs(limit, offset, container)
-        .await
-        .map_err(ApiError::from)
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_batch_job(
@@ -171,9 +112,11 @@ pub async fn delete_batch_job(
 #[specta::specta]
 pub async fn retry_failed_items(
     job_id: String,
+    item_id: Option<String>,
+    replacement_path: Option<String>,
     container: State<'_, Container>,
 ) -> Result<crate::features::batch::dto::RetryFailedItemsResponseDto, ApiError> {
-    batch_history::retry_failed_items(job_id, container)
+    batch_history::retry_failed_items(job_id, item_id, replacement_path, container)
         .await
         .map_err(ApiError::from)
 }
@@ -186,11 +129,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_batch_status,
             cancel_batch,
             get_batch_history,
-            start_batch_file_import,
-            start_batch_url_import,
-            get_batch_job_status,
-            cancel_batch_job,
-            list_batch_jobs,
             delete_batch_job,
             retry_failed_items,
         ])

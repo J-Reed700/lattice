@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! # Test Assertions
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -36,7 +34,7 @@
 //! assert_chunk_count(&repo, "doc-123", 5).await?;
 //! ```
 
-use lattice::error::Result;
+use lattice::shared::error::Result;
 use lattice::infrastructure::persistence::repositories::{
     chunk_repository::ChunkRepository,
     document_repository::DocumentRepository,
@@ -44,10 +42,6 @@ use lattice::infrastructure::persistence::repositories::{
     mention_repository::MentionRepository,
     tag_repository::TagRepository,
 };
-
-// ============================================================================
-// Vector/Embedding Assertions
-// ============================================================================
 
 /// Assert that two embeddings are similar within a threshold.
 ///
@@ -104,10 +98,6 @@ pub fn assert_embedding_normalized(embedding: &[f32]) {
         magnitude
     );
 }
-
-// ============================================================================
-// Document Assertions
-// ============================================================================
 
 /// Assert that a document exists in the database.
 ///
@@ -166,10 +156,6 @@ pub async fn assert_chunk_count(repo: &ChunkRepository, doc_id: &str, expected: 
     Ok(())
 }
 
-// ============================================================================
-// Tag Assertions
-// ============================================================================
-
 /// Assert that a tag exists.
 pub async fn assert_tag_exists(repo: &TagRepository, tag_name: &str) -> Result<()> {
     let tags = repo.get_all_with_counts().await?;
@@ -224,10 +210,6 @@ pub async fn assert_tag_on_documents(
 
     Ok(())
 }
-
-// ============================================================================
-// Mention Assertions
-// ============================================================================
 
 /// Assert that a mention exists.
 pub async fn assert_mention_exists(repo: &MentionRepository, mention_name: &str) -> Result<()> {
@@ -304,10 +286,6 @@ pub async fn assert_document_has_mentions(
     Ok(())
 }
 
-// ============================================================================
-// Search Result Assertions
-// ============================================================================
-
 /// Assert search results contain specific document IDs.
 pub fn assert_search_contains(results: &[String], expected_doc_ids: &[&str]) {
     for expected in expected_doc_ids {
@@ -361,10 +339,6 @@ pub fn assert_max_results(results: &[String], max: usize) {
     );
 }
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
 /// Calculate cosine similarity between two vectors.
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
@@ -382,10 +356,6 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
     dot_product / (magnitude_a * magnitude_b)
 }
-
-// ============================================================================
-// Batch Assertions
-// ============================================================================
 
 /// Assert multiple documents exist.
 pub async fn assert_documents_exist(repo: &DocumentRepository, doc_ids: &[&str]) -> Result<()> {

@@ -238,7 +238,6 @@ impl WebArchiveService {
     /// # Errors
     /// - `AppError::Io` if directory creation or file writing fails
     pub async fn initialize(&self) -> Result<()> {
-        // Create base directory
         fs::create_dir_all(&self.base_dir)
             .await
             .map_err(|e| AppError::Io {
@@ -246,7 +245,6 @@ impl WebArchiveService {
                 kind: format!("{:?}", e.kind()),
             })?;
 
-        // Create README if it doesn't exist
         self.ensure_readme().await?;
 
         Ok(())
@@ -336,7 +334,6 @@ impl WebArchiveService {
             bad_titles.iter().any(|&bad| title_lower.contains(bad)) || extracted_title.len() < 10;
 
         if is_bad_title {
-            // Extract meaningful parts from URL
             if let Ok(parsed) = Url::parse(url) {
                 let domain = parsed.host_str().unwrap_or("unknown");
 
@@ -345,7 +342,6 @@ impl WebArchiveService {
                     let path_parts: Vec<&str> = segments.collect();
                     if let Some(last_segment) = path_parts.last() {
                         if !last_segment.is_empty() && last_segment.len() > 3 {
-                            // Use last URL segment + domain
                             let clean_segment = last_segment
                                 .replace(".html", "")
                                 .replace(".php", "")
@@ -560,7 +556,6 @@ impl WebArchiveService {
             .map(|slice| slice.join("---").trim().to_string())
             .unwrap_or_default();
 
-        // Parse frontmatter
         let mut title = String::new();
         let mut author = None;
         let mut word_count = 0;
@@ -592,7 +587,6 @@ impl WebArchiveService {
             }
         }
 
-        // Extract excerpt (first paragraph or first 200 chars)
         let excerpt = markdown_content
             .lines()
             .skip_while(|l| l.trim().is_empty() || l.starts_with('#'))
@@ -622,11 +616,9 @@ impl WebArchiveServiceTrait for WebArchiveService {
         // Ensure archive is initialized
         self.initialize().await?;
 
-        // Extract domain for subdirectory
         let domain = Self::extract_domain(url)?;
         let domain_dir = self.base_dir.join(&domain);
 
-        // Create domain subdirectory
         fs::create_dir_all(&domain_dir)
             .await
             .map_err(|e| AppError::Io {
@@ -634,7 +626,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
                 kind: format!("{:?}", e.kind()),
             })?;
 
-        // Validate and generate title
         let title_to_use = Self::generate_fallback_title(url, &article.title);
 
         // Log if we used fallback
@@ -647,13 +638,11 @@ impl WebArchiveServiceTrait for WebArchiveService {
             );
         }
 
-        // Generate article directory: {slug}-{uuid}/
         let slug = Self::slugify(&title_to_use);
         let uuid = Uuid::new_v4();
         let dir_name = format!("{}-{}", slug, uuid.simple());
         let article_dir = domain_dir.join(&dir_name);
 
-        // Create article directory
         fs::create_dir_all(&article_dir)
             .await
             .map_err(|e| AppError::Io {
@@ -702,7 +691,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
                 kind: format!("{:?}", e.kind()),
             })?;
 
-        // Return path to article.md (not directory) for indexing
         Ok(markdown_path)
     }
 
@@ -716,7 +704,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
             path.to_path_buf()
         };
 
-        // Read markdown file
         let content = fs::read_to_string(&article_md_path).await.map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 AppError::NotFound(format!("Article not found: {}", path.display()))
@@ -728,7 +715,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
             }
         })?;
 
-        // Parse markdown
         Self::markdown_to_article(&content).await
     }
 
@@ -756,7 +742,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
             }
         };
 
-        // Remove directory
         match fs::remove_dir_all(&path_to_delete).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -775,7 +760,6 @@ impl WebArchiveServiceTrait for WebArchiveService {
             return Ok(articles);
         }
 
-        // Read all entries in base directory
         let mut entries = fs::read_dir(&self.base_dir)
             .await
             .map_err(|e| AppError::Io {
@@ -812,11 +796,9 @@ impl WebArchiveServiceTrait for WebArchiveService {
                 {
                     let article_path = domain_entry.path();
 
-                    // Check if this is an article directory (contains article.md)
                     if article_path.is_dir() {
                         let article_md = article_path.join("article.md");
                         if article_md.exists() {
-                            // Return path to article.md (new format)
                             articles.push(article_md);
                         }
                     } else if article_path.extension() == Some(std::ffi::OsStr::new("md")) {
@@ -866,7 +848,6 @@ mod tests {
             "multiple-spaces"
         );
 
-        // Test truncation
         let long_title = "a".repeat(100);
         assert_eq!(WebArchiveService::slugify(&long_title).len(), 50);
     }
@@ -908,8 +889,6 @@ reading_time_minutes: 1
 archived_at: "2024-01-20T14:22:00Z"
 ---
 
-# Test Article
-
 *By Test Author*
 
 > Brief excerpt
@@ -929,7 +908,6 @@ Article content here.
 
     #[test]
     fn test_generate_fallback_title_with_bad_title() {
-        // Test generic bad title
         let result = WebArchiveService::generate_fallback_title(
             "https://reddit.com/r/rust/comments/abc123/some_discussion",
             "The heart of the internet",
@@ -937,12 +915,10 @@ Article content here.
         assert!(result.contains("reddit.com"));
         assert_ne!(result, "The heart of the internet");
 
-        // Test short title
         let result =
             WebArchiveService::generate_fallback_title("https://example.com/article", "Short");
         assert!(result.contains("example.com"));
 
-        // Test URL with path segment
         let result = WebArchiveService::generate_fallback_title(
             "https://github.com/rust-lang/rust/pull/12345",
             "Loading",

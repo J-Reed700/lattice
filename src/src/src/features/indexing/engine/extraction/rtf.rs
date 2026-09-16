@@ -1,7 +1,7 @@
 //! Rich Text Format (RTF) extraction.
 
 use super::types::{ContentMetadata, ExtractedContent};
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
 use tokio::io::{AsyncReadExt, BufReader};
 
@@ -55,6 +55,7 @@ pub async fn extract_rtf(path: &Path, max_file_size: u64) -> Result<ExtractedCon
         mime_type: "application/rtf".to_string(),
         metadata,
         page_ranges: vec![],
+        needs_ocr: Vec::new(),
     })
 }
 

@@ -50,15 +50,11 @@
 //! Pure delegation pattern with no rate limiting or audit logging. Commands delegate directly
 //! to database layer for simple CRUD operations on recent documents tracking table.
 
+use crate::application::ports::RecentDocumentsRepositoryPort;
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result, ResultExt};
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use tauri::State;
-use uuid::Uuid;
-
-/// Maximum number of recent documents to keep
-const MAX_RECENT_DOCUMENTS: i64 = 50;
 
 /// Recent document with access metadata
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -193,18 +189,18 @@ pub async fn recent_document_operation(
     operation: RecentDocumentOperation,
     container: State<'_, Container>,
 ) -> Result<RecentDocumentResponse, AppError> {
-    let pool = container.db_pool();
+    let repository = container.recent_documents_repository();
     match operation {
         RecentDocumentOperation::Track { document_id } => {
-            track_document_access_internal(&document_id, pool).await?;
+            track_document_access_internal(&document_id, repository.as_ref()).await?;
             Ok(RecentDocumentResponse::Tracked)
         }
         RecentDocumentOperation::GetRecent { limit } => {
-            let docs = get_recent_documents_internal(limit, pool).await?;
+            let docs = get_recent_documents_internal(limit, repository.as_ref()).await?;
             Ok(RecentDocumentResponse::Documents(docs))
         }
         RecentDocumentOperation::Clear => {
-            clear_recent_documents_internal(pool).await?;
+            clear_recent_documents_internal(repository.as_ref()).await?;
             Ok(RecentDocumentResponse::Cleared)
         }
     }
@@ -288,93 +284,17 @@ pub async fn track_document_access(
     document_id: String,
     container: State<'_, Container>,
 ) -> Result<(), AppError> {
-    let pool = container.db_pool();
-    track_document_access_internal(&document_id, pool)
+    let repository = container.recent_documents_repository();
+    track_document_access_internal(&document_id, repository.as_ref())
         .await
         .map_err(|e| AppError::Other(format!("Failed to track document access: {}", e)))
 }
 
-/// Internal implementation for tracking document access
-async fn track_document_access_internal(document_id: &str, pool: &SqlitePool) -> Result<()> {
-    // Check if document exists
-    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
-    let doc_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = ?")
-        .bind(document_id)
-        .fetch_one(pool)
-        .await
-        .context("Failed to check if document exists")?;
-
-    if doc_exists == 0 {
-        return Err(AppError::NotFound("Document not found".to_string()));
-    }
-
-    // Check if already tracked
-    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
-    let existing_record = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT id FROM recent_documents WHERE document_id = ?",
-    )
-    .bind(document_id)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to check existing recent document")?;
-
-    if existing_record.is_some() {
-        // Update existing record
-        // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
-        sqlx::query(
-            r#"
-            UPDATE recent_documents
-            SET last_accessed_at = datetime('now'),
-                access_count = access_count + 1
-            WHERE document_id = ?
-            "#,
-        )
-        .bind(document_id)
-        .execute(pool)
-        .await
-        .context("Failed to update recent document")?;
-    } else {
-        // Insert new record
-        let recent_id = Uuid::new_v4().to_string();
-        // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
-        sqlx::query(
-            r#"
-            INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
-            VALUES (?, ?, datetime('now'), 1)
-            "#,
-        )
-        .bind(&recent_id)
-        .bind(document_id)
-        .execute(pool)
-        .await
-        .context("Failed to insert recent document")?;
-    }
-
-    // LRU eviction: keep only last MAX_RECENT_DOCUMENTS
-    evict_old_recent_documents(pool).await?;
-
-    Ok(())
-}
-
-/// Evict old recent documents (LRU)
-async fn evict_old_recent_documents(pool: &SqlitePool) -> Result<()> {
-    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
-    sqlx::query(
-        r#"
-        DELETE FROM recent_documents
-        WHERE id NOT IN (
-            SELECT id FROM recent_documents
-            ORDER BY last_accessed_at DESC
-            LIMIT ?
-        )
-        "#,
-    )
-    .bind(MAX_RECENT_DOCUMENTS)
-    .execute(pool)
-    .await
-    .context("Failed to evict old recent documents")?;
-
-    Ok(())
+async fn track_document_access_internal(
+    document_id: &str,
+    repository: &dyn RecentDocumentsRepositoryPort,
+) -> Result<()> {
+    repository.track_access(document_id).await
 }
 
 /// Get recent documents with metadata and access stats
@@ -491,67 +411,30 @@ pub async fn get_recent_documents(
     limit: usize,
     container: State<'_, Container>,
 ) -> Result<Vec<RecentDocument>, AppError> {
-    let pool = container.db_pool();
-    get_recent_documents_internal(limit, pool)
+    let repository = container.recent_documents_repository();
+    get_recent_documents_internal(limit, repository.as_ref())
         .await
         .map_err(|e| AppError::Other(format!("Failed to get recent documents: {}", e)))
 }
 
-/// Internal implementation for getting recent documents
 async fn get_recent_documents_internal(
     limit: usize,
-    pool: &SqlitePool,
+    repository: &dyn RecentDocumentsRepositoryPort,
 ) -> Result<Vec<RecentDocument>> {
-    // Cap limit to reasonable max
-    let safe_limit = limit.min(100);
-
-    // repository-barrier-allow: legacy read model pending consolidation into RecentDocumentsRepository.
-    let recent_docs =
-        sqlx::query_as::<_, (String, String, String, String, Option<String>, String, i64)>(
-            r#"
-        SELECT
-            r.id,
-            r.document_id,
-            d.file_name,
-            d.file_path,
-            d.file_type,
-            r.last_accessed_at,
-            r.access_count
-        FROM recent_documents r
-        INNER JOIN documents d ON r.document_id = d.id
-        ORDER BY r.last_accessed_at DESC
-        LIMIT ?
-        "#,
-        )
-        .bind(safe_limit as i64)
-        .fetch_all(pool)
-        .await
-        .context("Failed to query recent documents")?
+    Ok(repository
+        .get_recent_documents(limit)
+        .await?
         .into_iter()
-        .map(
-            |(
-                id,
-                document_id,
-                document_name,
-                document_path,
-                file_type,
-                last_accessed_at,
-                access_count,
-            )| {
-                RecentDocument {
-                    id,
-                    document_id,
-                    document_name,
-                    document_path,
-                    file_type,
-                    last_accessed_at,
-                    access_count,
-                }
-            },
-        )
-        .collect();
-
-    Ok(recent_docs)
+        .map(|record| RecentDocument {
+            id: record.id,
+            document_id: record.document_id,
+            document_name: record.document_name,
+            document_path: record.document_path,
+            file_type: record.file_type,
+            last_accessed_at: record.last_accessed_at,
+            access_count: record.access_count,
+        })
+        .collect())
 }
 
 /// Clear all recent document history
@@ -658,33 +541,27 @@ async fn get_recent_documents_internal(
 ///
 /// Thin controller delegating to `clear_recent_documents_internal`
 pub async fn clear_recent_documents(container: State<'_, Container>) -> Result<(), AppError> {
-    let pool = container.db_pool();
-    clear_recent_documents_internal(pool)
+    let repository = container.recent_documents_repository();
+    clear_recent_documents_internal(repository.as_ref())
         .await
         .map_err(|e| AppError::Other(format!("Failed to clear recent documents: {}", e)))
 }
 
-/// Internal implementation for clearing recent documents
-async fn clear_recent_documents_internal(pool: &SqlitePool) -> Result<()> {
-    // repository-barrier-allow: legacy command helper pending consolidation into RecentDocumentsRepository.
-    sqlx::query("DELETE FROM recent_documents")
-        .execute(pool)
-        .await
-        .context("Failed to clear recent documents")?;
-
+async fn clear_recent_documents_internal(
+    repository: &dyn RecentDocumentsRepositoryPort,
+) -> Result<()> {
+    repository.clear_recent_history(None).await?;
     Ok(())
 }
 
 // The old implementation here queried the documents table but returned RecentDocument DTO,
 // which was incorrect. The new implementation in document_list.rs queries documents table
 // and returns proper DocumentMetadataDto with all fields needed for organization.
-//
 // Migration: Frontend calls to invoke('list_all_documents') will now use the new command
 // from document_list.rs which returns richer metadata.
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Tests would go here - integration tests with test database
 }

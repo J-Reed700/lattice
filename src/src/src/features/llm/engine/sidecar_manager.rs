@@ -7,11 +7,10 @@
 //!
 //! # Why a sidecar
 //!
-//! Sprint 2's LLM migration replaces in-process `mistralrs` FFI with
-//! the `llama-server` binary that ships in the Lattice installer. The
+//! Lattice uses the bundled `llama-server` binary rather than an in-process
+//! inference runtime. The
 //! binary speaks an OpenAI-compatible HTTP/SSE API on `127.0.0.1:<port>`.
-//! This module spawns it; `SidecarLLMClient` (Sprint 2 PR 2.1) is the
-//! HTTP client that consumes it.
+//! This module spawns it; `SidecarLLMClient` is its HTTP client.
 //!
 //! # Lifecycle
 //!
@@ -27,20 +26,18 @@
 //!    - Sends `kill()` to the child process. Tauri-plugin-shell's
 //!      `CommandChild` uses `shared_child::SharedChild` which calls
 //!      the OS kill primitive (TerminateProcess on Windows, SIGKILL
-//!      on Unix). Sprint 6 PR 6.1 hardens this further with Windows
-//!      Job Objects and explicit RunEvent::ExitRequested handling.
+//!      on Unix), with Windows Job Objects providing process-tree cleanup.
 //!
 //! # What this module does NOT do
 //!
-//! - It does not implement the `LLMClient` trait — that's `SidecarLLMClient`
-//!   in Sprint 2 PR 2.1.
+//! - It does not implement the `LLMClient` trait; `SidecarLLMClient` does.
 //! - It does not pick which binary variant (Vulkan vs CPU on Windows)
-//!   to use — that's Sprint 3 PR 3.2's fallback chain.
+//!   to use; the fallback chain owns that decision.
 //! - It does not download model files — that's the existing model
 //!   storage layer, untouched by this migration.
 
-use crate::llm::system::SystemCapabilities;
-use crate::llm::types::LLMError;
+use crate::features::llm::engine::system::SystemCapabilities;
+use crate::features::llm::engine::types::LLMError;
 use parking_lot::Mutex as SyncMutex;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -102,7 +99,7 @@ impl SidecarConfig {
         }
     }
 
-    /// CPU-only fallback config. Used by Sprint 3's crash-fallback path.
+    /// CPU-only fallback configuration.
     pub fn cpu_only(model_path: PathBuf) -> Self {
         Self {
             model_path,
@@ -148,8 +145,7 @@ impl SidecarConfig {
 /// Live sidecar process handle.
 ///
 /// Holds the OS process and the channel of events from it. Dropping
-/// the handle terminates the child via `kill()`. Sprint 6 PR 6.1
-/// switched the inner mutex from `tokio::Mutex` to
+/// the handle terminates the child via `kill()`. The inner mutex uses
 /// `parking_lot::Mutex` so the registry's synchronous kill_all path
 /// can lock without an async runtime.
 pub struct SidecarHandle {
@@ -201,8 +197,8 @@ impl SidecarHandle {
 
 impl Drop for SidecarHandle {
     fn drop(&mut self) {
-        // Best-effort sync kill. The Sprint 6 PR 6.1 registry path is
-        // the primary cleanup mechanism (driven off
+        // Best-effort synchronous kill. The registry is the primary cleanup
+        // mechanism (driven off
         // `RunEvent::ExitRequested`, synchronous, runs before the
         // tokio runtime stops). This Drop remains as a safety net for
         // handles dropped outside app shutdown — e.g. when the user
@@ -218,10 +214,6 @@ impl Drop for SidecarHandle {
         }
     }
 }
-
-// ============================================================================
-// SidecarRegistry — Sprint 6 PR 6.1 zombie-process eradication
-// ============================================================================
 
 /// Process-wide registry of live sidecars.
 ///
@@ -431,15 +423,10 @@ impl Default for SidecarRegistry {
     }
 }
 
-// ============================================================================
-// Windows Job Object — kernel-level cascade kill
-// ============================================================================
-
 /// RAII guard around a Windows Job Object configured to kill all
 /// member processes when the job handle closes.
 ///
-/// Sprint 6 PR 6.1's load-bearing zombie protection on Windows. The
-/// Job Object is created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`,
+/// The Job Object uses `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`,
 /// which means: when the OS handle to this job closes (because our
 /// process exits — including segfault, taskkill /f, or panic),
 /// every process assigned to it is terminated by the kernel.
@@ -526,7 +513,6 @@ impl JobObjectGuard {
 
         // Open a handle to the child process with the rights needed
         // for AssignProcessToJobObject (set_quota + terminate).
-        //
         // SAFETY: OpenProcess returns a HANDLE we own and must close.
         // PID was just read from a CommandChild we control — the
         // process is alive and we have permission to inspect it
@@ -575,16 +561,14 @@ impl Drop for JobObjectGuard {
 // for `JobObjectGuard` since its only field is HANDLE — no manual
 // `unsafe impl` needed.
 
-/// Sprint 6 PR 6.1: kill any orphan `llama-server` processes left
-/// behind by a previous crashed Lattice instance.
+/// Kill orphan `llama-server` processes left by a crashed Lattice instance.
 ///
 /// Called once from `main.rs` at app boot, after the registry is
 /// managed but before the DI container spawns any new sidecars.
 ///
 /// # Match strategy
 ///
-/// **Two-stage match** to avoid murdering a developer's unrelated
-/// `llama-server` instance:
+/// A two-stage match avoids terminating an unrelated `llama-server` instance:
 ///
 /// 1. Process name must match `llama-server` or `llama-server.exe`.
 /// 2. Argv must contain a fragment matching the bundled-sidecar
@@ -666,8 +650,7 @@ pub struct SidecarManager;
 impl SidecarManager {
     /// Spawn a llama-server sidecar with crash-fallback.
     ///
-    /// Sprint 3 PR 3.2: when `config.n_gpu_layers > 0` (GPU offload
-    /// requested) and the spawn fails with a startup crash or
+    /// When GPU offload is requested and startup crashes or times out,
     /// readiness timeout, we retry once with `n_gpu_layers = 0` —
     /// CPU-only mode. The motivating failure modes:
     ///
@@ -684,8 +667,7 @@ impl SidecarManager {
     ///
     /// On successful CPU fallback we emit a `tracing::warn!` with
     /// `target = "sidecar_fallback"` so the UI / observability layer
-    /// can render a "running in CPU mode" banner. Sprint 6 PR 6.2
-    /// pipes that into structured user-facing diagnostics.
+    /// can render a "running in CPU mode" banner.
     pub async fn start_with_fallback(
         app: &AppHandle,
         config: SidecarConfig,
@@ -805,7 +787,7 @@ impl SidecarManager {
             );
         }
 
-        // 6. Spawn the long-lived event drain task (Sprint 6 PR 6.2).
+        // 6. Spawn the long-lived event drain task.
         //    The drain owns the receiver for the rest of the sidecar's
         //    life — feeds stderr/stdout into tracing, detects
         //    unexpected termination, and signals readiness via a
@@ -889,8 +871,7 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
 ///
 /// # Why not just `wait_for_ready` and drop the receiver
 ///
-/// Sprint 2 PR 2.1's original implementation consumed the `Receiver`
-/// during startup and dropped it once readiness was confirmed.
+/// Consuming and dropping the `Receiver` after startup loses later output.
 /// Tauri-plugin-shell's stderr/stdout pipes are bounded mpsc channels
 /// — once nobody's reading the receiver, the channel fills up and
 /// the spawn-side task that produces events stops. Losing that side
@@ -898,13 +879,11 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
 /// and crash logs from llama-server all silently disappeared from
 /// our `tracing` pipeline.
 ///
-/// Sprint 6 PR 6.2 fixes that. The drain task:
-///
+/// The drain task:
 /// - Reads every `CommandEvent` for the lifetime of the sidecar.
 /// - Pipes each stderr/stdout line into `tracing` with
 ///   `target = "llama_server"` so user diagnostic exports include
-///   them. (Sprint 6 PR 6.2 follow-up: structured fields for
-///   different log severities once we know the llama.cpp log format.)
+///   them.
 /// - Detects `Terminated` mid-flight and clears the child slot in
 ///   `child_arc` so `SidecarRegistry::kill_all` doesn't try to kill
 ///   a dead PID at shutdown.
@@ -1061,10 +1040,6 @@ async fn await_ready(
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1103,10 +1078,10 @@ mod tests {
     }
 
     fn make_caps(
-        gpu_vendor: Option<crate::llm::system::GPUVendor>,
+        gpu_vendor: Option<crate::features::llm::engine::system::GPUVendor>,
         ram_gb: f64,
     ) -> SystemCapabilities {
-        use crate::llm::system::{GPUInfo, Platform};
+        use crate::features::llm::engine::system::{GPUInfo, Platform};
         SystemCapabilities {
             total_ram_gb: ram_gb,
             available_ram_gb: ram_gb,
@@ -1127,7 +1102,7 @@ mod tests {
 
     #[test]
     fn from_capabilities_apple_silicon_uses_full_offload() {
-        use crate::llm::system::GPUVendor;
+        use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Apple), 16.0);
         let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
         assert_eq!(cfg.n_gpu_layers, 99);
@@ -1136,7 +1111,7 @@ mod tests {
 
     #[test]
     fn from_capabilities_nvidia_uses_full_offload() {
-        use crate::llm::system::GPUVendor;
+        use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Nvidia), 32.0);
         let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
         assert_eq!(cfg.n_gpu_layers, 99);
@@ -1153,7 +1128,7 @@ mod tests {
 
     #[test]
     fn from_capabilities_unknown_gpu_treated_as_no_acceleration() {
-        use crate::llm::system::GPUVendor;
+        use crate::features::llm::engine::system::GPUVendor;
         let caps = make_caps(Some(GPUVendor::Unknown), 16.0);
         let cfg = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
         // Unknown vendor → is_accelerated() returns false → CPU path
@@ -1162,7 +1137,7 @@ mod tests {
 
     #[test]
     fn from_capabilities_low_ram_shrinks_context() {
-        use crate::llm::system::GPUVendor;
+        use crate::features::llm::engine::system::GPUVendor;
         // GPU present + low RAM: still no GPU offload concern, but
         // context shrinks to keep KV cache manageable.
         let caps = make_caps(Some(GPUVendor::Apple), 4.0);

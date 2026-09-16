@@ -2,7 +2,7 @@
 
 ## Overview
 
-This module contains all application setup logic extracted from `main.rs` following the "bricks and studs" philosophy. Each submodule is self-contained with clear responsibilities and contracts.
+This module contains application setup logic extracted from `main.rs`. Each submodule has a focused responsibility and explicit contracts.
 
 ## Module Structure
 
@@ -100,7 +100,7 @@ setup/
   - Errors: Missing file, corrupted JSON, invalid format
 
 **Dependencies:**
-- `crate::services::embedding::EmbeddingService`
+- `crate::infrastructure::services::embedding::EmbeddingService`
 - `tokenizers::Tokenizer`
 - `std::sync::Arc`
 
@@ -305,7 +305,7 @@ let app_dir = setup::setup_app_directories(app)?;
 
 ## Documentation Compliance
 
-This module follows the "bricks and studs" philosophy:
+The setup modules are designed to compose cleanly:
 - ✅ Self-contained with clear boundaries
 - ✅ Public interface via module exports
 - ✅ Comprehensive error handling

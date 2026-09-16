@@ -3,7 +3,6 @@
 //! This module defines trait interfaces for dependency injection.
 
 use async_trait::async_trait;
-use std::path::PathBuf;
 
 use crate::shared::error::AppError;
 

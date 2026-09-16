@@ -18,6 +18,7 @@ use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::SqlitePool;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
@@ -39,15 +40,12 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// `Ok(())` if filename is safe, `Err(AppError::Security)` if dangerous patterns detected
 fn validate_safe_filename(filename: &str) -> Result<()> {
-    // Check for literal directory traversal
     if filename.contains("..") {
         return Err(AppError::Security(
             "Filename contains directory traversal (..)".to_string(),
         ));
     }
 
-    // Check for URL-encoded directory traversal patterns
-    // %2e = . (dot), %2f = / (slash), %5c = \ (backslash)
     let filename_lower = filename.to_lowercase();
     if filename_lower.contains("%2e")
         || filename_lower.contains("%2f")
@@ -58,14 +56,12 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
         ));
     }
 
-    // Check for absolute paths
     if filename.starts_with('/') || filename.starts_with('\\') {
         return Err(AppError::Security(
             "Filename cannot be an absolute path".to_string(),
         ));
     }
 
-    // Check for null bytes
     if filename.contains('\0') {
         return Err(AppError::Security(
             "Filename contains null byte".to_string(),
@@ -108,23 +104,19 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
 /// validate_sql_safe_path(unsafe_path)?; // Error
 /// ```
 fn validate_sql_safe_path(path: &str) -> Result<()> {
-    // ORACLE VALIDATION: Removed overly aggressive SQL keyword checking
+    // SQL keywords are valid in paths and are not rejected here.
     // that would block legitimate paths like "Dropbox", "update_v2", etc.
-    //
     // Security relies on:
     // 1. Path canonicalization + starts_with() check (confines to backup_root)
     // 2. Single-quote escaping below (replace("'", "''"))
-    //
     // We keep basic checks for obvious SQL injection attempts:
 
-    // Check for SQL statement terminators
     if path.contains(';') {
         return Err(AppError::Security(
             "Path contains SQL statement terminator (;)".to_string(),
         ));
     }
 
-    // Check for SQL comment sequences
     if path.contains("--") {
         return Err(AppError::Security(
             "Path contains SQL comment sequence (--)".to_string(),
@@ -137,7 +129,6 @@ fn validate_sql_safe_path(path: &str) -> Result<()> {
         ));
     }
 
-    // Check for null bytes
     if path.contains('\0') {
         return Err(AppError::Security("Path contains null byte".to_string()));
     }
@@ -164,7 +155,8 @@ impl BackupAdapter {
 
     /// Get metadata about a backup file
     async fn get_backup_info(&self, path: &PathBuf) -> Result<BackupInfoData> {
-        let metadata = fs::metadata(path)
+        let metadata = tokio::fs::metadata(path)
+            .await
             .map_err(|e| AppError::FileSystem(format!("Failed to read backup metadata: {}", e)))?;
 
         let created_at = metadata
@@ -185,7 +177,6 @@ impl BackupAdapter {
         // Try to open backup file and get file count
         let file_count = self.get_backup_file_count(path).await.unwrap_or(0);
 
-        // Get version from backup (if possible)
         let version = self
             .get_backup_version(path)
             .await
@@ -303,7 +294,6 @@ impl BackupAdapter {
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
-        // Run integrity check
         let result: (String,) = sqlx::query_as("PRAGMA integrity_check")
             .fetch_one(&pool)
             .await
@@ -332,8 +322,7 @@ impl BackupPort for BackupAdapter {
             .ok_or_else(|| AppError::FileSystem("Invalid database path".to_string()))?
             .join("backups");
 
-        // Create backup root if it doesn't exist
-        fs::create_dir_all(&backup_root).map_err(|e| {
+        tokio::fs::create_dir_all(&backup_root).await.map_err(|e| {
             AppError::FileSystem(format!("Failed to create backup directory: {}", e))
         })?;
 
@@ -387,7 +376,6 @@ impl BackupPort for BackupAdapter {
                 // user can write. Do not relax this to "honour the user's chosen
                 // path" without first splitting trusted (scheduler, reading
                 // validated settings) from untrusted (IPC) callers — see SET-4.
-                //
                 // The corresponding half of SET-4 is fixed in settings
                 // validation, which now rejects an out-of-root `backupPath` at
                 // save time so the user sees an error immediately, instead of
@@ -410,16 +398,11 @@ impl BackupPort for BackupAdapter {
                     canonical_path
                 }
             }
-            None => {
-                // Use default backup path (no validation needed - we control it)
-                canonical_backup_root.join(self.generate_backup_filename())
-            }
+            None => canonical_backup_root.join(self.generate_backup_filename()),
         };
 
         info!("Creating backup at: {}", backup_path.display());
 
-        // Use VACUUM INTO for online backup (SQLite 3.27+)
-        // Note: backup_path is already validated to be within backup_root
         let backup_path_str = backup_path.to_string_lossy().to_string();
 
         // SECURITY: Validate path for SQL safety (CWE-89 mitigation)
@@ -438,7 +421,6 @@ impl BackupPort for BackupAdapter {
                 AppError::Database(format!("Failed to create backup: {}", e))
             })?;
 
-        // Verify backup was created
         if !backup_path.exists() {
             return Err(AppError::FileSystem(
                 "Backup file was not created".to_string(),
@@ -459,10 +441,12 @@ impl BackupPort for BackupAdapter {
         // 2. Create safety backup of current database
         let current_backup = self.db_path.with_extension("db.pre_restore");
         if self.db_path.exists() {
-            fs::copy(&self.db_path, &current_backup).map_err(|e| {
-                error!("Failed to create safety backup: {}", e);
-                AppError::FileSystem(format!("Failed to create safety backup: {}", e))
-            })?;
+            tokio::fs::copy(&self.db_path, &current_backup)
+                .await
+                .map_err(|e| {
+                    error!("Failed to create safety backup: {}", e);
+                    AppError::FileSystem(format!("Failed to create safety backup: {}", e))
+                })?;
             info!("Created safety backup at: {}", current_backup.display());
         }
 
@@ -474,10 +458,10 @@ impl BackupPort for BackupAdapter {
         // Use temp file + rename for atomicity
         let temp_path = self.db_path.with_extension("db.restoring");
 
-        match fs::copy(&path, &temp_path) {
+        match tokio::fs::copy(&path, &temp_path).await {
             Ok(_) => {
                 // Atomic rename
-                match fs::rename(&temp_path, &self.db_path) {
+                match tokio::fs::rename(&temp_path, &self.db_path).await {
                     Ok(_) => {
                         info!("Database restored successfully");
                         info!("Old database backed up to: {}", current_backup.display());
@@ -488,10 +472,10 @@ impl BackupPort for BackupAdapter {
                         // Rollback: restore from safety backup
                         error!("Failed to rename restored database: {}", e);
                         if current_backup.exists() {
-                            let _ = fs::rename(&current_backup, &self.db_path);
+                            let _ = tokio::fs::rename(&current_backup, &self.db_path).await;
                             info!("Rolled back to original database");
                         }
-                        let _ = fs::remove_file(&temp_path);
+                        let _ = tokio::fs::remove_file(&temp_path).await;
                         Err(AppError::FileSystem(format!(
                             "Failed to restore database: {}",
                             e
@@ -503,7 +487,7 @@ impl BackupPort for BackupAdapter {
                 error!("Failed to copy backup file: {}", e);
                 // Rollback: restore from safety backup if needed
                 if current_backup.exists() && !self.db_path.exists() {
-                    let _ = fs::rename(&current_backup, &self.db_path);
+                    let _ = tokio::fs::rename(&current_backup, &self.db_path).await;
                     info!("Rolled back to original database");
                 }
                 Err(AppError::FileSystem(format!(
@@ -521,16 +505,17 @@ impl BackupPort for BackupAdapter {
             return Ok(Vec::new());
         }
 
-        let entries = fs::read_dir(&backup_dir)
+        let mut entries = tokio::fs::read_dir(&backup_dir)
+            .await
             .map_err(|e| AppError::FileSystem(format!("Failed to read backup directory: {}", e)))?;
 
         let mut backups = Vec::new();
 
-        for entry in entries {
-            let entry = entry.map_err(|e| {
-                AppError::FileSystem(format!("Failed to read directory entry: {}", e))
-            })?;
-
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| AppError::FileSystem(format!("Failed to read directory entry: {}", e)))?
+        {
             let path = entry.path();
 
             // Only include .db files
@@ -541,7 +526,6 @@ impl BackupPort for BackupAdapter {
             }
         }
 
-        // Sort by created_at (newest first)
         backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         Ok(backups)
@@ -558,7 +542,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
-        // Create the database file first
         std::fs::File::create(&db_path).unwrap();
 
         let pool = SqlitePoolOptions::new()
@@ -566,7 +549,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Create test schema
         sqlx::query(
             r#"
             CREATE TABLE documents (
@@ -580,7 +562,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Insert test data
         sqlx::query("INSERT INTO documents (id, title, content) VALUES (?, ?, ?)")
             .bind("1")
             .bind("Test Doc")
@@ -612,7 +593,6 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create custom path WITHIN the allowed backup directory
         let backup_root = db_path.parent().unwrap().join("backups");
         fs::create_dir_all(&backup_root).unwrap();
         let custom_path = backup_root.join("my_backup.db");
@@ -637,7 +617,6 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create a couple backups
         let _ = adapter.create_backup(None).await.unwrap();
         // Sleep 1 second to avoid timestamp collision (backups use second-precision timestamps)
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -697,10 +676,6 @@ mod tests {
         pool.close().await;
     }
 
-    // ========================================================================
-    // SECURITY TESTS (CWE-22: Path Traversal Prevention)
-    // ========================================================================
-
     #[tokio::test]
 
     async fn test_create_backup_rejects_parent_directory_traversal() {
@@ -741,7 +716,6 @@ mod tests {
 
         let result = adapter.create_backup(Some(malicious_path)).await;
 
-        // Should be rejected
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -767,7 +741,6 @@ mod tests {
 
         let result = adapter.create_backup(Some(malicious_path)).await;
 
-        // Should be rejected
         assert!(result.is_err());
 
         pool.close().await;
@@ -779,7 +752,6 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create a valid path within the backups directory
         let backup_dir = db_path.parent().unwrap().join("backups");
         fs::create_dir_all(&backup_dir).unwrap();
 
@@ -787,7 +759,6 @@ mod tests {
 
         let result = adapter.create_backup(Some(valid_path.clone())).await;
 
-        // Should succeed
         assert!(result.is_ok());
         assert!(valid_path.exists());
 
@@ -803,7 +774,6 @@ mod tests {
         let backup_dir = db_path.parent().unwrap().join("backups");
         fs::create_dir_all(&backup_dir).unwrap();
 
-        // Create a symlink pointing outside the backup directory
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
@@ -811,16 +781,13 @@ mod tests {
             let symlink_path = backup_dir.join("escape_link");
             let target_path = db_path.parent().unwrap().parent().unwrap();
 
-            // Create symlink (may fail if permissions don't allow)
             if symlink(target_path, &symlink_path).is_ok() {
                 let malicious_path = symlink_path.join("evil.db");
 
                 let result = adapter.create_backup(Some(malicious_path)).await;
 
-                // Should be rejected (canonicalization resolves symlink)
                 assert!(result.is_err());
 
-                // Clean up
                 fs::remove_file(&symlink_path).ok();
             }
         }
@@ -840,7 +807,6 @@ mod tests {
         // Provide directory instead of file path
         let result = adapter.create_backup(Some(backup_dir.clone())).await;
 
-        // Should succeed and create a file in that directory
         assert!(result.is_ok());
 
         let backup_path = result.unwrap();
@@ -884,21 +850,15 @@ mod tests {
         pool.close().await;
     }
 
-    // ========================================================================
-    // RESTORE BACKUP TESTS
-    // ========================================================================
-
     #[tokio::test]
 
     async fn test_restore_backup_success() {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create a backup
         let backup_path = adapter.create_backup(None).await.unwrap();
         let backup_pathbuf = PathBuf::from(backup_path);
 
-        // Add more data to the original database
         sqlx::query("INSERT INTO documents (id, title, content) VALUES (?, ?, ?)")
             .bind("2")
             .bind("New Doc")
@@ -907,7 +867,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify we have 2 documents
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
@@ -922,10 +881,8 @@ mod tests {
         let safety_backup = db_path.with_extension("db.pre_restore");
         assert!(safety_backup.exists());
 
-        // Verify database file was replaced
         assert!(db_path.exists());
 
-        // Create a new pool to verify restored data
         let new_pool = SqlitePoolOptions::new()
             .connect(&format!("sqlite://{}", db_path.display()))
             .await
@@ -936,7 +893,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have 1 document (from backup, not 2)
         assert_eq!(restored_count.0, 1);
 
         new_pool.close().await;
@@ -948,7 +904,6 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create an invalid backup file
         let invalid_backup = tempdir().unwrap();
         let invalid_path = invalid_backup.path().join("corrupt.db");
         fs::write(&invalid_path, b"not a valid sqlite database").unwrap();
@@ -956,7 +911,6 @@ mod tests {
         // Attempt to restore invalid backup
         let result = adapter.restore_backup(invalid_path).await;
 
-        // Should fail validation
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -981,7 +935,6 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create a backup
         let backup_path = adapter.create_backup(None).await.unwrap();
         let backup_pathbuf = PathBuf::from(backup_path);
 
@@ -1021,13 +974,11 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Get original data
         let original_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
             .unwrap();
 
-        // Create a backup in a location we can't write to
         let backup_path = adapter.create_backup(None).await.unwrap();
         let backup_pathbuf = PathBuf::from(&backup_path);
 
@@ -1043,7 +994,6 @@ mod tests {
             fs::set_permissions(&db_path, perms).unwrap();
         }
 
-        // Create new pool for restore attempt
         let new_pool = SqlitePoolOptions::new()
             .connect(&format!("sqlite://{}", db_path.display()))
             .await
@@ -1071,7 +1021,6 @@ mod tests {
             );
         }
 
-        // Verify original database is intact (rollback occurred)
         let verify_pool = SqlitePoolOptions::new()
             .connect(&format!("sqlite://{}", db_path.display()))
             .await
@@ -1100,7 +1049,6 @@ mod tests {
         let missing_path = PathBuf::from("/nonexistent/backup.db");
         let result = adapter.restore_backup(missing_path).await;
 
-        // Should fail validation
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1125,14 +1073,12 @@ mod tests {
         let (pool, db_path, _dir) = create_test_pool().await;
         let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
-        // Create a backup
         let backup_path = adapter.create_backup(None).await.unwrap();
         let backup_pathbuf = PathBuf::from(backup_path);
 
         // Restore from backup
         adapter.restore_backup(backup_pathbuf).await.unwrap();
 
-        // Verify no temporary files left behind
         let temp_path = db_path.with_extension("db.restoring");
         assert!(
             !temp_path.exists(),
@@ -1140,7 +1086,6 @@ mod tests {
             temp_path.display()
         );
 
-        // Verify database file exists and is valid
         assert!(db_path.exists());
 
         let new_pool = SqlitePoolOptions::new()
@@ -1158,10 +1103,6 @@ mod tests {
         new_pool.close().await;
     }
 
-    // ========================================================================
-    // SQL INJECTION TESTS (CWE-89: VACUUM INTO Hardening)
-    // ========================================================================
-
     #[tokio::test]
 
     async fn test_sql_injection_semicolon_statement_terminator() {
@@ -1176,7 +1117,6 @@ mod tests {
 
         let result = adapter.create_backup(Some(malicious_path)).await;
 
-        // Should be rejected
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1185,7 +1125,6 @@ mod tests {
             err
         );
 
-        // Verify documents table still exists
         let count: Result<(i64,), _> = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await;
@@ -1203,7 +1142,6 @@ mod tests {
         let backup_dir = db_path.parent().unwrap().join("backups");
         fs::create_dir_all(&backup_dir).unwrap();
 
-        // Test SQL comment patterns
         let comment_patterns = vec![
             "backup.db--comment",
             "backup.db/* comment */",
@@ -1276,7 +1214,6 @@ mod tests {
             err
         );
 
-        // Verify table still exists
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
@@ -1309,7 +1246,6 @@ mod tests {
             err
         );
 
-        // Verify no extra documents inserted
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
@@ -1366,10 +1302,6 @@ mod tests {
         pool.close().await;
     }
 
-    // ========================================================================
-    // SQL SAFE PATH VALIDATOR UNIT TEST
-    // ========================================================================
-
     #[test]
     fn test_sql_safe_path_validator() {
         // Valid paths
@@ -1385,7 +1317,7 @@ mod tests {
         assert!(validate_sql_safe_path("/backup/file--comment.db").is_err());
         assert!(validate_sql_safe_path("/backup/*comment*/file.db").is_err());
 
-        // ORACLE FIX: Removed SQL keyword checking - these paths are now ALLOWED
+        // SQL keywords in paths are allowed.
         // Valid: paths that happen to contain SQL keywords (e.g., "Dropbox", "update_v2")
         assert!(validate_sql_safe_path("/backup/DROP.db").is_ok());
         assert!(validate_sql_safe_path("/backup/DELETE_backup.db").is_ok());

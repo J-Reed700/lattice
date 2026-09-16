@@ -18,6 +18,7 @@ use crate::features::file::use_cases::{
 };
 use crate::features::tags::TagServiceTrait;
 use crate::infrastructure::security::FileAccessConfig;
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct FileDi {
@@ -85,5 +86,51 @@ pub fn build(
             Arc::new(SqliteCitingConversationsRepository::new(db_pool))
                 as Arc<dyn CitingConversationsRepositoryPort>,
         )),
+    }
+}
+
+/// File operations' registrar surface on `Container`.
+impl Container {
+    // File Operations (from FileOpsModule)
+    pub fn open_file_use_case(&self) -> Arc<OpenFileUseCase> {
+        Arc::clone(self.file_ops.open_file_use_case())
+    }
+
+    pub fn open_file_by_id_use_case(&self) -> Arc<OpenFileByIdUseCase> {
+        Arc::clone(self.file_ops.open_file_by_id_use_case())
+    }
+
+    pub fn get_file_path_by_id_use_case(&self) -> Arc<GetFilePathByIdUseCase> {
+        Arc::clone(self.file_ops.get_file_path_by_id_use_case())
+    }
+
+    pub fn show_in_folder_use_case(&self) -> Arc<ShowInFolderUseCase> {
+        Arc::clone(self.file_ops.show_in_folder_use_case())
+    }
+
+    pub fn get_file_metadata_use_case(&self) -> Arc<GetFileMetadataUseCase> {
+        Arc::clone(self.file_ops.get_file_metadata_use_case())
+    }
+
+    pub fn read_file_content_use_case(&self) -> Arc<ReadFileContentUseCase> {
+        Arc::clone(self.file_ops.read_file_content_use_case())
+    }
+
+    pub fn read_file_bytes_use_case(&self) -> Arc<ReadFileBytesUseCase> {
+        Arc::clone(self.file_ops.read_file_bytes_use_case())
+    }
+
+    pub fn update_file_metadata_use_case(&self) -> Arc<UpdateFileMetadataUseCase> {
+        Arc::clone(self.file_ops.update_file_metadata_use_case())
+    }
+
+    pub fn list_citing_conversations_use_case(&self) -> Arc<ListCitingConversationsUseCase> {
+        Arc::clone(self.file_ops.list_citing_conversations_use_case())
+    }
+
+    pub fn file_library(
+        &self,
+    ) -> Arc<dyn crate::application::ports::file_library::FileLibraryPort> {
+        Arc::clone(self.file_ops.library())
     }
 }

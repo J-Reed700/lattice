@@ -64,14 +64,12 @@ impl InputValidator {
 
     /// Validate JSON input for deserialization
     pub fn validate_json(json_str: &str, max_depth: usize) -> Result<Value> {
-        // Check size limit (10MB)
         if json_str.len() > 10 * 1024 * 1024 {
             return Err(AppError::InvalidInput(
                 "JSON input too large (max 10MB)".to_string(),
             ));
         }
 
-        // Parse JSON
         let value: Value = serde_json::from_str(json_str)?;
 
         // Check depth to prevent stack overflow
@@ -101,14 +99,12 @@ impl InputValidator {
         allowed_extensions: &[&str],
         max_size: usize,
     ) -> Result<()> {
-        // Check filename
         if filename.is_empty() {
             return Err(AppError::InvalidInput(
                 "Filename cannot be empty".to_string(),
             ));
         }
 
-        // Check file size
         if content.len() > max_size {
             return Err(AppError::InvalidInput(format!(
                 "File too large: {} bytes (max: {} bytes)",
@@ -117,7 +113,6 @@ impl InputValidator {
             )));
         }
 
-        // Check extension
         let extension = filename
             .rsplit('.')
             .next()
@@ -131,7 +126,6 @@ impl InputValidator {
             )));
         }
 
-        // Check for file signature/magic bytes
         if !Self::verify_file_signature(content, &extension) {
             return Err(AppError::InvalidInput(
                 "File content does not match extension".to_string(),
@@ -160,12 +154,10 @@ impl InputValidator {
 
     /// Validate and sanitize HTML content
     pub fn sanitize_html(html: &str) -> String {
-        // Remove script tags
         let mut sanitized = html.to_string();
         sanitized = sanitized.replace("<script", "&lt;script");
         sanitized = sanitized.replace("</script>", "&lt;/script&gt;");
 
-        // Remove event handlers
         let event_handlers = [
             "onload",
             "onerror",
@@ -183,7 +175,6 @@ impl InputValidator {
             sanitized = sanitized.replace(handler, "data-disabled");
         }
 
-        // Remove javascript: protocol
         sanitized = sanitized.replace("javascript:", "");
         sanitized = sanitized.replace("data:", "");
         sanitized = sanitized.replace("vbscript:", "");
@@ -233,14 +224,12 @@ impl InputValidator {
             return Err(AppError::InvalidInput("URL too long".to_string()));
         }
 
-        // Check for allowed protocols
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(AppError::InvalidInput(
                 "Only HTTP/HTTPS URLs are allowed".to_string(),
             ));
         }
 
-        // Remove dangerous characters
         let sanitized = url
             .replace("<", "%3C")
             .replace(">", "%3E")
@@ -279,7 +268,6 @@ impl InputValidator {
     /// assert!(validator.validate_model_name("model/name").is_err());
     /// ```
     pub fn validate_model_name(&self, name: &str) -> Result<String> {
-        // Check length
         if name.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Model name cannot be empty".to_string(),
@@ -292,21 +280,18 @@ impl InputValidator {
             ));
         }
 
-        // Check for path traversal
         if name.contains("..") {
             return Err(AppError::InvalidInput(
                 "Model name cannot contain '..' (path traversal)".to_string(),
             ));
         }
 
-        // Check for path separators
         if name.contains('/') || name.contains('\\') {
             return Err(AppError::InvalidInput(
                 "Model name cannot contain path separators".to_string(),
             ));
         }
 
-        // Check for null bytes
         if name.contains('\0') {
             return Err(AppError::InvalidInput(
                 "Model name contains null bytes".to_string(),
@@ -347,10 +332,10 @@ impl InputValidator {
     /// let validator = InputValidator::new();
     ///
     /// // Valid path
-    /// assert!(validator.validate_directory_path("/Users/josh/Documents", true).is_ok());
+    /// assert!(validator.validate_directory_path("/Users/example/Documents", true).is_ok());
     ///
     /// // Path traversal attempt
-    /// assert!(validator.validate_directory_path("/Users/josh/../../../etc", false).is_err());
+    /// assert!(validator.validate_directory_path("/Users/example/../../../etc", false).is_err());
     ///
     /// // Relative path (not allowed)
     /// assert!(validator.validate_directory_path("Documents/folder", false).is_err());
@@ -386,7 +371,6 @@ impl InputValidator {
             ));
         }
 
-        // Check 5: If require_exists, verify directory exists
         if require_exists {
             if !path_obj.exists() {
                 return Err(AppError::FileNotFound {
@@ -523,7 +507,6 @@ impl InputValidator {
             )));
         }
 
-        // Check 6: Canonicalize paths to resolve symlinks and relative paths
         let canonical_path = path.canonicalize().map_err(|e| {
             AppError::Security(format!(
                 "Failed to canonicalize path (possible symlink attack): {}",
@@ -569,7 +552,6 @@ mod tests {
         assert!(validator.validate_search_query("").is_err());
         assert!(validator.validate_search_query("   ").is_err());
 
-        // Verify legitimate characters are preserved
         let result = validator
             .validate_search_query("O'Brien's \"research\" on SQL;")
             .unwrap();
@@ -633,7 +615,7 @@ mod tests {
 
         // Valid absolute paths (existence not required)
         assert!(validator
-            .validate_directory_path("/Users/josh/Documents", false)
+            .validate_directory_path("/Users/example/Documents", false)
             .is_ok());
         assert!(validator
             .validate_directory_path("/home/user/folder", false)
@@ -651,7 +633,7 @@ mod tests {
 
         // Invalid: path traversal (CWE-22)
         assert!(validator
-            .validate_directory_path("/Users/josh/../../../etc", false)
+            .validate_directory_path("/Users/example/../../../etc", false)
             .is_err());
         assert!(validator
             .validate_directory_path("/home/../root", false)
@@ -671,10 +653,9 @@ mod tests {
 
         // Invalid: null bytes (CWE-158)
         assert!(validator
-            .validate_directory_path("/Users/josh\0/evil", false)
+            .validate_directory_path("/Users/example\0/evil", false)
             .is_err());
 
-        // Test with existence check using temp directory
         let temp = tempfile::tempdir().unwrap();
         let temp_path = temp.path().to_str().unwrap();
 

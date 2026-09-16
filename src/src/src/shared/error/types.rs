@@ -155,8 +155,6 @@ pub enum AppError {
 }
 
 impl AppError {
-    // ==================== Builder Methods ====================
-
     /// Create a NotFound error with resource type and ID
     pub fn not_found(resource_type: &str, resource_id: &str) -> Self {
         AppError::NotFound(format!("{} '{}' not found", resource_type, resource_id))
@@ -210,8 +208,6 @@ impl AppError {
         AppError::InternalError(message.to_string())
     }
 
-    // ==================== Context Methods ====================
-
     /// Add context to an error (creates a new error with additional context)
     pub fn with_context(self, context: &str) -> Self {
         let base_message = self.to_string();
@@ -223,8 +219,6 @@ impl AppError {
         let base_message = self.to_string();
         AppError::Other(format!("{}. Suggestion: {}", base_message, suggestion))
     }
-
-    // ==================== Error Codes ====================
 
     /// Get the error code for this error type
     pub fn error_code(&self) -> &'static str {
@@ -292,8 +286,6 @@ impl AppError {
             _ => 500,
         }
     }
-
-    // ==================== Categorization Methods ====================
 
     /// Get a user-friendly error message
     pub fn to_user_friendly_message(&self) -> String {
@@ -655,8 +647,6 @@ impl From<AppError> for String {
     }
 }
 
-// ==================== Auto-conversions from other error types ====================
-
 /// Auto-convert from std::io::Error
 impl From<io::Error> for AppError {
     fn from(err: io::Error) -> Self {
@@ -728,9 +718,9 @@ impl From<crate::shared::domain_types::DomainTypeError> for AppError {
 }
 
 /// Auto-convert from LLMError to AppError
-impl From<crate::infrastructure::llm::types::LLMError> for AppError {
-    fn from(e: crate::infrastructure::llm::types::LLMError) -> Self {
-        use crate::infrastructure::llm::types::LLMError;
+impl From<crate::features::llm::engine::types::LLMError> for AppError {
+    fn from(e: crate::features::llm::engine::types::LLMError) -> Self {
+        use crate::features::llm::engine::types::LLMError;
         match e {
             LLMError::ModelNotLoaded => AppError::ModelLoadFailed("Model not loaded".to_string()),
             LLMError::GenerationFailed(msg) => {
@@ -820,7 +810,7 @@ pub type Result<T, E = AppError> = std::result::Result<T, E>;
 /// # Examples
 ///
 /// ```
-/// use lattice::error::{ResultExt, AppError};
+/// use lattice::shared::error::{ResultExt, AppError};
 ///
 /// fn read_config(path: &str) -> Result<String, AppError> {
 ///     std::fs::read_to_string(path)

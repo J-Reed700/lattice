@@ -2,11 +2,9 @@
 //!
 //! This module defines trait interfaces for dependency injection.
 
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 use crate::shared::error::Result;
 use async_trait::async_trait;
-
-// ============================================================================
 
 /// Trait for managing LLM context in conversational RAG
 ///
@@ -37,7 +35,7 @@ pub trait ContextManagerTrait: Send + Sync {
         &self,
         conversation: &crate::domain::conversation::ConversationAggregate,
         search_results: Vec<SearchResult>,
-    ) -> Result<crate::services::context_manager::LLMContext>;
+    ) -> Result<crate::infrastructure::services::context_manager::LLMContext>;
 
     /// Format system context (system prompt)
     ///
@@ -80,10 +78,6 @@ pub trait ContextManagerTrait: Send + Sync {
     /// Get maximum context token budget
     fn max_context_tokens(&self) -> usize;
 }
-
-// ============================================================================
-// Q&A Engine Trait
-// ============================================================================
 
 /// Trait for question-answering engine with RAG pipeline
 ///
@@ -134,7 +128,7 @@ pub trait SearchEnrichmentServiceTrait: Send + Sync {
     ) -> Result<
         std::collections::HashMap<
             String,
-            crate::services::search_enrichment_service::DocumentMetadata,
+            crate::features::search::enrichment_service::DocumentMetadata,
         >,
     >;
 }

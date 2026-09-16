@@ -1,17 +1,16 @@
 use crate::features::embedding::service::EmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
-use crate::infrastructure::indexing::chunker::{ChunkerConfig, SemanticChunker};
-use crate::infrastructure::indexing::error::{IndexingError, Result};
-use crate::infrastructure::indexing::error_ext::IndexingResultExt;
-use crate::infrastructure::indexing::events::IndexingEvent;
-use crate::infrastructure::indexing::extraction::ContentExtractor;
-use crate::infrastructure::indexing::metadata_extractor::{
+use crate::features::indexing::engine::error::{IndexingError, Result};
+use crate::features::indexing::engine::error_ext::IndexingResultExt;
+use crate::features::indexing::engine::events::IndexingEvent;
+use crate::features::indexing::engine::extraction::ContentExtractor;
+use crate::features::indexing::engine::metadata_extractor::{
     determine_page_number, extract_metadata,
 };
-use crate::infrastructure::indexing::progress::{IndexProgress, ProgressTracker};
-use crate::infrastructure::indexing::queue::IndexTask;
-use crate::infrastructure::indexing::storage::IndexStorage;
-use crate::infrastructure::indexing::transaction::FileIndexTransaction;
+use crate::features::indexing::engine::progress::{IndexProgress, ProgressTracker};
+use crate::features::indexing::engine::queue::IndexTask;
+use crate::features::indexing::engine::storage::IndexStorage;
+use crate::features::indexing::engine::transaction::FileIndexTransaction;
 use crate::infrastructure::services::file_storage::FileStorageService;
 use crate::infrastructure::services::file_type_detector::FileTypeDetector;
 use crate::shared::utils::patterns::observer::Observable;
@@ -78,7 +77,6 @@ pub struct IndexingActor {
     file_storage: Arc<FileStorageService>,
     embedder: Arc<EmbeddingService>,
     extractor: Arc<ContentExtractor>,
-    chunker: Arc<SemanticChunker>,
     progress_tracker: Arc<Mutex<ProgressTracker>>,
     event_observable: Arc<Mutex<Observable<IndexingEvent>>>,
     cancelled: Arc<Mutex<bool>>,
@@ -91,7 +89,7 @@ impl IndexingActor {
         pool: SqlitePool,
         vault_path: PathBuf,
         embedder: Arc<EmbeddingService>,
-        tokenizer: Arc<Tokenizer>,
+        _tokenizer: Arc<Tokenizer>,
         progress_tracker: Arc<Mutex<ProgressTracker>>,
         pause_gate: Arc<PauseGate>,
     ) -> Self {
@@ -99,25 +97,12 @@ impl IndexingActor {
         let file_storage = Arc::new(FileStorageService::new(vault_path, pool));
         let extractor = Arc::new(ContentExtractor::new());
 
-        let chunker_config = ChunkerConfig {
-            max_tokens: 800,
-            overlap_tokens: 120,
-            prefer_sentence_boundaries: true,
-        };
-
-        #[allow(clippy::expect_used)] // Default config is static and validated by tests
-        let chunker = Arc::new(
-            SemanticChunker::new(tokenizer, chunker_config)
-                .expect("Default chunker config is always valid"),
-        );
-
         Self {
             rx,
             storage,
             file_storage,
             embedder,
             extractor,
-            chunker,
             progress_tracker,
             event_observable: Arc::new(Mutex::new(Observable::new())),
             cancelled: Arc::new(Mutex::new(false)),
@@ -266,7 +251,6 @@ impl IndexingActor {
             .await
             .log_context("store file", path)?;
 
-        // Create transaction guard - automatically cleans up on failure
         let tx = FileIndexTransaction::new(
             file_record.id.clone(),
             Arc::clone(&self.file_storage),
@@ -314,8 +298,13 @@ impl IndexingActor {
         let base_metadata = extract_metadata(path, &extracted.text, 0)?;
 
         let mut contextualized_chunks = Vec::new();
+        // One entry per base chunk: the prefixed span text plus the byte range
+        // of every contextualized chunk inside it. Late chunking embeds the
+        // span once and pools each range; the stored chunk text and offsets are
+        // the same either way.
+        let mut spans: Vec<(String, Vec<std::ops::Range<usize>>)> = Vec::new();
 
-        let base_chunks = self.chunker.chunk_text(&extracted.text)?;
+        let base_chunks = self.embedder.split_text(&extracted.text, "")?;
 
         if base_chunks.is_empty() {
             self.storage
@@ -327,7 +316,7 @@ impl IndexingActor {
         }
 
         for chunk in base_chunks {
-            let page_number = determine_page_number(chunk.start_idx, &extracted.page_ranges);
+            let page_number = determine_page_number(chunk.start, &extracted.page_ranges);
 
             let mut chunk_metadata = base_metadata.clone();
             chunk_metadata.page_number = page_number;
@@ -337,26 +326,53 @@ impl IndexingActor {
             }
 
             let context_prefix = self.build_context_prefix(&chunk_metadata);
-            let contextualized_content = format!("{}\n\n{}", context_prefix, chunk.text);
+            let span_prefix = format!("{context_prefix}\n\n");
+            let mut chunk_ranges = Vec::new();
+            for part in self.embedder.split_text(&chunk.text, &span_prefix)? {
+                let contextualized_content = format!("{}\n\n{}", context_prefix, part.text);
+                chunk_ranges.push(span_prefix.len() + part.start..span_prefix.len() + part.end);
 
-            contextualized_chunks.push(
-                crate::infrastructure::indexing::chunker::ContextualizedChunk {
-                    original_content: chunk.text.clone(),
-                    contextualized_content,
-                    context_prefix,
-                    chunk_index: contextualized_chunks.len(),
-                    token_count: chunk.token_count,
-                    start_idx: chunk.start_idx,
-                    end_idx: chunk.end_idx,
-                },
-            );
+                contextualized_chunks.push(
+                    crate::features::indexing::engine::chunker::ContextualizedChunk {
+                        original_content: part.text,
+                        contextualized_content,
+                        context_prefix: context_prefix.clone(),
+                        chunk_index: contextualized_chunks.len(),
+                        token_count: part.token_count,
+                        start_idx: chunk.start + part.start,
+                        end_idx: chunk.start + part.end,
+                    },
+                );
+            }
+            if !chunk_ranges.is_empty() {
+                spans.push((format!("{span_prefix}{}", chunk.text), chunk_ranges));
+            }
         }
 
-        let embeddings = self
-            .embedder
-            .embed_contextualized_chunks(&contextualized_chunks)
-            .await
-            .log_context("generate embeddings", path)?;
+        let embeddings = if self.embedder.embedding_strategy().is_late_chunking() {
+            let mut vectors = Vec::with_capacity(contextualized_chunks.len());
+            for (span_text, chunk_ranges) in &spans {
+                vectors.extend(
+                    self.embedder
+                        .embed_span_chunks(span_text, chunk_ranges)
+                        .await
+                        .log_context("generate embeddings", path)?,
+                );
+            }
+            vectors
+        } else {
+            self.embedder
+                .embed_contextualized_chunks(&contextualized_chunks)
+                .await
+                .log_context("generate embeddings", path)?
+        };
+        if embeddings.len() != contextualized_chunks.len() {
+            return Err(IndexingError::InternalError(format!(
+                "embedding returned {} vectors for {} chunks",
+                embeddings.len(),
+                contextualized_chunks.len()
+            )));
+        }
 
         let num_chunks = contextualized_chunks.len();
 
@@ -378,6 +394,11 @@ impl IndexingActor {
             )
             .await
             .log_context("store document", path)?;
+
+        sqlx::query("UPDATE text_embeddings SET model_name = ? WHERE chunk_id IN (SELECT tc.id FROM text_chunks tc JOIN documents d ON d.id = tc.document_id WHERE d.file_path = ?)")
+            .bind(self.embedder.model_identity())
+            .bind(path.to_string_lossy().as_ref())
+            .execute(&mut *db_tx).await?;
 
         sqlx::query("UPDATE files SET is_indexed = 1 WHERE id = ?1")
             .bind(&file_record.id)
@@ -413,24 +434,18 @@ impl IndexingActor {
         // Success - commit transaction to prevent rollback
         tx.commit();
 
+        // Background summary tier; a no-op unless it has been switched on.
+        crate::features::summaries::trigger::notify_document_at_path(&self.storage.pool, path)
+            .await;
+
         Ok(())
     }
 
     fn build_context_prefix(
         &self,
-        metadata: &crate::infrastructure::indexing::metadata_extractor::DocumentMetadata,
+        metadata: &crate::features::indexing::engine::metadata_extractor::DocumentMetadata,
     ) -> String {
-        let mut parts = vec![format!("Document: {}", metadata.title)];
-
-        if let Some(page) = metadata.page_number {
-            parts.push(format!("Page: {}", page));
-        }
-
-        if let Some(section) = &metadata.section {
-            parts.push(format!("Section: {}", section));
-        }
-
-        format!("[{}]", parts.join(" | "))
+        crate::features::indexing::engine::chunker::context_prefix(metadata)
     }
 
     async fn process_folder(&self, path: &Path, recursive: bool) -> Result<()> {
@@ -703,42 +718,7 @@ impl IndexingServiceTrait for IndexingService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
-
-    async fn create_test_service() -> (IndexingService, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-
-        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_path.display()))
-            .await
-            .unwrap();
-
-        crate::infrastructure::persistence::database::initialize_database(&pool)
-            .await
-            .unwrap();
-
-        use tokenizers::models::wordpiece::WordPiece;
-        let wp = WordPiece::default();
-        let tokenizer = Arc::new(Tokenizer::new(wp));
-
-        let model_path = temp_dir.path().join("model.onnx");
-
-        let embedder = Arc::new(
-            EmbeddingService::new(model_path)
-                .expect("Failed to create embedder for test - model file may be missing"),
-        );
-
-        let service = IndexingService::new(
-            pool,
-            temp_dir.path().to_path_buf(),
-            embedder,
-            tokenizer,
-            100,
-        );
-
-        (service, temp_dir)
-    }
 
     #[tokio::test]
     async fn test_service_creation() {
@@ -755,7 +735,7 @@ mod tests {
 
         use tokenizers::models::wordpiece::WordPiece;
         let wp = WordPiece::default();
-        let tokenizer = Arc::new(Tokenizer::new(wp));
+        let _tokenizer = Arc::new(Tokenizer::new(wp));
 
         let progress = ProgressTracker::new(100);
         let current = progress.get_current();

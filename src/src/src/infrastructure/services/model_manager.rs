@@ -1,44 +1,33 @@
 // BGE-M3 Model Manager
-//
 // This module handles downloading the BGE-M3 embedding model from HuggingFace.
-//
 // ## Architecture Note: Why Hardcoded URLs?
-//
 // While we have a domain-driven multi-file download infrastructure (see
 // `domain/modules/model_metadata.rs` with `ModelFile` and `CuratedModel`), this manager
 // uses hardcoded constants for BGE-M3. This is intentional and follows the
 // "ruthless simplicity" principle:
-//
 // - **Current**: BGE-M3 is our only embedding model and requires 5 specific files
 // - **Simple**: Direct URL constants are easy to understand and debug
 // - **Working**: This approach is proven and tested
-//
 // The domain-driven infrastructure exists for:
 // - Future model additions (when we support multiple embedding models)
 // - User-provided models (when that feature is needed)
 // - Complex model configurations (versioning, variants, etc.)
-//
 // ## BGE-M3 File Structure
-//
 // BGE-M3 ONNX model requires 5 files:
 // 1. `model.onnx` - Main ONNX model graph (724 KB)
 // 2. `model.onnx_data` - External tensor data (2.27 GB) **REQUIRED**
 // 3. `tokenizer.json` - Tokenizer configuration
 // 4. `vocab.txt` - Vocabulary file
 // 5. `config.json` - Model configuration
-//
 // IMPORTANT: model.onnx_data is NOT optional - ONNX Runtime loads it automatically
 // when the main model.onnx file references external data. Missing this file
 // causes "failed to load model" errors.
-//
 // ## When to Use Domain Infrastructure
-//
 // Consider migrating to domain-driven approach when:
 // - We support multiple embedding models (e.g., e5-large, instructor-xl)
 // - Users can choose/add custom models
 // - Models have complex version/variant management
 // - We need dynamic model discovery from HuggingFace API
-//
 // Until then, keep it simple with hardcoded constants.
 
 use crate::infrastructure::services::traits::ModelManagerTrait;
@@ -194,7 +183,6 @@ impl ModelManager {
 
     fn emit_progress(&self, progress: DownloadProgress) {
         if let Some(handle) = &self.app_handle {
-            // Convert speed from MB/s to bytes/s for schema compliance
             let bytes_per_second = progress.speed_mbps * 1_048_576.0;
 
             let payload = DownloadProgressPayload {
@@ -279,7 +267,6 @@ impl ModelManager {
             .await
             .context("Failed to create model directory")?;
 
-        // Check available disk space
         self.check_disk_space().await?;
 
         // Track download start time for elapsed_seconds calculation
@@ -368,7 +355,6 @@ impl ModelManager {
     async fn download_file(&self, url: &str, target_path: &Path, filename: &str) -> Result<()> {
         let temp_path = target_path.with_extension("tmp");
 
-        // Check for partial download and attempt to resume
         let mut downloaded: u64 = 0;
         let resume_supported = if temp_path.exists() {
             if let Ok(metadata) = fs::metadata(&temp_path).await {
@@ -388,7 +374,6 @@ impl ModelManager {
 
         let mut request = self.client.get(url);
 
-        // Add Range header for resume support
         if resume_supported && downloaded > 0 {
             request = request.header("Range", format!("bytes={}-", downloaded));
         }
@@ -398,7 +383,6 @@ impl ModelManager {
             .await
             .map_err(|e| AppError::Network(format!("Network error: Failed to connect to download server for {}. Please check your internet connection. Error: {}", filename, e)))?;
 
-        // Check if resume is supported (206) or starting fresh (200)
         let status = response.status();
         if !status.is_success() && status.as_u16() != 206 {
             return Err(AppError::Network(format!(
@@ -445,7 +429,6 @@ impl ModelManager {
                     filename
                 ))?
         } else {
-            // Create new file
             fs::File::create(&temp_path)
                 .await
                 .context(format!(
@@ -598,7 +581,7 @@ impl ModelManager {
             .await
             .context("Failed to create reranker directory")?;
 
-        // Sprint 5: candle's BertModel needs config.json at load time
+        // Candle's BertModel needs config.json at load time.
         // (drives hidden_size, num_attention_heads, etc.). The old ORT
         // path embedded those in the .onnx graph, so we didn't need a
         // separate config download. Now we do.

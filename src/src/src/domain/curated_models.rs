@@ -26,12 +26,8 @@
 //! }
 //! ```
 
+use crate::domain::model_management::ModelFormat;
 use crate::domain::model_management::{ModelCategory, ModelMetadata, PerformanceTier};
-use crate::llm::models::ModelFormat;
-
-// ============================================================================
-// LLM Models - GGUF Quantized for Local Inference
-// ============================================================================
 
 /// Get curated list of LLM models for text generation and chat.
 ///
@@ -44,7 +40,6 @@ use crate::llm::models::ModelFormat;
 /// size/quality tradeoff.
 pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
     vec![
-        // === Small Models (< 2GB) ===
         ModelMetadata {
             id: "tinyllama-1.1b-chat-v1.0-q4_k_m".into(),
             name: "TinyLlama 1.1B Chat".into(),
@@ -115,7 +110,6 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             format: ModelFormat::Gguf,
         },
 
-        // === Medium Models (2-8GB) ===
         ModelMetadata {
             id: "mistral-7b-instruct-v0.2-q4_k_m".into(),
             name: "Mistral 7B Instruct v0.2".into(),
@@ -186,7 +180,6 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             format: ModelFormat::Gguf,
         },
 
-        // === Large Models (8-16GB) ===
         ModelMetadata {
             id: "llama-3.1-13b-instruct-q4_k_m".into(),
             name: "Llama 3.1 13B Instruct".into(),
@@ -234,9 +227,8 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
             format: ModelFormat::Gguf,
         },
 
-        // Sprint 4 PR 4.1+4.2: chat-LLM safetensors entries removed.
-        // The bundled `llama-server` sidecar (Sprint 2 migration) only
-        // accepts GGUF. Models that were previously listed here in
+        // The bundled `llama-server` accepts GGUF. Models that were
+        // previously listed here in
         // safetensors format (Gemma 2 9B IT, Gemma 4 E4B IT
         // multimodal, Mistral 7B Instruct v0.3) are either available
         // as GGUF from third-party packagers or, in the case of
@@ -244,7 +236,7 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
         // When suitable GGUFs land we re-add the entries pointing at
         // the GGUF repo (TheBloke/, MaziyarPanahi/, bartowski/, etc.).
         // ModelFormat::Safetensors continues to exist for embedding
-        // models (BGE-M3, all-MiniLM-L6-v2) — Candle loads those
+        // models (Qwen3 Embedding, all-MiniLM-L6-v2) — Candle loads those
         // natively from safetensors weights.
     ]
 }
@@ -266,14 +258,10 @@ pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
     }
 }
 
-// ============================================================================
-// Embedding Models - Semantic Search Optimized
-// ============================================================================
-
 /// Get curated list of embedding models for semantic search.
 ///
 /// Returns models optimized for:
-/// - **BGE-M3**: Multilingual, hybrid dense/sparse retrieval (1024 dim)
+/// - **Qwen3 Embedding 0.6B**: multilingual instruction-aware retrieval (1024 dim)
 /// - **all-MiniLM-L6-v2**: Compact, fast general-purpose embeddings (384 dim)
 ///
 /// These models generate vector representations for semantic similarity.
@@ -281,40 +269,26 @@ pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
 pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
     vec![
         ModelMetadata {
-            id: "bge-m3".into(),
-            name: "BGE-M3".into(),
+            id: "qwen3-embedding-0.6b".into(),
+            name: "Qwen3 Embedding 0.6B".into(),
             category: ModelCategory::Embedding,
-            description: "Multi-lingual embedding model with hybrid dense/sparse retrieval. State-of-the-art for search.".into(),
-            size_gb: 2.3,
-            minimum_ram_gb: 4.0,
+            description: "Instruction-aware multilingual retrieval candidate. Local runtime uses up to 2048 tokens per passage; benchmark before changing your default.".into(),
+            size_gb: 1.2,
+            minimum_ram_gb: 6.0,
             recommended_ram_gb: 8.0,
-            context_length: 8192,
+            context_length: 2048,
             performance_tier: PerformanceTier::Balanced,
-            supported_quantizations: vec!["F16".into(), "F32".into()],
-            capabilities: vec!["embedding".into(), "retrieval".into(), "multilingual".into(), "hybrid-search".into()],
-            download_url: Some("https://huggingface.co/BAAI/bge-m3".into()),
-            license: "MIT".into(),
+            supported_quantizations: vec!["F32".into()],
+            capabilities: vec!["embedding".into(), "retrieval".into(), "multilingual".into()],
+            download_url: Some("https://huggingface.co/Qwen/Qwen3-Embedding-0.6B".into()),
+            license: "Apache-2.0".into(),
             requires_auth: false,
-            model_id: Some("BAAI/bge-m3".into()),
-            default_filename: None, // Multi-file model - no single default file
-            files: vec![
-                super::model_metadata::ModelFileMetadata::new(
-                    "model.safetensors".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/model.safetensors".to_string(),
-                    2_270_000_000,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "tokenizer.json".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json".to_string(),
-                    17_000_000,
-                ),
-                super::model_metadata::ModelFileMetadata::new(
-                    "config.json".to_string(),
-                    "https://huggingface.co/BAAI/bge-m3/resolve/main/config.json".to_string(),
-                    700,
-                ),
-            ],
-            total_size_bytes: 2_287_000_000,
+            model_id: Some("Qwen/Qwen3-Embedding-0.6B".into()),
+            default_filename: None,
+            files: ["model.safetensors", "tokenizer.json", "config.json", "tokenizer_config.json", "1_Pooling/config.json"].into_iter().map(|name| {
+                super::model_metadata::ModelFileMetadata::new(name.into(), format!("https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/{name}"), if name == "model.safetensors" { 1_200_000_000 } else { 1_000 })
+            }).collect(),
+            total_size_bytes: 1_210_000_000,
             embedding_dimensions: Some(1024),
             embedding_compatibility: None,
             format: ModelFormat::Safetensors,
@@ -352,6 +326,9 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
                     "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json".to_string(),
                     1_000,
                 ),
+                super::model_metadata::ModelFileMetadata::new("tokenizer_config.json".into(), "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json".into(), 1000),
+                super::model_metadata::ModelFileMetadata::new("sentence_bert_config.json".into(), "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json".into(), 1000),
+                super::model_metadata::ModelFileMetadata::new("1_Pooling/config.json".into(), "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json".into(), 1000),
             ],
             total_size_bytes: 91_700_000,
             embedding_dimensions: Some(384),
@@ -361,9 +338,29 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
     ]
 }
 
-// ============================================================================
-// OCR Models - Vision-Language Models
-// ============================================================================
+/// Curated embedding entries whose training documents Matryoshka Representation
+/// Learning, i.e. whose leading coordinates are individually usable as a
+/// shorter embedding.
+///
+/// A per-entry flag rather than a guess: truncating a model that was not
+/// trained this way silently destroys its geometry, and the failure looks like
+/// "search got worse" rather than like an error. Qwen3-Embedding ships MRL as a
+/// documented feature (its card advertises user-defined output dimensions).
+/// all-MiniLM-L6-v2 predates the technique entirely.
+///
+/// Matched against the *catalog* id, and also against the HuggingFace
+/// `model_id`, because a downloaded model records whichever the download path
+/// gave it.
+const MATRYOSHKA_EMBEDDING_MODELS: &[&str] = &["qwen3-embedding-0.6b", "qwen/qwen3-embedding-0.6b"];
+
+/// Whether a curated embedding entry advertises Matryoshka support.
+///
+/// `false` for anything not in the catalog: an unknown model has made no such
+/// promise, and the safe reading of silence is "do not truncate".
+pub fn embedding_model_supports_matryoshka(model_id: &str) -> bool {
+    let normalized = model_id.trim().to_lowercase();
+    MATRYOSHKA_EMBEDDING_MODELS.contains(&normalized.as_str())
+}
 
 /// Get curated list of OCR models for text extraction from images/PDFs.
 ///
@@ -422,10 +419,6 @@ pub fn get_curated_ocr_models() -> Vec<ModelMetadata> {
         },
     ]
 }
-
-// ============================================================================
-// Transcription Models - Whisper for On-Device Speech-to-Text
-// ============================================================================
 
 /// Curated on-device transcription models.
 ///
@@ -638,9 +631,14 @@ mod tests {
     }
 
     #[test]
-    fn test_embedding_models_count() {
+    fn embedding_catalog_contains_supported_runtime_models() {
         let models = get_curated_embedding_models();
-        assert_eq!(models.len(), 2);
+        let ids: std::collections::HashSet<_> =
+            models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            std::collections::HashSet::from(["qwen3-embedding-0.6b", "all-minilm-l6-v2"])
+        );
     }
 
     #[test]
@@ -656,9 +654,14 @@ mod tests {
     }
 
     #[test]
-    fn test_all_models_count() {
+    fn all_curated_models_have_unique_ids_and_valid_categories() {
         let models = get_all_curated_models();
-        assert_eq!(models.len(), 14);
+        let ids: std::collections::HashSet<_> =
+            models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(ids.len(), models.len());
+        for model in models {
+            assert_eq!(get_model_category_by_id(&model.id), Some(model.category));
+        }
     }
 
     #[test]
@@ -849,13 +852,16 @@ mod tests {
     }
 
     #[test]
-    fn test_bge_m3_metadata() {
-        let models = get_curated_embedding_models();
-        let bge = models.iter().find(|m| m.id == "bge-m3").unwrap();
-
-        assert_eq!(bge.category, ModelCategory::Embedding);
-        assert!(bge.capabilities.contains(&"multilingual".into()));
-        assert!(bge.capabilities.contains(&"hybrid-search".into()));
+    fn only_matryoshka_trained_embedding_models_may_be_truncated() {
+        assert!(embedding_model_supports_matryoshka("qwen3-embedding-0.6b"));
+        assert!(embedding_model_supports_matryoshka(
+            "Qwen/Qwen3-Embedding-0.6B"
+        ));
+        // Documented for multi-granularity retrieval, not nested dimensions.
+        assert!(!embedding_model_supports_matryoshka("all-minilm-l6-v2"));
+        // Silence is not a promise.
+        assert!(!embedding_model_supports_matryoshka("some-local-model"));
+        assert!(!embedding_model_supports_matryoshka(""));
     }
 
     #[test]
@@ -895,13 +901,14 @@ mod tests {
                     model.id, file.url,
                 );
             }
-            let has_safetensors = model
+            // The Candle runtime needs a supported weights artifact.
+            let has_weights = model
                 .files
                 .iter()
-                .any(|f| f.filename == "model.safetensors");
+                .any(|f| f.filename == "model.safetensors" || f.filename == "pytorch_model.bin");
             assert!(
-                has_safetensors,
-                "Embedding model '{}' is missing model.safetensors",
+                has_weights,
+                "Embedding model '{}' lists neither model.safetensors nor pytorch_model.bin",
                 model.id,
             );
         }

@@ -161,7 +161,6 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
 
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
-        // Use optimized bulk insert operation
         ops::save_batch_optimized(&mut tx, entities).await?;
 
         Ok(())
@@ -180,7 +179,6 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepositoryTx {
 
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
-        // Use optimized bulk delete operation
         ops::delete_batch_optimized(&mut tx, ids).await?;
 
         Ok(())

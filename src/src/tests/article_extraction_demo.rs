@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 /// Integration test demonstrating improved article extraction with Readability.js
 ///

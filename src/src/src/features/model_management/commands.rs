@@ -1,14 +1,14 @@
-//! # Model Management Commands (Phase 1 + Phase 2)
+//! # Model management commands
 //!
 //! Tauri IPC commands for AI model discovery, compatibility scoring, and recommendations.
 //!
-//! ## Phase 1 Commands (Curated Catalog)
+//! ## Curated catalog commands
 //!
 //! - `detect_system_capabilities` - Detect hardware (RAM, GPU, disk)
 //! - `get_compatible_models` - Get compatible models for a category
 //! - `get_all_recommended_models` - Get all compatible models across categories
 //!
-//! ## Phase 2 Commands (External Catalog)
+//! ## External catalog commands
 //!
 //! - `search_model_catalog` - Search external model catalogs (Hugging Face)
 //! - `refresh_model_catalog` - Refresh catalog cache
@@ -47,10 +47,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 
-// ============================================================================
-// Request/Response DTOs
-// ============================================================================
-
 /// Request to get recommended models by category.
 #[derive(Debug, Deserialize)]
 pub struct GetRecommendedModelsRequest {
@@ -83,10 +79,6 @@ impl SystemCapabilitiesResponse {
         }
     }
 }
-
-// ============================================================================
-// Commands
-// ============================================================================
 
 /// Detect system hardware capabilities.
 ///
@@ -155,10 +147,8 @@ pub async fn get_compatible_models(
     container: State<'_, Container>,
     category: String,
 ) -> Result<Vec<ModelRecommendationDto>> {
-    // Parse category
     let category = parse_model_category(&category)?;
 
-    // Get system capabilities
     let system_info_port = container.system_info();
     let system_info = system_info_port.get_system_info().await?;
 
@@ -173,7 +163,6 @@ pub async fn get_compatible_models(
         available_disk_gb: get_available_disk_space(),
     };
 
-    // Get downloadable Hugging Face models and filter by category
     let models = fetch_downloadable_hf_models(container.inner(), "gguf", 200)
         .await?
         .into_iter()
@@ -200,10 +189,8 @@ pub async fn get_compatible_models(
         })
         .collect();
 
-    // Sort by ranking score (descending)
     ModelRecommendation::sort_by_ranking(&mut recommendations);
 
-    // Convert to DTOs
     let dto_recommendations: Vec<ModelRecommendationDto> = recommendations
         .into_iter()
         .map(|recommendation| {
@@ -236,7 +223,6 @@ pub async fn get_all_recommended_models(
 ) -> Result<Vec<ModelRecommendationDto>> {
     tracing::info!("get_all_recommended_models: Command invoked");
 
-    // Get system capabilities
     let system_info_port = container.system_info();
     tracing::info!("get_all_recommended_models: Getting system info");
     let system_info = system_info_port.get_system_info().await?;
@@ -258,8 +244,6 @@ pub async fn get_all_recommended_models(
     };
     tracing::info!("get_all_recommended_models: Built system capabilities");
 
-    // Get downloadable Hugging Face models. Two passes:
-    //   - GGUF for chat LLMs (llama-server sidecar)
     tracing::info!("get_all_recommended_models: Getting Hugging Face models");
     let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
 
@@ -287,13 +271,11 @@ pub async fn get_all_recommended_models(
     );
 
     // Score compatibility for each model.
-    //
     // Embedding-model filtering: only surface Compatible models. Drops
     // both Incompatible (architecture not loadable / no safetensors) and
     // Unknown (we can't tell from tags, and download_model.rs's gate
     // rejects Unknown anyway — surfacing them in the catalog would let
     // users click a button that always errors).
-    //
     // This replaces the older is_gguf_only_model heuristic which assumed
     // ONNX was the runtime — no longer true after the Candle migration.
     let scorer = CompatibilityScorer::new();
@@ -322,10 +304,8 @@ pub async fn get_all_recommended_models(
         recommendations.len()
     );
 
-    // Sort by ranking score (descending)
     ModelRecommendation::sort_by_ranking(&mut recommendations);
 
-    // Convert to DTOs
     let dto_recommendations: Vec<ModelRecommendationDto> = recommendations
         .into_iter()
         .map(|recommendation| {
@@ -418,10 +398,6 @@ async fn fetch_downloadable_hf_models(
 
     Ok(downloadable)
 }
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /// Parse model category string.
 fn parse_model_category(category: &str) -> Result<ModelCategory> {
@@ -527,10 +503,6 @@ mod tests {
     }
 }
 
-// ============================================================================
-// Phase 2: External Model Catalog Commands
-// ============================================================================
-
 /// Request to search external model catalogs.
 #[derive(Debug, Deserialize, specta::Type)]
 pub struct SearchModelCatalogRequest {
@@ -586,7 +558,6 @@ pub async fn search_model_catalog(
     container: State<'_, Container>,
     request: SearchModelCatalogRequest,
 ) -> Result<Vec<ModelSearchResultDto>> {
-    // Parse filters
     let category = if let Some(cat_str) = request.category {
         Some(parse_model_category(&cat_str)?)
     } else {
@@ -601,7 +572,6 @@ pub async fn search_model_catalog(
     )
     .map_err(AppError::InvalidInput)?;
 
-    // Get external models from catalog port (cached Hugging Face)
     let discovered_models = fetch_downloadable_hf_models(
         container.inner(),
         &request.query,
@@ -637,14 +607,11 @@ pub async fn search_model_catalog(
         })
         .collect();
 
-    // Use ModelCatalogService to search and rank
     let catalog_service = ModelCatalogService::new();
     let results = catalog_service.search_and_rank(external_models, &filters);
 
-    // Apply limit
     let limited_results: Vec<_> = results.into_iter().take(request.limit).collect();
 
-    // Convert to DTOs
     let dto_results: Vec<ModelSearchResultDto> = limited_results
         .into_iter()
         .map(|result| {
@@ -730,11 +697,6 @@ pub async fn get_model_catalog_stats(container: State<'_, Container>) -> Result<
     Ok(stats)
 }
 
-// ============================================================================
-// Downloaded Models Tracking (Phase 3)
-// ============================================================================
-
-// Re-export impl functions from model_management_commands module (for gateway dispatch)
 pub use crate::features::model_management::commands_extra::{
     delete_downloaded_model_and_file_impl, get_active_chat_model_impl,
     get_models_with_metadata_impl, is_model_already_downloaded_impl, set_active_chat_model_impl,

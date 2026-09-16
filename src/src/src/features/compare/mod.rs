@@ -12,12 +12,12 @@
 //!
 //! ## Public surface
 //!
-//! - `dto` — the request and table DTOs (GROUND-RULES §4.10)
+//! - `dto` — request and table DTOs
 //! - `use_case::compare_documents_impl` — the whole pipeline
 //! - `plugin::init()` — the `compare` Tauri plugin
 //!
-//! Nothing here touches the filesystem: retrieval goes through the semantic
-//! search use case and the chunk repository (CLAUDE.md Repository Barrier).
+//! Retrieval goes through the semantic search use case and chunk repository;
+//! this feature does not inspect the filesystem directly.
 
 pub mod commands;
 pub mod dto;

@@ -12,16 +12,20 @@
 //!
 //! # Output
 //!
-//! Creates `src/app/websrc/lib/bindings.ts` with:
+//! Creates `src/websrc/lib/bindings.ts` with:
 //! - TypeScript wrappers and DTOs for the registered plugin commands
 //! - Auto-exported DTOs from command signatures
 //! - A deterministic generated header
+
+mod bindings_settings;
 
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use std::path::{Path, PathBuf};
 
 fn normalize_generated_bindings(path: &Path) -> std::io::Result<()> {
     let generated = std::fs::read_to_string(path)?;
+    let generated =
+        bindings_settings::normalize_settings_output(&generated).map_err(std::io::Error::other)?;
     let normalized = generated
         .lines()
         .map(str::trim_end)
@@ -61,6 +65,13 @@ fn main() {
     #[rustfmt::skip]
     let builder =
         tauri_specta::Builder::<tauri::Wry>::new().commands(tauri_specta::collect_commands![
+            lattice::features::study::plugin::list_study_decks,
+            lattice::features::study::plugin::get_study_deck,
+            lattice::features::study::plugin::generate_study_deck,
+            lattice::features::study::plugin::generate_conversation_study_deck,
+            lattice::features::study::plugin::review_study_card,
+            lattice::features::study::plugin::update_study_card,
+            lattice::features::study::plugin::delete_study_deck,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
@@ -105,6 +116,32 @@ fn main() {
             lattice::features::search::commands::find_similar_documents,
             lattice::features::search::commands::search_with_recency,
             lattice::features::search::commands::batch_search,
+            lattice::features::function_calling::plugin::list_available_functions,
+            lattice::features::function_calling::plugin::execute_function,
+            lattice::features::function_calling::plugin::get_function_stats,
+            lattice::features::qa::plugin::ask_question_wrapper,
+            lattice::features::qa::plugin::ask_question_stream_wrapper::<tauri::Wry>,
+            lattice::features::qa::plugin::check_llm_health_wrapper,
+            lattice::features::qa::plugin::generate_chat_starters_wrapper,
+            lattice::features::conversation::plugin::chat_with_conversation,
+            lattice::features::conversation::plugin::regenerate_response,
+            lattice::features::conversation::plugin::truncate_conversation_after,
+            lattice::features::conversation::plugin::fork_conversation,
+            lattice::features::settings::plugin::get_system_theme::<tauri::Wry>,
+            lattice::features::settings::plugin::set_cloud_api_key,
+            // Additional public IPC contracts (use the same signatures as runtime).
+            lattice::features::file::commands::open_file,
+            lattice::features::file::commands::open_file_by_id,
+            lattice::features::file::commands::remove_indexed_folder,
+            lattice::features::file::commands::read_file_content,
+            lattice::features::file::commands::read_file_bytes,
+            lattice::features::file::commands::show_in_folder,
+            lattice::interfaces::commands::document_list::get_document,
+            lattice::features::compare::plugin::compare_documents,
+            lattice::features::references::plugin::create_passage_reference,
+            lattice::features::references::plugin::list_passage_references,
+            lattice::features::references::plugin::update_passage_reference,
+            lattice::features::references::plugin::delete_passage_reference,
             // File plugin
             lattice::features::file::plugin::commands::index_file,
             lattice::features::file::plugin::commands::index_directory,
@@ -225,11 +262,6 @@ fn main() {
             lattice::features::batch::plugin::get_batch_status,
             lattice::features::batch::plugin::cancel_batch,
             lattice::features::batch::plugin::get_batch_history,
-            lattice::features::batch::plugin::start_batch_file_import,
-            lattice::features::batch::plugin::start_batch_url_import,
-            lattice::features::batch::plugin::get_batch_job_status,
-            lattice::features::batch::plugin::cancel_batch_job,
-            lattice::features::batch::plugin::list_batch_jobs,
             lattice::features::batch::plugin::delete_batch_job,
             lattice::features::batch::plugin::retry_failed_items,
             // Backup Plugin (7 commands)
@@ -240,6 +272,16 @@ fn main() {
             lattice::features::backup::plugin::plugin_export_json,
             lattice::features::backup::plugin::plugin_export_csv,
             lattice::features::backup::plugin::plugin_export_html,
+            lattice::features::backup::plugin::plugin_get_archive_status,
+            lattice::features::backup::plugin::plugin_begin_archive_setup,
+            lattice::features::backup::plugin::plugin_confirm_archive_setup,
+            lattice::features::backup::plugin::plugin_choose_archive_destination::<tauri::Wry>,
+            lattice::features::backup::plugin::plugin_set_archive_keep_count,
+            lattice::features::backup::plugin::plugin_set_archive_passphrase,
+            lattice::features::backup::plugin::plugin_rotate_recovery_code,
+            lattice::features::backup::plugin::plugin_disable_archive,
+            lattice::features::backup::plugin::plugin_create_archive_now,
+            lattice::features::backup::plugin::plugin_restore_archive::<tauri::Wry>,
             // Daily notes plugin
             lattice::features::daily_notes::plugin::list_workspace_notes,
             lattice::features::daily_notes::plugin::create_workspace_note,
@@ -271,6 +313,7 @@ fn main() {
             lattice::features::mentions::plugin::delete_mention,
             // Settings plugin
             lattice::features::settings::plugin::test_ollama_connection,
+            lattice::features::settings::plugin::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,
             lattice::features::settings::plugin::get_settings,
             lattice::features::settings::plugin::get_settings_category,
@@ -299,16 +342,19 @@ fn main() {
             // Transcription plugin (2 commands)
             lattice::features::transcription::plugin::transcribe_file,
             lattice::features::transcription::plugin::get_transcription_status,
-        ]);
+        ])
+        .typ::<lattice::features::conversation::chat::ChatResponse>()
+        .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
+        .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
+        .typ::<lattice::features::conversation::chat::ToolPreferences>();
 
     // Export bindings to file
     let result = builder.export(
         Typescript::default()
             .header(
-                "// Auto-generated TypeScript bindings for Diamond Standard Plugins\n\
-                 // DO NOT EDIT - This file is auto-generated by export_bindings.rs\n\
+                "// Auto-generated TypeScript bindings for Lattice plugins\n\
+                 // DO NOT EDIT - generated by export_bindings.rs\n\
                  // To regenerate: cargo run --bin export_bindings\n\
-                 //\n\
                  // @ts-nocheck\n\
                  // tauri-specta currently emits runtime helpers unused by this app; declarations\n\
                  // exported from this file remain type-checked at their use sites.",

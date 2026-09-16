@@ -1,32 +1,12 @@
-use crate::application::ports::{
-    DocumentRepository, MentionRepositoryPort, RepositoryPort, SettingsRepositoryPort,
-};
-use crate::domain::entities::Document;
-use crate::domain::events::model_download_events::ModelDownloadEvent;
+use crate::application::ports::SettingsRepositoryPort;
 use crate::features::download::events::infra_events::DownloadEventBridge;
-use crate::features::download::manager::DownloadManager;
 use crate::features::download::saga::DownloadSaga;
-use crate::features::embedding::EmbeddingServiceTrait;
-use crate::features::indexing::use_cases::IndexFileUseCase;
-use crate::features::indexing::IndexStorageTrait;
-#[cfg(test)]
-use crate::features::search::mocks::MockSearchService;
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
-use crate::features::tags::{TagRepositoryTrait, TagServiceTrait};
+use crate::features::indexing::engine as indexing;
 use crate::infrastructure::event_bus::EventBus;
-use crate::infrastructure::indexing;
-use crate::infrastructure::persistence::repositories::DocumentRepository as DddDocumentRepository;
-use crate::infrastructure::services::traits::{
-    FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
-};
-use crate::interfaces::commands;
 use crate::shared::utils::supervised_task::supervise_cancellable;
 use tokio_util::sync::CancellationToken;
 // ChunkRepositoryTrait removed - migrated to DDD ports
-use crate::infrastructure::search::bm25::BM25Search;
-use crate::infrastructure::search::hybrid::HybridSearchService;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -89,7 +69,9 @@ fn initialize_tokenizer_layer(model_dir: &Path) -> Option<std::sync::Arc<tokeniz
             Some(tokenizer)
         }
         None => {
-            tracing::info!("Tokenizer not available - text processing will be limited");
+            tracing::info!(
+                "Optional ONNX tokenizer unavailable; configured model tokenizer loads separately"
+            );
             None
         }
     }
@@ -119,7 +101,7 @@ fn initialize_indexing_layer(
             Some(service)
         }
         (None, _) => {
-            tracing::warn!("Indexing service not initialized - embedding service unavailable");
+            tracing::warn!("Optional ONNX indexing service not initialized; configured indexing uses the model loader");
             None
         }
         (_, None) => {
@@ -165,7 +147,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 async fn create_container(
     pool: sqlx::SqlitePool,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
-    security_context: Arc<crate::security::SecurityContext>,
+    _security_context: Arc<crate::security::SecurityContext>,
     model_dir: PathBuf,
     data_dir: PathBuf,
     ollama_endpoint: String,
@@ -176,14 +158,13 @@ async fn create_container(
 
     tracing::info!("Creating DI Container (pure DDD architecture)");
 
-    // Check if AI models are available
     let embedding_model_path = model_dir.join("model.onnx");
     let embedding_model_path_opt = if embedding_model_path.exists() {
         tracing::info!("✅ AI models found at {:?}", embedding_model_path);
         Some(embedding_model_path.to_string_lossy().to_string())
     } else {
-        tracing::info!("ℹ️ AI models not found at {:?}", embedding_model_path);
-        tracing::info!("AI features will use degraded mocks until models are downloaded");
+        tracing::info!("Optional ONNX model absent at {:?}", embedding_model_path);
+        tracing::info!("Configured embedding and chat providers will be resolved independently");
         None
     };
 
@@ -231,9 +212,6 @@ async fn create_container(
 pub fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn Error>> {
     let app_handle = app.handle().clone();
 
-    // Use Tauri's built-in async runtime for initialization.
-    // Async functions store state on heap via Futures, not stack.
-    // Box::pin ensures the Future is heap-allocated.
     let result = tauri::async_runtime::block_on(async move {
         let future = Box::pin(initialize_app_async(app_handle.clone()));
         future.await
@@ -251,7 +229,6 @@ pub fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn Error>> {
 /// Components go directly to heap via Tauri State.
 #[tracing::instrument(skip(app_handle))]
 async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String> {
-    // Setup directories
     let app_dir = match super::setup_app_directories(&app_handle) {
         Ok(dir) => dir,
         Err(e) => {
@@ -261,6 +238,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     };
 
     crate::infrastructure::crash::set_crashes_directory(app_dir.clone());
+    let settings_dir_for_summaries = app_dir.clone();
 
     let model_dir = match super::setup_model_directory(&app_handle) {
         Ok(dir) => dir,
@@ -276,14 +254,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     let app_handle_for_container = app_handle.clone();
 
-    // Initialize all async layers with timeout
     let container = match tokio::time::timeout(Duration::from_secs(30), async move {
         // Sequential initialization with clear error propagation
         let conn = initialize_database_layer(db_path).await?;
         let embedder = initialize_embedding_layer(&model_dir_for_init).await; // Returns Option
         let tokenizer = initialize_tokenizer_layer(&model_dir_for_init); // Returns Option
 
-        let indexing_service = initialize_indexing_layer(
+        let _indexing_service = initialize_indexing_layer(
             conn.pool().clone(),
             app_dir.clone(),
             embedder.clone(),
@@ -291,7 +268,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         );
         let security_context = initialize_security_layer();
 
-        // === DUAL CONTAINER STRATEGY ===
         // During DDD migration, we run BOTH containers:
         // 1. Legacy ServiceContainer - for existing commands
         // 2. DDD Container - for new DDD-aligned commands
@@ -303,7 +279,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         // also runs the one-shot migration of any leftover legacy config.json
         // (see SettingsRepository::new) so by the time we read here the
         // user's prior choices have been ported into settings.json.
-        //
         // This bootstrap repo is an idempotent reader of the same JSON file
         // the DI container's SettingsRepository instance will own — both
         // resolve to the same on-disk state, no split-brain.
@@ -318,7 +293,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         let ollama_endpoint = bootstrap_settings.llm.ollama_url.clone();
         let ollama_model = bootstrap_settings.llm.model.clone();
 
-        // Create unified DI Container
         let container = create_container(
             conn.pool().clone(),
             Arc::new(conn),
@@ -340,43 +314,45 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
             tracing::warn!(error = %e, "failed to compute file-access allowed roots");
         }
 
+        // Resume interrupted file imports from their durable item records. Load
+        // the selected embedding model before allowing the workers to continue.
         let batch_repo = container.batch_job_repository();
-        tokio::spawn(async move {
-            match batch_repo.list_batch_jobs(Some(500), Some(0)).await {
-                Ok(jobs) => {
-                    for job in jobs.into_iter().filter(|job| job.status == "running") {
-                        if let Err(e) = batch_repo
-                            .update_job_status(
-                                &job.id,
-                                "failed",
-                                None,
-                                Some(Utc::now().to_rfc3339()),
-                            )
-                            .await
-                        {
-                            tracing::warn!(
-                                job_id = %job.id,
-                                error = %e,
-                                "Failed to mark stale batch job as failed"
-                            );
+        match batch_repo.list_batch_jobs(Some(500), Some(0)).await {
+            Ok(jobs) => {
+                let active: Vec<_> = jobs.into_iter()
+                    .filter(|job| matches!(job.status.as_str(), "pending" | "running"))
+                    .collect();
+                let needs_embedding = active.iter().any(|job| job.job_type == "file_import");
+                let embedding_ready = if needs_embedding {
+                    match container.get_or_load_embedding().await {
+                        Ok(_) => true,
+                        Err(error) => {
+                            tracing::warn!(%error, "Cannot resume file imports without embedding model");
+                            false
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to list batch jobs for lifecycle cleanup"
-                    );
+                } else { false };
+                for job in active {
+                    if job.job_type == "file_import" && embedding_ready {
+                        if let Err(error) = container.start_batch_file_import_use_case().resume_interrupted(job.id.clone()).await {
+                            tracing::warn!(job_id = %job.id, %error, "Failed to resume file import");
+                        }
+                    } else if let Err(error) = batch_repo.update_job_status(
+                        &job.id, "failed", None, Some(Utc::now().to_rfc3339())
+                    ).await {
+                        tracing::warn!(job_id = %job.id, %error, "Failed to mark interrupted batch job failed");
+                    }
                 }
             }
-        });
+            Err(error) => tracing::warn!(%error, "Failed to recover batch jobs"),
+        }
 
         // Log AI model status
         if embedder.is_none() {
-            tracing::info!("ℹ️ Application started without AI models");
-            tracing::info!("Download models from Settings → Models to enable AI features");
+            tracing::info!("Optional ONNX embedding service is not loaded");
+            tracing::info!("Configured model availability is reported by provider prewarming");
         } else {
-            tracing::info!("✅ Application started with full AI capabilities");
+            tracing::info!("Optional ONNX embedding service initialized");
         }
 
         Ok::<crate::interfaces::di::Container, String>(container)
@@ -404,10 +380,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         tracing::warn!(error = %e, "Failed to start auto-backup scheduler");
     }
 
-    // === MANAGE CONTAINER IN TAURI STATE ===
     // Pure DDD Container - all commands use this
 
-    // Initialize download management
     tracing::info!("Initializing download management...");
     let download_repository: Arc<
         dyn crate::features::download::download_repository::DownloadRepository,
@@ -492,18 +466,15 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     let shutdown_token = CancellationToken::new();
     app_handle.manage(shutdown_token.clone());
 
-    // === Wire DownloadSaga into application initialization ===
     // DownloadSaga exists but was never subscribed to events, so completions were missed.
 
     tracing::info!("Initializing download event system...");
 
-    // Step 1: Create EventBus for domain events
     let event_bus = Arc::new(EventBus::<
-        crate::domain::events::model_download_events::ModelDownloadEvent,
+        crate::features::download::events::model_download_events::ModelDownloadEvent,
     >::new());
     tracing::info!("EventBus created");
 
-    // Step 2: Create repositories needed by DownloadSaga
     let downloaded_model_repository = Arc::new(
         crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
             container.db_pool().clone(),
@@ -514,15 +485,14 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository::new(
             container.db_pool().clone()
         )
-    ) as Arc<dyn crate::domain::repositories::unit_of_work::ModelFileRepositoryPort>;
+    ) as Arc<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort>;
 
     let uow_factory = Arc::new(
         crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory::new(
             container.db_pool().clone()
         )
-    ) as Arc<dyn crate::domain::repositories::UnitOfWorkFactory>;
+    ) as Arc<dyn crate::application::ports::UnitOfWorkFactory>;
 
-    // Step 3: Instantiate DownloadSaga with all dependencies
     let download_saga = Arc::new(DownloadSaga::new(
         Arc::clone(&event_bus),
         Arc::clone(&model_file_repository),
@@ -533,7 +503,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     let saga_for_listener = Arc::clone(&download_saga);
     let download_saga_cancel = shutdown_token.clone();
-    supervise_cancellable("download_saga", shutdown_token.clone(), move || {
+    let saga_handle = supervise_cancellable("download_saga", shutdown_token.clone(), move || {
         let saga = Arc::clone(&saga_for_listener);
         let cancel = download_saga_cancel.clone();
         async move {
@@ -559,11 +529,14 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     // correctly (see P0 fix in this file's git log), so panics during
     // steady-state operation are unlikely. Refactoring the bridge to
     // be restartable is a separate task.
+    let bridge_cancel = shutdown_token.clone();
     let bridge_handle = tokio::spawn(async move {
-        event_bridge.start().await;
+        event_bridge.start(bridge_cancel).await;
     });
-    // Detach explicitly to make the fire-and-forget intent loud.
-    drop(bridge_handle);
+    app_handle.manage(super::background_workers::BackgroundWorkers::new(vec![
+        saga_handle,
+        bridge_handle,
+    ]));
     tracing::info!("Download event bridge started with EventBus integration");
 
     let download_state =
@@ -590,7 +563,35 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
         tracing::warn!("prewarm: Container missing from Tauri state immediately after manage()");
     }
 
+    let summaries_enabled = read_summary_tier_flag(&settings_dir_for_summaries).await;
+    if let Err(error) =
+        crate::features::summaries::di::register(app_handle.clone(), summaries_enabled).await
+    {
+        tracing::warn!(%error, "Could not enable the document summary tier");
+    }
+
     Ok(())
+}
+
+/// Read the stored `summary_index_enabled` search setting, defaulting to off
+/// when settings cannot be read so startup never depends on it.
+async fn read_summary_tier_flag(data_dir: &std::path::Path) -> bool {
+    use crate::application::ports::SettingsRepositoryPort;
+    use crate::infrastructure::persistence::repositories::SettingsRepository;
+
+    match SettingsRepository::new(data_dir.to_path_buf()).await {
+        Ok(repository) => match repository.get_all().await {
+            Ok(settings) => settings.search.summary_index_enabled,
+            Err(e) => {
+                tracing::warn!(error = %e, "Could not read search settings; summary tier stays off");
+                false
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "Could not open the settings repository; summary tier stays off");
+            false
+        }
+    }
 }
 
 #[cfg(test)]

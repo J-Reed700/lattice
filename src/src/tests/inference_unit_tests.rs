@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Unit tests for GenerationConfig.
 //!
@@ -16,7 +15,7 @@
 //! does not expose methods to inspect internal state (max_tokens, temperature, etc.).
 //! The builder pattern is opaque, making verification infeasible without actual
 //! inference execution.
-use lattice::infrastructure::llm::traits::GenerationConfig;
+use lattice::features::llm::engine::traits::GenerationConfig;
 
 mod inference_helpers;
 use inference_helpers::GenerationConfigFixture;

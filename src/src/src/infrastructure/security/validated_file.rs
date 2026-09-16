@@ -1,12 +1,8 @@
-// ============================================================================
 // ValidatedFile - Atomic File Access with Security Validation
-// ============================================================================
-//
 // CRITICAL SECURITY FIXES:
 // 1. Arbitrary File Access - Enforces directory scope with allowed_roots
 // 2. TOCTOU Race Condition - Atomically validates and opens file (no race window)
 // 3. Windows ADS & UNC Bypass - Blocks `:` (ADS) and `\\` (UNC) on Windows
-//
 // SECURITY PROPERTIES:
 // - Validation and file opening are atomic (single function call)
 // - No race window between validation and access
@@ -74,25 +70,21 @@ impl PathSecurityValidator {
     /// - No Windows ADS (`:` after filename)
     /// - No UNC paths (`\\server\share`)
     pub fn validate(path: &Path) -> Result<(), ValidationError> {
-        // Check for empty path
         if path.as_os_str().is_empty() {
             return Err(ValidationError::EmptyPath);
         }
 
-        // Check for null bytes in path string
         if let Some(path_str) = path.to_str() {
             if path_str.contains('\0') {
                 return Err(ValidationError::NullByte);
             }
         }
 
-        // Check for parent directory traversal using path components
         for component in path.components() {
             match component {
                 Component::ParentDir => return Err(ValidationError::ParentTraversal),
                 Component::Normal(os_str) => {
                     if let Some(s) = os_str.to_str() {
-                        // Check for null bytes in component
                         if s.contains('\0') {
                             return Err(ValidationError::NullByte);
                         }
@@ -144,7 +136,6 @@ impl ScopeEnforcer {
             return Err(ValidationError::NoAllowedRoots);
         }
 
-        // Validate all allowed roots can be canonicalized
         for root in &allowed_roots {
             root.canonicalize().map_err(|e| {
                 ValidationError::InvalidAllowedRoot(format!("{}: {}", root.display(), e))
@@ -172,7 +163,6 @@ impl ScopeEnforcer {
             ValidationError::CanonicalizationFailed(format!("{}: {}", path.display(), e))
         })?;
 
-        // Check if canonical path starts with any allowed root
         for root in &self.allowed_roots {
             let canonical_root = root.canonicalize().map_err(|e| {
                 ValidationError::InvalidAllowedRoot(format!("{}: {}", root.display(), e))
@@ -255,18 +245,13 @@ impl ValidatedFile {
     ) -> Result<Self, ValidatedFileError> {
         let path = path.as_ref();
 
-        // Step 1: Syntax validation (null bytes, traversal, ADS, UNC)
         PathSecurityValidator::validate(path)?;
 
-        // Step 2: Scope enforcement (ensure path is in allowed roots)
         let enforcer = ScopeEnforcer::new(allowed_roots.to_vec())?;
         let canonical_path = enforcer.check_scope(path)?;
 
-        // Step 3: Open file atomically (no race window after validation)
         let handle = File::open(&canonical_path)?;
 
-        // Step 4: Post-open verification (defense in depth)
-        // Verify the file we opened is actually at the canonical path
         let metadata = handle.metadata()?;
 
         // Re-canonicalize and verify it matches
@@ -326,10 +311,6 @@ impl ValidatedFile {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,7 +351,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let allowed = vec![temp_dir.path().to_path_buf()];
 
-        // Create a file in temp dir
         let _test_file = create_test_file(temp_dir.path(), "test.txt", "content");
 
         // Try to traverse up
@@ -408,16 +388,13 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_blocks_symlink_escape() {
-        // Create temp directory structure
         let temp_dir = TempDir::new().unwrap();
         let vault_dir = temp_dir.path().join("lattice");
         fs::create_dir(&vault_dir).unwrap();
 
-        // Create file outside lattice
         let outside_file = temp_dir.path().join("outside.txt");
         fs::write(&outside_file, "secret").unwrap();
 
-        // Create symlink inside lattice pointing outside
         let symlink_path = vault_dir.join("link.txt");
         std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
 
@@ -471,20 +448,16 @@ mod tests {
 
     #[test]
     fn test_allows_valid_files_in_scope() {
-        // Create temp directory and file
         let temp_dir = TempDir::new().unwrap();
         let test_file = create_test_file(temp_dir.path(), "test.txt", "hello world");
         let allowed = vec![temp_dir.path().to_path_buf()];
 
-        // Should successfully open
         let mut validated_file =
             ValidatedFile::open(&test_file, &allowed).expect("Should allow valid file in scope");
 
-        // Verify we can read the content
         let content = validated_file.read_to_string().unwrap();
         assert_eq!(content, "hello world");
 
-        // Verify path is correct
         assert_eq!(
             validated_file.path(),
             test_file.canonicalize().unwrap().as_path()
@@ -551,14 +524,12 @@ mod tests {
 
         let mut validated_file = ValidatedFile::open(&test_file, &allowed).unwrap();
 
-        // Test read_to_string
         let content = validated_file.read_to_string().unwrap();
         assert_eq!(content, "test content");
 
         // Re-open for read_to_end test
         let mut validated_file = ValidatedFile::open(&test_file, &allowed).unwrap();
 
-        // Test read_to_end
         let bytes = validated_file.read_to_end().unwrap();
         assert_eq!(bytes, b"test content");
     }

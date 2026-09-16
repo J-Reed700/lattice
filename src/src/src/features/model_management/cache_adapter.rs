@@ -65,15 +65,6 @@ use crate::shared::error::AppError;
 /// Bump this when cached payload semantics change to avoid stale result reuse.
 const CACHE_KEY_VERSION: &str = "v4";
 
-/// Cache entry for model catalog queries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CacheEntry {
-    query: String,
-    results: Vec<ExternalModelMetadata>,
-    cached_at: i64,
-    expires_at: i64,
-}
-
 /// Model catalog cache adapter.
 ///
 /// Wraps a `ModelCatalogPort` with SQLite-based caching.
@@ -348,7 +339,6 @@ impl ModelCatalogPort for ModelCacheAdapter {
             return Ok(results);
         }
 
-        // Store in cache (best effort, don't fail if cache write fails)
         if let Err(e) = self.store_cached(query, limit, &results).await {
             tracing::warn!("Failed to cache results: {}", e);
         }
@@ -453,7 +443,6 @@ mod tests {
     async fn test_clear_all() {
         let cache = create_test_cache().await;
 
-        // Add some cache entries
         cache.search_models("llama", 5).await.unwrap();
         cache.search_models("phi", 5).await.unwrap();
 
@@ -478,7 +467,6 @@ mod tests {
         assert_eq!(stats.valid_entries, 0);
         assert_eq!(stats.expired_entries, 0);
 
-        // Add entries
         cache.search_models("llama", 5).await.unwrap();
         cache.search_models("phi", 5).await.unwrap();
 
@@ -496,12 +484,10 @@ mod tests {
 
         let mock = Arc::new(MockModelCatalogPort::new());
 
-        // Create cache with 1-second TTL
         let cache = ModelCacheAdapter::with_ttl(pool, mock as Arc<dyn ModelCatalogPort>, 1)
             .await
             .expect("Failed to create cache");
 
-        // Add entry
         cache.search_models("llama", 5).await.unwrap();
 
         let stats = cache.get_stats().await.unwrap();

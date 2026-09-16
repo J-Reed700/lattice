@@ -1,7 +1,6 @@
 use crate::domain::entities::model::Model;
-use crate::domain::entities::model_file::ModelFile;
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use async_trait::async_trait;
 
 #[async_trait]

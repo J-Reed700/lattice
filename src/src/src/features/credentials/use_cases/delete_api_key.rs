@@ -146,7 +146,6 @@ mod tests {
         assert!(dto.message.is_some());
         assert!(dto.message.unwrap().contains("anthropic"));
 
-        // Verify key was actually deleted
         assert!(!mock_port.has_key("anthropic").await);
     }
 
@@ -155,7 +154,6 @@ mod tests {
         let mock_port = Arc::new(MockCredentialsPort::new());
         let use_case = DeleteApiKeyUseCase::new(mock_port);
 
-        // Deleting non-existent key should be idempotent (succeed)
         let result = use_case.execute("nonexistent".to_string()).await;
 
         assert!(result.is_ok());
@@ -250,7 +248,6 @@ mod tests {
         // Delete only lowercase version
         use_case.execute("openai".to_string()).await.unwrap();
 
-        // Verify case sensitivity
         assert!(mock_port.has_key("OpenAI").await);
         assert!(!mock_port.has_key("openai").await);
     }

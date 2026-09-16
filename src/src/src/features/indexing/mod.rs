@@ -13,11 +13,10 @@
 //! - `crate::features::indexing::use_cases` — index/reindex/delete use cases
 //! - `crate::features::indexing::commands` — Tauri command handlers
 //!
-//! ## Kept as shared namespaces (redirects retained)
+//! ## Engine
 //!
-//! - `crate::infrastructure::indexing` (the indexing pipeline) —
-//!   consumed broadly by file, batch, web, conversation, etc. Stays
-//!   accessible via `infrastructure/mod.rs` #[path] redirect.
+//! - `crate::features::indexing::engine` — the indexing pipeline, owned
+//!   by this feature and consumed by file, batch, web, conversation, etc.
 //!
 //! Public traits: `crate::features::indexing::{IndexingServiceTrait, IndexStorageTrait}`.
 //!
@@ -35,3 +34,4 @@ pub mod use_cases;
 pub mod mocks;
 
 pub use trait_def::{IndexStorageTrait, IndexingServiceTrait};
+pub mod engine;

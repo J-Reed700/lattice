@@ -17,7 +17,7 @@
 //!
 //! ```no_run
 //! use sqlx::SqlitePool;
-//! use crate::infrastructure::indexing::storage::IndexStorage;
+//! use crate::features::indexing::engine::storage::IndexStorage;
 //!
 //! # async fn example(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
 //! let storage = IndexStorage::new(pool);
@@ -33,12 +33,11 @@ mod documents;
 mod stats;
 mod types;
 
-// Re-export public types
 pub use types::DocumentRecord;
 
+use crate::features::indexing::engine::chunker::{ContextualizedChunk, TextChunk};
+use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
-use crate::infrastructure::indexing::chunker::{ContextualizedChunk, TextChunk};
-use crate::infrastructure::indexing::error::Result;
 use async_trait::async_trait;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::{Path, PathBuf};
@@ -170,17 +169,7 @@ impl IndexStorage {
         )
         .await
     }
-
-    // Private helpers exposed for backwards compatibility
-
-    async fn calculate_checksum(&self, path: &Path) -> Result<String> {
-        checksum::calculate_checksum(path).await
-    }
 }
-
-// ============================================================================
-// IndexStorageTrait Implementation
-// ============================================================================
 
 #[async_trait]
 impl IndexStorageTrait for IndexStorage {
@@ -238,6 +227,25 @@ impl IndexStorageTrait for IndexStorage {
         documents: Vec<(PathBuf, String, Vec<TextChunk>, Vec<Vec<f32>>)>,
     ) -> Result<Vec<String>> {
         self.batch_store_documents(documents).await
+    }
+
+    async fn store_document_with_context_for_model(
+        &self,
+        path: &Path,
+        mime_type: &str,
+        chunks: Vec<ContextualizedChunk>,
+        embeddings: Vec<Vec<f32>>,
+        model_identity: &str,
+    ) -> Result<String> {
+        let mut tx = self.pool.begin().await?;
+        let id = context::store_document_with_context_and_file_tx(
+            &mut tx, path, "", mime_type, chunks, embeddings,
+        )
+        .await?;
+        sqlx::query("UPDATE text_embeddings SET model_name = ? WHERE chunk_id IN (SELECT id FROM text_chunks WHERE document_id = ?)")
+            .bind(model_identity).bind(&id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(id)
     }
 
     async fn store_document_with_context(

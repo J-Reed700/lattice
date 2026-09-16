@@ -10,7 +10,6 @@ async fn setup_test_db() -> (SqlitePool, TempDir) {
 
     let pool = SqlitePool::connect(":memory:").await.unwrap();
 
-    // Create tables
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS files (
@@ -44,13 +43,11 @@ async fn test_store_new_file() {
 
     let service = FileStorageService::new(vault_path.clone(), pool);
 
-    // Create a test file
     let test_file_path = temp_dir.path().join("test.txt");
     tokio::fs::write(&test_file_path, b"Hello, World!")
         .await
         .unwrap();
 
-    // Store file
     let validated_path = ValidatedFilePath::new(test_file_path.clone()).unwrap();
     let result = service
         .store_file(validated_path, "text/plain", None)
@@ -64,7 +61,6 @@ async fn test_store_new_file() {
     assert_eq!(result.ref_count, 1);
     assert!(!result.is_indexed);
 
-    // Verify file exists on disk
     let stored_path = vault_path.join(&result.storage_path);
     assert!(stored_path.exists());
 }
@@ -77,26 +73,22 @@ async fn test_deduplication() {
 
     let service = FileStorageService::new(vault_path.clone(), pool);
 
-    // Create a test file
     let test_file_path = temp_dir.path().join("test.txt");
     tokio::fs::write(&test_file_path, b"Hello, World!")
         .await
         .unwrap();
 
-    // Store file first time
     let validated_path = ValidatedFilePath::new(test_file_path.clone()).unwrap();
     let result1 = service
         .store_file(validated_path.clone(), "text/plain", None)
         .await
         .unwrap();
 
-    // Store same file again
     let result2 = service
         .store_file(validated_path, "text/plain", None)
         .await
         .unwrap();
 
-    // Should be same file with incremented ref_count
     assert_eq!(result1.content_hash, result2.content_hash);
     assert_eq!(result2.ref_count, 2);
 }
@@ -109,7 +101,6 @@ async fn test_delete_file() {
 
     let service = FileStorageService::new(vault_path.clone(), pool);
 
-    // Create and store a test file
     let test_file_path = temp_dir.path().join("test.txt");
     tokio::fs::write(&test_file_path, b"Hello, World!")
         .await
@@ -124,7 +115,6 @@ async fn test_delete_file() {
     let stored_path = vault_path.join(&result.storage_path);
     assert!(stored_path.exists());
 
-    // Delete file
     service.delete_file(&result.id).await.unwrap();
 
     // File should be deleted from disk
@@ -143,7 +133,6 @@ async fn test_ref_counting() {
 
     let service = FileStorageService::new(vault_path.clone(), pool);
 
-    // Create and store a test file
     let test_file_path = temp_dir.path().join("test.txt");
     tokio::fs::write(&test_file_path, b"Hello, World!")
         .await
@@ -183,7 +172,6 @@ async fn test_verify_file() {
 
     let service = FileStorageService::new(vault_path.clone(), pool);
 
-    // Create and store a test file
     let test_file_path = temp_dir.path().join("test.txt");
     tokio::fs::write(&test_file_path, b"Hello, World!")
         .await
@@ -195,14 +183,12 @@ async fn test_verify_file() {
         .await
         .unwrap();
 
-    // Verify should pass
     assert!(service.verify_file(&result.id).await.unwrap());
 
     // Corrupt the file
     let stored_path = vault_path.join(&result.storage_path);
     tokio::fs::write(&stored_path, b"Corrupted!").await.unwrap();
 
-    // Verify should fail
     assert!(!service.verify_file(&result.id).await.unwrap());
 }
 
@@ -214,7 +200,6 @@ async fn test_cleanup_orphaned_files() {
 
     let service = FileStorageService::new(vault_path.clone(), pool.clone());
 
-    // Create and store a test file
     let test_file_path = temp_dir.path().join("test.txt");
     tokio::fs::write(&test_file_path, b"Hello, World!")
         .await
@@ -236,7 +221,6 @@ async fn test_cleanup_orphaned_files() {
     let stored_path = vault_path.join(&result.storage_path);
     assert!(stored_path.exists());
 
-    // Cleanup orphaned files
     let count = service.cleanup_orphaned_files().await.unwrap();
     assert_eq!(count, 1);
 
@@ -245,10 +229,6 @@ async fn test_cleanup_orphaned_files() {
     let found = service.get_file_by_id(&result.id).await.unwrap();
     assert!(found.is_none());
 }
-
-// =============================================================================
-// Security Tests - CWE-22 Directory Traversal Prevention
-// =============================================================================
 
 #[tokio::test]
 async fn test_directory_traversal_prevention() {
@@ -290,7 +270,6 @@ async fn test_directory_traversal_prevention() {
         "CRITICAL SECURITY: Absolute paths with '..' must be rejected"
     );
 
-    // Verify error message is appropriate
     if let Err(e) = result {
         let error_msg = format!("{:?}", e);
         assert!(
@@ -307,25 +286,21 @@ async fn test_symlink_attack_detection() {
 
     let temp_dir = TempDir::new().unwrap();
 
-    // Create a test file in temp directory
     let test_file = temp_dir.path().join("legitimate.txt");
     tokio::fs::write(&test_file, b"legitimate content")
         .await
         .unwrap();
 
-    // Create sensitive file simulation (in temp for testing)
     let sensitive_file = temp_dir.path().join("sensitive_data.txt");
     tokio::fs::write(&sensitive_file, b"SECRET DATA")
         .await
         .unwrap();
 
-    // Create symlink pointing to sensitive file
     let symlink_path = temp_dir.path().join("innocent_link.txt");
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
-        // Create symlink (may fail on some systems, that's okay for testing)
         let _ = symlink(&sensitive_file, &symlink_path);
     }
 
@@ -377,6 +352,8 @@ async fn test_path_validation_edge_cases() {
 
     // Edge Case 1: Backslash traversal (Windows-style on Unix)
     let backslash_traversal = std::path::PathBuf::from("..\\..\\..\\etc\\passwd");
+    // reason: only asserted under cfg(windows); the binding must keep its name for that block.
+    #[cfg_attr(not(windows), allow(unused_variables))]
     let result1 = ValidatedFilePath::new(backslash_traversal);
 
     // On Unix, backslashes are valid filename characters, but '..' should still be caught
@@ -456,11 +433,9 @@ async fn test_file_size_limit_enforcement() {
     let vault_path = temp_dir.path().join("lattice");
     tokio::fs::create_dir_all(&vault_path).await.unwrap();
 
-    // Create service with specific size limit (1MB)
     let max_size = 1024 * 1024; // 1MB
     let service = FileStorageService::with_max_size(vault_path.clone(), pool, max_size);
 
-    // Test 1: Create a file that's exactly at the limit (should succeed)
     let at_limit_file = temp_dir.path().join("at_limit.bin");
     let at_limit_content = vec![0u8; max_size as usize];
     tokio::fs::write(&at_limit_file, at_limit_content)
@@ -477,7 +452,6 @@ async fn test_file_size_limit_enforcement() {
         "Files at exactly max_file_size should be accepted"
     );
 
-    // Test 2: Create a file that exceeds the limit (should fail)
     let oversized_file = temp_dir.path().join("oversized.bin");
     let oversized_content = vec![0u8; (max_size + 1) as usize];
     tokio::fs::write(&oversized_file, oversized_content)
@@ -494,7 +468,6 @@ async fn test_file_size_limit_enforcement() {
         "Files exceeding max_file_size should be rejected to prevent DoS"
     );
 
-    // Test 3: Verify error message mentions size limit
     if let Err(e) = result_oversized {
         let error_msg = format!("{:?}", e);
         assert!(

@@ -87,6 +87,7 @@ impl SystemCapabilities {
     }
 
     /// Convert RAM from MB to GB.
+    #[cfg(test)]
     fn mb_to_gb(mb: u64) -> f64 {
         mb as f64 / 1024.0
     }
@@ -127,7 +128,6 @@ pub async fn detect_capabilities() -> SystemCapabilities {
     let cpu_cores = sys.physical_core_count().unwrap_or(1);
     let cpu_threads = sys.cpus().len();
 
-    // Get CPU model name (from first CPU)
     let cpu_model = sys.cpus().first().map(|cpu| {
         let brand = cpu.brand();
         if brand.is_empty() {
@@ -182,10 +182,8 @@ mod tests {
     async fn test_has_sufficient_ram() {
         let caps = detect_capabilities().await;
 
-        // Should have at least 1GB
         assert!(caps.has_sufficient_ram(1.0));
 
-        // Should not have 1000GB (on most systems)
         assert!(!caps.has_sufficient_ram(1000.0));
     }
 

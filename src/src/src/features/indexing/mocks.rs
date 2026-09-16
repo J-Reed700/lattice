@@ -5,17 +5,11 @@
 #[cfg(test)]
 use super::trait_def::{IndexStorageTrait, IndexingServiceTrait};
 #[cfg(test)]
-use crate::shared::error::Result;
-#[cfg(test)]
 use async_trait::async_trait;
-#[cfg(test)]
-use std::collections::HashMap;
 #[cfg(test)]
 use std::path::Path;
 #[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
-
-// ============================================================================
+use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 /// Mock implementation of IndexingServiceTrait for testing
@@ -24,10 +18,10 @@ use std::sync::{Arc, Mutex, RwLock};
 /// Useful for testing UI components and progress tracking logic.
 pub struct MockIndexingService {
     indexed_files: Arc<RwLock<Vec<std::path::PathBuf>>>,
-    progress: Arc<RwLock<crate::infrastructure::indexing::progress::IndexProgress>>,
+    progress: Arc<RwLock<crate::features::indexing::engine::progress::IndexProgress>>,
     is_indexing: Arc<std::sync::atomic::AtomicBool>,
     progress_tx:
-        tokio::sync::broadcast::Sender<crate::infrastructure::indexing::progress::IndexProgress>,
+        tokio::sync::broadcast::Sender<crate::features::indexing::engine::progress::IndexProgress>,
 }
 
 #[cfg(test)]
@@ -38,7 +32,7 @@ impl MockIndexingService {
         Self {
             indexed_files: Arc::new(RwLock::new(Vec::new())),
             progress: Arc::new(RwLock::new(
-                crate::infrastructure::indexing::progress::IndexProgress::new(),
+                crate::features::indexing::engine::progress::IndexProgress::new(),
             )),
             is_indexing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             progress_tx,
@@ -46,7 +40,10 @@ impl MockIndexingService {
     }
 
     /// Set the progress state for testing
-    pub fn set_progress(&self, progress: crate::infrastructure::indexing::progress::IndexProgress) {
+    pub fn set_progress(
+        &self,
+        progress: crate::features::indexing::engine::progress::IndexProgress,
+    ) {
         *self.progress.write().unwrap() = progress.clone();
         let _ = self.progress_tx.send(progress);
     }
@@ -84,7 +81,7 @@ impl IndexingServiceTrait for MockIndexingService {
     async fn index_file(
         &self,
         path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         self.indexed_files.write().unwrap().push(path.clone());
         self.is_indexing
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -100,14 +97,14 @@ impl IndexingServiceTrait for MockIndexingService {
         &self,
         path: std::path::PathBuf,
         _recursive: bool,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         self.indexed_files.write().unwrap().push(path);
         self.is_indexing
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
         let mut progress = self.progress.write().unwrap();
         progress.total_files = 5; // Mock: assume 5 files
-        progress.status = crate::infrastructure::indexing::progress::IndexStatus::Processing;
+        progress.status = crate::features::indexing::engine::progress::IndexStatus::Processing;
         let _ = self.progress_tx.send(progress.clone());
 
         Ok(())
@@ -116,20 +113,20 @@ impl IndexingServiceTrait for MockIndexingService {
     async fn reindex_file(
         &self,
         path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         self.index_file(path).await
     }
 
     async fn remove_file(
         &self,
         path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         let mut files = self.indexed_files.write().unwrap();
         files.retain(|p| p != &path);
         Ok(())
     }
 
-    async fn cancel_all(&self) -> crate::infrastructure::indexing::error::Result<()> {
+    async fn cancel_all(&self) -> crate::features::indexing::engine::error::Result<()> {
         self.is_indexing
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let mut progress = self.progress.write().unwrap();
@@ -138,43 +135,30 @@ impl IndexingServiceTrait for MockIndexingService {
         Ok(())
     }
 
-    async fn get_progress(&self) -> crate::infrastructure::indexing::progress::IndexProgress {
+    async fn get_progress(&self) -> crate::features::indexing::engine::progress::IndexProgress {
         self.progress.read().unwrap().clone()
     }
 
     async fn subscribe_progress(
         &self,
-    ) -> tokio::sync::broadcast::Receiver<crate::infrastructure::indexing::progress::IndexProgress>
+    ) -> tokio::sync::broadcast::Receiver<crate::features::indexing::engine::progress::IndexProgress>
     {
         self.progress_tx.subscribe()
     }
 
-    async fn pause_indexing(&self) -> crate::infrastructure::indexing::error::Result<()> {
+    async fn pause_indexing(&self) -> crate::features::indexing::engine::error::Result<()> {
         Ok(())
     }
 
-    async fn resume_indexing(&self) -> crate::infrastructure::indexing::error::Result<()> {
+    async fn resume_indexing(&self) -> crate::features::indexing::engine::error::Result<()> {
         Ok(())
     }
 }
 
-// ============================================================================
-// Hybrid Search Service Trait
-// ============================================================================
-
-// Trait for hybrid search combining vector and keyword search.
-//
-// Provides hybrid search using reciprocal rank fusion (RRF) to combine
-// semantic (vector) and keyword (BM25) search results. Implementations are
-// `HybridSearchService` in production and `MockHybridSearch` in tests.
-// ============================================================================
-// Mock IndexStorage
-// ============================================================================
-
 #[cfg(test)]
 type StoredChunk = (
     String,
-    crate::infrastructure::indexing::chunker::TextChunk,
+    crate::features::indexing::engine::chunker::TextChunk,
     Vec<f32>,
 );
 
@@ -187,7 +171,7 @@ pub struct MockIndexStorage {
         RwLock<
             std::collections::HashMap<
                 String,
-                crate::infrastructure::indexing::storage::DocumentRecord,
+                crate::features::indexing::engine::storage::DocumentRecord,
             >,
         >,
     >,
@@ -217,7 +201,7 @@ impl MockIndexStorage {
     pub fn add_document(
         &self,
         path: &str,
-        record: crate::infrastructure::indexing::storage::DocumentRecord,
+        record: crate::features::indexing::engine::storage::DocumentRecord,
     ) {
         self.documents
             .write()
@@ -229,7 +213,7 @@ impl MockIndexStorage {
     pub fn add_chunks(
         &self,
         doc_id: String,
-        chunks: Vec<crate::infrastructure::indexing::chunker::TextChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::TextChunk>,
         embeddings: Vec<Vec<f32>>,
     ) {
         let mut chunks_guard = self.chunks.write().unwrap();
@@ -263,14 +247,13 @@ impl IndexStorageTrait for MockIndexStorage {
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::infrastructure::indexing::chunker::TextChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::TextChunk>,
         embeddings: Vec<Vec<f32>>,
-    ) -> crate::infrastructure::indexing::error::Result<String> {
+    ) -> crate::features::indexing::engine::error::Result<String> {
         let doc_id = uuid::Uuid::new_v4().to_string();
         let path_str = path.to_string_lossy().to_string();
 
-        // Create document record
-        let record = crate::infrastructure::indexing::storage::DocumentRecord {
+        let record = crate::features::indexing::engine::storage::DocumentRecord {
             id: doc_id.clone(),
             file_path: path_str.clone(),
             file_name: path
@@ -289,7 +272,6 @@ impl IndexStorageTrait for MockIndexStorage {
 
         self.documents.write().unwrap().insert(path_str, record);
 
-        // Store chunks
         self.add_chunks(doc_id.clone(), chunks, embeddings);
 
         *self.indexed_count.write().unwrap() += 1;
@@ -300,7 +282,7 @@ impl IndexStorageTrait for MockIndexStorage {
     async fn document_exists(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<bool> {
+    ) -> crate::features::indexing::engine::error::Result<bool> {
         let path_str = path.to_string_lossy().to_string();
         Ok(self.documents.read().unwrap().contains_key(&path_str))
     }
@@ -308,8 +290,8 @@ impl IndexStorageTrait for MockIndexStorage {
     async fn get_document_by_path(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<
-        Option<crate::infrastructure::indexing::storage::DocumentRecord>,
+    ) -> crate::features::indexing::engine::error::Result<
+        Option<crate::features::indexing::engine::storage::DocumentRecord>,
     > {
         let path_str = path.to_string_lossy().to_string();
         Ok(self.documents.read().unwrap().get(&path_str).cloned())
@@ -318,8 +300,7 @@ impl IndexStorageTrait for MockIndexStorage {
     async fn needs_reindex(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<bool> {
-        // Mock always returns false for simplicity
+    ) -> crate::features::indexing::engine::error::Result<bool> {
         let _ = path;
         Ok(false)
     }
@@ -328,7 +309,7 @@ impl IndexStorageTrait for MockIndexStorage {
         &self,
         path: &Path,
         status: &str,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         let path_str = path.to_string_lossy().to_string();
         if let Some(doc) = self.documents.write().unwrap().get_mut(&path_str) {
             doc.status = status.to_string();
@@ -339,11 +320,10 @@ impl IndexStorageTrait for MockIndexStorage {
     async fn remove_document(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         let path_str = path.to_string_lossy().to_string();
         self.documents.write().unwrap().remove(&path_str);
 
-        // Remove associated chunks
         self.chunks
             .write()
             .unwrap()
@@ -357,10 +337,10 @@ impl IndexStorageTrait for MockIndexStorage {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-    ) -> crate::infrastructure::indexing::error::Result<String> {
+    ) -> crate::features::indexing::engine::error::Result<String> {
         let path_str = path.to_string_lossy().to_string();
 
-        let record = crate::infrastructure::indexing::storage::DocumentRecord {
+        let record = crate::features::indexing::engine::storage::DocumentRecord {
             id: file_id.to_string(),
             file_path: path_str.clone(),
             file_name: path
@@ -382,11 +362,11 @@ impl IndexStorageTrait for MockIndexStorage {
         Ok(file_id.to_string())
     }
 
-    async fn get_indexed_count(&self) -> crate::infrastructure::indexing::error::Result<i64> {
+    async fn get_indexed_count(&self) -> crate::features::indexing::engine::error::Result<i64> {
         Ok(*self.indexed_count.read().unwrap())
     }
 
-    async fn get_total_chunks(&self) -> crate::infrastructure::indexing::error::Result<i64> {
+    async fn get_total_chunks(&self) -> crate::features::indexing::engine::error::Result<i64> {
         Ok(self.chunks.read().unwrap().len() as i64)
     }
 
@@ -395,10 +375,10 @@ impl IndexStorageTrait for MockIndexStorage {
         documents: Vec<(
             std::path::PathBuf,
             String,
-            Vec<crate::infrastructure::indexing::chunker::TextChunk>,
+            Vec<crate::features::indexing::engine::chunker::TextChunk>,
             Vec<Vec<f32>>,
         )>,
-    ) -> crate::infrastructure::indexing::error::Result<Vec<String>> {
+    ) -> crate::features::indexing::engine::error::Result<Vec<String>> {
         let mut doc_ids = Vec::new();
 
         for (path, mime_type, chunks, embeddings) in documents {
@@ -415,13 +395,13 @@ impl IndexStorageTrait for MockIndexStorage {
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::infrastructure::indexing::chunker::ContextualizedChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
-    ) -> crate::infrastructure::indexing::error::Result<String> {
+    ) -> crate::features::indexing::engine::error::Result<String> {
         let doc_id = uuid::Uuid::new_v4().to_string();
         let path_str = path.to_string_lossy().to_string();
 
-        let record = crate::infrastructure::indexing::storage::DocumentRecord {
+        let record = crate::features::indexing::engine::storage::DocumentRecord {
             id: doc_id.clone(),
             file_path: path_str.clone(),
             file_name: path
@@ -443,10 +423,9 @@ impl IndexStorageTrait for MockIndexStorage {
             .unwrap()
             .insert(path_str.clone(), record);
 
-        // Convert contextualized chunks to text chunks for storage
         let chunks: Vec<_> = chunks
             .into_iter()
-            .map(|c| crate::infrastructure::indexing::chunker::TextChunk {
+            .map(|c| crate::features::indexing::engine::chunker::TextChunk {
                 text: c.contextualized_content,
                 start_idx: c.start_idx,
                 end_idx: c.end_idx,
@@ -468,12 +447,12 @@ impl IndexStorageTrait for MockIndexStorage {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-        chunks: Vec<crate::infrastructure::indexing::chunker::ContextualizedChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
-    ) -> crate::infrastructure::indexing::error::Result<String> {
+    ) -> crate::features::indexing::engine::error::Result<String> {
         let path_str = path.to_string_lossy().to_string();
 
-        let record = crate::infrastructure::indexing::storage::DocumentRecord {
+        let record = crate::features::indexing::engine::storage::DocumentRecord {
             id: file_id.to_string(),
             file_path: path_str.clone(),
             file_name: path
@@ -495,10 +474,9 @@ impl IndexStorageTrait for MockIndexStorage {
             .unwrap()
             .insert(path_str.clone(), record);
 
-        // Convert contextualized chunks to text chunks
         let chunks: Vec<_> = chunks
             .into_iter()
-            .map(|c| crate::infrastructure::indexing::chunker::TextChunk {
+            .map(|c| crate::features::indexing::engine::chunker::TextChunk {
                 text: c.contextualized_content,
                 start_idx: c.start_idx,
                 end_idx: c.end_idx,
@@ -515,7 +493,3 @@ impl IndexStorageTrait for MockIndexStorage {
         Ok(file_id.to_string())
     }
 }
-
-// ============================================================================
-// Chunk Repository Trait
-// ============================================================================

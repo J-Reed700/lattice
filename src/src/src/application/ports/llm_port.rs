@@ -37,10 +37,6 @@ use async_trait::async_trait;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Tool/Function Calling Types (Application Layer - Provider-Agnostic)
-// ============================================================================
-
 /// Tool definition for LLM function calling.
 ///
 /// Provider-agnostic representation of a callable function.
@@ -58,6 +54,8 @@ pub struct ToolDefinition {
 /// A tool call returned by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    #[serde(default)]
+    pub id: Option<String>,
     /// Function name being called
     pub name: String,
     /// Arguments as a JSON object
@@ -84,6 +82,43 @@ pub enum StreamChunk {
 /// - Be thread-safe (`Send + Sync`)
 #[async_trait]
 pub trait LLMPort: Send + Sync {
+    fn supports_typed_completions(&self) -> bool {
+        false
+    }
+
+    /// Typed completion preserves native tool IDs/results, usage, and finish state.
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Err(crate::shared::error::AppError::InvalidConfig(
+            "This provider does not support typed completions".into(),
+        ))
+    }
+
+    /// Deliver public answer text as it arrives while retaining the complete
+    /// native tool response. Providers without streaming keep the default.
+    async fn complete_with_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        let response = self.complete(request).await?;
+        if !response.text.is_empty() {
+            on_text(response.text.clone())?;
+        }
+        Ok(response)
+    }
+
+    /// A retry discards the previous attempt's public draft. Callers must reset
+    /// their display before accepting subsequent text; tool calls remain provisional
+    /// until the returned completion has been validated.
+    async fn complete_with_retry_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        self.complete_with_progress(request, on_text).await
+    }
+
     /// Generate a response to a prompt with optional context.
     ///
     /// Performs synchronous generation, waiting for the complete response
@@ -294,4 +329,45 @@ pub trait LLMPort: Send + Sync {
         let mapped = inner.map(|r| r.map(StreamChunk::Content));
         Ok(Box::new(Box::pin(mapped)))
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CompletionInput {
+    /// Opaque provider output replayed unchanged, including signed reasoning state.
+    Native {
+        value: serde_json::Value,
+    },
+    Message {
+        role: String,
+        content: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolResult {
+        id: String,
+        output: String,
+    },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompletionRequest {
+    pub input: Vec<CompletionInput>,
+    pub tools: Vec<ToolDefinition>,
+    pub json_schema: Option<serde_json::Value>,
+    pub reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompletionResponse {
+    pub text: String,
+    pub tool_calls: Vec<CompletionInput>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub finish_reason: String,
+    /// Opaque native output items for replaying provider-specific reasoning state.
+    pub provider_output: serde_json::Value,
 }

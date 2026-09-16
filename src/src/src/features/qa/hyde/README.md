@@ -40,7 +40,7 @@ hyde/
 ## Usage
 
 ```rust
-use vault_desktop::infrastructure::services::hyde::{QueryClassifier, QueryType};
+use vault_desktop::features::qa::hyde::{QueryClassifier, QueryType};
 
 let classifier = QueryClassifier::new();
 
@@ -66,7 +66,7 @@ Run tests:
 cargo test --test query_classifier_test
 
 # Inline unit tests (requires fixing other compilation errors)
-cargo test --lib infrastructure::services::hyde
+cargo test --lib features::qa::hyde
 ```
 
 ## Test Results
@@ -125,5 +125,5 @@ pub mod hyde;
 And can be imported anywhere in the codebase:
 
 ```rust
-use crate::infrastructure::services::hyde::{QueryClassifier, QueryType};
+use crate::features::qa::hyde::{QueryClassifier, QueryType};
 ```

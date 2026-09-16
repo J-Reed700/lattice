@@ -39,5 +39,4 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
-// Re-export public traits at the feature root.
 pub use trait_def::{TagRepositoryTrait, TagServiceTrait};

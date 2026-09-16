@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Tag Command Tests with DDD Container
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -40,15 +38,11 @@
 
 use crate::migration::container_helpers::*;
 use lattice::commands::tags::*;
-use lattice::error::Result;
+use lattice::shared::error::Result;
 use lattice::models::tag::Tag;
 use lattice::infrastructure::persistence::repositories::{DocumentRepository, TagRepository};
 use lattice::services::tag_service::TagService;
 use tauri::State;
-
-// ============================================================================
-// Tag Creation Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_create_tag_with_container() {
@@ -91,16 +85,11 @@ async fn test_create_tag_without_color() {
     assert!(tag.color.is_none() || tag.color.is_some());
 }
 
-// ============================================================================
-// Tag Retrieval Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_get_all_tags() {
     let container = create_test_container().await.unwrap();
     let state = State::from(&container);
 
-    // Create some tags
     let _ = create_tag("rust".to_string(), None, state.clone()).await;
     let _ = create_tag("python".to_string(), None, state.clone()).await;
 
@@ -115,11 +104,9 @@ async fn test_get_all_tags() {
 async fn test_get_all_tags_with_counts() {
     let container = create_test_container().await.unwrap();
 
-    // Create a tag and document
     let tag_repo = TagRepository::new(container.db_pool().clone());
     let doc_repo = DocumentRepository::new(container.db_pool().clone());
 
-    // Create test document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -130,7 +117,6 @@ async fn test_get_all_tags_with_counts() {
     .await
     .unwrap();
 
-    // Create tag and associate with document
     let tag = tag_repo.create("rust", None).await.unwrap();
     tag_repo
         .add_tags_to_document_by_names("doc-1", vec!["rust".to_string()])
@@ -151,7 +137,6 @@ async fn test_get_all_tags_with_counts() {
 async fn test_get_document_tags() {
     let container = create_test_container().await.unwrap();
 
-    // Create document and tags
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -177,15 +162,10 @@ async fn test_get_document_tags() {
     assert_eq!(tags.len(), 2);
 }
 
-// ============================================================================
-// Tag Application Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_apply_tags_to_document() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -213,7 +193,6 @@ async fn test_apply_tags_to_document() {
 async fn test_apply_tags_normalizes_input() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -243,7 +222,6 @@ async fn test_apply_tags_normalizes_input() {
 async fn test_apply_tags_merges_with_existing() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -256,7 +234,6 @@ async fn test_apply_tags_merges_with_existing() {
 
     let state = State::from(&container);
 
-    // Apply first set of tags
     let _ = apply_tags(
         "doc-1".to_string(),
         vec!["rust".to_string()],
@@ -264,7 +241,6 @@ async fn test_apply_tags_merges_with_existing() {
     )
     .await;
 
-    // Apply second set (should merge)
     let result = apply_tags(
         "doc-1".to_string(),
         vec!["python".to_string(), "RUST".to_string()],
@@ -275,7 +251,6 @@ async fn test_apply_tags_merges_with_existing() {
     assert!(result.is_ok());
     let tags = result.unwrap();
 
-    // Should have both tags, with rust not duplicated
     assert!(tags.len() >= 2);
     assert_eq!(
         tags.iter().filter(|t| t.name() == "rust").count(),
@@ -288,7 +263,6 @@ async fn test_apply_tags_merges_with_existing() {
 async fn test_apply_tags_filters_empty() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -312,15 +286,10 @@ async fn test_apply_tags_filters_empty() {
     assert_eq!(tags.len(), 1, "Should filter out empty tags");
 }
 
-// ============================================================================
-// Tag Removal Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_remove_tag_from_document() {
     let container = create_test_container().await.unwrap();
 
-    // Create document and tag
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -342,18 +311,12 @@ async fn test_remove_tag_from_document() {
 
     let tag_id = tags[0].id.clone();
 
-    // Remove the tag
     let result = remove_tag_from_document("doc-1".to_string(), tag_id, state.clone()).await;
     assert!(result.is_ok());
 
-    // Verify tag removed
     let remaining_tags = get_document_tags("doc-1".to_string(), state).await.unwrap();
     assert_eq!(remaining_tags.len(), 0, "Tag should be removed");
 }
-
-// ============================================================================
-// Tag Update Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_update_tag_name() {
@@ -393,10 +356,6 @@ async fn test_update_tag_color() {
     assert_eq!(updated.color, Some("#ff5733".to_string()));
 }
 
-// ============================================================================
-// Tag Deletion Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_delete_tag() {
     let container = create_test_container().await.unwrap();
@@ -409,7 +368,6 @@ async fn test_delete_tag() {
     let result = delete_tag(tag.id.clone(), state.clone()).await;
     assert!(result.is_ok());
 
-    // Verify tag deleted
     let all_tags = get_all_tags(state).await.unwrap();
     assert!(
         !all_tags.iter().any(|t| t.id == tag.id),
@@ -417,15 +375,10 @@ async fn test_delete_tag() {
     );
 }
 
-// ============================================================================
-// Tag Search Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_search_by_tag() {
     let container = create_test_container().await.unwrap();
 
-    // Create documents
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -452,10 +405,6 @@ async fn test_search_by_tag() {
     assert_eq!(doc_ids[0], "doc-1");
 }
 
-// ============================================================================
-// TagService Business Logic Tests
-// ============================================================================
-
 #[test]
 fn test_tag_service_merge_logic() {
     let existing = vec!["rust".to_string(), "programming".to_string()];
@@ -474,7 +423,6 @@ fn test_tag_service_merge_logic() {
     assert!(merged.contains(&"tutorial".to_string()));
     assert!(merged.contains(&"async".to_string()));
 
-    // Check no duplicates
     assert_eq!(
         merged.iter().filter(|t| t.to_lowercase() == "rust").count(),
         1
@@ -499,15 +447,10 @@ fn test_tag_service_merge_all_duplicates() {
     assert_eq!(merged.len(), 2, "Should deduplicate all tags");
 }
 
-// ============================================================================
-// Concurrent Operations Tests (Locking)
-// ============================================================================
-
 #[tokio::test]
 async fn test_concurrent_tag_operations_with_locking() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -552,7 +495,6 @@ async fn test_concurrent_tag_operations_with_locking() {
 async fn test_tag_lock_timeout() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -578,15 +520,10 @@ async fn test_tag_lock_timeout() {
     )
     .await;
 
-    // Should timeout waiting for lock
     assert!(result.is_err(), "Should timeout waiting for lock");
 
     drop(lock); // Release lock
 }
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_apply_tags_to_nonexistent_document() {
@@ -600,7 +537,6 @@ async fn test_apply_tags_to_nonexistent_document() {
     )
     .await;
 
-    // Should handle gracefully
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -611,7 +547,6 @@ async fn test_get_tags_for_nonexistent_document() {
 
     let result = get_document_tags("nonexistent".to_string(), state).await;
 
-    // Should return empty or error gracefully
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -619,7 +554,6 @@ async fn test_get_tags_for_nonexistent_document() {
 async fn test_remove_nonexistent_tag() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -633,13 +567,8 @@ async fn test_remove_nonexistent_tag() {
     let state = State::from(&container);
     let result = remove_tag_from_document("doc-1".to_string(), "nonexistent".to_string(), state).await;
 
-    // Should handle gracefully
     assert!(result.is_ok() || result.is_err());
 }
-
-// ============================================================================
-// Integration Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_full_tag_lifecycle() {

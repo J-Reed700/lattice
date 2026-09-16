@@ -1,5 +1,5 @@
 mod implementation;
-mod ops;
+pub(super) mod ops;
 mod tx;
 
 pub use implementation::SqliteBatchJobRepository;

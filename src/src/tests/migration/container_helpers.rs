@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! ServiceContainer Test Helpers
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -47,22 +45,18 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use lattice::interfaces::di::Container as ServiceContainer;
 use lattice::shared::error::Result;
-use lattice::infrastructure::indexing::IndexingService;
+use lattice::features::indexing::engine::IndexingService;
 use lattice::infrastructure::observability::Metrics;
-use lattice::infrastructure::qa::QAEngine;
+use lattice::features::qa::engine::QAEngine;
 use lattice::infrastructure::security::SecurityContext;
-use lattice::infrastructure::services::ConversationService;
+use lattice::features::conversation::service::ConversationService;
 use lattice::infrastructure::services::ContextManager;
 use lattice::infrastructure::services::FileStorageService;
 use lattice::infrastructure::services::ModelManager;
-use lattice::infrastructure::services::SearchEnrichmentService;
+use lattice::features::search::enrichment_service::SearchEnrichmentService;
 use lattice::infrastructure::services::TagService;
 use lattice::infrastructure::services::traits::*;
 use lattice::infrastructure::services::WebIngestionService;
-
-// ============================================================================
-// Test Container Factory
-// ============================================================================
 
 /// Configuration for test container creation
 #[derive(Debug, Clone)]
@@ -120,23 +114,19 @@ pub async fn create_test_container() -> Result<ServiceContainer> {
 pub async fn create_test_container_with_config(
     config: TestContainerConfig,
 ) -> Result<ServiceContainer> {
-    // Create database pool
     let pool = if config.in_memory_db {
         create_test_database().await?
     } else {
         create_file_database().await?
     };
 
-    // Create infrastructure services
     let security_context = Arc::new(SecurityContext::new());
     let metrics = Arc::new(Metrics::new());
 
-    // Create core services (with mocks)
     let embedding_service =
         Arc::new(MockEmbeddingService::new(config.embedding_dim)) as Arc<dyn EmbeddingServiceTrait>;
     let search_service = Arc::new(MockSearchService::new()) as Arc<dyn SearchServiceTrait>;
 
-    // Create domain services
     let tag_service = Arc::new(TagService::new(pool.clone())) as Arc<dyn TagServiceTrait>;
     let file_storage_service =
         Arc::new(FileStorageService::new()) as Arc<dyn FileStorageServiceTrait>;
@@ -148,7 +138,9 @@ pub async fn create_test_container_with_config(
     let search_enrichment_service =
         Arc::new(SearchEnrichmentService::new(pool.clone())) as Arc<dyn SearchEnrichmentServiceTrait>;
     let conversation_service =
-        Arc::new(ConversationService::new(pool.clone())) as Arc<dyn ConversationServiceTrait>;
+        Arc::new(ConversationService::new(Arc::new(
+            lattice::features::conversation::repository::ConversationRepository::new(pool.clone()),
+        ))) as Arc<dyn ConversationServiceTrait>;
     let context_manager = Arc::new(ContextManager::new(4000)) as Arc<dyn ContextManagerTrait>;
 
     // Optional services
@@ -161,13 +153,11 @@ pub async fn create_test_container_with_config(
     };
 
     let qa_engine = if config.include_optional_services {
-        // Create QA engine with mock LLM client
         Some(Arc::new(create_test_qa_engine()) as Arc<dyn lattice::services::traits::QAEngineTrait>)
     } else {
         None
     };
 
-    // Build container
     Ok(ServiceContainer::new(
         pool,
         security_context,
@@ -195,12 +185,11 @@ pub async fn create_test_container_with_config(
 pub async fn create_test_database() -> Result<SqlitePool> {
     let pool = SqlitePool::connect(":memory:")
         .await
-        .map_err(|e| lattice::error::AppError::DatabaseError(e.to_string()))?;
+        .map_err(|e| lattice::shared::error::AppError::DatabaseError(e.to_string()))?;
 
-    // Initialize schema
     lattice::infrastructure::persistence::database::init::initialize_database(&pool)
         .await
-        .map_err(|e| lattice::error::AppError::DatabaseError(e.to_string()))?;
+        .map_err(|e| lattice::shared::error::AppError::DatabaseError(e.to_string()))?;
 
     Ok(pool)
 }
@@ -214,7 +203,7 @@ pub async fn create_file_database() -> Result<SqlitePool> {
     use uuid::Uuid;
 
     let temp_dir = tempfile::tempdir()
-        .map_err(|e| lattice::error::AppError::Other(format!("Failed to create temp dir: {}", e)))?;
+        .map_err(|e| lattice::shared::error::AppError::Other(format!("Failed to create temp dir: {}", e)))?;
 
     let uuid = Uuid::new_v4().simple().to_string();
     let db_path = temp_dir.path().join(format!("test_{}.db", uuid));
@@ -222,29 +211,24 @@ pub async fn create_file_database() -> Result<SqlitePool> {
 
     let pool = SqlitePool::connect(&db_url)
         .await
-        .map_err(|e| lattice::error::AppError::DatabaseError(e.to_string()))?;
+        .map_err(|e| lattice::shared::error::AppError::DatabaseError(e.to_string()))?;
 
     lattice::infrastructure::persistence::database::init::initialize_database(&pool)
         .await
-        .map_err(|e| lattice::error::AppError::DatabaseError(e.to_string()))?;
+        .map_err(|e| lattice::shared::error::AppError::DatabaseError(e.to_string()))?;
 
     Ok(pool)
 }
 
 /// Create a test QA engine with mock LLM client
 fn create_test_qa_engine() -> QAEngine {
-    // Create mock LLM client
-    let mock_client = Arc::new(lattice::llm::OllamaClient::new(
+    let mock_client = Arc::new(lattice::features::llm::engine::OllamaClient::new(
         "http://localhost:11434",
         "test-model".to_string(),
     ));
 
-    QAEngine::new(mock_client as Arc<dyn lattice::llm::LLMClient>)
+    QAEngine::new(mock_client as Arc<dyn lattice::features::llm::engine::LLMClient>)
 }
-
-// ============================================================================
-// Test Assertions
-// ============================================================================
 
 /// Assert that a ServiceContainer is properly initialized
 ///
@@ -252,7 +236,6 @@ fn create_test_qa_engine() -> QAEngine {
 ///
 /// Panics if any required service is not accessible
 pub async fn assert_container_initialized(container: &ServiceContainer) {
-    // Test infrastructure services
     assert!(
         container.db_pool().acquire().await.is_ok(),
         "Database pool should be accessible"
@@ -262,7 +245,6 @@ pub async fn assert_container_initialized(container: &ServiceContainer) {
         "Security context should be accessible"
     );
 
-    // Test core services
     assert!(
         container.embedding_service().embed_single("test").await.is_ok(),
         "Embedding service should be accessible"
@@ -273,7 +255,6 @@ pub async fn assert_container_initialized(container: &ServiceContainer) {
         "Search service should be accessible"
     );
 
-    // Test domain services
     assert!(
         container.tag_service().get_or_create("test", "#fff").await.is_ok(),
         "Tag service should be accessible"
@@ -313,10 +294,6 @@ macro_rules! assert_containers_equivalent {
         }
     }};
 }
-
-// ============================================================================
-// Test Utilities
-// ============================================================================
 
 /// Create a minimal ServiceContainer for unit tests
 ///
@@ -380,7 +357,6 @@ mod tests {
     async fn test_container_services_accessible() {
         let container = create_test_container().await.unwrap();
 
-        // Test each service
         let _db = container.db_pool();
         let _security = container.security_context();
         let _metrics = container.metrics();

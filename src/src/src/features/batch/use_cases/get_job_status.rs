@@ -129,6 +129,7 @@ impl GetBatchJobStatusUseCase {
                 target: item.url,
                 status: item.status,
                 error_message: item.error_message,
+                document_id: item.document_id,
             })
             .collect();
 
@@ -141,6 +142,7 @@ impl GetBatchJobStatusUseCase {
             completed_items: job_status.completed_items,
             failed_items: job_status.failed_items,
             created_at: created_at.to_rfc3339(),
+            completed_at: job_status.completed_at,
             items,
         })
     }
@@ -345,20 +347,21 @@ mod tests {
 
         let status = use_case.execute(request).await.unwrap();
 
-        // Verify first item (completed)
         assert_eq!(status.items[0].item_id, "item-1");
         assert_eq!(status.items[0].target, "https://example.com/1");
         assert_eq!(status.items[0].status, "completed");
+        assert_eq!(status.items[0].document_id.as_deref(), Some("doc-1"));
+        let serialized = serde_json::to_value(&status).unwrap();
+        assert_eq!(serialized["items"][0]["documentId"], "doc-1");
+        assert!(serialized.get("completedAt").is_some());
         assert!(status.items[0].error_message.is_none());
 
-        // Verify second item (failed)
         assert_eq!(status.items[1].status, "failed");
         assert_eq!(
             status.items[1].error_message,
             Some("Network error".to_string())
         );
 
-        // Verify third item (pending)
         assert_eq!(status.items[2].status, "pending");
     }
 

@@ -55,7 +55,6 @@ impl GetFileMetadataUseCase {
             .validate_path(&request.path)
             .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
 
-        // Check file exists (using validated path)
         if !self.file_storage.exists(&validated_path).await {
             return Err(AppError::NotFound(format!(
                 "File not found: {}",
@@ -63,10 +62,8 @@ impl GetFileMetadataUseCase {
             )));
         }
 
-        // Get metadata from storage port
         let metadata = self.file_storage.metadata(&validated_path).await?;
 
-        // Get file name
         let file_name = validated_path
             .file_name()
             .and_then(|n| n.to_str())
@@ -76,7 +73,6 @@ impl GetFileMetadataUseCase {
         // Detect MIME type
         let mime_type = Self::detect_mime_type(&validated_path);
 
-        // Convert timestamp to ISO 8601
         let modified_at = DateTime::<Utc>::from_timestamp(metadata.modified_at, 0)
             .unwrap_or_else(Utc::now)
             .to_rfc3339();
@@ -191,7 +187,10 @@ mod tests {
                     },
                 )
                 .ok_or_else(|| {
-                    crate::error::AppError::NotFound(format!("File not found: {}", path.display()))
+                    crate::shared::error::AppError::NotFound(format!(
+                        "File not found: {}",
+                        path.display()
+                    ))
                 })
         }
     }
@@ -247,7 +246,10 @@ mod tests {
         let result = use_case.execute(request).await;
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(crate::error::AppError::NotFound(_))));
+        assert!(matches!(
+            result,
+            Err(crate::shared::error::AppError::NotFound(_))
+        ));
     }
 
     #[test]

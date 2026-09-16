@@ -29,9 +29,9 @@
 //! OpenAI-compatible backend later (vLLM, mistralrs-server, etc.)
 //! without changing this file.
 
-use crate::llm::sidecar_manager::SidecarHandle;
-use crate::llm::traits::{ChatMessage, GenerationConfig, LLMClient};
-use crate::llm::types::LLMError;
+use crate::features::llm::engine::sidecar_manager::SidecarHandle;
+use crate::features::llm::engine::traits::{ChatMessage, GenerationConfig, LLMClient};
+use crate::features::llm::engine::types::LLMError;
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -61,10 +61,6 @@ const NON_STREAM_TIMEOUT: Duration = Duration::from_secs(120);
 /// Health check timeout — should be milliseconds; if it isn't, the
 /// sidecar is in trouble and we should report unhealthy fast.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
-
-// ============================================================================
-// Wire types — OpenAI-compatible request/response shapes
-// ============================================================================
 
 /// OpenAI-shaped chat completion request. We use `serde_json::Value`
 /// for fields llama-server's OpenAI compat layer accepts but our trait
@@ -129,10 +125,6 @@ struct ChatDelta {
     #[serde(default)]
     content: String,
 }
-
-// ============================================================================
-// Client
-// ============================================================================
 
 /// LLM client that talks to a bundled llama-server sidecar.
 ///
@@ -536,10 +528,6 @@ impl LLMClient for SidecarLLMClient {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     //! These tests target the request-shaping and SSE-parsing logic.
@@ -548,17 +536,11 @@ mod tests {
     //! precisely so this logic can be tested without a live HTTP response.
     //! Lifecycle integration tests (real sidecar process) live in
     //! `tests/sidecar_integration.rs` — they require a llama-server
-    //! binary on disk and a tiny GGUF model, both of which CI has
-    //! after Sprint 1 PR 1.1 lands.
+    //! binary on disk and a tiny GGUF model.
     //!
     //! Note: full end-to-end tests on Windows are blocked by the
-    //! pre-existing esaxx-rs/cxx CRT-mismatch linker error (audit
-    //! note added during Sprint 1 PR 1.3); these tests pass on macOS
-    //! and Linux where linking works.
-
-    // ========================================================================
-    // SSE decoding (CHAT-6)
-    // ========================================================================
+    //! esaxx-rs/cxx CRT-mismatch linker error; these tests pass on
+    //! macOS and Linux where linking works.
 
     fn content_frame(text: &str) -> String {
         format!(

@@ -4,8 +4,7 @@ use crate::domain::download::{
 use crate::infrastructure::persistence::database::connection::DatabaseConnection;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, SqlitePool};
-use std::path::PathBuf;
+use sqlx::FromRow;
 use std::sync::Arc;
 
 #[derive(Debug, FromRow)]
@@ -21,8 +20,12 @@ struct DownloadSessionRow {
     checksum_value: Option<String>,
     error_message: Option<String>,
     retry_count: i32,
+    // reason: sqlx::FromRow column mapped from `SELECT *`; kept to mirror the table schema.
+    #[allow(dead_code)]
     max_retries: i32,
     created_at: String,
+    // reason: sqlx::FromRow column mapped from `SELECT *`; kept to mirror the table schema.
+    #[allow(dead_code)]
     updated_at: String,
     started_at: Option<String>,
     completed_at: Option<String>,
@@ -35,28 +38,6 @@ impl TryFrom<DownloadSessionRow> for DownloadSession {
     type Error = DownloadError;
 
     fn try_from(row: DownloadSessionRow) -> Result<Self, Self::Error> {
-        use serde::Deserialize;
-
-        #[derive(Deserialize)]
-        struct SessionData {
-            id: String,
-            url: String,
-            destination: String,
-            state: String,
-            bytes_downloaded: u64,
-            total_bytes: Option<u64>,
-            bytes_per_second: f64,
-            checksum_algorithm: Option<String>,
-            checksum_value: Option<String>,
-            error_message: Option<String>,
-            retry_count: u32,
-            max_retries: u32,
-            created_at: String,
-            updated_at: String,
-            started_at: Option<String>,
-            completed_at: Option<String>,
-        }
-
         let checksum = match (row.checksum_algorithm, row.checksum_value) {
             (Some(algo), Some(value)) => {
                 let algorithm = match algo.as_str() {
@@ -190,7 +171,6 @@ impl DownloadRepository for SqliteDownloadRepository {
             session.id()
         );
 
-        // Use BEGIN IMMEDIATE to acquire write lock immediately, preventing deadlock
         let mut tx =
             self.db_conn.begin_immediate().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
@@ -294,7 +274,6 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn update(&self, session: &DownloadSession) -> Result<(), DownloadError> {
-        // Use BEGIN IMMEDIATE to acquire write lock immediately, preventing deadlock
         let mut tx =
             self.db_conn.begin_immediate().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
@@ -392,7 +371,6 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), DownloadError> {
-        // Use BEGIN IMMEDIATE to acquire write lock immediately, preventing deadlock
         let mut tx =
             self.db_conn.begin_immediate().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
@@ -459,7 +437,6 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError> {
-        // Use BEGIN IMMEDIATE to acquire write lock immediately, preventing deadlock
         let mut tx =
             self.db_conn.begin_immediate().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))

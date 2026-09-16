@@ -32,6 +32,15 @@ use crate::application::contracts::search::SearchResultRecord as SearchResultPor
 use crate::shared::result::Result;
 use std::collections::HashSet;
 
+/// A persisted vector and the source metadata needed by runtime search.
+pub struct VectorIndexEntry {
+    pub id: String,
+    pub embedding: Vec<f32>,
+    pub content: String,
+    pub chunk_id: String,
+    pub document_id: String,
+}
+
 /// Port for vector similarity search operations.
 ///
 /// Implementations must:
@@ -77,29 +86,29 @@ pub trait VectorSearchPort: Send + Sync {
         threshold: f32,
     ) -> Result<Vec<SearchResultPortDto>>;
 
-    /// Search with an optional document scope.
+    /// Search restricted to an explicit set of documents.
     ///
-    /// When `allowed_document_ids` is provided, implementations should prefer
-    /// applying the scope during retrieval rather than post-filtering.
+    /// `allowed_document_ids` is a hard scope: `None` searches everything, and
+    /// `Some(set)` returns only chunks whose `doc_id` is in `set` (an empty set
+    /// allows nothing). At most `top_k` results come back, ordered by descending
+    /// similarity, exactly as for [`VectorSearchPort::search`].
     ///
-    /// The default implementation preserves backward compatibility by delegating
-    /// to `search` and filtering returned results.
+    /// There is deliberately no default body. Post-filtering an unscoped
+    /// `search` silently loses recall — an ANN index has to widen its candidate
+    /// window *before* retrieval to still return `top_k` in-scope hits — so
+    /// implementations must apply the scope during retrieval where they can,
+    /// and must opt into filtering after the fact where they cannot.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`VectorSearchPort::search`].
     fn search_scoped(
         &self,
         query_embedding: &[f32],
         top_k: usize,
         threshold: f32,
         allowed_document_ids: Option<&HashSet<String>>,
-    ) -> Result<Vec<SearchResultPortDto>> {
-        let mut results = self.search(query_embedding, top_k, threshold)?;
-        if let Some(scope) = allowed_document_ids {
-            results.retain(|result| scope.contains(&result.doc_id));
-            if results.len() > top_k {
-                results.truncate(top_k);
-            }
-        }
-        Ok(results)
-    }
+    ) -> Result<Vec<SearchResultPortDto>>;
 
     /// Add a new embedding to the search index.
     ///
@@ -152,6 +161,22 @@ pub trait VectorSearchPort: Send + Sync {
         self.add_embedding(id, embedding)
     }
 
+    /// Publish a document's persisted vectors in one batch. Implementations
+    /// should persist once and accept repeated publication of the same IDs so
+    /// an interrupted import can finish without generating embeddings again.
+    fn publish_embeddings(&self, entries: Vec<VectorIndexEntry>) -> Result<()> {
+        for entry in entries {
+            self.add_embedding_with_content(
+                entry.id,
+                entry.embedding,
+                entry.content,
+                entry.chunk_id,
+                entry.document_id,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Remove an embedding from the search index.
     ///
     /// If the ID does not exist, this is a no-op (returns Ok).
@@ -170,6 +195,14 @@ pub trait VectorSearchPort: Send + Sync {
     /// searcher.remove_embedding("doc-123")?;
     /// ```
     fn remove_embedding(&self, id: &str) -> Result<()>;
+
+    /// Remove a set of embeddings, persisting once when supported.
+    fn remove_embeddings(&self, ids: &[String]) -> Result<()> {
+        for id in ids {
+            self.remove_embedding(id)?;
+        }
+        Ok(())
+    }
 
     /// Clear all embeddings from the index.
     ///

@@ -1,7 +1,7 @@
 /// Ollama client wrapper
 ///
 /// Provides a high-level interface to the Ollama API for text generation.
-use crate::infrastructure::qa::types::QAError;
+use crate::features::qa::engine::types::QAError;
 use ollama_rs::{
     generation::{completion::request::GenerationRequest, options::GenerationOptions},
     Ollama,
@@ -43,7 +43,6 @@ impl OllamaClient {
     /// );
     /// ```
     pub fn new(url: &str, model: String) -> Self {
-        // Parse URL to get host and port
         let url = url.trim_end_matches('/');
         let host = url
             .strip_prefix("http://")
@@ -163,10 +162,7 @@ impl OllamaClient {
     pub async fn health_check(&self) -> bool {
         // Try to list models
         match self.client.list_local_models().await {
-            Ok(models) => {
-                // Check if our model is available
-                models.iter().any(|m| m.name == self.model)
-            }
+            Ok(models) => models.iter().any(|m| m.name == self.model),
             Err(_) => false,
         }
     }

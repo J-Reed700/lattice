@@ -3,9 +3,7 @@
 //! These are integration smoke tests that verify each embeddings command can run
 //! without panicking. They test the HAPPY PATH and ONE ERROR PATH per command.
 //!
-//! # Oracle Mandate
-//!
-//! "100% smoke test coverage - every command runs once without exploding."
+//! Each command runs at least once without panicking.
 //! Pattern: command_handler(mock_state, payload).await.is_ok()
 //!
 //! # Test Strategy
@@ -35,7 +33,6 @@ async fn smoke_test_generate_embedding_happy_path() {
 
     let result = generate_embedding_impl("test text".to_string(), &state).await;
 
-    // Assert: Command completes without panic
     match result {
         Ok(embedding) => {
             println!(
@@ -97,7 +94,6 @@ async fn smoke_test_generate_embedding_empty_text() {
 async fn smoke_test_generate_embedding_long_text() {
     let state = EmbeddingState::default();
 
-    // Create text longer than 10k chars
     let long_text = "a".repeat(15_000);
 
     let result = generate_embedding_impl(long_text, &state).await;
@@ -204,7 +200,6 @@ async fn smoke_test_generate_embeddings_batch_empty() {
 async fn smoke_test_generate_embeddings_batch_too_large() {
     let state = EmbeddingState::default();
 
-    // Create batch larger than 100 texts
     let large_batch: Vec<String> = (0..150).map(|i| format!("text {}", i)).collect();
 
     let result = generate_embeddings_batch_impl(large_batch, &state).await;

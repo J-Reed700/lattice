@@ -118,22 +118,20 @@ impl ChunkingService {
             let ch = *chars.get(i).unwrap_or(&' ');
             current.push(ch);
 
-            // Check for sentence ending
             if self.is_sentence_ending(ch) {
                 // Look ahead to see if this is a real sentence boundary
                 if i + 1 < chars.len() {
                     let next = *chars.get(i + 1).unwrap_or(&' ');
 
                     // If next char is whitespace or uppercase, likely a sentence boundary
-                    if next.is_whitespace() || next.is_uppercase() {
-                        // Check for common abbreviations
-                        if !self.is_abbreviation(&current) {
-                            let trimmed = current.trim().to_string();
-                            if !trimmed.is_empty() {
-                                sentences.push(trimmed);
-                            }
-                            current.clear();
+                    if (next.is_whitespace() || next.is_uppercase())
+                        && !self.is_abbreviation(&current)
+                    {
+                        let trimmed = current.trim().to_string();
+                        if !trimmed.is_empty() {
+                            sentences.push(trimmed);
                         }
+                        current.clear();
                     }
                 } else {
                     // End of text - add remaining
@@ -148,7 +146,6 @@ impl ChunkingService {
             i += 1;
         }
 
-        // Add any remaining text
         if !current.trim().is_empty() {
             sentences.push(current.trim().to_string());
         }
@@ -269,10 +266,6 @@ impl Default for ChunkingService {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,7 +309,6 @@ mod tests {
         let text = "Dr. Smith is here. This is a test.";
         let sentences = service.chunk_by_sentences(text);
 
-        // Should not split on "Dr."
         assert!(sentences.len() <= 2);
     }
 

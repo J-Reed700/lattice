@@ -12,18 +12,18 @@
 //! - `crate::features::search::commands` — Tauri command handlers
 //! - `crate::features::search::plugin::init()` — Tauri plugin (directory-shaped)
 //!
-//! ## Kept as shared namespaces (redirects retained)
-//!
-//! - `crate::domain::entities::search_result::SearchResult`
-//! - `crate::domain::value_objects::{search_mode, search_query}`
-//! - `crate::domain::repositories::search_repository`
-//! - `crate::domain::services::search_ranking_service`
-//! - `crate::infrastructure::search` — retrieval engine (USearch +
+//! - `crate::features::search::engine` — retrieval engine (USearch +
 //!   BM25 + hybrid/fusion/reranker/query_expansion/etc.)
 //!   consumed by qa, mentions, indexing, conversation chat retrieval
-//! - `crate::infrastructure::persistence::repositories::search`
-//!   (tx-wrapper)
-//! - `crate::infrastructure::services::search_enrichment_service`
+//! - `crate::features::search::repository_tx` — transactional search
+//!   repository adapter
+//! - `crate::features::search::enrichment_service`
+//!
+//! Domain types used by the application layer live in the domain layer:
+//! `crate::domain::entities::SearchResult`,
+//! `crate::domain::value_objects::{SearchMode, SearchQuery}`,
+//! `crate::domain::repositories::SearchRepository`, and
+//! `crate::domain::services::SearchRankingService`.
 //!
 //! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, HybridSearchTrait}`.
 
@@ -38,4 +38,7 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
-pub use trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+pub use trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait, SparseSearchTrait};
+pub mod engine;
+pub mod enrichment_service;
+pub mod repository_tx;

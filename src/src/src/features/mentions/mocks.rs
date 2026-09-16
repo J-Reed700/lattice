@@ -7,9 +7,7 @@ use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 /// Mock implementation of MentionRepositoryTrait for testing
@@ -79,12 +77,10 @@ impl MockMentionRepository {
     ) {
         let mention_id = mention.mention.id.clone();
 
-        // Add mention if not exists
         if !self.mentions.read().unwrap().contains_key(&mention_id) {
             self.add_mention(mention.mention.clone());
         }
 
-        // Add to document mentions
         self.by_document
             .write()
             .unwrap()
@@ -92,7 +88,6 @@ impl MockMentionRepository {
             .or_default()
             .push(mention);
 
-        // Add backlink
         self.document_mentions
             .write()
             .unwrap()
@@ -145,7 +140,6 @@ impl crate::application::ports::mention_repository_port::MentionRepositoryPort
         if let Some(existing_id) = existing_id {
             let existing = self.mentions.read().unwrap().get(&existing_id).cloned();
             if let Some(existing) = existing {
-                // Update existing mention
                 let updated = crate::application::ports::mention_repository_port::MentionData {
                     id: existing_id,
                     name: name.to_string(),
@@ -161,7 +155,6 @@ impl crate::application::ports::mention_repository_port::MentionRepositoryPort
             }
         }
 
-        // Create new mention
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().to_rfc3339();
 
@@ -265,7 +258,6 @@ impl crate::application::ports::mention_repository_port::MentionRepositoryPort
 
         let mut results = Vec::new();
 
-        // Extract @[person] mentions
         let at_mention_re = Regex::new(r"@\[([^\]]+)\]").unwrap();
         for cap in at_mention_re.captures_iter(text) {
             let name = &cap[1];
@@ -286,7 +278,6 @@ impl crate::application::ports::mention_repository_port::MentionRepositoryPort
             results.push(mention_with_context);
         }
 
-        // Extract [[wikilink]] mentions
         let wikilink_re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
         for cap in wikilink_re.captures_iter(text) {
             let name = &cap[1];
@@ -321,7 +312,6 @@ impl crate::application::ports::mention_repository_port::MentionRepositoryPort
             crate::shared::error::AppError::NotFound(format!("Mention not found: {}", id))
         })?;
 
-        // Update fields if provided
         if let Some(mt) = mention_type {
             mention.mention_type = mt.to_string();
         }
@@ -350,7 +340,3 @@ impl MockMentionRepository {
         text[start..end].to_string()
     }
 }
-
-// ============================================================================
-// Tag Repository Trait (DDD Architecture)
-// ============================================================================

@@ -36,13 +36,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::application::ports::{
+    unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
+    UnitOfWork as UnitOfWorkTrait, UnitOfWorkFactory as UnitOfWorkFactoryTrait,
+};
+use crate::application::ports::{
     BatchJobRepositoryPort, ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
-use crate::domain::repositories::{
-    unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
-    SearchRepository, SystemRepository, UnitOfWork as UnitOfWorkTrait,
-    UnitOfWorkFactory as UnitOfWorkFactoryTrait,
-};
+use crate::domain::repositories::{SearchRepository, SystemRepository};
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 
@@ -50,10 +50,10 @@ use super::batch_job::SqliteBatchJobRepositoryTx;
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
 use super::model_file::SqliteModelFileRepositoryTx;
-use super::search::SqliteSearchRepositoryTx;
 use super::system::SqliteSystemRepositoryTx;
 use crate::features::embedding::repository_tx::SqliteEmbeddingRepositoryTx;
 use crate::features::model_management::repository_tx::SqliteModelRepositoryTx;
+use crate::features::search::repository_tx::SqliteSearchRepositoryTx;
 
 pub struct SqliteUnitOfWork {
     pub(crate) transaction: Option<Arc<Mutex<Transaction<'static, Sqlite>>>>,
@@ -64,12 +64,6 @@ impl SqliteUnitOfWork {
         Self {
             transaction: Some(Arc::new(Mutex::new(transaction))),
         }
-    }
-
-    fn transaction(&self) -> Result<Arc<Mutex<Transaction<'static, Sqlite>>>> {
-        self.transaction
-            .clone()
-            .ok_or_else(|| AppError::Database("Transaction already consumed".to_string()))
     }
 
     fn take_unique_transaction(&mut self) -> Result<Transaction<'static, Sqlite>> {
@@ -231,8 +225,50 @@ impl UnitOfWorkFactoryTrait for SqliteUnitOfWorkFactory {
 #[cfg(test)]
 mod tests {
     use super::SqliteUnitOfWork;
-    use crate::domain::repositories::UnitOfWork as UnitOfWorkTrait;
+    use crate::application::ports::UnitOfWork as UnitOfWorkTrait;
     use sqlx::SqlitePool;
+
+    async fn transaction_with_pending_write() -> (SqlitePool, SqliteUnitOfWork) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE transaction_probe (value INTEGER NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("INSERT INTO transaction_probe VALUES (42)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        (pool, SqliteUnitOfWork::new(tx))
+    }
+
+    #[tokio::test]
+    async fn commit_persists_pending_write() {
+        let (pool, mut uow) = transaction_with_pending_write().await;
+        uow.commit().await.unwrap();
+        let values: Vec<i64> = sqlx::query_scalar("SELECT value FROM transaction_probe")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(values, vec![42]);
+        assert!(uow.transaction.is_none());
+    }
+
+    #[tokio::test]
+    async fn rollback_discards_pending_write() {
+        let (pool, mut uow) = transaction_with_pending_write().await;
+        uow.rollback().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transaction_probe")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(uow.transaction.is_none());
+    }
 
     #[tokio::test]
     async fn commit_with_live_reference_does_not_consume_transaction() {

@@ -1,4 +1,4 @@
-//! Corpus-shape use cases (Phase 5.3).
+//! Corpus-shape use cases.
 
 pub mod run_clustering;
 

@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Health Command Tests with DDD Container
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -41,10 +39,6 @@ use crate::migration::container_helpers::*;
 use lattice::interfaces::commands::health::*;
 use lattice::shared::error::Result;
 use tauri::State;
-
-// ============================================================================
-// Health Check Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_health_check_with_container() {
@@ -166,7 +160,6 @@ async fn test_search_index_health_check() {
 async fn test_search_index_with_documents() {
     let container = create_test_container().await.unwrap();
 
-    // Insert a test document
     let pool = container.db_pool();
     sqlx::query(
         r#"
@@ -199,7 +192,6 @@ async fn test_search_index_with_documents() {
 async fn test_overall_health_status_all_healthy() {
     let container = create_test_container().await.unwrap();
 
-    // Insert document to make search index healthy
     let pool = container.db_pool();
     sqlx::query(
         r#"
@@ -234,13 +226,8 @@ async fn test_overall_health_status_degraded() {
     );
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_health_check_handles_database_error() {
-    // Create container with closed database
     let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
     pool.close().await;
 
@@ -262,7 +249,9 @@ async fn test_health_check_handles_database_error() {
     )) as std::sync::Arc<dyn lattice::services::traits::WebIngestionServiceTrait>;
     let search_enrichment = std::sync::Arc::new(lattice::services::search_enrichment_service::SearchEnrichmentService::new(pool.clone()))
         as std::sync::Arc<dyn lattice::services::traits::SearchEnrichmentServiceTrait>;
-    let conversation = std::sync::Arc::new(lattice::services::conversation_service::ConversationService::new(pool.clone()))
+    let conversation = std::sync::Arc::new(lattice::services::conversation_service::ConversationService::new(std::sync::Arc::new(
+        lattice::features::conversation::repository::ConversationRepository::new(pool.clone()),
+    )))
         as std::sync::Arc<dyn lattice::services::traits::ConversationServiceTrait>;
     let context_manager = std::sync::Arc::new(lattice::services::context_manager::ContextManager::new(4000))
         as std::sync::Arc<dyn lattice::services::traits::ContextManagerTrait>;
@@ -297,10 +286,6 @@ async fn test_health_check_handles_database_error() {
         "Database should be marked unhealthy"
     );
 }
-
-// ============================================================================
-// Performance Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_health_check_performance() {
@@ -340,10 +325,6 @@ async fn test_health_check_latency_measurement() {
     assert!(result.search_index.latency_ms.unwrap() < 1000);
 }
 
-// ============================================================================
-// Component Health Helper Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_component_health_structure() {
     let container = create_test_container().await.unwrap();
@@ -351,7 +332,6 @@ async fn test_component_health_structure() {
 
     let result = health_check(state).await.unwrap();
 
-    // Verify ComponentHealth structure
     let db_health = &result.database;
     assert!(
         ["healthy", "degraded", "unhealthy"].contains(&db_health.status.as_str()),

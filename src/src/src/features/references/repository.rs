@@ -1,5 +1,4 @@
-//! Persistence owner for `passage_references`. Single source of truth for
-//! passage reference state (CLAUDE.md Repository Barrier).
+//! Persistence owner for `passage_references`.
 //!
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
@@ -121,17 +120,15 @@ impl PassageReferenceRepository {
         title: Option<&str>,
         note: Option<&str>,
     ) -> Result<()> {
-        let result = sqlx::query(
-            "UPDATE passage_references SET title = ?, note = ? WHERE id = ?",
-        )
-        .bind(title)
-        .bind(note)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(|error| {
-            AppError::Database(format!("Failed to update passage reference {id}: {error}"))
-        })?;
+        let result = sqlx::query("UPDATE passage_references SET title = ?, note = ? WHERE id = ?")
+            .bind(title)
+            .bind(note)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                AppError::Database(format!("Failed to update passage reference {id}: {error}"))
+            })?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!(

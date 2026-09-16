@@ -17,14 +17,12 @@
 //!         "/path/to/file1.txt".to_string(),
 //!         "/path/to/file2.pdf".to_string(),
 //!     ],
+//!
+//! space_id: None,
 //! };
 //! ```
 
 use serde::{Deserialize, Serialize};
-
-// =============================================================================
-// Batch File Import DTOs
-// =============================================================================
 
 /// Request to start a batch file import job.
 ///
@@ -34,6 +32,10 @@ use serde::{Deserialize, Serialize};
 pub struct StartBatchFileImportRequestDto {
     /// List of file paths to import (1-100 files).
     pub file_paths: Vec<String>,
+    #[serde(default)]
+    pub indexing: Option<FileIndexingOptionsDto>,
+    #[serde(default)]
+    pub space_id: Option<String>,
 }
 
 /// Response after starting a batch file import job.
@@ -96,10 +98,6 @@ pub struct BatchProgressDto {
     pub pending: usize,
 }
 
-// =============================================================================
-// Batch URL Import DTOs
-// =============================================================================
-
 /// Request to start a batch URL import job.
 ///
 /// Creates a batch job that processes multiple URLs concurrently.
@@ -159,10 +157,6 @@ pub struct StartBatchUrlImportResponseDto {
     pub job_id: String,
 }
 
-// =============================================================================
-// Batch Job Status DTOs
-// =============================================================================
-
 /// Request to get batch job status.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -198,6 +192,9 @@ pub struct BatchJobStatusDto {
     /// Job creation timestamp (ISO 8601 string)
     pub created_at: String,
 
+    /// Job completion timestamp, when the job has finished.
+    pub completed_at: Option<String>,
+
     /// List of all batch items with their status
     pub items: Vec<BatchJobItemDto>,
 }
@@ -218,11 +215,9 @@ pub struct BatchJobItemDto {
     /// Error message if status is "failed"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    /// Canonical document produced by this import, when available.
+    pub document_id: Option<String>,
 }
-
-// =============================================================================
-// Batch Job Management DTOs
-// =============================================================================
 
 /// Request to cancel a batch job.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -311,15 +306,28 @@ pub struct DeleteBatchJobResponseDto {
 pub struct RetryFailedItemsRequestDto {
     /// The batch job ID to retry failed items from
     pub job_id: String,
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub replacement_path: Option<String>,
 }
 
 /// Response from retrying failed items.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetryFailedItemsResponseDto {
-    /// New batch job ID for the retry operation
+    /// Job to monitor (file retries reuse the original job).
     pub new_job_id: String,
 
     /// Number of failed items being retried
     pub retried_count: usize,
+}
+
+/// Optional import context. File order comes from the request's file_paths.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FileIndexingOptionsDto {
+    pub source_group: Option<crate::domain::value_objects::source_context::SourceGroup>,
+    #[serde(default)]
+    pub rebuild_existing: bool,
 }

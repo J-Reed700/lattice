@@ -9,8 +9,6 @@ use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use std::path::PathBuf;
-#[cfg(test)]
 use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
@@ -110,7 +108,6 @@ impl ModelManagerTrait for MockModelManager {
     }
 
     fn cancel_download(&self) {
-        // Reset progress to indicate cancellation
         self.set_download_progress(None);
     }
 

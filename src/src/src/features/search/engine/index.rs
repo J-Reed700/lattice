@@ -6,7 +6,7 @@ use crate::shared::error::{AppError, Result, ResultExt};
 use crate::shared::utils::alignment::bytes_to_f32_slice;
 use memmap2::Mmap;
 use sqlx::{Row, SqlitePool};
-use std::fs::{File, Metadata};
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -16,7 +16,6 @@ pub struct EmbeddingIndex {
     count: usize,
     dim: usize,
     ids: Vec<String>,
-    metadata: Option<Metadata>,
 }
 
 impl EmbeddingIndex {
@@ -27,7 +26,6 @@ impl EmbeddingIndex {
             count: 0,
             dim,
             ids: vec![],
-            metadata: None,
         }
     }
 
@@ -54,7 +52,6 @@ impl EmbeddingIndex {
                 count: 0,
                 dim: DEFAULT_EMBEDDING_DIM,
                 ids: vec![],
-                metadata: None,
             });
         }
 
@@ -84,8 +81,6 @@ impl EmbeddingIndex {
 
             let embedding_bytes: Vec<u8> = record.get("embedding");
 
-            // Convert bytes to f32 slice with alignment validation
-            // This will fail on ARM if data is misaligned
             let float_slice = bytes_to_f32_slice(&embedding_bytes).context(
                 "Failed to convert embedding bytes to f32 slice - alignment issue on ARM",
             )?;
@@ -100,12 +95,11 @@ impl EmbeddingIndex {
 
         let file = File::open(&temp_path)?;
 
-        // P1 Issue #4: Store metadata to detect if file changes during use
+        // Validate the backing file before mapping it.
         let metadata = file
             .metadata()
             .context("Failed to read file metadata for mmap validation")?;
 
-        // Validate file size is reasonable
         if metadata.len() == 0 {
             return Err(AppError::InvalidInput("Cannot mmap empty file".to_string()));
         }
@@ -125,7 +119,6 @@ impl EmbeddingIndex {
         // 4. The mmap is read-only by default, preventing data races
         // 5. File handle 'file' is valid and open for reading
         // 6. Subsequent accesses validate bounds before dereferencing
-        // 7. Metadata is stored to detect if file is modified
         let mmap = unsafe { Mmap::map(&file)? };
 
         Ok(Self {
@@ -133,19 +126,17 @@ impl EmbeddingIndex {
             count,
             dim,
             ids,
-            metadata: Some(metadata),
         })
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let file = File::open(path.as_ref())?;
 
-        // P1 Issue #4: Store metadata to detect if file changes during use
+        // Validate the backing file before mapping it.
         let metadata = file
             .metadata()
             .context("Failed to read file metadata for mmap validation")?;
 
-        // Validate file size is reasonable
         if metadata.len() == 0 {
             return Err(AppError::InvalidInput("Cannot mmap empty file".to_string()));
         }
@@ -165,7 +156,6 @@ impl EmbeddingIndex {
         // 4. The mmap is read-only by default, preventing data races
         // 5. File handle 'file' is valid and open for reading
         // 6. Bounds checking is performed before any data access
-        // 7. Metadata is stored to detect if file is modified
         let mmap = unsafe { Mmap::map(&file)? };
 
         if mmap.len() < 8 {
@@ -208,7 +198,6 @@ impl EmbeddingIndex {
             count,
             dim,
             ids: vec![],
-            metadata: Some(metadata),
         })
     }
 

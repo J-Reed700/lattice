@@ -41,10 +41,6 @@ pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-// =============================================================================
-// GATEWAY IMPL FUNCTIONS - Async implementations for gateway dispatch
-// =============================================================================
-
 /// Health check implementation for gateway pattern
 ///
 /// This async function is called directly by the gateway.

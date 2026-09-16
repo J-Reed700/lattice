@@ -6,7 +6,6 @@
 //! Each consolidated handler uses tagged enums to dispatch to the appropriate
 //! operation, maintaining type safety while reducing the command surface area.
 
-// Re-export consolidated operations from individual modules
 pub use crate::features::cache::commands::{cache_operation, CacheOperation, CacheResponse};
 pub use crate::features::embedding::commands::{
     embedding_operation, EmbeddingOperation, EmbeddingResponse,

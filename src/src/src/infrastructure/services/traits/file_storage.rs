@@ -5,7 +5,6 @@
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::Result;
 use async_trait::async_trait;
-use std::path::Path;
 
 /// File record type for storage service
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

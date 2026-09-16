@@ -1,26 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
-use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
 use crate::shared::text_utils::safe_truncate;
 
 use super::{
     extract_acronym_context_terms, extract_acronym_terms, extract_phrase_terms,
     normalize_keyword_token, tokenize_keyword_terms,
 };
-
-pub(super) fn select_wiki_search_query(
-    validated_message: &str,
-    interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
-    followup_anchor_terms: Option<&HashSet<String>>,
-) -> String {
-    select_wiki_search_query_with_tuning(
-        validated_message,
-        interpretation,
-        followup_anchor_terms,
-        &RetrievalTuningSettingsDto::default(),
-    )
-}
 
 pub(super) fn select_wiki_search_query_with_tuning(
     validated_message: &str,
@@ -47,6 +34,9 @@ pub(super) fn select_wiki_search_query_with_tuning(
     }
 }
 
+/// Default-tuning entry point retained for the retrieval unit tests, which
+/// pin web-query selection behaviour without threading settings through.
+#[cfg(test)]
 pub(super) fn select_web_search_query<'a>(
     validated_message: &'a str,
     interpretation: &'a crate::domain::qa::hyde::HyDEInterpretation,

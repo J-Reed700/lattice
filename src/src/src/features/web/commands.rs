@@ -35,9 +35,8 @@ use crate::features::web::dto::{GetUrlPreviewRequestDto, IngestWebUrlRequestDto}
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
-use chrono::Utc;
 // TODO: Fix web_ingestion module test errors before enabling
-// use crate::infrastructure::web::ingestion::types::{is_safe_url, normalize_url};
+// use crate::features::web::ingestion::types::{is_safe_url, normalize_url};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -70,10 +69,9 @@ fn normalize_optional_id(value: Option<String>) -> Option<String> {
 }
 
 async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<(), AppError> {
-    // repository-barrier-allow: legacy validation query pending routing through SpaceRepository.
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
-        .bind(space_id)
-        .fetch_one(container.db_pool())
+    let exists = container
+        .document_scope()
+        .space_exists(space_id)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -81,14 +79,12 @@ async fn ensure_space_exists(container: &Container, space_id: &str) -> Result<()
                 space_id, e
             ))
         })?;
-
-    if exists == 0 {
+    if !exists {
         return Err(AppError::InvalidInput(format!(
             "Space not found for web import: {}",
             space_id
         )));
     }
-
     Ok(())
 }
 
@@ -96,10 +92,9 @@ async fn ensure_conversation_exists(
     container: &Container,
     conversation_id: &str,
 ) -> Result<(), AppError> {
-    // repository-barrier-allow: legacy validation query pending routing through ConversationRepository.
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
-        .bind(conversation_id)
-        .fetch_one(container.db_pool())
+    let exists = container
+        .document_scope()
+        .conversation_exists(conversation_id)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -107,14 +102,12 @@ async fn ensure_conversation_exists(
                 conversation_id, e
             ))
         })?;
-
-    if exists == 0 {
+    if !exists {
         return Err(AppError::InvalidInput(format!(
             "Conversation not found for web import: {}",
             conversation_id
         )));
     }
-
     Ok(())
 }
 
@@ -123,27 +116,16 @@ async fn assign_document_to_space(
     document_id: &str,
     space_id: &str,
 ) -> Result<(), AppError> {
-    let now = Utc::now().to_rfc3339();
-    // repository-barrier-allow: legacy membership write pending a shared space-membership repository.
-    sqlx::query(
-        r#"
-        INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
-        VALUES (?, ?, ?)
-        "#,
-    )
-    .bind(document_id)
-    .bind(space_id)
-    .bind(&now)
-    .execute(container.db_pool())
-    .await
-    .map_err(|e| {
-        AppError::Database(format!(
-            "Failed to assign imported web document '{}' to space '{}': {}",
-            document_id, space_id, e
-        ))
-    })?;
-
-    Ok(())
+    container
+        .document_scope()
+        .assign_documents(&[document_id.to_string()], space_id)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to assign imported web document '{}' to space '{}': {}",
+                document_id, space_id, e
+            ))
+        })
 }
 
 /// Ingest web content with full extraction and indexing pipeline
@@ -509,10 +491,8 @@ pub async fn fetch_url_preview(
         return Err(AppError::RateLimitExceeded(e.to_string()));
     }
 
-    // Get use case
     let preview_use_case = container.get_url_preview_use_case();
 
-    // Fetch preview via use case
     let preview = match preview_use_case
         .execute(GetUrlPreviewRequestDto { url: url.clone() })
         .await
@@ -708,10 +688,8 @@ pub async fn extract_article(
         return Err(AppError::RateLimitExceeded(e.to_string()));
     }
 
-    // Get service
     let article_extractor = container.article_extractor_service();
 
-    // Extract article (service handles URL validation, fetching, and extraction)
     let article = match article_extractor.extract_article_from_url(&url).await {
         Ok(article) => article,
         Err(e) => {
@@ -787,9 +765,6 @@ pub async fn extract_article(
 /// 5. Return total count
 #[tracing::instrument(skip(container))]
 pub async fn reindex_web_archive(container: State<'_, Container>) -> Result<usize, AppError> {
-    use crate::features::web::WebArchiveServiceTrait;
-
-    // Get web archive service
     let web_archive = container.web_archive();
 
     // List all archived articles
@@ -798,7 +773,6 @@ pub async fn reindex_web_archive(container: State<'_, Container>) -> Result<usiz
 
     tracing::info!("Found {} web archive files to reindex", total_files);
 
-    // Get indexing service for reindexing
     let indexing_service = container.indexing_service();
 
     let mut reindexed_count = 0;

@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Integration Tests: Metadata Extraction
 //!
@@ -44,10 +43,6 @@ impl TestContext {
         Ok(Self { pool, temp_dir })
     }
 }
-
-// ============================================================================
-// Test 1: Language Detection - Programming Languages
-// ============================================================================
 
 #[tokio::test]
 async fn test_language_detection_programming() -> Result<()> {
@@ -151,10 +146,6 @@ export default Calculator;
     Ok(())
 }
 
-// ============================================================================
-// Test 2: Language Detection - Natural Languages
-// ============================================================================
-
 #[tokio::test]
 async fn test_language_detection_natural() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -217,10 +208,6 @@ def process_data(df):
 
     Ok(())
 }
-
-// ============================================================================
-// Test 3: Category Assignment
-// ============================================================================
 
 #[tokio::test]
 async fn test_category_assignment() -> Result<()> {
@@ -331,10 +318,6 @@ Follow these instructions to train your first model...
 
     Ok(())
 }
-
-// ============================================================================
-// Test 4: Quality Score Calculation
-// ============================================================================
 
 #[tokio::test]
 async fn test_quality_score_calculation() -> Result<()> {
@@ -454,10 +437,6 @@ Next steps: review with team
     Ok(())
 }
 
-// ============================================================================
-// Test 5: Word Count Accuracy
-// ============================================================================
-
 #[tokio::test]
 async fn test_word_count_accuracy() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -521,10 +500,6 @@ async fn test_word_count_accuracy() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Test 6: Token Count for Chunks
-// ============================================================================
-
 #[tokio::test]
 async fn test_token_count_for_chunks() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -580,10 +555,6 @@ Computer vision allows machines to interpret visual information.
 
     Ok(())
 }
-
-// ============================================================================
-// Test 7: Access Tracking
-// ============================================================================
 
 #[tokio::test]
 async fn test_access_tracking() -> Result<()> {
@@ -660,10 +631,6 @@ async fn test_access_tracking() -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /// Index a test file with metadata extraction
 async fn index_test_file(pool: &SqlitePool, file_path: &PathBuf) -> Result<String> {

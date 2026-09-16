@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! # Mock Implementations
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -45,11 +43,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use lattice::error::{AppError, Result};
-
-// ============================================================================
-// MockEmbedder
-// ============================================================================
+use lattice::shared::error::{AppError, Result};
 
 /// Mock embedding service for testing.
 ///
@@ -109,14 +103,12 @@ impl MockEmbedder {
     ///
     /// Embedding vector of configured dimensions
     pub async fn embed_text(&self, text: &str) -> Result<Vec<f32>> {
-        // Check cache first
         let mut cache = self.cache.lock().await;
 
         if let Some(cached) = cache.get(text) {
             return Ok(cached.clone());
         }
 
-        // Generate embedding
         let embedding = if self.deterministic {
             self.generate_deterministic_embedding(text)
         } else {
@@ -168,7 +160,6 @@ impl MockEmbedder {
         text.hash(&mut hasher);
         let hash = hasher.finish();
 
-        // Use hash to seed a simple PRNG
         let mut seed = hash;
         let mut embedding = Vec::with_capacity(self.dimensions);
 
@@ -212,10 +203,6 @@ fn normalize_vector(vec: &mut [f32]) {
         }
     }
 }
-
-// ============================================================================
-// MockLLMClient
-// ============================================================================
 
 /// Mock LLM client for testing.
 ///
@@ -284,10 +271,6 @@ impl Default for MockLLMClient {
     }
 }
 
-// ============================================================================
-// MockSearchIndex
-// ============================================================================
-
 /// Mock search index for testing.
 ///
 /// Provides simple in-memory search without actual vector indexing.
@@ -337,7 +320,6 @@ impl MockSearchIndex {
             })
             .collect();
 
-        // Sort by similarity (descending)
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top-k
@@ -382,10 +364,6 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
     dot_product / (magnitude_a * magnitude_b)
 }
-
-// ============================================================================
-// Test Helpers
-// ============================================================================
 
 /// Create a mock embedding with specific characteristics.
 pub fn create_mock_embedding(dimensions: usize, seed: u64) -> Vec<f32> {
@@ -476,7 +454,6 @@ mod tests {
         let index = MockSearchIndex::new();
         let embedder = MockEmbedder::new(384);
 
-        // Add documents
         let emb1 = embedder.embed_text("machine learning").await.unwrap();
         let emb2 = embedder.embed_text("deep learning").await.unwrap();
         let emb3 = embedder.embed_text("rust programming").await.unwrap();

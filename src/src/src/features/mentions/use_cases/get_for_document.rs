@@ -57,7 +57,6 @@ impl GetMentionsForDocumentUseCase {
         &self,
         document_id: String,
     ) -> Result<GetMentionsForDocumentResultDto, AppError> {
-        // Validate input
         if document_id.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Document ID cannot be empty".to_string(),

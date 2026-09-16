@@ -5,8 +5,8 @@
 use crate::application::ports::{FileStoragePort, FileSystemPort};
 use crate::application::services::FileType;
 use crate::features::file::dto::{OpenFileRequestDto, OpenFileResponseDto};
+use crate::features::web::article_detector::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
-use crate::infrastructure::web::WebArticleDetector;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 
@@ -65,7 +65,6 @@ impl OpenFileUseCase {
             .validate_path(&request.path)
             .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
 
-        // Check file exists (using validated path)
         if !self.file_storage.exists(&validated_path).await {
             return Err(AppError::NotFound(format!(
                 "File not found: {}",
@@ -73,7 +72,6 @@ impl OpenFileUseCase {
             )));
         }
 
-        // Check if it's a directory
         if self.file_system.is_directory(&validated_path).await? {
             return Err(AppError::InvalidInput(format!(
                 "Cannot open directories: {}",
@@ -281,7 +279,10 @@ mod tests {
         let result = use_case.execute(request).await;
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(crate::error::AppError::NotFound(_))));
+        assert!(matches!(
+            result,
+            Err(crate::shared::error::AppError::NotFound(_))
+        ));
     }
 
     #[tokio::test]
@@ -312,7 +313,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(crate::error::AppError::InvalidInput(_))
+            Err(crate::shared::error::AppError::InvalidInput(_))
         ));
     }
 }

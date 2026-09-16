@@ -15,9 +15,10 @@ pub mod index_file;
 pub mod reindex_document;
 pub mod rename_document;
 
-// Re-export use cases for convenience
 pub use delete_document::DeleteDocumentUseCase;
 pub use index_directory::IndexDirectoryUseCase;
 pub use index_file::IndexFileUseCase;
 pub use reindex_document::ReindexDocumentUseCase;
 pub use rename_document::RenameDocumentUseCase;
+
+pub(crate) mod embedding_input;

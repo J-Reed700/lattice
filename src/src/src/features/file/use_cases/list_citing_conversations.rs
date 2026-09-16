@@ -26,7 +26,9 @@ impl ListCitingConversationsUseCase {
         limit: Option<i64>,
     ) -> Result<Vec<CitingConversation>> {
         let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-        self.repo.find_citing_conversations(&document_id, limit).await
+        self.repo
+            .find_citing_conversations(&document_id, limit)
+            .await
     }
 }
 

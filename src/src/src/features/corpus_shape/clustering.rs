@@ -11,8 +11,7 @@
 //!   means fewer, larger clusters + more noise.
 //! - `min_samples = 3` — density threshold; smaller = looser clusters.
 //!
-//! These are the starting values from the Phase 5.3 plan. Josh will eyeball
-//! the debug JSON and tune from there.
+//! These defaults can be tuned against the debug JSON output.
 
 use ndarray::Array2;
 use petal_clustering::{Fit, HDbscan};
@@ -89,10 +88,7 @@ impl Default for ClusteringParams {
 ///   treats everything as noise (this is correct behavior, not failure).
 /// - Output cluster order is not guaranteed stable across HDBSCAN versions;
 ///   downstream code must not depend on it.
-pub fn cluster(
-    inputs: Vec<ClusteringInput>,
-    params: ClusteringParams,
-) -> Result<ClusteringOutput> {
+pub fn cluster(inputs: Vec<ClusteringInput>, params: ClusteringParams) -> Result<ClusteringOutput> {
     if inputs.is_empty() {
         return Ok(ClusteringOutput {
             clusters: Vec::new(),
@@ -101,10 +97,7 @@ pub fn cluster(
         });
     }
 
-    let dim = inputs
-        .first()
-        .map(|first| first.vector.len())
-        .unwrap_or(0);
+    let dim = inputs.first().map(|first| first.vector.len()).unwrap_or(0);
 
     if dim == 0 {
         return Err(AppError::InvalidInput(
@@ -112,7 +105,6 @@ pub fn cluster(
         ));
     }
 
-    // Validate all vectors are same length.
     for input in &inputs {
         if input.vector.len() != dim {
             return Err(AppError::InvalidInput(format!(
@@ -132,8 +124,7 @@ pub fn cluster(
     // threshold can't produce a real cluster anyway, so return all-noise.
     let min_points_required = params.min_cluster_size.max(params.min_samples);
     if n < min_points_required {
-        let noise_doc_ids: Vec<String> =
-            inputs.iter().map(|input| input.doc_id.clone()).collect();
+        let noise_doc_ids: Vec<String> = inputs.iter().map(|input| input.doc_id.clone()).collect();
         return Ok(ClusteringOutput {
             clusters: Vec::new(),
             noise_doc_ids,
@@ -149,9 +140,8 @@ pub fn cluster(
         }
     }
 
-    let data = Array2::from_shape_vec((n, dim), flat).map_err(|e| {
-        AppError::InvalidInput(format!("Failed to shape embedding matrix: {}", e))
-    })?;
+    let data = Array2::from_shape_vec((n, dim), flat)
+        .map_err(|e| AppError::InvalidInput(format!("Failed to shape embedding matrix: {}", e)))?;
 
     let mut hdbscan = HDbscan::<f64, Euclidean> {
         alpha: 1.0,
@@ -177,10 +167,7 @@ pub fn cluster(
         let mut vectors: Vec<&Vec<f32>> = Vec::with_capacity(member_indices.len());
         for &idx in &member_indices {
             let input = inputs.get(idx).ok_or_else(|| {
-                AppError::InternalError(format!(
-                    "HDBSCAN returned out-of-range index: {}",
-                    idx
-                ))
+                AppError::InternalError(format!("HDBSCAN returned out-of-range index: {}", idx))
             })?;
             member_doc_ids.push(input.doc_id.clone());
             vectors.push(&input.vector);
@@ -208,10 +195,7 @@ pub fn cluster(
             .zip(member_doc_ids.iter())
             .map(|(v, id)| (id.clone(), euclidean_distance(v, &centroid)))
             .collect();
-        distances.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         let representatives: Vec<String> =
             distances.into_iter().take(5).map(|(id, _)| id).collect();
 

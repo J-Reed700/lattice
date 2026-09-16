@@ -26,6 +26,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::references::plugin::init(),
         // AI services
         crate::features::compare::plugin::init(),
+        crate::features::study::plugin::init(),
         crate::features::embedding::plugin::init(),
         crate::features::huggingface::plugin::init(),
         crate::features::extraction::plugin::init(),

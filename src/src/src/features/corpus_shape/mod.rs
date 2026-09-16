@@ -1,13 +1,11 @@
-//! # Corpus-shape feature (Phase 5.3)
+//! # Corpus-shape feature
 //!
 //! Clusters a lattice's documents over their mean-pooled chunk embeddings
 //! using HDBSCAN, assigns each cluster an LLM-generated 3-5 word label,
 //! and caches labels across re-runs via a stability fingerprint so small
 //! membership churn doesn't reshuffle the whole label set.
 //!
-//! Scope: **backend-only** in 5.3. The one user-visible artifact is a
-//! debug JSON file written via `cluster_vault_debug` for Josh to eyeball
-//! before any UI (Phase 5.4) is built on top.
+//! `cluster_vault_debug` can write a JSON report for tuning and diagnostics.
 //!
 //! ## Public surface
 //!
@@ -21,12 +19,12 @@
 //!   `list_clusters`)
 //! - `plugin::init()` — Tauri plugin registration
 //!
-//! ## Non-goals (for 5.3)
+//! ## Non-goals
 //!
 //! - Automatic filing / moving documents into clusters.
 //! - A scheduled / background clustering job.
-//! - UI surfaces — Phase 5.4 adds the FileBrowser integration.
-//! - Tuning knobs in settings — Josh tunes the constants directly for 5.3.
+//! - UI surfaces.
+//! - User-facing tuning controls.
 
 pub mod clustering;
 pub mod commands;

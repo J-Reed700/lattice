@@ -22,7 +22,7 @@ pub struct BM25Result {
     pub content: Option<String>,
 }
 
-impl From<BM25Result> for crate::infrastructure::search::service::SearchResult {
+impl From<BM25Result> for crate::features::search::engine::service::SearchResult {
     fn from(result: BM25Result) -> Self {
         Self {
             id: result.chunk_id.clone(),
@@ -384,10 +384,6 @@ impl BM25Search {
         !query.trim().is_empty()
     }
 }
-
-// ============================================================================
-// Trait Implementation
-// ============================================================================
 
 #[async_trait]
 impl BM25SearchTrait for BM25Search {

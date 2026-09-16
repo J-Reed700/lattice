@@ -17,6 +17,7 @@
 //! - `crate::features::function_calling::{FunctionRegistryTrait, FunctionExecutorTrait}` — service traits
 
 pub mod commands;
+pub mod di;
 pub mod domain;
 pub mod dto;
 pub mod executor;

@@ -11,7 +11,7 @@
 //! 6. Answer generation with source metadata
 
 use async_stream::stream;
-use futures::stream::{Stream, StreamExt};
+use futures::stream::Stream;
 use std::sync::Arc;
 
 use crate::application::ports::{
@@ -20,16 +20,12 @@ use crate::application::ports::{
 use crate::domain::entities::search_result::SearchResult;
 use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use crate::features::qa::dto::{QARequestDto, QAResponseDto, SourceDto, StreamChunkDto};
+use crate::features::qa::hyde::HyDEService;
 use crate::features::search::mapper::infer_category;
 use crate::features::search::mapper::SearchMapper;
-use crate::infrastructure::services::hyde::HyDEService;
 use crate::shared::error::Result;
 use crate::shared::text_utils::{build_excerpt, extract_highlight_terms};
 use tracing::{debug, error, info, warn};
-
-// ============================================================================
-// Constants
-// ============================================================================
 
 /// Fraction of the context window reserved for the LLM response.
 /// Prevents the prompt from consuming the entire context budget.
@@ -45,10 +41,6 @@ const FULL_DOCUMENT_CHUNK_THRESHOLD: usize = 20;
 /// Number of sibling chunks to include before and after each matched chunk
 /// when a document exceeds the full-document threshold.
 const SNAPSHOT_WINDOW_RADIUS: usize = 5;
-
-// ============================================================================
-// Source metadata helpers (pure functions)
-// ============================================================================
 
 fn validate_file_name(name: &str, document_id: &str) -> String {
     let trimmed = name.trim();
@@ -109,10 +101,6 @@ fn validate_file_size(size: i64, document_id: &str) -> i64 {
     size
 }
 
-// ============================================================================
-// Use Case
-// ============================================================================
-
 /// Ask question use case implementing RAG with HyDE.
 ///
 /// Provides question-answering capabilities by:
@@ -150,15 +138,10 @@ impl AskQuestionUseCase {
         }
     }
 
-    // ====================================================================
-    // Public entry points
-    // ====================================================================
-
     /// Execute question answering (non-streaming).
     pub async fn execute(&self, request: QARequestDto) -> Result<QAResponseDto> {
         let start = std::time::Instant::now();
 
-        // Step 1: Interpret query with HyDE
         info!("Interpreting query with HyDE: {}", request.question);
         let interpretation = self.hyde_service.interpret_query(&request.question).await?;
 
@@ -167,7 +150,6 @@ impl AskQuestionUseCase {
             interpretation.query_type, interpretation.search_strategy
         );
 
-        // Step 2: Branch based on query type
         let (answer, sources) = match interpretation.query_type {
             QueryType::Greeting => {
                 info!("Processing greeting without context retrieval");
@@ -203,14 +185,12 @@ impl AskQuestionUseCase {
         &self,
         request: QARequestDto,
     ) -> Result<Box<dyn Stream<Item = Result<StreamChunkDto>> + Send + Unpin + '_>> {
-        // Step 1: Interpret query with HyDE
         info!(
             "Interpreting query with HyDE (streaming): {}",
             request.question
         );
         let interpretation = self.hyde_service.interpret_query(&request.question).await?;
 
-        // Step 2: Branch based on query type
         match interpretation.query_type {
             QueryType::Greeting => {
                 info!("Processing greeting without context retrieval (streaming)");
@@ -234,10 +214,6 @@ impl AskQuestionUseCase {
             }
         }
     }
-
-    // ====================================================================
-    // RAG pipeline
-    // ====================================================================
 
     /// Execute RAG pipeline with streaming.
     async fn execute_rag_stream(
@@ -264,7 +240,7 @@ impl AskQuestionUseCase {
         );
         let query_embedding = self
             .embedding_service
-            .embed_single(search_text)
+            .embed_query(search_text)
             .await
             .map_err(|e| {
                 error!(error = %e, "RAG stream: Embedding generation failed");
@@ -398,7 +374,7 @@ impl AskQuestionUseCase {
         info!("RAG: Embedding search text ({} chars)", search_text.len());
         let query_embedding = self
             .embedding_service
-            .embed_single(search_text)
+            .embed_query(search_text)
             .await
             .map_err(|e| {
                 error!(error = %e, "RAG: Embedding generation failed");
@@ -466,10 +442,6 @@ impl AskQuestionUseCase {
         Ok((answer, sources))
     }
 
-    // ====================================================================
-    // Prompt construction
-    // ====================================================================
-
     /// Build LLM prompt with document context and relevance markers.
     ///
     /// Each context block is either:
@@ -527,10 +499,6 @@ impl AskQuestionUseCase {
         self.llm.generate(&greeting_prompt, &[], None).await
     }
 
-    // ====================================================================
-    // Full-document context expansion
-    // ====================================================================
-
     /// Expand search results to document context with relevance markers.
     ///
     /// Uses a two-tier strategy based on document size:
@@ -553,7 +521,7 @@ impl AskQuestionUseCase {
         &self,
         search_results: &[SearchResult],
     ) -> (Vec<String>, Vec<String>) {
-        use std::collections::{BTreeSet, HashMap, HashSet};
+        use std::collections::{HashMap, HashSet};
 
         if search_results.is_empty() {
             return (Vec::new(), Vec::new());
@@ -574,7 +542,6 @@ impl AskQuestionUseCase {
             }
         }
 
-        // Sort document IDs by best match score (highest first)
         let mut doc_ids: Vec<String> = doc_best_score.keys().cloned().collect();
         doc_ids.sort_by(|a, b| {
             let score_a = doc_best_score.get(a).copied().unwrap_or(0.0);
@@ -584,21 +551,18 @@ impl AskQuestionUseCase {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Fetch all chunks for each document in parallel
         let chunk_futures: Vec<_> = doc_ids
             .iter()
             .map(|doc_id| self.chunk_repo.find_by_document(doc_id))
             .collect();
         let chunk_results = futures::future::join_all(chunk_futures).await;
 
-        // Fetch document metadata in parallel (for file paths in snapshot headers)
         let doc_futures: Vec<_> = doc_ids
             .iter()
             .map(|doc_id| self.document_repo.find_by_id(doc_id))
             .collect();
         let doc_metadata_results = futures::future::join_all(doc_futures).await;
 
-        // Build doc_id → file_name lookup
         let mut doc_file_names: HashMap<String, String> = HashMap::new();
         for (doc_id, result) in doc_ids.iter().zip(doc_metadata_results) {
             if let Ok(Some(doc)) = result {
@@ -697,7 +661,6 @@ impl AskQuestionUseCase {
     ) -> String {
         use std::collections::BTreeSet;
 
-        // Find the array indices of matched chunks
         let matched_indices: Vec<usize> = chunks
             .iter()
             .enumerate()
@@ -709,7 +672,6 @@ impl AskQuestionUseCase {
             return String::new();
         }
 
-        // Build the set of indices to include (windows merged via BTreeSet)
         let mut include_indices: BTreeSet<usize> = BTreeSet::new();
         for &idx in &matched_indices {
             let start = idx.saturating_sub(SNAPSHOT_WINDOW_RADIUS);
@@ -719,7 +681,6 @@ impl AskQuestionUseCase {
             }
         }
 
-        // Build snapshot text, inserting [...] gaps between non-contiguous regions
         let mut snapshot = format!(
             "(Excerpt from \"{}\", showing {} of {} sections)\n",
             file_name,
@@ -729,7 +690,6 @@ impl AskQuestionUseCase {
 
         let mut prev_idx: Option<usize> = None;
         for &idx in &include_indices {
-            // Insert gap marker if there's a discontinuity
             if let Some(prev) = prev_idx {
                 if idx > prev + 1 {
                     snapshot.push_str("\n[...]\n");
@@ -780,10 +740,6 @@ impl AskQuestionUseCase {
         }
     }
 
-    // ====================================================================
-    // Context window budget
-    // ====================================================================
-
     /// Apply token-budget-aware truncation to context chunks.
     ///
     /// Keeps chunks (highest-score first, which is the order from vector search)
@@ -829,10 +785,6 @@ impl AskQuestionUseCase {
         kept
     }
 
-    // ====================================================================
-    // Source building (parallel document lookups)
-    // ====================================================================
-
     /// Build source citations from search results.
     ///
     /// Uses parallel document lookups to avoid N+1 sequential queries.
@@ -857,7 +809,6 @@ impl AskQuestionUseCase {
 
         let doc_results = futures::future::join_all(doc_futures).await;
 
-        // Build lookup map: doc_id → Document
         let mut doc_map = std::collections::HashMap::new();
         for (id, result) in doc_ids.iter().zip(doc_results) {
             match result {
@@ -887,7 +838,6 @@ impl AskQuestionUseCase {
             }
         }
 
-        // Build SourceDto for each result
         let mut sources = Vec::with_capacity(search_results.len());
         for result in search_results {
             let doc_id = result.document_id().unwrap_or(result.id());
@@ -941,6 +891,7 @@ impl AskQuestionUseCase {
             };
 
             sources.push(SourceDto {
+                page_number: None,
                 document_id: doc_id.to_string(),
                 chunk_id: result.id().to_string(),
                 content,
@@ -964,10 +915,6 @@ impl AskQuestionUseCase {
         Ok(sources)
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

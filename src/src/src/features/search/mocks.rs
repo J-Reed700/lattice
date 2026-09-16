@@ -5,15 +5,13 @@
 #[cfg(test)]
 use super::trait_def::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 #[cfg(test)]
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 #[cfg(test)]
-use crate::shared::error::{AppError, Result};
+use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 /// Mock search service with in-memory index
@@ -122,7 +120,6 @@ impl SearchServiceTrait for MockSearchService {
         query_embedding: &[f32],
         top_k: usize,
     ) -> Result<Vec<SearchResult>> {
-        // Mock doesn't have database access, so just return basic results
         self.search(query_embedding, top_k)
     }
 
@@ -157,7 +154,14 @@ impl SearchServiceTrait for MockSearchService {
 /// Stores query results in memory for deterministic testing.
 /// Useful for testing without database dependencies.
 pub struct MockBM25Search {
-    results: Arc<RwLock<std::collections::HashMap<String, Vec<crate::search::bm25::BM25Result>>>>,
+    results: Arc<
+        RwLock<
+            std::collections::HashMap<
+                String,
+                Vec<crate::features::search::engine::bm25::BM25Result>,
+            >,
+        >,
+    >,
 }
 
 #[cfg(test)]
@@ -185,7 +189,11 @@ impl MockBM25Search {
     ///     }
     /// ]);
     /// ```
-    pub fn set_results(&self, query: &str, results: Vec<crate::search::bm25::BM25Result>) {
+    pub fn set_results(
+        &self,
+        query: &str,
+        results: Vec<crate::features::search::engine::bm25::BM25Result>,
+    ) {
         self.results
             .write()
             .unwrap()
@@ -212,7 +220,7 @@ impl BM25SearchTrait for MockBM25Search {
         &self,
         query: &str,
         top_k: usize,
-    ) -> Result<Vec<crate::search::bm25::BM25Result>> {
+    ) -> Result<Vec<crate::features::search::engine::bm25::BM25Result>> {
         Ok(self
             .results
             .read()
@@ -230,7 +238,7 @@ impl BM25SearchTrait for MockBM25Search {
         query: &str,
         top_k: usize,
         min_score: f32,
-    ) -> Result<Vec<crate::search::bm25::BM25Result>> {
+    ) -> Result<Vec<crate::features::search::engine::bm25::BM25Result>> {
         let all_results = self.search(query, top_k * 2).await?;
         Ok(all_results
             .into_iter()
@@ -240,19 +248,13 @@ impl BM25SearchTrait for MockBM25Search {
     }
 
     async fn optimize_index(&self) -> Result<()> {
-        // Mock doesn't need to do anything
         Ok(())
     }
 
     async fn rebuild_index(&self) -> Result<()> {
-        // Mock doesn't need to do anything
         Ok(())
     }
 }
-
-// ============================================================================
-// Mock Service Implementations
-// ============================================================================
 
 #[cfg(test)]
 /// Mock hybrid search service for testing
@@ -263,7 +265,12 @@ impl BM25SearchTrait for MockBM25Search {
 pub struct MockHybridSearch {
     /// Mock results to return (query -> results mapping)
     results: Arc<
-        RwLock<std::collections::HashMap<String, Vec<crate::search::hybrid::HybridSearchResult>>>,
+        RwLock<
+            std::collections::HashMap<
+                String,
+                Vec<crate::features::search::engine::hybrid::HybridSearchResult>,
+            >,
+        >,
     >,
 }
 
@@ -303,7 +310,7 @@ impl MockHybridSearch {
     pub fn set_results(
         &self,
         query: &str,
-        results: Vec<crate::search::hybrid::HybridSearchResult>,
+        results: Vec<crate::features::search::engine::hybrid::HybridSearchResult>,
     ) {
         self.results
             .write()
@@ -332,8 +339,8 @@ impl HybridSearchTrait for MockHybridSearch {
         query_text: &str,
         _query_embedding: &[f32],
         top_k: usize,
-        _mode: crate::search::hybrid::SearchMode,
-    ) -> Result<Vec<crate::search::hybrid::HybridSearchResult>> {
+        _mode: crate::features::search::engine::hybrid::SearchMode,
+    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>> {
         Ok(self
             .results
             .read()
@@ -350,8 +357,8 @@ impl HybridSearchTrait for MockHybridSearch {
         &self,
         queries: Vec<(String, Vec<f32>)>,
         top_k: usize,
-        mode: crate::search::hybrid::SearchMode,
-    ) -> Result<Vec<Vec<crate::search::hybrid::HybridSearchResult>>> {
+        mode: crate::features::search::engine::hybrid::SearchMode,
+    ) -> Result<Vec<Vec<crate::features::search::engine::hybrid::HybridSearchResult>>> {
         let mut results = Vec::new();
         for (query_text, query_embedding) in queries {
             let result = self
@@ -369,12 +376,12 @@ impl HybridSearchTrait for MockHybridSearch {
         top_k: usize,
         _recency_weight: f32,
         _max_age_days: i64,
-    ) -> Result<Vec<crate::search::hybrid::HybridSearchResult>> {
+    ) -> Result<Vec<crate::features::search::engine::hybrid::HybridSearchResult>> {
         self.search(
             query_text,
             query_embedding,
             top_k,
-            crate::search::hybrid::SearchMode::Hybrid,
+            crate::features::search::engine::hybrid::SearchMode::Hybrid,
         )
         .await
     }
@@ -430,7 +437,6 @@ mod tests {
     async fn test_mock_search_service() {
         let mut service = MockSearchService::new();
 
-        // Add some test embeddings
         service.add_embedding("doc1".to_string(), vec![1.0, 0.0, 0.0]);
         service.add_embedding("doc2".to_string(), vec![0.0, 1.0, 0.0]);
         service.add_embedding("doc3".to_string(), vec![0.0, 0.0, 1.0]);
@@ -482,7 +488,6 @@ mod tests {
         assert_eq!(tag.name().as_str(), "rust");
         assert_eq!(tag.color(), "#ff5733");
 
-        // Getting again should return same tag
         let tag2 = service.get_or_create("rust", "#000000").await.unwrap();
         assert_eq!(tag.id(), tag2.id());
         assert_eq!(tag2.color(), "#ff5733"); // Original color preserved
@@ -601,11 +606,9 @@ mod tests {
         // Default is complete
         assert_eq!(manager.get_download_progress(), Some(1.0));
 
-        // Simulate in-progress download
         manager.set_download_progress(Some(0.5));
         assert_eq!(manager.get_download_progress(), Some(0.5));
 
-        // Simulate not downloading
         manager.set_download_progress(None);
         assert_eq!(manager.get_download_progress(), None);
     }
@@ -648,7 +651,6 @@ mod tests {
         // Ingest a URL without configuration
         let result = service.ingest_url("https://example.com").await.unwrap();
 
-        // Verify default result
         assert!(!result.document_id.is_empty());
         assert_eq!(result.url, "https://example.com");
         assert_eq!(result.title, "Mock Web Document");
@@ -658,7 +660,6 @@ mod tests {
         assert_eq!(result.author, Some("Mock Author".to_string()));
         assert_eq!(result.reading_time_minutes, Some(2));
 
-        // Verify tracking
         let urls = service.get_ingested_urls();
         assert_eq!(urls.len(), 1);
         assert_eq!(urls[0], "https://example.com");
@@ -684,7 +685,6 @@ mod tests {
         // Ingest
         let result = service.ingest_url("https://test.com").await.unwrap();
 
-        // Verify custom result returned
         assert_eq!(result.document_id, "custom-id");
         assert_eq!(result.title, "Custom Title");
         assert_eq!(result.word_count, 500);
@@ -729,10 +729,8 @@ mod tests {
         // Clear
         service.clear();
 
-        // Verify cleared
         assert_eq!(service.get_ingested_urls().len(), 0);
 
-        // Should return default result now
         let result = service.ingest_url("https://test.com").await.unwrap();
         assert_eq!(result.title, "Mock Web Document");
     }
@@ -770,12 +768,10 @@ mod tests {
         let chunk_ids = vec!["chunk1".to_string(), "chunk2".to_string()];
         let result = service.enrich_results(&chunk_ids).await.unwrap();
 
-        // Should enrich all chunks with defaults
         assert_eq!(result.len(), 2);
         assert!(result.contains_key("chunk1"));
         assert!(result.contains_key("chunk2"));
 
-        // Check default values
         let chunk1 = &result["chunk1"];
         assert_eq!(chunk1.snippet, "Mock content snippet for testing...");
         assert_eq!(
@@ -803,7 +799,7 @@ mod tests {
             serde_json::Value::String("text/custom".to_string()),
         );
 
-        let custom = crate::services::search_enrichment_service::DocumentMetadata {
+        let custom = crate::features::search::enrichment_service::DocumentMetadata {
             snippet: "Custom snippet text".to_string(),
             document_id: "chunk1".to_string(),
             metadata: custom_metadata,
@@ -816,7 +812,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify custom metadata
         assert_eq!(result["chunk1"].snippet, "Custom snippet text");
         assert_eq!(
             result["chunk1"].metadata["filename"],
@@ -836,7 +831,7 @@ mod tests {
         );
         service.set_metadata(
             "chunk1",
-            crate::services::search_enrichment_service::DocumentMetadata {
+            crate::features::search::enrichment_service::DocumentMetadata {
                 snippet: "Configured".to_string(),
                 document_id: "chunk1".to_string(),
                 metadata,
@@ -847,7 +842,6 @@ mod tests {
         let chunk_ids = vec!["chunk1".to_string(), "chunk2".to_string()];
         let result = service.enrich_results(&chunk_ids).await.unwrap();
 
-        // Verify mixed results
         assert_eq!(result["chunk1"].snippet, "Configured");
         assert_eq!(
             result["chunk2"].snippet,
@@ -872,7 +866,7 @@ mod tests {
         // Configure metadata
         service.set_metadata(
             "chunk1",
-            crate::services::search_enrichment_service::DocumentMetadata {
+            crate::features::search::enrichment_service::DocumentMetadata {
                 snippet: "Test".to_string(),
                 document_id: "chunk1".to_string(),
                 metadata: std::collections::HashMap::new(),
@@ -882,7 +876,6 @@ mod tests {
         // Clear
         service.clear();
 
-        // Should return default now
         let result = service
             .enrich_results(&["chunk1".to_string()])
             .await
@@ -940,7 +933,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Add user message
         let msg1 = service
             .add_user_message(&conversation.id.to_string(), "Hello".to_string(), 10)
             .await
@@ -948,7 +940,6 @@ mod tests {
         assert_eq!(msg1.content, "Hello");
         assert_eq!(msg1.tokens, 10);
 
-        // Add assistant message
         let msg2 = service
             .add_assistant_message(&conversation.id.to_string(), "Hi there".to_string(), 20)
             .await
@@ -956,7 +947,6 @@ mod tests {
         assert_eq!(msg2.content, "Hi there");
         assert_eq!(msg2.tokens, 20);
 
-        // Verify aggregate
         let aggregate = service
             .get_conversation(&conversation.id.to_string())
             .await
@@ -970,7 +960,6 @@ mod tests {
     async fn test_mock_conversation_service_list() {
         let service = MockConversationService::new();
 
-        // Create multiple conversations
         service
             .create_conversation("Conv 1".to_string(), "model".to_string(), None)
             .await
@@ -1006,7 +995,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Add multiple messages
         for i in 0..5 {
             service
                 .add_user_message(&conversation.id.to_string(), format!("Message {}", i), 100)
@@ -1030,7 +1018,3 @@ mod tests {
         assert!(!aggregate.messages().is_empty()); // At least last message
     }
 }
-
-// ============================================================================
-// Document Repository Trait (Legacy)
-// ============================================================================

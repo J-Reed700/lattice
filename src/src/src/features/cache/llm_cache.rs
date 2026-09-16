@@ -215,16 +215,10 @@ mod tests {
         assert_eq!(stats.tag_cache_size, 1);
     }
 
-    // ============================================================================
-    // ORACLE CONCURRENCY TESTS - Phase 4 Week 2 Day 6 Step 4
-    // ============================================================================
-
     #[tokio::test]
     async fn test_concurrent_get_put_operations() {
-        // Arrange: Create cache
         let cache = Arc::new(LlmCache::with_capacity(100, 100));
 
-        // Act: Spawn 10 threads, each performing 100 operations
         let mut handles = vec![];
 
         for thread_id in 0..10 {
@@ -241,11 +235,8 @@ mod tests {
                     // Put operation
                     cache_clone.put_tags(&content, tags.clone()).await;
 
-                    // Get operation
                     let retrieved = cache_clone.get_tags(&content).await;
 
-                    // Assert: Retrieved data should match (if still in cache)
-                    // May be None if evicted, but if Some, must match
                     if let Some(retrieved_tags) = retrieved {
                         assert_eq!(
                             retrieved_tags, tags,
@@ -259,14 +250,12 @@ mod tests {
             handles.push(handle);
         }
 
-        // Assert: All threads complete without panics
         for handle in handles {
             handle
                 .await
                 .expect("CRITICAL CONCURRENCY: Thread panicked during concurrent operations");
         }
 
-        // Verify cache is in consistent state
         let stats = cache.stats().await;
         assert!(
             stats.tag_cache_size <= stats.tag_cache_capacity,
@@ -278,7 +267,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_readers_writers() {
-        // Arrange: Create cache and populate with test data
         let cache = Arc::new(LlmCache::with_capacity(50, 50));
 
         // Pre-populate cache
@@ -288,7 +276,6 @@ mod tests {
             cache.put_tags(&content, tags).await;
         }
 
-        // Act: Spawn 5 readers + 5 writers concurrently
         let mut handles = vec![];
 
         // Spawn 5 reader threads
@@ -328,14 +315,12 @@ mod tests {
             handles.push(handle);
         }
 
-        // Assert: All threads complete without deadlocks or panics
         for handle in handles {
             handle
                 .await
                 .expect("CRITICAL CONCURRENCY: Thread panicked or deadlocked");
         }
 
-        // Verify cache integrity
         let stats = cache.stats().await;
         assert!(
             stats.tag_cache_size <= stats.tag_cache_capacity,
@@ -345,12 +330,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_eviction_under_load() {
-        // Arrange: Create cache with small capacity to force evictions
         let capacity = 20;
         let cache = Arc::new(LlmCache::with_capacity(capacity, capacity));
 
-        // Act: Spawn 5 threads, each trying to insert 50 items
-        // Total 250 items, but capacity is only 20, forcing heavy eviction
         let mut handles = vec![];
 
         for thread_id in 0..5 {
@@ -373,14 +355,12 @@ mod tests {
             handles.push(handle);
         }
 
-        // Assert: All threads complete successfully
         for handle in handles {
             handle
                 .await
                 .expect("CRITICAL CONCURRENCY: Thread panicked during eviction");
         }
 
-        // Verify cache respects capacity even under heavy load
         let stats = cache.stats().await;
 
         assert!(
@@ -390,7 +370,6 @@ mod tests {
             capacity
         );
 
-        // Verify capacity exactly matches expected (not exceeded)
         assert_eq!(
             stats.tag_cache_capacity, capacity,
             "CRITICAL CONCURRENCY: Cache capacity changed unexpectedly"
@@ -399,10 +378,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_query_and_tag_cache() {
-        // Arrange: Create cache
         let cache = Arc::new(LlmCache::with_capacity(50, 50));
 
-        // Act: Spawn threads operating on both caches concurrently
         let mut handles = vec![];
 
         // Spawn threads for tag cache
@@ -447,14 +424,12 @@ mod tests {
             handles.push(handle);
         }
 
-        // Assert: All threads complete successfully
         for handle in handles {
             handle
                 .await
                 .expect("CRITICAL CONCURRENCY: Cache isolation failed");
         }
 
-        // Verify both caches maintained independence
         let stats = cache.stats().await;
 
         assert!(
@@ -470,7 +445,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_capacity_edge_cases() {
-        // Test 1: Capacity of 1 (minimum)
         let cache_min = LlmCache::with_capacity(1, 1);
 
         cache_min.put_tags("first", vec!["tag1".to_string()]).await;
@@ -483,7 +457,6 @@ mod tests {
         );
         assert!(cache_min.get_tags("second").await.is_some());
 
-        // Test 2: Large capacity
         let cache_large = LlmCache::with_capacity(10000, 10000);
 
         for i in 0..100 {

@@ -46,8 +46,7 @@ pub trait TranscriptionPort: Send + Sync {
 
     /// Whether a transcription model is downloaded and loadable.
     ///
-    /// This is a repository query — it never walks the filesystem for state and
-    /// never loads the model (Repository Barrier, `CLAUDE.md`).
+    /// This repository query neither scans the filesystem nor loads the model.
     async fn is_ready(&self) -> Result<bool, AppError>;
 
     /// Display name of the model that would be used, if any.

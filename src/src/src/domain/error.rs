@@ -403,7 +403,6 @@ mod tests {
 
     #[test]
     fn test_helper_methods_comprehensive() {
-        // Test all error types with all helper methods
         let test_cases = vec![
             (
                 DomainError::EntityNotFound {

@@ -22,16 +22,14 @@ use futures::stream::Stream;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
+use crate::application::factories::ChecksumFactory;
 use crate::application::ports::{DocumentRepositoryPort, LLMPort};
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::domain::entities::Document;
-use crate::domain::value_objects::Checksum;
 use crate::features::corpus_shape::clustering::ClusteringParams;
 use crate::features::corpus_shape::entity::LabelSource;
 use crate::features::corpus_shape::labeling::RepresentativeDoc;
-use crate::features::corpus_shape::repository::{
-    ClusterRepositoryPort, SqliteClusterRepository,
-};
+use crate::features::corpus_shape::repository::{ClusterRepositoryPort, SqliteClusterRepository};
 use crate::features::corpus_shape::use_cases::run_clustering::DocumentContentPreviewPort;
 use crate::features::corpus_shape::use_cases::RunClusteringUseCase;
 use crate::features::embedding::entity::Embedding as EmbeddingEntity;
@@ -40,10 +38,6 @@ use crate::infrastructure::persistence::repositories::mocks::{
 };
 use crate::shared::domain_types::{ChunkId, ValidatedFilePath};
 use crate::shared::error::Result;
-
-// ============================================================================
-// Mock LLM — deterministic + counts calls.
-// ============================================================================
 
 struct CountingMockLlm {
     calls: Arc<Mutex<usize>>,
@@ -54,9 +48,6 @@ impl CountingMockLlm {
         Self {
             calls: Arc::new(Mutex::new(0)),
         }
-    }
-    fn call_count(&self) -> usize {
-        *self.calls.lock()
     }
     fn counter(&self) -> Arc<Mutex<usize>> {
         Arc::clone(&self.calls)
@@ -98,10 +89,6 @@ impl LLMPort for CountingMockLlm {
     }
 }
 
-// ============================================================================
-// Stub content-preview port.
-// ============================================================================
-
 struct StubPreview;
 
 #[async_trait]
@@ -113,10 +100,6 @@ impl DocumentContentPreviewPort for StubPreview {
         }))
     }
 }
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 async fn fresh_sqlite_pool() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -130,7 +113,7 @@ fn make_document(id: &str, file_name: &str) -> Document {
         file_name
     )))
     .unwrap();
-    let checksum = Checksum::from_bytes(file_name.as_bytes());
+    let checksum = ChecksumFactory::from_bytes(file_name.as_bytes()).unwrap();
     let now = Utc::now();
     Document::with_id(
         crate::shared::domain_types::DocumentId::from(id.to_string()),
@@ -228,20 +211,16 @@ fn build_use_case(
 ) -> RunClusteringUseCase {
     let doc_port: Arc<dyn DocumentRepositoryPort> = doc_repo;
     let emb_port: Arc<dyn crate::application::ports::EmbeddingRepositoryPort> = emb_repo;
-    let cluster_repo: Arc<dyn ClusterRepositoryPort> =
-        Arc::new(SqliteClusterRepository::new(pool));
+    let cluster_repo: Arc<dyn ClusterRepositoryPort> = Arc::new(SqliteClusterRepository::new(pool));
     let preview: Arc<dyn DocumentContentPreviewPort> = Arc::new(StubPreview);
 
-    RunClusteringUseCase::new(doc_port, emb_port, cluster_repo, preview, Some(llm))
-        .with_params(ClusteringParams {
+    RunClusteringUseCase::new(doc_port, emb_port, cluster_repo, preview, Some(llm)).with_params(
+        ClusteringParams {
             min_cluster_size: 5,
             min_samples: 3,
-        })
+        },
+    )
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[tokio::test]
 async fn full_pipeline_finds_three_clusters_on_synthetic_vault() {

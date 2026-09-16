@@ -6,33 +6,10 @@ use crate::features::file::dto::{
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
-use crate::shared::sql_like::directory_prefix_pattern;
-use serde::{Deserialize, Serialize};
-use std::fs;
 use std::sync::Arc;
 use tauri::State;
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct IndexedFolder {
-    pub path: String,
-    pub recursive: bool,
-    pub enabled: bool,
-    pub last_scan: Option<String>,
-    pub document_count: i64,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct IndexingActivity {
-    pub id: String,
-    pub action: String,
-    pub file_path: String,
-    pub status: String,
-    pub timestamp: String,
-    pub details: Option<String>,
-}
+pub use crate::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 
 /// Core implementation - Opens a file in the system's default application or returns internal rendering info
 ///
@@ -138,7 +115,7 @@ pub async fn open_file_impl(
 ///
 /// // Open a document (returns action info)
 /// const response = await invoke<OpenFileResponseDto>('open_file', {
-///   path: '/Users/josh/Documents/report.pdf'
+///   path: '/Users/example/Documents/report.pdf'
 /// });
 ///
 /// if (response.action === 'render_internal') {
@@ -394,67 +371,9 @@ pub async fn remove_indexed_folder_impl(
 
     let path_str = validated_path.to_string_lossy().to_string();
 
-    // Matches only paths strictly inside this directory, with `LIKE`
-    // metacharacters escaped. Binding alone is not enough — see
-    // `shared::sql_like` for why a bare `? || '%'` deletes siblings.
-    let subtree = directory_prefix_pattern(&path_str);
-
-    // Count documents before deletion for audit metadata
-    // repository-barrier-allow: legacy command-owned folder transaction; migrate to a file repository.
-    let doc_count: Result<(i64,), _> = sqlx::query_as(
-        r#"
-        SELECT COUNT(*) as count
-        FROM documents
-        WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\'
-        "#,
-    )
-    .bind(&path_str)
-    .bind(&subtree)
-    .fetch_one(container.db_pool())
-    .await;
-
-    let result = async {
-        // Both deletes must land together: a folder removed from the watch
-        // list while its documents survive (or vice versa) leaves the index
-        // describing a folder we no longer track.
-        let mut tx = container
-            .db_pool()
-            .begin()
-            .await
-            .map_err(|e| AppError::Other(format!("Failed to begin transaction: {}", e)))?;
-
-        // repository-barrier-allow: these statements form one legacy cross-table removal transaction.
-        sqlx::query(
-            r#"
-            DELETE FROM watch_folders
-            WHERE path = ?
-            "#,
-        )
-        .bind(&path_str)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Other(format!("Failed to remove indexed folder: {}", e)))?;
-
-        // repository-barrier-allow: paired with the watch-folder delete in the transaction above.
-        sqlx::query(
-            r#"
-            DELETE FROM documents
-            WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\'
-            "#,
-        )
-        .bind(&path_str)
-        .bind(&subtree)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Other(format!("Failed to remove documents from folder: {}", e)))?;
-
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Other(format!("Failed to commit folder removal: {}", e)))?;
-
-        Ok::<(), AppError>(())
-    }
-    .await;
+    let removal = container.file_library().remove_folder(&path_str).await;
+    let doc_count = removal.as_ref().ok().copied();
+    let result = removal.map(|_| ());
 
     // An un-watched folder must stop being readable over file-read IPC.
     if result.is_ok() {
@@ -474,7 +393,7 @@ pub async fn remove_indexed_folder_impl(
                 .with_metadata("operation", "remove_indexed_folder")
                 .with_metadata("resource_type", "folder");
 
-            if let Ok((count,)) = doc_count {
+            if let Some(count) = doc_count {
                 event = event.with_metadata("documents_removed", count.to_string());
             }
 
@@ -513,7 +432,7 @@ pub async fn remove_indexed_folder_impl(
 /// import { invoke } from '@tauri-apps/api/core';
 ///
 /// await invoke('remove_indexed_folder', {
-///   path: '/Users/josh/Documents/Archive'
+///   path: '/Users/example/Documents/Archive'
 /// });
 /// ```
 #[tauri::command]
@@ -580,62 +499,7 @@ pub async fn remove_indexed_folder(
 pub async fn get_indexed_folders(
     container: State<'_, Container>,
 ) -> Result<Vec<IndexedFolder>, AppError> {
-    // repository-barrier-allow: legacy read model pending extraction into a file repository.
-    let folders = sqlx::query_as::<_, IndexedFolderRow>(
-        r#"
-        SELECT
-            path,
-            recursive,
-            enabled,
-            last_scan,
-            created_at
-        FROM watch_folders
-        ORDER BY created_at DESC
-        "#,
-    )
-    .fetch_all(container.db_pool())
-    .await
-    .map_err(|e| AppError::Other(format!("Failed to fetch indexed folders: {}", e)))?;
-
-    let mut result = Vec::new();
-    for folder in folders {
-        // Escaped subtree match — must agree exactly with the pattern used by
-        // `remove_indexed_folder_impl`, or the count shown to the user will
-        // not match what removal actually deletes.
-        // repository-barrier-allow: legacy read-model enrichment pending repository extraction.
-        let doc_count: (i64,) = sqlx::query_as(
-            r#"
-            SELECT COUNT(*) as count
-            FROM documents
-            WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\'
-            "#,
-        )
-        .bind(&folder.path)
-        .bind(directory_prefix_pattern(&folder.path))
-        .fetch_one(container.db_pool())
-        .await
-        .map_err(|e| AppError::Other(format!("Failed to count documents: {}", e)))?;
-
-        result.push(IndexedFolder {
-            path: folder.path,
-            recursive: folder.recursive,
-            enabled: folder.enabled,
-            last_scan: folder.last_scan,
-            document_count: doc_count.0,
-            created_at: folder.created_at,
-        });
-    }
-
-    Ok(result)
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct IndexedFolderRow {
-    path: String,
-    recursive: bool,
-    enabled: bool,
-    last_scan: Option<String>,
-    created_at: String,
+    container.file_library().indexed_folders().await
 }
 
 /// Retrieves recent indexing activities with configurable limit
@@ -692,46 +556,7 @@ pub async fn get_indexing_activities(
     container: State<'_, Container>,
     limit: usize,
 ) -> Result<Vec<IndexingActivity>, AppError> {
-    // Validate limit to prevent excessive resource usage
-    let safe_limit = limit.min(10000);
-
-    // repository-barrier-allow: legacy indexing-activity read model pending repository extraction.
-    let activities = sqlx::query_as::<_, IndexingActivityRow>(
-        r#"
-        SELECT
-            id,
-            file_path,
-            status,
-            indexed_at as timestamp
-        FROM documents
-        ORDER BY indexed_at DESC
-        LIMIT ?
-        "#,
-    )
-    .bind(safe_limit as i64)
-    .fetch_all(container.db_pool())
-    .await
-    .map_err(|e| AppError::Other(format!("Failed to fetch indexing activities: {}", e)))?;
-
-    Ok(activities
-        .into_iter()
-        .map(|a| IndexingActivity {
-            id: a.id,
-            action: "indexed".to_string(),
-            file_path: a.file_path,
-            status: a.status,
-            timestamp: a.timestamp,
-            details: None,
-        })
-        .collect())
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct IndexingActivityRow {
-    id: String,
-    file_path: String,
-    status: String,
-    timestamp: String,
+    container.file_library().indexing_activities(limit).await
 }
 
 /// Core implementation - Reads the content of a file for preview purposes
@@ -942,7 +767,7 @@ pub async fn get_file_metadata_impl(
 /// import { invoke } from '@tauri-apps/api/core';
 ///
 /// const metadata = await invoke<FileMetadata>('get_file_metadata', {
-///   path: '/Users/josh/Documents/report.pdf'
+///   path: '/Users/example/Documents/report.pdf'
 /// });
 /// ```
 #[tauri::command]
@@ -990,7 +815,7 @@ pub async fn show_in_folder_impl(container: &Container, path: String) -> Result<
 /// import { invoke } from '@tauri-apps/api/core';
 ///
 /// await invoke('show_in_folder', {
-///   path: '/Users/josh/Documents/report.pdf'
+///   path: '/Users/example/Documents/report.pdf'
 /// });
 /// ```
 #[tauri::command]
@@ -1001,15 +826,11 @@ pub async fn show_in_folder(path: String, container: State<'_, Container>) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_show_in_folder_windows_osstring_safety() {
-        // Test that OsString concatenation handles special characters safely
-        // These test cases verify the fix for command injection vulnerability
-
         use std::ffi::OsString;
 
         let test_cases = vec![
@@ -1055,11 +876,9 @@ mod tests {
         for (input_path, expected_display) in test_cases {
             let path = PathBuf::from(input_path);
 
-            // Test OsString concatenation (same approach as show_in_folder)
             let mut select_arg = OsString::from("/select,");
             select_arg.push(&path);
 
-            // Verify OsString contains both parts
             let as_string = select_arg.to_string_lossy();
             assert!(
                 as_string.starts_with("/select,"),
@@ -1082,9 +901,6 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_show_in_folder_unix_arg_safety() {
-        // Test that individual .arg() calls handle special characters safely
-        // on macOS and Linux
-
         use std::ffi::OsStr;
 
         let test_cases = vec![
@@ -1103,7 +919,6 @@ mod tests {
         for input_path in test_cases {
             let path = PathBuf::from(input_path);
 
-            // Verify PathBuf can be used directly as arg (no conversion needed)
             let os_str: &OsStr = path.as_ref();
 
             // The key safety property: when passed to Command::arg(),
@@ -1119,9 +934,6 @@ mod tests {
 
     #[test]
     fn test_no_command_injection_patterns() {
-        // Verify that common command injection patterns are safe
-        // with our implementation
-
         let injection_attempts = vec![
             "file.txt && malicious.exe",
             "file.txt; rm -rf /",
@@ -1138,8 +950,6 @@ mod tests {
             // The entire string is treated as a path, not parsed for shell metacharacters
             let os_string = path.as_os_str().to_string_lossy();
 
-            // Verify the whole injection attempt is preserved as-is
-            // (not parsed/split by shell metacharacters)
             assert_eq!(
                 os_string, attempt,
                 "Injection attempt should be preserved as literal path: {}",

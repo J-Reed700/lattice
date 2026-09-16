@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 // Shutdown Tests
-//
 // Tests for graceful shutdown behavior with extended timeouts.
 // Verifies that the shutdown logic properly handles:
 // - Normal database closure within timeout

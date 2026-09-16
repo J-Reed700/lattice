@@ -3,7 +3,8 @@
 //! Thin plugin wrapper for settings CRUD operations via use cases.
 
 use crate::features::settings::dto::{
-    ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, UpdateSettingsRequestDto,
+    ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, SettingsDto,
+    UpdateSettingsRequestDto,
 };
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
@@ -141,49 +142,6 @@ fn build_http_client(request: &TestOllamaConnectionRequest) -> Result<Client, Ap
         .map_err(|e| AppError::Network(format!("Failed to build HTTP client: {}", e)))
 }
 
-async fn fetch_models_from_v1(client: &Client, base_url: &str) -> Result<Vec<String>, AppError> {
-    let endpoint = format!("{}/v1/models", base_url);
-    let response = client
-        .get(&endpoint)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(format!("Failed to reach {}: {}", endpoint, e)))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(AppError::Network(format!(
-            "{} returned {}: {}",
-            endpoint, status, body
-        )));
-    }
-
-    let body: serde_json::Value = response.json().await.map_err(|e| {
-        AppError::Deserialization(format!("Invalid response from {}: {}", endpoint, e))
-    })?;
-
-    let mut models = Vec::new();
-    if let Some(items) = body.get("data").and_then(|data| data.as_array()) {
-        for item in items {
-            if let Some(model_id) = item.get("id").and_then(|id| id.as_str()) {
-                let name = model_id.trim();
-                if !name.is_empty() && !models.iter().any(|m| m == name) {
-                    models.push(name.to_string());
-                }
-            }
-        }
-    }
-
-    if models.is_empty() {
-        return Err(AppError::Deserialization(format!(
-            "{} did not include any model ids",
-            endpoint
-        )));
-    }
-
-    Ok(models)
-}
-
 async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<String>, AppError> {
     let endpoint = format!("{}/api/tags", base_url);
     let response = client
@@ -236,24 +194,29 @@ pub async fn test_ollama_connection(
         validate_and_normalize_ollama_url(&request.ollama_url).map_err(ApiError::from)?;
     let client = build_http_client(&request).map_err(ApiError::from)?;
 
-    match fetch_models_from_v1(&client, &base_url).await {
-        Ok(models) => {
-            Ok(TestOllamaConnectionResponse {
-                endpoint: "/v1/models".to_string(),
-                models,
-            })
-        }
-        Err(v1_error) => match fetch_models_from_tags(&client, &base_url).await {
-            Ok(models) => Ok(TestOllamaConnectionResponse {
-                endpoint: "/api/tags".to_string(),
-                models,
-            }),
-            Err(tags_error) => Err(ApiError::from(AppError::Network(format!(
-                "Failed to fetch models from both /v1/models and /api/tags. v1 error: {}. tags error: {}",
-                v1_error, tags_error
-            )))),
-        },
-    }
+    let models = fetch_models_from_tags(&client, &base_url).await.map_err(|_| {
+        ApiError::from(AppError::Network(
+            "Could not list Ollama models from /api/tags. Check the URL and authentication. For a llama.cpp server, select the llama.cpp provider.".into(),
+        ))
+    })?;
+    Ok(TestOllamaConnectionResponse {
+        endpoint: "/api/tags".into(),
+        models,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn test_llama_cpp_connection(
+    request: crate::application::contracts::settings::LlamaCppSettingsDto,
+) -> Result<TestOllamaConnectionResponse, ApiError> {
+    let models = crate::features::llm::llama_cpp::LlamaCppLlm::test_connection(&request)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(TestOllamaConnectionResponse {
+        endpoint: "/v1/chat/completions".into(),
+        models,
+    })
 }
 
 #[tauri::command]
@@ -360,19 +323,14 @@ pub async fn test_custom_tool(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_settings(container: State<'_, Container>) -> Result<serde_json::Value, ApiError> {
+pub async fn get_settings(container: State<'_, Container>) -> Result<SettingsDto, ApiError> {
     let settings = container
         .get_settings_use_case()
         .execute()
         .await
         .map_err(ApiError::from)?;
 
-    serde_json::to_value(settings).map_err(|e| {
-        ApiError::from(AppError::Serialization(format!(
-            "Failed to serialize settings: {}",
-            e
-        )))
-    })
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -380,13 +338,19 @@ pub async fn get_settings(container: State<'_, Container>) -> Result<serde_json:
 pub async fn get_settings_category(
     category: String,
     container: State<'_, Container>,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<HashMap<String, serde_json::Value>, ApiError> {
     let category = parse_category(&category).map_err(ApiError::from)?;
-    container
+    let value = container
         .get_settings_use_case()
         .get_category(category)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    match value {
+        serde_json::Value::Object(fields) => Ok(fields.into_iter().collect()),
+        _ => Err(ApiError::from(AppError::InvalidData(
+            "Settings category must serialize to an object".into(),
+        ))),
+    }
 }
 
 #[tauri::command]
@@ -394,7 +358,7 @@ pub async fn get_settings_category(
 pub async fn update_settings(
     settings: UpdateSettingsRequest,
     container: State<'_, Container>,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<SettingsDto, ApiError> {
     let category = match settings.category {
         Some(category) => Some(parse_category(&category).map_err(ApiError::from)?),
         None => None,
@@ -423,31 +387,19 @@ pub async fn update_settings(
         tracing::warn!(error = %e, "failed to refresh file-access allowed roots after settings update");
     }
 
-    serde_json::to_value(updated).map_err(|e| {
-        ApiError::from(AppError::Serialization(format!(
-            "Failed to serialize settings: {}",
-            e
-        )))
-    })
+    Ok(updated)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn reset_settings(
-    container: State<'_, Container>,
-) -> Result<serde_json::Value, ApiError> {
+pub async fn reset_settings(container: State<'_, Container>) -> Result<SettingsDto, ApiError> {
     let reset = container
         .reset_settings_use_case()
         .reset_all()
         .await
         .map_err(ApiError::from)?;
 
-    serde_json::to_value(reset).map_err(|e| {
-        ApiError::from(AppError::Serialization(format!(
-            "Failed to serialize settings: {}",
-            e
-        )))
-    })
+    Ok(reset)
 }
 
 #[tauri::command]
@@ -481,7 +433,7 @@ pub async fn export_settings(container: State<'_, Container>) -> Result<String, 
 pub async fn import_settings(
     request: ImportSettingsRequest,
     container: State<'_, Container>,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<SettingsDto, ApiError> {
     let import_path = temp_settings_path("lattice-settings-import");
     tokio::fs::write(&import_path, request.settings)
         .await
@@ -505,12 +457,7 @@ pub async fn import_settings(
 
     let _ = tokio::fs::remove_file(&import_path).await;
 
-    serde_json::to_value(imported.settings).map_err(|e| {
-        ApiError::from(AppError::Serialization(format!(
-            "Failed to serialize settings: {}",
-            e
-        )))
-    })
+    Ok(imported.settings)
 }
 
 #[tauri::command]
@@ -646,9 +593,41 @@ pub async fn remove_watch_folder(
     Ok(())
 }
 
+/// Save a cloud credential through the same OS keyring as other app credentials.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_cloud_api_key(
+    container: State<'_, Container>,
+    provider: String,
+    key: String,
+) -> Result<(), ApiError> {
+    if !matches!(provider.as_str(), "openai" | "anthropic") || key.trim().is_empty() {
+        return Err(ApiError::from(AppError::InvalidInput(
+            "Choose a cloud provider and enter its API key".into(),
+        )));
+    }
+    container
+        .security_context()
+        .rate_limiters()
+        .credentials
+        .check_rate_limit("credentials")
+        .await
+        .map_err(|e| ApiError::from(AppError::RateLimitExceeded(e.to_string())))?;
+    container
+        .set_api_key_use_case()
+        .execute(provider, key)
+        .await
+        .map_err(ApiError::from)?;
+    container.invalidate_llm_cache();
+    container.invalidate_router_llm_cache();
+    container.invalidate_utility_llm_cache();
+    Ok(())
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("settings")
         .invoke_handler(tauri::generate_handler![
+            set_cloud_api_key,
             get_settings,
             get_settings_category,
             update_settings,
@@ -658,6 +637,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_system_theme,
             validate_folder_path,
             test_ollama_connection,
+            test_llama_cpp_connection,
             test_custom_tool,
             add_watch_folder,
             remove_watch_folder,

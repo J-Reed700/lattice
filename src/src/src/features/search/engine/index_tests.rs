@@ -15,12 +15,7 @@ mod tests {
     use sqlx::SqlitePool;
     use std::fs::{self, File};
     use std::io::Write as IoWrite;
-    use std::path::PathBuf;
     use tempfile::TempDir;
-
-    // ============================================================================
-    // Helper Functions
-    // ============================================================================
 
     async fn setup_test_db() -> (SqlitePool, TempDir) {
         let temp_dir = TempDir::new().unwrap();
@@ -30,7 +25,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Create schema
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS text_embeddings (
@@ -56,10 +50,6 @@ mod tests {
         embedding.iter().flat_map(|&f| f.to_le_bytes()).collect()
     }
 
-    // ============================================================================
-    // Empty Index Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_empty_index_from_database() {
         let (pool, _temp_dir) = setup_test_db().await;
@@ -76,7 +66,6 @@ mod tests {
 
         let temp_path = std::env::temp_dir().join("embeddings.bin");
 
-        // Remove any existing temp file
         let _ = fs::remove_file(&temp_path);
 
         let _index = EmbeddingIndex::from_database(&pool).await.unwrap();
@@ -88,17 +77,12 @@ mod tests {
         );
     }
 
-    // ============================================================================
-    // Large Index Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_large_index_10k_embeddings() {
         let (pool, _temp_dir) = setup_test_db().await;
         let dim = DEFAULT_EMBEDDING_DIM;
         let count = 10_000;
 
-        // Insert 10,000 embeddings
         for i in 0..count {
             let embedding = create_test_embedding(dim);
             let embedding_bytes = embedding_to_bytes(&embedding);
@@ -112,13 +96,11 @@ mod tests {
                 .unwrap();
         }
 
-        // Create index from database
         let index = EmbeddingIndex::from_database(&pool).await.unwrap();
 
         assert_eq!(index.count(), count);
         assert_eq!(index.dimension(), dim);
 
-        // Verify we can access all embeddings
         for i in 0..count {
             let emb = index.get_embedding(i).unwrap();
             assert_eq!(emb.len(), dim);
@@ -147,13 +129,8 @@ mod tests {
         let index = EmbeddingIndex::from_database(&pool).await.unwrap();
 
         // Memory-mapped files should be efficient
-        // Actual memory usage should be minimal
         assert_eq!(index.count(), count);
     }
-
-    // ============================================================================
-    // Index Persistence and Reload Tests
-    // ============================================================================
 
     #[tokio::test]
     async fn test_index_save_and_load() {
@@ -163,16 +140,13 @@ mod tests {
         let dim = 256;
         let count = 100;
 
-        // Create a test index file
         {
             let file = File::create(&index_path).unwrap();
             let mut writer = std::io::BufWriter::new(file);
 
-            // Write header
             writer.write_all(&(count as u32).to_le_bytes()).unwrap();
             writer.write_all(&(dim as u32).to_le_bytes()).unwrap();
 
-            // Write embeddings
             for _ in 0..count {
                 let embedding = create_test_embedding(dim);
                 for &val in &embedding {
@@ -183,13 +157,11 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Load the index
         let index = EmbeddingIndex::load(&index_path).unwrap();
 
         assert_eq!(index.count(), count);
         assert_eq!(index.dimension(), dim);
 
-        // Verify embeddings can be read
         for i in 0..count {
             let emb = index.get_embedding(i).unwrap();
             assert_eq!(emb.len(), dim);
@@ -204,7 +176,6 @@ mod tests {
         let dim = 128;
         let count = 50;
 
-        // Create initial index
         {
             let file = File::create(&index_path).unwrap();
             let mut writer = std::io::BufWriter::new(file);
@@ -222,7 +193,6 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Load index
         let index1 = EmbeddingIndex::load(&index_path).unwrap();
         assert_eq!(index1.count(), count);
 
@@ -232,16 +202,11 @@ mod tests {
         assert_eq!(index2.dimension(), dim);
     }
 
-    // ============================================================================
-    // File Corruption and Error Handling Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_empty_file_error() {
         let temp_dir = TempDir::new().unwrap();
         let index_path = temp_dir.path().join("empty.bin");
 
-        // Create empty file
         File::create(&index_path).unwrap();
 
         let result = EmbeddingIndex::load(&index_path);
@@ -257,7 +222,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let index_path = temp_dir.path().join("large.bin");
 
-        // Create a sparse file that appears very large
         let file = File::create(&index_path).unwrap();
         file.set_len(11 * 1024 * 1024 * 1024).unwrap(); // 11GB
 
@@ -300,17 +264,14 @@ mod tests {
             file.write_all(&count.to_le_bytes()).unwrap();
             file.write_all(&dim.to_le_bytes()).unwrap();
 
-            // Write one extra byte to misalign data
             file.write_all(&[0xFF]).unwrap();
 
-            // Write embedding data (now misaligned)
             let embedding = create_test_embedding(128);
             for &val in &embedding {
                 file.write_all(&val.to_le_bytes()).unwrap();
             }
         }
 
-        // Load should succeed (file is valid)
         let index = EmbeddingIndex::load(&index_path).unwrap();
 
         // But accessing embeddings might fail on ARM due to alignment
@@ -319,10 +280,6 @@ mod tests {
         // Either succeeds or fails gracefully
         assert!(result.is_ok() || result.is_err());
     }
-
-    // ============================================================================
-    // Metadata Validation Tests
-    // ============================================================================
 
     #[tokio::test]
     async fn test_metadata_stored() {
@@ -356,10 +313,6 @@ mod tests {
         assert_eq!(index.dimension(), dim);
     }
 
-    // ============================================================================
-    // Alignment Tests for Different Platforms
-    // ============================================================================
-
     #[test]
     fn test_alignment_validation() {
         use crate::shared::utils::alignment::validate_alignment;
@@ -367,7 +320,6 @@ mod tests {
         let aligned_data = vec![0_u8; 1024];
         assert!(validate_alignment::<f32>(aligned_data.as_ptr()).is_ok());
 
-        // Test unaligned pointer
         let data = vec![0_u8; 1025];
         #[allow(unsafe_code)]
         let unaligned_ptr = unsafe { data.as_ptr().add(1) };
@@ -383,11 +335,9 @@ mod tests {
     async fn test_f32_slice_conversion() {
         use crate::shared::utils::alignment::bytes_to_f32_slice;
 
-        // Create properly aligned f32 data
         let floats = [1.0_f32, 2.0, 3.0, 4.0];
         let bytes: Vec<u8> = floats.iter().flat_map(|&f| f.to_le_bytes()).collect();
 
-        // Convert back
         let result = bytes_to_f32_slice(&bytes);
         assert!(result.is_ok());
 
@@ -397,11 +347,6 @@ mod tests {
         assert!((converted[1] - 2.0).abs() < 1e-6);
     }
 
-    // ============================================================================
-    // Concurrent Access Tests
-    // ============================================================================
-
-    // FIXED: SIGBUS crash - added runtime alignment check in vector_ops.rs:169-181
     // ARM NEON now falls back to naive implementation for unaligned data
     // See: vector_ops.rs cosine_similarity_neon_impl for fix details
     #[tokio::test]
@@ -413,7 +358,6 @@ mod tests {
         let dim = 256;
         let count = 100;
 
-        // Insert test data
         for i in 0..count {
             let embedding = create_test_embedding(dim);
             let embedding_bytes = embedding_to_bytes(&embedding);
@@ -448,7 +392,6 @@ mod tests {
         }
     }
 
-    // FIXED: SIGBUS crash - added runtime alignment check in vector_ops.rs:169-181
     // ARM NEON now falls back to naive implementation for unaligned data
     // See: vector_ops.rs cosine_similarity_neon_impl for fix details
     #[tokio::test]

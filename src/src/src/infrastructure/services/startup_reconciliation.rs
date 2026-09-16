@@ -1,8 +1,8 @@
 use crate::domain::download::{DownloadError, DownloadState};
-use crate::persistence::repositories::DownloadedModelRepository;
-use crate::persistence::DownloadRepository;
+use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+use crate::infrastructure::persistence::DownloadRepository;
 use chrono::{DateTime, Duration, Utc};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -67,7 +67,7 @@ pub async fn reconcile_stale_downloads(
 /// Finds completed downloads that have no corresponding model record.
 /// Deletes the session to unblock the user from retrying.
 ///
-/// Oracle's "Database First" strategy: Delete session even if file cleanup fails.
+/// The database record is removed even if file cleanup fails.
 ///
 /// # Returns
 /// Number of orphaned sessions cleaned
@@ -87,7 +87,6 @@ pub async fn reconcile_orphaned_sessions(
         let model_id = session.model_id();
         let session_id = session.id().to_string();
 
-        // Check if model exists
         let model_exists = match model_id {
             Some(id) => model_repo
                 .find_by_model_id(id)
@@ -137,12 +136,12 @@ pub async fn reconcile_orphaned_sessions(
     Ok(cleaned)
 }
 
-/// Reconcile orphaned model files on app startup (Phase 3)
+/// Reconcile orphaned model files on app startup.
 ///
 /// Scans the models directory for files that have no corresponding database record.
 /// Deletes orphaned files to free up disk space.
 ///
-/// Oracle's "Database First" strategy: Only delete files that have no DB record.
+/// Only files without a database record are deleted.
 ///
 /// # Arguments
 ///
@@ -157,7 +156,6 @@ pub async fn reconcile_orphaned_files(
 ) -> Result<usize, DownloadError> {
     info!("Scanning for orphaned model files in: {:?}", models_dir);
 
-    // Check if models directory exists
     if !models_dir.exists() {
         info!("Models directory does not exist, skipping orphaned file cleanup");
         return Ok(0);
@@ -166,7 +164,6 @@ pub async fn reconcile_orphaned_files(
     let mut cleaned = 0;
     let mut total_size_freed: u64 = 0;
 
-    // Read all model directories
     let read_dir = std::fs::read_dir(models_dir)
         .map_err(|e| DownloadError::IoError(format!("Failed to read models directory: {}", e)))?;
 
@@ -186,7 +183,6 @@ pub async fn reconcile_orphaned_files(
             continue;
         }
 
-        // Extract model_id from directory name
         let model_id = match model_dir_path.file_name().and_then(|n| n.to_str()) {
             Some(name) => name,
             None => {
@@ -195,7 +191,6 @@ pub async fn reconcile_orphaned_files(
             }
         };
 
-        // Check if model exists in database
         let model_exists = model_repo
             .find_by_model_id(model_id)
             .await
@@ -214,7 +209,6 @@ pub async fn reconcile_orphaned_files(
                 total_size_freed += size;
             }
 
-            // Delete the entire directory
             match std::fs::remove_dir_all(&model_dir_path) {
                 Ok(_) => {
                     info!("Deleted orphaned model directory: {:?}", model_dir_path);

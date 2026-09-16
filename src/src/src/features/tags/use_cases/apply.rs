@@ -24,13 +24,11 @@ impl ApplyTagsUseCase {
             .acquire_lock_with_timeout(&request.document_id)
             .await?;
 
-        // Apply tags
         let tags = self
             .tag_service
             .apply_tags(&request.document_id, request.tag_names)
             .await?;
 
-        // Convert to DTOs
         let tag_dtos: Vec<TagDto> = tags
             .into_iter()
             .map(|tag| TagDto {

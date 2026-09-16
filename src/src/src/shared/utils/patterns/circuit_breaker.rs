@@ -118,10 +118,7 @@ impl CircuitBreaker {
     pub async fn is_call_permitted(&self) -> bool {
         let state = self.state.lock().await;
         match &*state {
-            State::Open { opened_at } => {
-                // Check if timeout has elapsed to transition to half-open
-                opened_at.elapsed() >= self.config.timeout
-            }
+            State::Open { opened_at } => opened_at.elapsed() >= self.config.timeout,
             _ => true,
         }
     }

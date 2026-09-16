@@ -6,18 +6,15 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
-
 
 //! DISABLED: Tag generator integration tests
-// Test code - allow common test patterns
 
 //!
 //! These tests are temporarily disabled because the TagGenerator module has been
 //! disabled as part of the local-first refactoring (removing cloud provider dependencies).
 //!
 //! TODO: Re-enable these tests once TagGenerator is re-implemented using local LLM (Ollama).
-//!       See: src/app/src/src/infrastructure/extraction/tag_generator.rs
+//!       See: src/src/src/infrastructure/extraction/tag_generator.rs
 //!
 //! Original purpose: Tests LLM-based tag generation with Anthropic Claude.
 
@@ -74,7 +71,6 @@ async fn test_generate_tags_simple() {
 
     println!("Generated tags: {:?}", tags);
 
-    // Check that tags are relevant (at least one should be ML-related)
     let tags_lower: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
     let is_relevant = tags_lower.iter().any(|t| {
         t.contains("machine") ||
@@ -110,7 +106,6 @@ async fn test_generate_tags_with_metadata() {
 
     println!("Tags with metadata: {:?}", tags);
 
-    // Should include programming-related tags
     let tags_lower: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
     let has_relevant = tags_lower.iter().any(|t| {
         t.contains("python") ||
@@ -189,7 +184,6 @@ async fn test_batch_tag_generation() {
         assert!(!tags.is_empty(), "Document {} has no tags", i);
     }
 
-    // Verify tags are different for different topics
     let tags1_lower: Vec<String> = results[0].iter().map(|t| t.to_lowercase()).collect();
     let tags2_lower: Vec<String> = results[1].iter().map(|t| t.to_lowercase()).collect();
 
@@ -212,7 +206,6 @@ async fn test_prompt_caching_effectiveness() {
 
     let generator = TagGenerator::new(&api_key).unwrap();
 
-    // Generate tags for multiple similar documents
     let documents: Vec<(String, Option<DocumentMetadata>)> = (0..5)
         .map(|i| {
             (
@@ -260,13 +253,11 @@ async fn test_cache_stats_tracking() {
     assert_eq!(initial_stats.total_tokens_saved, 0);
     assert_eq!(initial_stats.hit_rate_percent(), 0.0);
 
-    // Generate some tags
     let _ = generator.generate_tags("Test content", None, 3).await;
 
     let after_stats = generator.get_cache_stats();
     println!("Stats after one generation: {:?}", after_stats);
 
-    // Should have recorded at least the request
     assert!(after_stats.hits + after_stats.misses > 0);
 }
 
@@ -280,7 +271,6 @@ async fn test_empty_content_handling() {
 
     let tags = generator.generate_tags("", None, 5).await;
 
-    // Should handle gracefully - either return empty tags or a reasonable default
     match tags {
         Ok(tags) => {
             println!("Tags for empty content: {:?}", tags);
@@ -301,7 +291,6 @@ async fn test_very_long_content() {
 
     let generator = TagGenerator::new(&api_key).unwrap();
 
-    // Create a long document
     let content = "This is about machine learning. ".repeat(500);
 
     let tags = generator.generate_tags(&content, None, 5).await;
@@ -367,7 +356,6 @@ async fn test_concurrent_tag_generation() {
 
     let generator = TagGenerator::new(&api_key).unwrap();
 
-    // Generate tags concurrently
     let handles: Vec<_> = (0..3)
         .map(|i| {
             let gen_clone = generator.clone();

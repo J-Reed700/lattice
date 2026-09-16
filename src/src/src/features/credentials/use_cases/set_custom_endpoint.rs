@@ -147,7 +147,6 @@ mod tests {
         assert!(dto.success);
         assert!(dto.message.is_some());
 
-        // Verify endpoint was stored
         let stored = mock_port.get_endpoint().await;
         assert_eq!(stored, Some("https://api.example.com/v1".to_string()));
     }
@@ -157,7 +156,6 @@ mod tests {
         let mock_port = Arc::new(MockCredentialsPort::new());
         let use_case = SetCustomEndpointUseCase::new(mock_port.clone());
 
-        // Set first endpoint
         use_case
             .execute("https://first.example.com".to_string())
             .await

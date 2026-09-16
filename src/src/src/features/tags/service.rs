@@ -123,7 +123,6 @@ impl TagService {
         let mut normalized = HashSet::new();
         let mut result = Vec::new();
 
-        // Add existing tags first (preserving original case)
         for tag in existing {
             let normalized_tag = tag.to_lowercase();
             if normalized.insert(normalized_tag) {
@@ -131,7 +130,6 @@ impl TagService {
             }
         }
 
-        // Add generated tags that aren't duplicates
         for tag in generated {
             let normalized_tag = tag.to_lowercase();
             if normalized.insert(normalized_tag) {
@@ -149,11 +147,11 @@ impl TagServiceTrait for TagService {
         &self,
         name: &str,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag, crate::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
-            return Err(crate::error::AppError::InvalidInput(
+            return Err(crate::shared::error::AppError::InvalidInput(
                 "Tag name must be 1-100 characters".into(),
             ));
         }
@@ -161,10 +159,9 @@ impl TagServiceTrait for TagService {
         let normalized_name = name.trim().to_lowercase();
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
-        tag_repo
-            .create(&normalized_name, color)
-            .await
-            .map_err(|e| crate::error::AppError::Database(format!("Failed to create tag: {}", e)))
+        tag_repo.create(&normalized_name, color).await.map_err(|e| {
+            crate::shared::error::AppError::Database(format!("Failed to create tag: {}", e))
+        })
     }
 
     async fn update_tag(
@@ -172,12 +169,12 @@ impl TagServiceTrait for TagService {
         tag_id: &str,
         name: Option<&str>,
         color: Option<&str>,
-    ) -> Result<crate::features::tags::entity::Tag, crate::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
             if n.is_empty() || n.len() > 100 {
-                return Err(crate::error::AppError::InvalidInput(
+                return Err(crate::shared::error::AppError::InvalidInput(
                     "Tag name must be 1-100 characters".into(),
                 ));
             }
@@ -189,39 +186,43 @@ impl TagServiceTrait for TagService {
         tag_repo
             .update(tag_id, normalized_name.as_deref(), color)
             .await
-            .map_err(|e| crate::error::AppError::Database(format!("Failed to update tag: {}", e)))
+            .map_err(|e| {
+                crate::shared::error::AppError::Database(format!("Failed to update tag: {}", e))
+            })
     }
 
-    async fn delete_tag(&self, tag_id: &str) -> Result<(), crate::error::AppError> {
+    async fn delete_tag(&self, tag_id: &str) -> Result<(), crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
-        tag_repo
-            .delete(tag_id)
-            .await
-            .map_err(|e| crate::error::AppError::Database(format!("Failed to delete tag: {}", e)))
+        tag_repo.delete(tag_id).await.map_err(|e| {
+            crate::shared::error::AppError::Database(format!("Failed to delete tag: {}", e))
+        })
     }
 
     async fn get_all_tags(
         &self,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
-        tag_repo
-            .get_all()
-            .await
-            .map_err(|e| crate::error::AppError::Database(format!("Failed to get tags: {}", e)))
+        tag_repo.get_all().await.map_err(|e| {
+            crate::shared::error::AppError::Database(format!("Failed to get tags: {}", e))
+        })
     }
 
     async fn get_all_tags_with_counts(
         &self,
-    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::shared::error::AppError>
+    {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         let results = tag_repo.get_all_with_counts().await.map_err(|e| {
-            crate::error::AppError::Database(format!("Failed to get tags with counts: {}", e))
+            crate::shared::error::AppError::Database(format!(
+                "Failed to get tags with counts: {}",
+                e
+            ))
         })?;
 
         Ok(results
@@ -239,7 +240,7 @@ impl TagServiceTrait for TagService {
     async fn get_tags_for_document(
         &self,
         document_id: &str,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -247,7 +248,10 @@ impl TagServiceTrait for TagService {
             .get_tags_for_document(document_id)
             .await
             .map_err(|e| {
-                crate::error::AppError::Database(format!("Failed to get document tags: {}", e))
+                crate::shared::error::AppError::Database(format!(
+                    "Failed to get document tags: {}",
+                    e
+                ))
             })
     }
 
@@ -255,12 +259,11 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_names: Vec<String>,
-    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::entity::Tag>, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
-        // Get existing tags for the document
         let existing_tags = tag_repo
             .get_tags_for_document(document_id)
             .await
@@ -278,20 +281,21 @@ impl TagServiceTrait for TagService {
         // Merge with existing tags
         let merged_tags = Self::merge_tags(existing_tag_names, normalized_tags);
 
-        // Apply merged tags
         tag_repo
             .add_tags_to_document_by_names(document_id, merged_tags)
             .await
             .map_err(|e| {
-                crate::error::AppError::Database(format!("Failed to apply tags: {}", e))
+                crate::shared::error::AppError::Database(format!("Failed to apply tags: {}", e))
             })?;
 
-        // Return updated tags
         tag_repo
             .get_tags_for_document(document_id)
             .await
             .map_err(|e| {
-                crate::error::AppError::Database(format!("Failed to get updated tags: {}", e))
+                crate::shared::error::AppError::Database(format!(
+                    "Failed to get updated tags: {}",
+                    e
+                ))
             })
     }
 
@@ -299,20 +303,22 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         tag_id: &str,
-    ) -> Result<(), crate::error::AppError> {
+    ) -> Result<(), crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
         tag_repo
             .remove_tag_from_document(document_id, tag_id)
             .await
-            .map_err(|e| crate::error::AppError::Database(format!("Failed to remove tag: {}", e)))
+            .map_err(|e| {
+                crate::shared::error::AppError::Database(format!("Failed to remove tag: {}", e))
+            })
     }
 
     async fn search_documents_by_tag(
         &self,
         tag_name: &str,
-    ) -> Result<Vec<String>, crate::error::AppError> {
+    ) -> Result<Vec<String>, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         let tag_repo = TagRepository::new(self.db_pool.clone());
@@ -320,7 +326,7 @@ impl TagServiceTrait for TagService {
             .find_documents_by_tag_name(tag_name)
             .await
             .map_err(|e| {
-                crate::error::AppError::Database(format!(
+                crate::shared::error::AppError::Database(format!(
                     "Failed to search documents by tag: {}",
                     e
                 ))
@@ -331,50 +337,54 @@ impl TagServiceTrait for TagService {
         &self,
         document_id: &str,
         max_tags: usize,
-    ) -> Result<Vec<String>, crate::error::AppError> {
-        Err(crate::error::AppError::ServiceNotAvailable(format!(
-            "Tag generation requires AI model (document_id={}, max_tags={})",
-            document_id, max_tags
-        )))
+    ) -> Result<Vec<String>, crate::shared::error::AppError> {
+        Err(crate::shared::error::AppError::ServiceNotAvailable(
+            format!(
+                "Tag generation requires AI model (document_id={}, max_tags={})",
+                document_id, max_tags
+            ),
+        ))
     }
 
     async fn auto_tag_all_documents(
         &self,
         max_documents: usize,
-    ) -> Result<usize, crate::error::AppError> {
-        Err(crate::error::AppError::ServiceNotAvailable(format!(
-            "Auto-tagging requires AI model (max_documents={})",
-            max_documents
-        )))
+    ) -> Result<usize, crate::shared::error::AppError> {
+        Err(crate::shared::error::AppError::ServiceNotAvailable(
+            format!(
+                "Auto-tagging requires AI model (max_documents={})",
+                max_documents
+            ),
+        ))
     }
 
     async fn acquire_lock_with_timeout(
         &self,
         document_id: &str,
-    ) -> Result<DocumentLockGuard, crate::error::AppError> {
+    ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
         TagService::acquire_lock_with_timeout(self, document_id)
             .await
-            .map_err(crate::error::AppError::Other)
+            .map_err(crate::shared::error::AppError::Other)
     }
 
     async fn acquire_lock(
         &self,
         document_id: &str,
-    ) -> Result<DocumentLockGuard, crate::error::AppError> {
+    ) -> Result<DocumentLockGuard, crate::shared::error::AppError> {
         TagService::acquire_lock_with_timeout(self, document_id)
             .await
-            .map_err(crate::error::AppError::Other)
+            .map_err(crate::shared::error::AppError::Other)
     }
 
     async fn get_or_create(
         &self,
         name: &str,
         color: &str,
-    ) -> Result<crate::features::tags::entity::Tag, crate::error::AppError> {
+    ) -> Result<crate::features::tags::entity::Tag, crate::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
         if name.is_empty() || name.len() > 100 {
-            return Err(crate::error::AppError::InvalidInput(
+            return Err(crate::shared::error::AppError::InvalidInput(
                 "Tag name must be 1-100 characters".into(),
             ));
         }
@@ -384,12 +394,15 @@ impl TagServiceTrait for TagService {
         tag_repo
             .get_or_create(&normalized_name, Some(color))
             .await
-            .map_err(|e| crate::error::AppError::Database(format!("Failed to get tag: {}", e)))
+            .map_err(|e| {
+                crate::shared::error::AppError::Database(format!("Failed to get tag: {}", e))
+            })
     }
 
     async fn get_all_with_counts(
         &self,
-    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::error::AppError> {
+    ) -> Result<Vec<crate::features::tags::dto::TagWithCountDto>, crate::shared::error::AppError>
+    {
         self.get_all_tags_with_counts().await
     }
 
@@ -397,7 +410,6 @@ impl TagServiceTrait for TagService {
         let mut seen_lower = std::collections::HashSet::new();
         let mut result = Vec::new();
 
-        // Add existing tags (preserve original case)
         for tag in existing {
             let lower = tag.to_lowercase();
             if seen_lower.insert(lower) {
@@ -405,7 +417,6 @@ impl TagServiceTrait for TagService {
             }
         }
 
-        // Add generated tags (skip duplicates case-insensitively)
         for tag in generated {
             let lower = tag.to_lowercase();
             if seen_lower.insert(lower) {

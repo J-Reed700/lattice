@@ -22,7 +22,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use lattice::infrastructure::services::hyde::HyDEService;
+//! use lattice::features::qa::hyde::HyDEService;
 //! use std::sync::Arc;
 //!
 //! async fn example(llm: Arc<dyn LLMPort>) {
@@ -40,17 +40,13 @@
 
 use crate::application::ports::LLMPort;
 use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
-use crate::infrastructure::search::query_expansion::dictionaries::select_informative_terms;
-use crate::infrastructure::services::hyde::hyde_generator::HyDEGenerator;
-use crate::infrastructure::services::hyde::query_classifier::QueryClassifier;
+use crate::features::qa::hyde::hyde_generator::HyDEGenerator;
+use crate::features::qa::hyde::query_classifier::QueryClassifier;
+use crate::features::search::engine::query_expansion::dictionaries::select_informative_terms;
 use crate::shared::error::{AppError, Result};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info};
-
-// ============================================================================
-// HyDE Service
-// ============================================================================
 
 /// Orchestrates HyDE query interpretation pipeline.
 ///
@@ -62,7 +58,7 @@ use tracing::{debug, info};
 /// # Example
 ///
 /// ```rust,no_run
-/// use lattice::infrastructure::services::hyde::HyDEService;
+/// use lattice::features::qa::hyde::HyDEService;
 /// use lattice::domain::qa::hyde::QueryType;
 /// use std::sync::Arc;
 ///
@@ -96,7 +92,7 @@ impl HyDEService {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use lattice::infrastructure::services::hyde::HyDEService;
+    /// use lattice::features::qa::hyde::HyDEService;
     /// use std::sync::Arc;
     ///
     /// let service = HyDEService::new(llm_port);
@@ -191,7 +187,6 @@ impl HyDEService {
             return Err(AppError::InvalidInput("Query cannot be empty".to_string()));
         }
 
-        // Step 1: Classify query type
         debug!("Classifying query: {}", query);
         let mut query_type = self.classifier.classify(&query);
         if let Some(context) = conversation_context {
@@ -214,7 +209,6 @@ impl HyDEService {
         }
         info!("Query classified as: {}", query_type);
 
-        // Step 2: Generate HyDE interpretation
         let interpretation = self
             .generator
             .generate_with_context(query_type, query, conversation_context)
@@ -391,10 +385,6 @@ fn take_last_chars(text: &str, max_chars: usize) -> String {
         .unwrap_or(0);
     text[start_byte..].to_string()
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -628,7 +618,6 @@ mod tests {
         let mock_llm = Arc::new(MockLLM::new("Test response"));
         let service = HyDEService::new(mock_llm);
 
-        // Process multiple queries in sequence
         let greeting = service.interpret_query("Hi").await.unwrap();
         assert_eq!(greeting.query_type, QueryType::Greeting);
 
@@ -738,7 +727,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_integration_greeting_no_llm_call() {
-        // Verify end-to-end that greetings don't call LLM
         struct PanicLLM;
 
         #[async_trait]

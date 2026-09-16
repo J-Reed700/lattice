@@ -1,5 +1,5 @@
 //! Standalone test for MockHttpClient verification
-//! Oracle-approved validation of Range header capture (Test 26 critical component)
+//! Validation of Range header capture.
 
 // A panic is the assertion signal for this integration-test crate. The package
 // denies these operations in production targets.

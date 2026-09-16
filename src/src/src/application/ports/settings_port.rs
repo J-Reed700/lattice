@@ -262,10 +262,8 @@ impl SettingsRepositoryPort for MockSettingsRepository {
     ) -> Result<SettingsDto> {
         let mut settings = self.settings.write().await;
 
-        // Apply updates based on category
         match category {
             Some(cat) => {
-                // Update specific category
                 let category_value = match cat {
                     SettingsCategory::Indexing => serde_json::to_value(&settings.indexing)?,
                     SettingsCategory::Search => serde_json::to_value(&settings.search)?,
@@ -295,7 +293,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     }
                 }
 
-                // Update the category
                 match cat {
                     SettingsCategory::Indexing => {
                         settings.indexing =
@@ -336,7 +333,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                 }
             }
             None => {
-                // Update all settings (flat structure)
                 let mut settings_value = serde_json::to_value(&*settings)?;
                 let settings_map = settings_value.as_object_mut().ok_or_else(|| {
                     crate::shared::error::AppError::InvalidInput(
@@ -365,22 +361,18 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         let mut settings = self.settings.write().await;
 
         match category {
-            Some(cat) => {
-                // Reset specific category
-                match cat {
-                    SettingsCategory::Indexing => settings.indexing = Default::default(),
-                    SettingsCategory::Search => settings.search = Default::default(),
-                    SettingsCategory::Llm => settings.llm = Default::default(),
-                    SettingsCategory::Ui => settings.ui = Default::default(),
-                    SettingsCategory::Sync => settings.sync = Default::default(),
-                    SettingsCategory::Backup => settings.backup = Default::default(),
-                    SettingsCategory::Privacy => settings.privacy = Default::default(),
-                    SettingsCategory::Vault => settings.vault = Default::default(),
-                    SettingsCategory::Onboarding => settings.onboarding = Default::default(),
-                }
-            }
+            Some(cat) => match cat {
+                SettingsCategory::Indexing => settings.indexing = Default::default(),
+                SettingsCategory::Search => settings.search = Default::default(),
+                SettingsCategory::Llm => settings.llm = Default::default(),
+                SettingsCategory::Ui => settings.ui = Default::default(),
+                SettingsCategory::Sync => settings.sync = Default::default(),
+                SettingsCategory::Backup => settings.backup = Default::default(),
+                SettingsCategory::Privacy => settings.privacy = Default::default(),
+                SettingsCategory::Vault => settings.vault = Default::default(),
+                SettingsCategory::Onboarding => settings.onboarding = Default::default(),
+            },
             None => {
-                // Reset all settings
                 *settings = SettingsDto::default();
             }
         }
@@ -389,19 +381,16 @@ impl SettingsRepositoryPort for MockSettingsRepository {
     }
 
     async fn export(&self, _path: &str) -> Result<()> {
-        // Mock implementation - no-op
         Ok(())
     }
 
     async fn import(&self, _path: &str, _merge: bool) -> Result<SettingsDto> {
-        // Mock implementation - return current settings
         Ok(self.settings.read().await.clone())
     }
 
     fn validate(&self, settings: &SettingsDto) -> ValidationResult {
         let mut result = ValidationResult::success();
 
-        // Validate indexing settings
         if settings.indexing.chunk_size == 0 {
             result.add_error("indexing", "chunk_size must be greater than 0".to_string());
         }
@@ -415,7 +404,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             );
         }
 
-        // Validate search settings
         if settings.search.max_results == 0 {
             result.add_error("search", "max_results must be greater than 0".to_string());
         }
@@ -433,7 +421,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             );
         }
 
-        // Validate LLM settings
         if settings.llm.temperature < 0.0 || settings.llm.temperature > 2.0 {
             result.add_error("llm", "temperature must be between 0.0 and 2.0".to_string());
         }
@@ -679,7 +666,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             );
         }
 
-        // Validate UI settings
         if settings.ui.font_size < 8 || settings.ui.font_size > 72 {
             result.add_error("ui", "font_size must be between 8 and 72".to_string());
         }
@@ -687,7 +673,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             result.add_error("ui", "results_per_page must be greater than 0".to_string());
         }
 
-        // Validate sync settings
         if settings.sync.sync_enabled && settings.sync.sync_url.is_empty() {
             result.add_error(
                 "sync",
@@ -695,8 +680,8 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             );
         }
 
-        // Match the production repository: the legacy field remains in the
-        // DTO, but scheduled backups always use the protected app directory.
+        // Match the production repository: the field remains in the DTO, but
+        // scheduled backups always use the protected app directory.
         if !settings.backup.backup_path.is_empty() {
             result.add_error(
                 "backup",
@@ -714,10 +699,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         path.exists() && path.is_dir()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -766,7 +747,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset
         let reset = repo.reset(Some(SettingsCategory::Search)).await.unwrap();
 
         assert_eq!(reset.search.max_results, 10); // Back to default

@@ -3,7 +3,7 @@
 //! Converts between domain tag models and DTOs.
 //!
 //! This mapper handles conversion between tag domain models and their DTO representations.
-//! Note: Tag domain models will be implemented in Phase 3. For now, this mapper provides
+//! Until tag domain models are introduced, this mapper provides
 //! the structure for future implementation.
 
 use crate::features::tags::dto::{CreateTagRequestDto, TagDto};
@@ -66,7 +66,7 @@ impl TagMapper {
     /// # Errors
     ///
     /// Returns error if the string is not a valid UUID
-    pub fn string_to_id(id_str: &str) -> crate::error::Result<TagId> {
+    pub fn string_to_id(id_str: &str) -> crate::shared::error::Result<TagId> {
         TagId::from_string(id_str.to_string())
             .map_err(|e| AppError::ValidationFailed(format!("Invalid tag ID: {}", e)))
     }
@@ -86,10 +86,6 @@ impl TagMapper {
         (request.name, request.color, request.description)
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

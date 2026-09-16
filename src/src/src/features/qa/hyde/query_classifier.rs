@@ -58,7 +58,6 @@ mod tests {
     fn test_greeting_detection() {
         let classifier = QueryClassifier::new();
 
-        // Should detect greetings
         assert_eq!(classifier.classify("hi"), QueryType::Greeting);
         assert_eq!(classifier.classify("hello"), QueryType::Greeting);
         assert_eq!(classifier.classify("hey"), QueryType::Greeting);
@@ -69,7 +68,6 @@ mod tests {
         assert_eq!(classifier.classify("good evening"), QueryType::Greeting);
         assert_eq!(classifier.classify("  hello  "), QueryType::Greeting);
 
-        // Should not detect as greeting (has additional content)
         assert_ne!(classifier.classify("hello world"), QueryType::Greeting);
         assert_ne!(classifier.classify("hi, how are you?"), QueryType::Greeting);
     }
@@ -78,7 +76,6 @@ mod tests {
     fn test_question_detection() {
         let classifier = QueryClassifier::new();
 
-        // Should detect questions
         assert_eq!(classifier.classify("what is rust?"), QueryType::Question);
         assert_eq!(
             classifier.classify("how do I use this?"),
@@ -120,7 +117,6 @@ mod tests {
     fn test_command_detection() {
         let classifier = QueryClassifier::new();
 
-        // Should detect commands
         assert_eq!(
             classifier.classify("search for documents"),
             QueryType::Command

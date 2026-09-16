@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Example tests demonstrating MockUnitOfWork usage
 //!
@@ -15,7 +14,7 @@
 //! - lattice::domain::repositories::UnitOfWork -> Not in public API
 //! - lattice::domain::entities::Document -> lattice::domain::Document
 //! - lattice::application::ports -> Not fully in public API
-//! - lattice::error::AppError -> lattice::AppError
+//! - lattice::shared::error::AppError -> lattice::AppError
 //!
 //! This file provides comprehensive examples of how to use the MockUnitOfWork
 //! and MockUnitOfWorkFactory for testing service layer code.

@@ -23,10 +23,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::ports::{
-    ChunkRepositoryPort, DocumentRepositoryPort, FileStoragePort, VectorSearchPort,
-};
-use crate::domain::repositories::UnitOfWorkFactory;
+use crate::application::ports::UnitOfWorkFactory;
+use crate::application::ports::{DocumentRepositoryPort, FileStoragePort, VectorSearchPort};
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +59,6 @@ pub struct DeleteDocumentResponseDto {
 /// ## Dependencies
 ///
 /// - `DocumentRepositoryPort`: Manages document records
-/// - `ChunkRepositoryPort`: Manages text chunks
 /// - `VectorSearchPort`: Manages vector embeddings
 ///
 /// ## Business Rules
@@ -72,7 +69,6 @@ pub struct DeleteDocumentResponseDto {
 /// - Database operations are atomic; vector index removal happens after commit
 pub struct DeleteDocumentUseCase {
     document_repo: Arc<dyn DocumentRepositoryPort>,
-    chunk_repo: Arc<dyn ChunkRepositoryPort>,
     vector_search: Arc<dyn VectorSearchPort>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
     file_storage: Arc<dyn FileStoragePort>,
@@ -84,20 +80,17 @@ impl DeleteDocumentUseCase {
     /// # Arguments
     ///
     /// * `document_repo` - Repository for document persistence
-    /// * `chunk_repo` - Repository for chunk persistence
     /// * `vector_search` - Service for managing vector embeddings
     /// * `uow_factory` - Unit of work factory for transactional operations
     /// * `file_storage` - File storage for deleting physical files
     pub fn new(
         document_repo: Arc<dyn DocumentRepositoryPort>,
-        chunk_repo: Arc<dyn ChunkRepositoryPort>,
         vector_search: Arc<dyn VectorSearchPort>,
         uow_factory: Arc<dyn UnitOfWorkFactory>,
         file_storage: Arc<dyn FileStoragePort>,
     ) -> Self {
         Self {
             document_repo,
-            chunk_repo,
             vector_search,
             uow_factory,
             file_storage,
@@ -144,6 +137,10 @@ impl DeleteDocumentUseCase {
             .await
             .ok();
 
+        // Drop summary vectors before the rows go so the summary index never
+        // keeps a dead entry (rows themselves cascade on delete).
+        crate::features::summaries::trigger::notify_document_deleted(&document_id);
+
         let mut uow = self.uow_factory.create().await?;
         let db_result = {
             let chunk_repo = uow.chunk_repository()?;
@@ -189,23 +186,14 @@ impl DeleteDocumentUseCase {
         // If this fails, surface error to user (DB state is already committed)
         // Key comes from the one canonical scheme (`encoding::vector_key`),
         // shared with the writers and the startup rebuild.
-        for chunk in &chunks {
-            let embedding_key =
-                crate::features::embedding::encoding::vector_key(&chunk.id().to_string());
-            if let Err(e) = self.vector_search.remove_embedding(&embedding_key) {
-                tracing::error!(
-                    document_id = %document_id,
-                    chunk_id = %chunk.id(),
-                    error = %e,
-                    "Failed to remove vector embedding after delete commit"
-                );
-                return Err(AppError::Other(format!(
-                    "Failed to remove vector embedding for chunk {}: {}",
-                    chunk.id(),
-                    e
-                )));
-            }
-        }
+        let embedding_keys: Vec<String> = chunks
+            .iter()
+            .map(|chunk| crate::features::embedding::encoding::vector_key(&chunk.id().to_string()))
+            .collect();
+        let vector_search = Arc::clone(&self.vector_search);
+        tokio::task::spawn_blocking(move || vector_search.remove_embeddings(&embedding_keys))
+            .await
+            .map_err(|e| AppError::Other(format!("Vector deletion task failed: {}", e)))??;
 
         // 5. Delete the physical file from content-addressed storage AFTER DB commit
         if let Some(path_str) = file_path_str {
@@ -257,7 +245,3 @@ impl DeleteDocumentUseCase {
         })
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================

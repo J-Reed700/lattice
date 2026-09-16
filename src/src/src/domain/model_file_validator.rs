@@ -84,7 +84,7 @@ impl ModelFileValidator {
     ///
     /// A directory is considered valid if it contains at least one:
     /// - `.gguf` file (GGUF format)
-    /// - `.bin` file (legacy format)
+    /// - `.bin` file (PyTorch pickle checkpoint, e.g. `pytorch_model.bin`)
     /// - `.onnx` file (ONNX format)
     /// - `.onnx_data` file (ONNX data)
     /// - `.json` file (model config)
@@ -226,7 +226,6 @@ impl ModelFileValidator {
     /// * `true` - File is a valid model file (`.gguf`, `.bin`, `.onnx`, `.onnx_data`, `.json`, or `.model` with size ≥ 1KB)
     /// * `false` - File is invalid or doesn't meet criteria
     async fn is_valid_model_file(&self, file_path: &Path, file_size: u64) -> bool {
-        // Check extension
         let Some(extension) = file_path.extension() else {
             return false;
         };
@@ -239,7 +238,6 @@ impl ModelFileValidator {
             return false;
         }
 
-        // Check file size
         file_size >= self.min_file_size
     }
 }
@@ -257,10 +255,6 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::domain::ports::file_access::DirectoryEntry;
-
-    // ========================================================================
-    // Mock ChecksumService for Testing
-    // ========================================================================
 
     /// Mock implementation of ChecksumService for testing.
     /// Returns pre-configured checksums based on file paths.
@@ -293,10 +287,6 @@ mod tests {
             })
         }
     }
-
-    // ========================================================================
-    // Mock FileSystemAccess for Testing
-    // ========================================================================
 
     /// Mock implementation of FileSystemAccess for testing.
     /// Uses real filesystem operations internally but through the port interface.
@@ -339,10 +329,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Tests - Using Mock for Domain Purity
-    // ========================================================================
-
     #[tokio::test]
     async fn test_empty_directory() {
         let temp_dir = TempDir::new().unwrap();
@@ -368,7 +354,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.gguf");
 
-        // Create file with sufficient size
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
 
@@ -383,7 +368,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.bin");
 
-        // Create file with sufficient size
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
 
@@ -398,7 +382,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.gguf");
 
-        // Create file with insufficient size (< 1KB)
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 512]).unwrap();
 
@@ -413,7 +396,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.txt");
 
-        // Create file with sufficient size but wrong extension
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
 
@@ -427,12 +409,10 @@ mod tests {
     async fn test_multiple_files_with_one_valid() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create invalid file
         let invalid_file = temp_dir.path().join("readme.txt");
         let mut file = fs::File::create(&invalid_file).unwrap();
         file.write_all(b"Some text").unwrap();
 
-        // Create valid file
         let valid_file = temp_dir.path().join("model.gguf");
         let mut file = fs::File::create(&valid_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
@@ -448,7 +428,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.gguf");
 
-        // Create file with sufficient size
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
         drop(file);
@@ -461,7 +440,6 @@ mod tests {
         let fs_mock = Arc::new(MockFileSystemAccess);
         let validator = ModelFileValidator::new(checksum_mock, fs_mock);
 
-        // Test with matching checksum
         let expectations = vec![FileExpectation::new("model.gguf".to_string())
             .with_size(2048)
             .with_checksum(expected_checksum.clone())];
@@ -477,7 +455,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.gguf");
 
-        // Create file with sufficient size
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
         drop(file);
@@ -490,7 +467,6 @@ mod tests {
         let fs_mock = Arc::new(MockFileSystemAccess);
         let validator = ModelFileValidator::new(checksum_mock, fs_mock);
 
-        // Test with non-matching checksum
         let expectations = vec![FileExpectation::new("model.gguf".to_string())
             .with_size(2048)
             .with_checksum(expected_checksum)];
@@ -506,7 +482,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let model_file = temp_dir.path().join("model.gguf");
 
-        // Create file with sufficient size
         let mut file = fs::File::create(&model_file).unwrap();
         file.write_all(&vec![0u8; 2048]).unwrap();
         drop(file);
@@ -515,7 +490,6 @@ mod tests {
         let fs_mock = Arc::new(MockFileSystemAccess);
         let validator = ModelFileValidator::new(checksum_mock, fs_mock);
 
-        // Test wildcard pattern
         let expectations = vec![FileExpectation::new("*.gguf".to_string())];
 
         assert!(validator

@@ -36,10 +36,8 @@ impl ListDownloadedModelsUseCase {
     pub async fn execute(&self) -> Result<DownloadedModelsDto, AppError> {
         let mut models = self.storage.list_models().await?;
 
-        // Sort by download date (newest first)
         models.sort_by_key(|model| std::cmp::Reverse(model.downloaded_at));
 
-        // Convert to DTOs
         let model_dtos = models
             .into_iter()
             .map(|m| DownloadedModelDto {
@@ -89,7 +87,6 @@ mod tests {
     async fn test_list_models_sorted_by_date() {
         let mock_storage = Arc::new(MockModelStoragePort::new());
 
-        // Add models with different download times
         let now = Utc::now();
         mock_storage.add_model(DownloadedModel {
             model_id: "old-model".to_string(),
@@ -116,7 +113,6 @@ mod tests {
         assert!(result.is_ok());
         let downloaded = result.unwrap();
 
-        // Verify sorted by date (newest first)
         assert_eq!(downloaded.models.len(), 3);
         assert_eq!(downloaded.models[0].model_id, "new-model");
         assert_eq!(downloaded.models[1].model_id, "medium-model");
@@ -127,7 +123,6 @@ mod tests {
     async fn test_list_models_size_conversion() {
         let mock_storage = Arc::new(MockModelStoragePort::new());
 
-        // Add model with specific byte size
         mock_storage.add_model(DownloadedModel {
             model_id: "test-model".to_string(),
             path: PathBuf::from("/models/test"),
@@ -142,7 +137,6 @@ mod tests {
         let downloaded = result.unwrap();
         assert_eq!(downloaded.models.len(), 1);
 
-        // Verify size conversion from bytes to GB
         let model = &downloaded.models[0];
         assert_eq!(model.size_gb, 1.8);
     }
@@ -165,7 +159,6 @@ mod tests {
         let downloaded = result.unwrap();
         assert_eq!(downloaded.models.len(), 1);
 
-        // Verify path is converted to string
         let model = &downloaded.models[0];
         assert_eq!(model.path, "/models/path-test");
     }
@@ -230,7 +223,6 @@ mod tests {
     async fn test_list_models_large_size() {
         let mock_storage = Arc::new(MockModelStoragePort::new());
 
-        // Add very large model (26 GB)
         mock_storage.add_model(DownloadedModel {
             model_id: "large-model".to_string(),
             path: PathBuf::from("/models/large"),
@@ -253,7 +245,6 @@ mod tests {
     async fn test_list_models_small_size() {
         let mock_storage = Arc::new(MockModelStoragePort::new());
 
-        // Add small model (1.1 GB)
         mock_storage.add_model(DownloadedModel {
             model_id: "small-model".to_string(),
             path: PathBuf::from("/models/small"),

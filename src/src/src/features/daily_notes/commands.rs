@@ -30,6 +30,27 @@ pub struct SnapshotMessageDto {
     pub role: String,
     pub content: String,
     pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
+}
+
+#[cfg(test)]
+mod snapshot_contract_tests {
+    use super::SnapshotMessageDto;
+
+    #[test]
+    fn preserves_citation_metadata_and_reads_older_snapshots() {
+        let mut value = serde_json::json!({
+            "id": "message-1", "role": "assistant", "content": "See [1]",
+            "createdAt": "2026-09-15T00:00:00Z"
+        });
+        let older: SnapshotMessageDto = serde_json::from_value(value.clone()).unwrap();
+        assert!(older.metadata.is_none());
+        value["metadata"] =
+            serde_json::Value::String(r#"{"sources":[{"documentId":"document-1"}]}"#.into());
+        let snapshot: SnapshotMessageDto = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(snapshot).unwrap(), value);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -341,9 +362,7 @@ async fn resolve_capture_target(
     }
     let created = create_workspace_note_impl(
         container,
-        CreateWorkspaceNoteRequestDto {
-            title: Some(title),
-        },
+        CreateWorkspaceNoteRequestDto { title: Some(title) },
     )
     .await?;
     Ok((created, true))

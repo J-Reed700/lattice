@@ -327,7 +327,7 @@ See `examples.rs` for comprehensive examples demonstrating:
 Run the test suite:
 
 ```bash
-cd src/app/src
+cd src/src
 cargo test error::
 ```
 

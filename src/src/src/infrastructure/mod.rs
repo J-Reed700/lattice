@@ -23,39 +23,32 @@
 //! - Infrastructure must NOT: Be imported by Domain or Application layers
 //!
 //! # Migration Status
-//! Phase 3: Directory structure created, implementations pending migration
+//! Some legacy implementations remain outside this module while migration is
+//! in progress.
 
 pub mod adapters;
 pub mod audit;
 pub mod command_channel;
+pub mod conversation_context;
 pub mod crash;
+pub mod document_scope;
+pub(crate) mod embedding_loading;
+pub(crate) mod embedding_runtime;
 pub mod event_bus;
 pub mod events;
 pub mod extraction;
+pub mod file_library;
 pub mod file_system;
-// Vertical-slice migration (indexing): pipeline lives in features/indexing/engine/.
-#[path = "../features/indexing/engine/mod.rs"]
-pub mod indexing;
-// Vertical-slice migration (llm): engine lives in features/llm/engine/.
-#[path = "../features/llm/engine/mod.rs"]
-pub mod llm;
 pub mod ml;
+pub(crate) mod model_cache;
+pub(crate) mod model_loading;
 pub mod observability;
 pub mod persistence;
-// Vertical-slice migration (qa): QA engine lives in features/qa/engine/.
-#[path = "../features/qa/engine/mod.rs"]
-pub mod qa;
 pub mod sagas;
-// Vertical-slice migration (search): retrieval engine lives in features/search/engine/.
-#[path = "../features/search/engine/mod.rs"]
-pub mod search;
 pub mod security;
 pub mod services;
 pub mod setup;
 pub mod storage;
 pub mod system_info_adapter;
-// Vertical-slice migration (web): infrastructure web module lives in features/web/infra_mod.rs.
-#[path = "../features/web/infra_mod.rs"]
-pub mod web;
 
 // Model catalog infrastructure

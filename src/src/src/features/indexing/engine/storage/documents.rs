@@ -2,7 +2,7 @@
 
 use super::checksum::calculate_checksum;
 use super::types::DocumentRecord;
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::shared::error::ResultExt;
 use crate::shared::utils::path::path_to_string;
 use chrono::Utc;
@@ -176,7 +176,6 @@ pub async fn store_file_metadata_only(
         reason: format!("Invalid path encoding: {}", e),
     })?;
 
-    // Extract file_name - use title for web articles
     let filename = if is_web_article(path) {
         // Web article: extract title from metadata.json
         match get_web_article_title(path).await {

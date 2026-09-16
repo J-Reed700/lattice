@@ -59,7 +59,6 @@ mod tests {
     async fn test_query_indexed_directories() {
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
 
-        // Create schema
         sqlx::query(
             "CREATE TABLE documents (
                 id TEXT PRIMARY KEY,
@@ -72,7 +71,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Insert test data
         sqlx::query("INSERT INTO documents (id, file_path, title, content) VALUES (?, ?, ?, ?)")
             .bind("doc-1")
             .bind("notes/doc1.txt")

@@ -3,7 +3,6 @@
 //! Re-exports embedding services. This mod.rs is loaded as
 //! `crate::infrastructure::services::embedding` during migration.
 
-#[path = "dynamic.rs"]
 pub mod dynamic_embedding_service;
 pub mod dynamic_port;
 
@@ -13,5 +12,4 @@ pub use crate::features::embedding::candle_service::CandleEmbeddingService as Em
 pub use dynamic_embedding_service::DynamicEmbeddingService;
 pub use dynamic_port::DynamicEmbedding;
 
-// Export MODEL_NAME constant for compatibility
 pub const MODEL_NAME: &str = crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;

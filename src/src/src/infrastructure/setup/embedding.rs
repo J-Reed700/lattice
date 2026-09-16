@@ -1,5 +1,4 @@
-use crate::services;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 pub async fn setup_embedding_service(
@@ -11,11 +10,11 @@ pub async fn setup_embedding_service(
 
     if !model_path.exists() || !tokenizer_path.exists() {
         tracing::info!(
-            "AI model files not found at {:?}. App will start in degraded mode.",
+            "Optional ONNX embedding files absent at {:?}; configured embedding model will load separately.",
             model_dir
         );
         tracing::info!(
-            "AI-dependent features will be unavailable until models are downloaded from Settings → Models."
+            "Embedding availability will be determined when the configured model loads."
         );
         return None;
     }
@@ -28,12 +27,10 @@ pub async fn setup_embedding_service(
         }
         Err(e) => {
             tracing::warn!(
-                "Failed to initialize embedding service: {}. App will start in degraded mode.",
+                "Optional ONNX embedding initialization failed: {}. Configured model loading will still be attempted.",
                 e
             );
-            tracing::info!(
-                "AI-dependent features will be unavailable. Try re-downloading models from Settings → Models."
-            );
+            tracing::info!("See the configured embedding model load result for availability.");
             None
         }
     }
@@ -44,7 +41,7 @@ pub fn setup_tokenizer(model_dir: &Path) -> Option<Arc<tokenizers::Tokenizer>> {
 
     if !tokenizer_path.exists() {
         tracing::info!(
-            "Tokenizer file not found at {:?}. App will start in degraded mode.",
+            "Optional ONNX tokenizer absent at {:?}; configured models supply their own tokenizers.",
             tokenizer_path
         );
         return None;
@@ -57,7 +54,7 @@ pub fn setup_tokenizer(model_dir: &Path) -> Option<Arc<tokenizers::Tokenizer>> {
         }
         Err(e) => {
             tracing::warn!(
-                "Failed to load tokenizer: {}. App will start in degraded mode.",
+                "Failed to load optional ONNX tokenizer: {}. Configured models supply their own tokenizers.",
                 e
             );
             None
@@ -67,7 +64,7 @@ pub fn setup_tokenizer(model_dir: &Path) -> Option<Arc<tokenizers::Tokenizer>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_embedding_error_messages() {

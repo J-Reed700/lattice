@@ -6,7 +6,7 @@
 //! **NOTE**: Tag generation uses local LLM via TagServiceImpl.
 //! See infrastructure/extraction/tag_generator.rs for prompt helpers.
 
-use crate::application::ports::{LLMPort, RepositoryPort};
+use crate::application::ports::{LoadedChatModelPort, RepositoryPort};
 use crate::features::tags::dto::TagWithCountDto as TagWithCount;
 use crate::features::tags::entity::Tag;
 use crate::features::tags::generator::{
@@ -18,7 +18,7 @@ use crate::infrastructure::persistence::repositories::{DocumentRepositoryImpl, T
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
@@ -28,16 +28,16 @@ use tracing::warn;
 pub struct TagServiceImpl {
     pub(crate) db_pool: SqlitePool,
     document_locks: DocumentLockTable,
-    llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>,
+    model_provider: Arc<dyn LoadedChatModelPort>,
 }
 
 impl TagServiceImpl {
     /// Create a new tag service
-    pub fn new(db_pool: SqlitePool, llm_cache: Arc<RwLock<Option<Arc<dyn LLMPort>>>>) -> Self {
+    pub fn new(db_pool: SqlitePool, model_provider: Arc<dyn LoadedChatModelPort>) -> Self {
         Self {
             db_pool,
             document_locks: DocumentLockTable::default(),
-            llm_cache,
+            model_provider,
         }
     }
 
@@ -54,7 +54,6 @@ impl TagServiceImpl {
         let mut normalized = HashSet::new();
         let mut result = Vec::new();
 
-        // Add existing tags first (preserving original case)
         for tag in existing {
             let normalized_tag = tag.to_lowercase();
             if normalized.insert(normalized_tag) {
@@ -62,7 +61,6 @@ impl TagServiceImpl {
             }
         }
 
-        // Add generated tags that aren't duplicates
         for tag in generated {
             let normalized_tag = tag.to_lowercase();
             if normalized.insert(normalized_tag) {
@@ -77,7 +75,6 @@ impl TagServiceImpl {
 #[async_trait]
 impl TagServiceTrait for TagServiceImpl {
     async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<Tag> {
-        // Validate input
         if name.is_empty() || name.len() > 100 {
             return Err(AppError::InvalidInput(
                 "Tag name must be 1-100 characters".into(),
@@ -99,7 +96,6 @@ impl TagServiceTrait for TagServiceImpl {
         name: Option<&str>,
         color: Option<&str>,
     ) -> Result<Tag> {
-        // Validate name if provided
         if let Some(n) = name {
             if n.is_empty() || n.len() > 100 {
                 return Err(AppError::InvalidInput(
@@ -143,7 +139,6 @@ impl TagServiceTrait for TagServiceImpl {
             .await
             .map_err(|e| AppError::Database(format!("Failed to get tags with counts: {}", e)))?;
 
-        // Convert Vec<(Tag, i64)> to Vec<TagWithCount>
         Ok(results
             .into_iter()
             .map(|(tag, count)| TagWithCount {
@@ -168,7 +163,6 @@ impl TagServiceTrait for TagServiceImpl {
     async fn apply_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<Vec<Tag>> {
         let tag_repo = TagRepository::new(self.db_pool.clone());
 
-        // Get existing tags for the document
         let existing_tags = tag_repo
             .get_tags_for_document(document_id)
             .await
@@ -186,13 +180,11 @@ impl TagServiceTrait for TagServiceImpl {
         // Merge with existing tags
         let merged_tags = Self::merge_tags_static(existing_tag_names, normalized_tags);
 
-        // Apply merged tags
         tag_repo
             .add_tags_to_document_by_names(document_id, merged_tags)
             .await
             .map_err(|e| AppError::Database(format!("Failed to apply tags: {}", e)))?;
 
-        // Return updated tags
         tag_repo
             .get_tags_for_document(document_id)
             .await
@@ -247,14 +239,9 @@ impl TagServiceTrait for TagServiceImpl {
 
         let user_message = TagGenerator::build_user_message(content, &metadata, max_tags);
         let prompt = format!("{}\n\n{}", TAG_GENERATION_SYSTEM_PROMPT, user_message);
-        let llm = self
-            .llm_cache
-            .read()
-            .map_err(|e| AppError::Other(format!("LLM cache lock poisoned: {}", e)))?
-            .clone()
-            .ok_or_else(|| {
-                AppError::AiModelsNotInstalled("Default chat model not installed".to_string())
-            })?;
+        let llm = self.model_provider.current_model().ok_or_else(|| {
+            AppError::AiModelsNotInstalled("Default chat model not installed".to_string())
+        })?;
         let response = llm.generate(&prompt, &[], None).await?;
 
         if response.trim().is_empty() {
@@ -355,7 +342,6 @@ impl TagServiceTrait for TagServiceImpl {
 
     async fn acquire_lock(&self, document_id: &str) -> Result<DocumentLockGuard> {
         let lock = self.get_document_lock(document_id);
-        // Use lock_owned() to get an OwnedMutexGuard that owns an Arc to the mutex
         let guard = lock.lock_owned().await;
         Ok(DocumentLockGuard::new(guard))
     }

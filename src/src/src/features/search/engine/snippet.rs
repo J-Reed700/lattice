@@ -178,7 +178,7 @@ mod tests {
         let extractor = SnippetExtractor::new(100);
         let text = "Rust is a systems programming language focused on safety and performance.";
         let terms = vec!["Rust", "programming"];
-        let (snippet, highlights) = extractor.extract_with_highlights(text, &terms);
+        let (_snippet, highlights) = extractor.extract_with_highlights(text, &terms);
 
         assert!(highlights.contains(&"Rust".to_string()));
         assert!(highlights.contains(&"programming".to_string()));

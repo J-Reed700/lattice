@@ -1,4 +1,4 @@
-use crate::infrastructure::search::vector_ops::cosine_similarity_simd;
+use crate::features::search::engine::vector_ops::cosine_similarity_simd;
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

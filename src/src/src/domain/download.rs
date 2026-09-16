@@ -496,7 +496,6 @@ impl DownloadSession {
         }
 
         self.error_message = None;
-        // Reset progress to 0 - file may have been deleted during cleanup
         self.progress = DownloadProgress::new(self.progress.total_bytes());
         self.transition_to(DownloadState::Pending)
     }
@@ -514,10 +513,8 @@ impl DownloadSession {
             });
         }
 
-        // Reset retry counter to give fresh automatic retry attempts
         self.retry_count = 0;
         self.error_message = None;
-        // Reset progress to 0 - file may have been deleted during cleanup
         self.progress = DownloadProgress::new(self.progress.total_bytes());
         self.transition_to(DownloadState::Pending)
     }
@@ -794,7 +791,6 @@ mod tests {
         )
         .unwrap();
 
-        // Start download and make progress
         session.start().unwrap();
         session.update_progress(500, 100.0);
         assert_eq!(session.progress().bytes_downloaded(), 500);
@@ -833,49 +829,33 @@ mod tests {
         assert!(session.resume().is_err());
     }
 
-    // ============================================================================
-    // Domain Calculation Tests (Tests 31-33)
-    // ============================================================================
-
     #[test]
     fn test_progress_percentage_calculation() {
-        // Arrange: Create progress with known values
         let mut progress = DownloadProgress::new(Some(1000));
         progress.update(750, 0.0);
 
-        // Act: Calculate progress percentage
         let percentage = progress.percentage();
 
-        // Assert: Should be 75%
         assert_eq!(percentage, Some(75.0), "750 of 1000 bytes should be 75%");
     }
 
     #[test]
     fn test_progress_percentage_clamped_to_100() {
-        // Arrange: Create progress with bytes > total (edge case)
         let mut progress = DownloadProgress::new(Some(1000));
         progress.update(1200, 0.0); // More than total
 
-        // Act: Calculate progress percentage
         let percentage = progress.percentage();
 
-        // Assert: Should be clamped to 100%
         assert_eq!(percentage, Some(100.0), "Progress should never exceed 100%");
     }
 
     #[test]
     fn test_eta_calculation() {
-        // Arrange: Create progress with known progress and speed
         let mut progress = DownloadProgress::new(Some(1000));
         progress.update(250, 250.0); // 250 bytes per second
 
-        // Act: Calculate ETA
         let eta_seconds = progress.estimated_time_remaining();
 
-        // Assert: Should be approximately 3 seconds
-        // Remaining: 1000 - 250 = 750 bytes
-        // Speed: 250 bytes/sec
-        // ETA: 750 / 250 = 3 seconds
         assert!(eta_seconds.is_some(), "ETA should be calculable");
         let eta = eta_seconds.unwrap();
         assert!(
@@ -885,20 +865,13 @@ mod tests {
         );
     }
 
-    // ============================================================================
-    // Domain Edge Case Tests (Tests 34-37)
-    // ============================================================================
-
     #[test]
     fn test_eta_calculation_zero_speed() {
-        // Arrange: Create progress with zero speed
         let mut progress = DownloadProgress::new(Some(1000));
         progress.update(250, 0.0); // Zero speed - stalled download
 
-        // Act: Calculate ETA
         let eta = progress.estimated_time_remaining();
 
-        // Assert: Should return None (cannot calculate ETA with zero speed)
         assert!(
             eta.is_none(),
             "ETA should be None when speed is zero (stalled download)"
@@ -907,14 +880,11 @@ mod tests {
 
     #[test]
     fn test_eta_calculation_completed() {
-        // Arrange: Create completed download (all bytes downloaded)
         let mut progress = DownloadProgress::new(Some(1000));
         progress.update(1000, 250.0);
 
-        // Act: Calculate ETA
         let eta = progress.estimated_time_remaining();
 
-        // Assert: Should return Some(0) (download already complete)
         assert!(
             eta == Some(0),
             "ETA should be 0 for completed download, got {:?}",
@@ -924,7 +894,6 @@ mod tests {
 
     #[test]
     fn test_speed_calculation() {
-        // Arrange: Create progress with different speeds
         let test_cases = vec![
             (1000.0, "1 KB/s"),
             (1_000_000.0, "1 MB/s"),
@@ -935,10 +904,8 @@ mod tests {
             let mut progress = DownloadProgress::new(Some(1000));
             progress.update(500, speed_bps);
 
-            // Act: Get speed
             let actual_speed = progress.bytes_per_second();
 
-            // Assert: Speed matches expected
             assert_eq!(
                 actual_speed, speed_bps,
                 "Speed should be {} ({})",
@@ -949,14 +916,11 @@ mod tests {
 
     #[test]
     fn test_speed_clamped_to_zero() {
-        // Arrange: Create progress with negative speed (invalid)
         let mut progress = DownloadProgress::new(Some(1000));
         progress.update(500, -100.0); // Negative speed (should be clamped)
 
-        // Act: Get speed
         let actual_speed = progress.bytes_per_second();
 
-        // Assert: Speed should be clamped to 0.0 (DownloadProgress.update() clamps to max(0.0))
         assert_eq!(actual_speed, 0.0, "Negative speed should be clamped to 0.0");
     }
 }
@@ -1014,124 +978,4 @@ impl DownloadOperationState {
             }
         }
     }
-}
-
-// ============================================================================
-// MODULE 1: DOMAIN STATE SNAPSHOT MODELS
-// ============================================================================
-
-/// Download status enum matching TypeScript discriminated union
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DownloadStatus {
-    Pending,
-    Downloading,
-    Paused,
-    Completed,
-    Error,
-    Cancelled,
-}
-
-impl DownloadStatus {
-    /// Convert from DownloadState domain model
-    pub fn from_state(state: &DownloadState) -> Self {
-        match state {
-            DownloadState::Pending => DownloadStatus::Pending,
-            DownloadState::Downloading => DownloadStatus::Downloading,
-            DownloadState::Paused => DownloadStatus::Paused,
-            DownloadState::Completed => DownloadStatus::Completed,
-            DownloadState::Failed => DownloadStatus::Error,
-            DownloadState::Cancelled => DownloadStatus::Cancelled,
-        }
-    }
-}
-
-/// Per-file status for multi-file downloads
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileStatus {
-    Pending,
-    Downloading,
-    Completed,
-    Error,
-}
-
-/// Per-file progress information for batch downloads
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileProgress {
-    pub filename: String,
-    pub bytes_downloaded: u64,
-    pub total_bytes: u64,
-    pub status: FileStatus,
-}
-
-/// Single file download snapshot (legacy-compatible)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub struct SingleFileSnapshot {
-    pub kind: String, // Always "single"
-    pub id: String,
-    pub url: String,
-    pub destination: String,
-    pub filename: String,
-    pub bytes_downloaded: u64,
-    pub total_bytes: Option<u64>,
-    pub bytes_per_second: f64,
-    pub percentage: Option<f64>,
-    pub eta_seconds: Option<u64>,
-    pub status: DownloadStatus,
-}
-
-impl SingleFileSnapshot {
-    /// Create snapshot from DownloadSession domain model
-    pub fn from_session(session: &DownloadSession) -> Self {
-        let filename = session
-            .destination()
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        Self {
-            kind: "single".to_string(),
-            id: session.id().to_string(),
-            url: session.url().to_string(),
-            destination: session.destination().to_string_lossy().to_string(),
-            filename,
-            bytes_downloaded: session.progress().bytes_downloaded(),
-            total_bytes: session.progress().total_bytes(),
-            bytes_per_second: session.progress().bytes_per_second(),
-            percentage: session.progress().percentage(),
-            eta_seconds: session.progress().estimated_time_remaining(),
-            status: DownloadStatus::from_state(session.state()),
-        }
-    }
-}
-
-/// Multi-file download snapshot (for LLM models)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub struct BatchDownloadSnapshot {
-    pub kind: String, // Always "batch"
-    pub id: String,
-    pub group_name: String,
-    pub files: Vec<FileProgress>,
-    pub total_files: usize,
-    pub completed_files: usize,
-    pub aggregate_bytes_downloaded: u64,
-    pub aggregate_total_bytes: u64,
-    pub aggregate_bytes_per_second: f64,
-    pub aggregate_percentage: f64,
-    pub aggregate_eta_seconds: Option<u64>,
-    pub status: DownloadStatus,
-}
-
-/// Discriminated union of download snapshot types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum DownloadStateSnapshot {
-    #[serde(rename = "single")]
-    Single(SingleFileSnapshot),
-    #[serde(rename = "batch")]
-    Batch(BatchDownloadSnapshot),
 }

@@ -31,6 +31,7 @@ const SUPPORTED_TAGS: &[&str] = &[
     "jina_bert_v2",
     "nomic_bert",
     "modernbert",
+    "qwen3",
 ];
 
 /// Architecture tags we recognize but can't run yet. The reason is shown
@@ -61,10 +62,6 @@ const KNOWN_INCOMPATIBLE_TAGS: &[(&str, &str)] = &[
     (
         "qwen2",
         "Qwen2 — decoder-style, planned for a future release",
-    ),
-    (
-        "qwen3",
-        "Qwen3 — decoder-style, planned for a future release",
     ),
     (
         "llama",
@@ -177,18 +174,9 @@ mod tests {
     }
 
     #[test]
-    fn qwen3_is_incompatible_with_reason() {
+    fn qwen3_is_supported() {
         let result = detect_from_tags(&tags(&["sentence-transformers", "qwen3", "safetensors"]));
-        match result {
-            EmbeddingCompatibility::Incompatible {
-                architecture,
-                reason,
-            } => {
-                assert_eq!(architecture, "qwen3");
-                assert!(reason.to_lowercase().contains("decoder"));
-            }
-            other => panic!("expected Incompatible, got {:?}", other),
-        }
+        assert!(matches!(result, EmbeddingCompatibility::Compatible { .. }));
     }
 
     #[test]

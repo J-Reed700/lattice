@@ -62,7 +62,6 @@ mod tests {
     async fn test_get_all_tags() {
         let mock_service = Arc::new(MockTagService::new());
 
-        // Create some tags
         mock_service.create_tag("tag1", None).await.unwrap();
         mock_service
             .create_tag("tag2", Some("#FF0000"))
@@ -81,7 +80,6 @@ mod tests {
     async fn test_get_tags_for_document() {
         let mock_service = Arc::new(MockTagService::new());
 
-        // Apply tags to a document
         mock_service
             .apply_tags("doc-123", vec!["tag1".to_string(), "tag2".to_string()])
             .await

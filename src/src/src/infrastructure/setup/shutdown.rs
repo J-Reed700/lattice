@@ -1,7 +1,9 @@
+use super::background_workers::BackgroundWorkers;
+use crate::features::llm::engine::sidecar_manager::SidecarRegistry;
 use crate::interfaces::di::Container;
-use crate::llm::sidecar_manager::SidecarRegistry;
 use std::time::Duration;
 use tauri::Manager;
+use tokio_util::sync::CancellationToken;
 
 // Extended timeouts to handle SQLite busy conditions
 const DB_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -10,7 +12,7 @@ const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     tracing::info!("Exit requested, starting graceful shutdown");
 
-    // Sprint 6 PR 6.1: kill llama-server sidecars FIRST, synchronously,
+    // Kill llama-server sidecars first, synchronously,
     // before any async cleanup runs. This is the load-bearing
     // anti-zombie hook — by the time the tokio runtime starts tearing
     // down (which makes Drop-based kills race-y), every sidecar PID
@@ -31,6 +33,13 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     tauri::async_runtime::block_on(async {
         let shutdown_future = async {
             let mut cleanup_results = Vec::new();
+
+            if let Some(cancel) = app_handle.try_state::<CancellationToken>() {
+                cancel.cancel();
+                if let Some(workers) = app_handle.try_state::<BackgroundWorkers>() {
+                    workers.stop(&cancel).await;
+                }
+            }
 
             if let Some(container) = app_handle.try_state::<Container>() {
                 tracing::info!("Closing database connections");

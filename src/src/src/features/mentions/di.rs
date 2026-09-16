@@ -11,6 +11,7 @@ use crate::features::mentions::use_cases::{
     GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
 };
 use crate::infrastructure::persistence::repositories::MentionRepository;
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct MentionsDi {
@@ -52,5 +53,37 @@ pub fn build(db_pool: SqlitePool) -> MentionsDi {
         )),
         delete_mention_use_case: Arc::new(DeleteMentionUseCase::new(mention_repo.clone())),
         mention_repo,
+    }
+}
+
+/// Mentions' registrar surface on `Container`.
+impl Container {
+    // Mentions (from LibraryModule)
+    pub fn extract_mentions_use_case(&self) -> Arc<ExtractMentionsUseCase> {
+        Arc::clone(self.library.extract_mentions_use_case())
+    }
+
+    pub fn search_mentions_use_case(&self) -> Arc<SearchMentionsUseCase> {
+        Arc::clone(self.library.search_mentions_use_case())
+    }
+
+    pub fn get_backlinks_use_case(&self) -> Arc<GetBacklinksUseCase> {
+        Arc::clone(self.library.get_backlinks_use_case())
+    }
+
+    pub fn get_mentions_by_type_use_case(&self) -> Arc<GetMentionsByTypeUseCase> {
+        Arc::clone(self.library.get_mentions_by_type_use_case())
+    }
+
+    pub fn get_mentions_for_document_use_case(&self) -> Arc<GetMentionsForDocumentUseCase> {
+        Arc::clone(self.library.get_mentions_for_document_use_case())
+    }
+
+    pub fn create_mention_use_case(&self) -> Arc<CreateMentionUseCase> {
+        Arc::clone(self.library.create_mention_use_case())
+    }
+
+    pub fn delete_mention_use_case(&self) -> Arc<DeleteMentionUseCase> {
+        Arc::clone(self.library.delete_mention_use_case())
     }
 }

@@ -9,9 +9,7 @@ use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 /// Mock conversation service for testing
@@ -57,6 +55,53 @@ impl Default for MockConversationService {
 #[async_trait]
 #[cfg(test)]
 impl ConversationServiceTrait for MockConversationService {
+    async fn fail_pending_turn(&self, user_message_id: &str) -> Result<()> {
+        let mut conversations = self.conversations.write().unwrap();
+        for conversation in conversations.values_mut() {
+            if conversation.messages().iter().any(|m| {
+                m.id == user_message_id
+                    && m.status == "pending"
+                    && m.role == crate::domain::conversation::MessageRole::User
+            }) {
+                conversation.update_message_status(user_message_id, "failed".into())?;
+            }
+        }
+        Ok(())
+    }
+    async fn complete_turn(
+        &self,
+        conversation_id: &str,
+        user_message_id: &str,
+        content: String,
+        tokens: i64,
+        metadata: Option<String>,
+    ) -> Result<crate::domain::conversation::ConversationMessage> {
+        use crate::domain::conversation::{ConversationAggregate, MessageRole};
+        let mut conversations = self.conversations.write().unwrap();
+        let current = conversations.get_mut(conversation_id).ok_or_else(|| {
+            crate::shared::error::AppError::NotFound("Conversation not found".into())
+        })?;
+        let mut updated = current.clone();
+        if !updated.messages().iter().any(|m| {
+            m.id == user_message_id && m.role == MessageRole::User && m.status == "pending"
+        }) {
+            return Err(crate::shared::error::AppError::InvalidState(
+                "Turn is no longer pending in this conversation".into(),
+            ));
+        }
+        updated.update_message_status(user_message_id, "completed".into())?;
+        updated.add_message(MessageRole::Assistant, content, tokens)?;
+        let mut messages = updated.messages().to_vec();
+        let message = messages.last_mut().unwrap();
+        message.metadata = metadata;
+        let result = message.clone();
+        *current = ConversationAggregate::from_persistence(
+            updated.conversation().clone(),
+            messages,
+            updated.document_context().to_vec(),
+        );
+        Ok(result)
+    }
     async fn create_conversation(
         &self,
         title: String,
@@ -94,7 +139,6 @@ impl ConversationServiceTrait for MockConversationService {
             .map(|agg| agg.conversation().clone())
             .collect();
 
-        // Sort by updated_at descending (most recent first)
         all.sort_by_key(|conversation| std::cmp::Reverse(conversation.updated_at));
 
         let offset = offset.unwrap_or(0) as usize;
@@ -115,7 +159,7 @@ impl ConversationServiceTrait for MockConversationService {
             .unwrap()
             .remove(id)
             .ok_or_else(|| {
-                crate::error::AppError::NotFound(format!("Conversation not found: {}", id))
+                crate::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
             })?;
         Ok(())
     }
@@ -123,7 +167,7 @@ impl ConversationServiceTrait for MockConversationService {
     async fn rename_conversation(&self, id: &str, new_title: String) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", id))
+            crate::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
         })?;
 
         // Use the domain method to ensure validation
@@ -137,7 +181,7 @@ impl ConversationServiceTrait for MockConversationService {
     async fn update_system_prompt(&self, id: &str, system_prompt: Option<String>) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", id))
+            crate::shared::error::AppError::NotFound(format!("Conversation not found: {}", id))
         })?;
 
         let mut new_aggregate = aggregate.clone();
@@ -157,13 +201,15 @@ impl ConversationServiceTrait for MockConversationService {
 
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();
         new_aggregate.add_message(MessageRole::User, content.clone(), tokens)?;
 
-        // Get the last message that was just added
         let message = new_aggregate.messages().last().unwrap().clone();
         *aggregate = new_aggregate;
 
@@ -180,13 +226,15 @@ impl ConversationServiceTrait for MockConversationService {
 
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();
         new_aggregate.add_message(MessageRole::Assistant, content.clone(), tokens)?;
 
-        // Get the last message that was just added
         let message = new_aggregate.messages().last().unwrap().clone();
         *aggregate = new_aggregate;
 
@@ -204,13 +252,15 @@ impl ConversationServiceTrait for MockConversationService {
 
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();
         new_aggregate.add_message(MessageRole::Assistant, content.clone(), tokens)?;
 
-        // Get the last message that was just added and add metadata
         let mut message = new_aggregate.messages().last().unwrap().clone();
         message.metadata = metadata;
         *aggregate = new_aggregate;
@@ -225,7 +275,10 @@ impl ConversationServiceTrait for MockConversationService {
     ) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();
@@ -244,7 +297,10 @@ impl ConversationServiceTrait for MockConversationService {
     ) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();
@@ -264,7 +320,10 @@ impl ConversationServiceTrait for MockConversationService {
     ) -> Result<crate::domain::conversation::ConversationMessage> {
         let mut conversations = self.conversations.write().unwrap();
         let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
         })?;
 
         let mut new_aggregate = aggregate.clone();

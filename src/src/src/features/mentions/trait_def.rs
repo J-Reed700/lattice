@@ -342,16 +342,11 @@
 //!
 //! All persistence domains now use consistent DDD architecture with clean ports pattern.
 
-// ============================================================================
 // LEGACY TRAIT DEFINITION (Commented Out)
-// ============================================================================
-//
 // The trait below has been DEPRECATED and replaced with MentionRepositoryPort.
 // It is preserved here for reference during the migration period.
-//
 // use crate::shared::error::Result;
 // use async_trait::async_trait;
-//
 // #[async_trait]
 // pub trait MentionRepositoryTrait: Send + Sync {
 //     /// Create a new mention
@@ -369,7 +364,6 @@
 //         mention_type: &str,
 //         metadata: Option<&str>,
 //     ) -> Result<crate::application::ports::mention_repository_port::MentionData>;
-//
 //     /// Find mention by name
 //     ///
 //     /// # Arguments
@@ -381,7 +375,6 @@
 //         &self,
 //         name: &str,
 //     ) -> Result<Option<crate::application::ports::mention_repository_port::MentionData>>;
-//
 //     /// Search mentions by query
 //     ///
 //     /// # Arguments
@@ -395,7 +388,6 @@
 //         query: &str,
 //         limit: i64,
 //     ) -> Result<Vec<crate::application::ports::mention_repository_port::MentionData>>;
-//
 //     /// Get mentions by type
 //     ///
 //     /// # Arguments
@@ -407,7 +399,6 @@
 //         &self,
 //         mention_type: &str,
 //     ) -> Result<Vec<crate::application::ports::mention_repository_port::MentionData>>;
-//
 //     /// Get mentions for a document
 //     ///
 //     /// # Arguments
@@ -419,7 +410,6 @@
 //         &self,
 //         document_id: &str,
 //     ) -> Result<Vec<crate::application::ports::mention_repository_port::MentionWithContextData>>;
-//
 //     /// Get documents that contain a mention (backlinks)
 //     ///
 //     /// # Arguments
@@ -431,7 +421,6 @@
 //         &self,
 //         mention_id: &str,
 //     ) -> Result<Vec<String>>;
-//
 //     /// Extract and store mentions from document text
 //     ///
 //     /// # Arguments
@@ -445,7 +434,6 @@
 //         document_id: &str,
 //         text: &str,
 //     ) -> Result<Vec<crate::application::ports::mention_repository_port::MentionWithContextData>>;
-//
 //     /// Delete a mention
 //     ///
 //     /// # Arguments

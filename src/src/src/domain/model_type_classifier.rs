@@ -1,5 +1,4 @@
 use crate::domain::model_metadata::ModelType;
-use crate::shared::error::AppError;
 use std::path::Path;
 use tracing::{debug, info, warn};
 

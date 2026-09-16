@@ -38,7 +38,6 @@ impl MetadataExtractor {
     ///
     /// Detected language enum
     pub fn detect_language(&self, content: &str, file_ext: &str) -> Language {
-        // Check file extension first for programming languages
         match file_ext.to_lowercase().as_str() {
             "rs" => Language::Rust,
             "py" | "pyw" => Language::Python,
@@ -262,7 +261,6 @@ impl MetadataExtractor {
 
     /// Detect if content contains code blocks or code patterns.
     pub fn contains_code(&self, content: &str) -> bool {
-        // Check for common code patterns
         content.contains("```") ||           // Markdown code blocks
         content.contains("fn ") ||           // Rust functions
         content.contains("def ") ||          // Python functions
@@ -311,13 +309,14 @@ impl MetadataExtractor {
 
 /// Read the `[mm:ss–mm:ss]` window markers written by the audio extraction path.
 ///
-/// Note the separator is an EN DASH (U+2013), per contract §4.8. A chunk may
+/// The separator is an EN DASH (U+2013). A chunk may
 /// span several windows, so the span runs from the first marker's start to the
 /// last marker's end. The scan is over the whole chunk rather than line by line
 /// because `ChunkingService` joins sentences with spaces, which puts most
 /// markers mid-line.
 fn transcript_span(content: &str) -> Option<String> {
-    let re = lazy_regex::regex!(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\u{2013}(\d{1,2}:\d{2}(?::\d{2})?)\]");
+    let re =
+        lazy_regex::regex!(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\u{2013}(\d{1,2}:\d{2}(?::\d{2})?)\]");
     let mut matches = re.captures_iter(content);
     let first = matches.next()?;
     let start = first.get(1)?.as_str().to_string();
@@ -333,10 +332,6 @@ impl Default for MetadataExtractor {
         Self::new()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -433,7 +428,6 @@ mod tests {
         let extractor = MetadataExtractor::new();
         let content = "This is a test";
         let tokens = extractor.count_tokens(content);
-        // Should be approximately 4 * 1.3 = 5
         assert!((4..=6).contains(&tokens));
     }
 

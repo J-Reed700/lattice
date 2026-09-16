@@ -3,9 +3,7 @@
 //! These are integration smoke tests that verify each file command can run
 //! without panicking. They test the HAPPY PATH and ONE ERROR PATH per command.
 //!
-//! # Oracle Mandate
-//!
-//! "100% smoke test coverage - every command runs once without exploding."
+//! Each command runs at least once without panicking.
 //! Pattern: command_handler(mock_state, payload).await.is_ok()
 //!
 //! # Test Strategy

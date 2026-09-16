@@ -109,9 +109,7 @@ pub async fn list_passage_references_impl(
     container: &Container,
     limit: Option<i64>,
 ) -> Result<Vec<PassageReferenceDto>> {
-    let limit = limit
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, MAX_LIST_LIMIT);
+    let limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
     let records = repository(container).list(limit).await?;
     Ok(records.into_iter().map(record_to_dto).collect())
 }

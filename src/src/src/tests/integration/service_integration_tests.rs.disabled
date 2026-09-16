@@ -6,7 +6,7 @@
 //! **IMPORTANT**: These tests verify ACTUAL service interactions in the codebase.
 //! Uses mock services where real dependencies (like ONNX models) are unavailable.
 
-use crate::infrastructure::services::conversation_service::ConversationService;
+use crate::features::conversation::service::ConversationService;
 use crate::infrastructure::services::file_storage::FileStorageService;
 use crate::infrastructure::services::tag_service_impl::TagServiceImpl;
 use crate::infrastructure::services::traits::{EmbeddingServiceTrait, SearchServiceTrait, TagServiceTrait};

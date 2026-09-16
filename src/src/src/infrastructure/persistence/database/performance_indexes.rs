@@ -91,7 +91,6 @@ pub async fn create_performance_indexes(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // Run ANALYZE to update query planner statistics
     debug!("Running ANALYZE to update statistics...");
     sqlx::query("ANALYZE").execute(pool).await?;
 

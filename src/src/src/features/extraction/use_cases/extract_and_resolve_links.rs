@@ -124,7 +124,7 @@ impl ExtractAndResolveLinksUseCase {
         let document_refs: Vec<DocumentRefDto> = all_documents
             .into_iter()
             .map(|agg| {
-                let doc = agg.document();
+                let doc = &agg;
                 DocumentRefDto {
                     document_id: doc.id().to_string(),
                     file_path: doc.file_path().display().to_string(),
@@ -308,7 +308,7 @@ mod tests {
         }
     }
 
-    fn create_test_document_aggregate(id: &str, path: &str, _title: Option<&str>) -> Document {
+    fn create_test_document_aggregate(_id: &str, path: &str, _title: Option<&str>) -> Document {
         use crate::domain::value_objects::{Checksum, ChunkingStrategy, FileMetadata};
         use crate::shared::domain_types::ValidatedFilePath;
         use chrono::Utc;

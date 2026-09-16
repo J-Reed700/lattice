@@ -193,7 +193,7 @@ impl std::str::FromStr for Category {
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::document::Document;
-/// use lattice::domain_types::{DocumentId, ValidatedFilePath};
+/// use lattice::shared::domain_types::{DocumentId, ValidatedFilePath};
 /// use std::path::PathBuf;
 ///
 /// let path = ValidatedFilePath::new(PathBuf::from("/docs/file.txt")).unwrap();
@@ -222,7 +222,7 @@ pub struct Document {
     checksum: Checksum,
     status: DocumentStatus,
     error_message: Option<String>,
-    // Rich metadata fields (Phase 2)
+    // Extended metadata
     language: Language,
     category: Category,
     quality_score: f32,
@@ -230,13 +230,14 @@ pub struct Document {
     #[serde(rename = "lastAccessedAt", alias = "last_accessed")]
     last_accessed_at: Option<DateTime<Utc>>,
     word_count: i32,
+    #[serde(default)]
+    source_context: Option<crate::domain::value_objects::source_context::SourceContext>,
 
-    // Document content (Oracle Step 1: Document must contain content field)
+    // Raw document content
     #[serde(skip)] // Don't serialize raw content in API responses (too large)
     content: String,
 
-    // Aggregate components (per Oracle's Option A)
-    // Document is now the Aggregate Root that encapsulates chunks and tags
+    // The aggregate root encapsulates chunks and tags
     // to enforce the invariant: "Document must have at least one chunk"
     #[serde(skip)] // Don't serialize chunks/tags in API responses (use projections for that)
     chunks: Vec<Chunk>,
@@ -245,6 +246,18 @@ pub struct Document {
 }
 
 impl Document {
+    pub fn source_context(
+        &self,
+    ) -> Option<&crate::domain::value_objects::source_context::SourceContext> {
+        self.source_context.as_ref()
+    }
+    pub fn set_source_context(
+        &mut self,
+        value: Option<crate::domain::value_objects::source_context::SourceContext>,
+    ) {
+        self.source_context = value;
+    }
+
     /// Create document from file metadata and content.
     ///
     /// This is a factory method for creating documents from file system data,
@@ -280,10 +293,8 @@ impl Document {
     ) -> Result<Self> {
         use crate::shared::error::AppError;
 
-        // Generate document ID first (needed for chunking)
         let document_id = crate::shared::domain_types::DocumentId::new();
 
-        // Generate chunks from content
         let chunks = if content.trim().is_empty() {
             // Empty/whitespace-only content → no chunks (valid state)
             Vec::new()
@@ -332,6 +343,7 @@ impl Document {
             content,
             chunks,
             tags: Vec::new(),
+            source_context: None,
         })
     }
 
@@ -349,7 +361,7 @@ impl Document {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::document::Document;
-    /// use lattice::domain_types::ValidatedFilePath;
+    /// use lattice::shared::domain_types::ValidatedFilePath;
     /// use std::path::PathBuf;
     ///
     /// let path = ValidatedFilePath::new(PathBuf::from("/docs/report.pdf")).unwrap();
@@ -391,6 +403,7 @@ impl Document {
             content: String::new(),
             chunks: Vec::new(),
             tags: Vec::new(),
+            source_context: None,
         }
     }
 
@@ -439,6 +452,7 @@ impl Document {
             content,
             chunks: Vec::new(),
             tags: Vec::new(),
+            source_context: None,
         }
     }
 
@@ -449,7 +463,7 @@ impl Document {
     /// from the database and fuses them into a valid Document Entity, enforcing
     /// all domain invariants.
     ///
-    /// # Oracle's Verdict (Option A)
+    /// # Aggregate invariants
     ///
     /// In Domain-Driven Design (DDD), the Aggregate Root must encapsulate all data
     /// necessary to enforce its invariants. Since "must have chunks" is a core
@@ -494,7 +508,6 @@ impl Document {
         self.chunks = chunks;
         self.tags = tags;
 
-        // Return the complete, validated Aggregate Root
         Ok(self)
     }
 
@@ -670,10 +683,6 @@ impl Document {
         format!("{:.1} {}", size, unit)
     }
 
-    // ========================================================================
-    // Aggregate Component Accessors
-    // ========================================================================
-
     /// Get the chunks belonging to this document.
     ///
     /// Returns a slice of all chunks that are part of this document aggregate.
@@ -686,14 +695,6 @@ impl Document {
     /// Returns a slice of all tag IDs linked to this document.
     pub fn tags(&self) -> &[TagId] {
         &self.tags
-    }
-
-    /// Get reference to this document (for backward compatibility with old Aggregate API).
-    ///
-    /// Previously, DocumentAggregate wrapped a Document and exposed it via `.document()`.
-    /// Now that Document IS the aggregate root, this method simply returns self.
-    pub fn document(&self) -> &Self {
-        self
     }
 
     /// Get document content.
@@ -710,10 +711,6 @@ impl Document {
         self.modified_at = Utc::now();
     }
 
-    // ========================================================================
-    // Compatibility Methods (for migration from DocumentAggregate)
-    // ========================================================================
-
     /// Get document ID as string (alias for `id().as_str()`).
     ///
     /// This method provides compatibility with old code that called `doc.document_id()`.
@@ -727,10 +724,6 @@ impl Document {
     pub fn as_path(&self) -> &Path {
         self.file_path()
     }
-
-    // ========================================================================
-    // Rich Metadata Methods (Phase 2)
-    // ========================================================================
 
     /// Get document language.
     pub fn language(&self) -> &Language {
@@ -787,10 +780,6 @@ impl Document {
     pub fn set_word_count(&mut self, count: i32) {
         self.word_count = count.max(0);
     }
-
-    // ========================================================================
-    // Chunk Manipulation Methods (Oracle Step 3: Unified Document Flow)
-    // ========================================================================
 
     /// Set token count for a specific chunk by index.
     ///
@@ -859,19 +848,6 @@ impl Document {
         }
     }
 
-    /// Get file metadata accessor (for backward compatibility).
-    ///
-    /// Returns a FileMetadata value object constructed from the Document's fields.
-    /// This is used by code that still expects to extract metadata from the document.
-    pub fn metadata(&self) -> Result<crate::domain::value_objects::FileMetadata> {
-        crate::domain::value_objects::FileMetadata::new(
-            self.file_name.clone(),
-            self.mime_type.clone(),
-            self.size_bytes,
-            self.modified_at,
-        )
-    }
-
     /// Mark document for reindexing with new content.
     ///
     /// Resets the document status to Pending and updates the modified timestamp.
@@ -900,18 +876,12 @@ impl Document {
         self.chunks.clear();
         self.tags.clear();
 
-        // Create new chunks using the chunking strategy
-        // The chunk() method already returns Vec<Chunk>, not Vec<String>
         let new_chunks = chunking_strategy.chunk(&content, &self.id)?;
         self.chunks = new_chunks;
 
         Ok(())
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod property_tests {
@@ -924,10 +894,6 @@ mod property_tests {
     fn temp_path(file_name: &str) -> PathBuf {
         std::env::temp_dir().join(file_name)
     }
-
-    // ========================================================================
-    // Strategy Helpers
-    // ========================================================================
 
     fn arbitrary_document_status() -> impl Strategy<Value = DocumentStatus> {
         prop_oneof![
@@ -1004,7 +970,7 @@ mod property_tests {
                 let validated_path = ValidatedFilePath::new(path.clone())
                     .unwrap_or_else(|_| ValidatedFilePath::new(temp_path("test.txt")).unwrap());
 
-                let checksum = Checksum::from_bytes(content.as_bytes());
+                let checksum = Checksum::new("0".repeat(64)).expect("valid checksum");
                 let size_bytes = content.len() as i64;
 
                 let mut doc = Document::new(
@@ -1019,10 +985,6 @@ mod property_tests {
             })
     }
 
-    // ========================================================================
-    // Category A: Creation & Identity (5 tests)
-    // ========================================================================
-
     proptest! {
         #[test]
         fn prop_document_has_unique_id(_dummy in 0..10u32) {
@@ -1034,14 +996,14 @@ mod property_tests {
                 "test1.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"test1"),
+                Checksum::new("1".repeat(64)).expect("valid checksum"),
             );
             let doc2 = Document::new(
                 path2,
                 "test2.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"test2"),
+                Checksum::new("2".repeat(64)).expect("valid checksum"),
             );
 
             prop_assert_ne!(doc1.id(), doc2.id());
@@ -1061,7 +1023,7 @@ mod property_tests {
                 "test.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"test"),
+                Checksum::new("a".repeat(64)).expect("valid checksum"),
             );
 
             prop_assert_eq!(doc.status(), DocumentStatus::Pending);
@@ -1077,10 +1039,6 @@ mod property_tests {
             prop_assert!(doc.modified_at() <= doc.indexed_at());
         }
     }
-
-    // ========================================================================
-    // Category B: Status Transitions (6 tests)
-    // ========================================================================
 
     proptest! {
         #[test]
@@ -1111,7 +1069,7 @@ mod property_tests {
                 "test.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"test"),
+                Checksum::new("a".repeat(64)).expect("valid checksum"),
             );
             doc.status = status;
 
@@ -1140,7 +1098,7 @@ mod property_tests {
                 "test.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"test"),
+                Checksum::new("a".repeat(64)).expect("valid checksum"),
             );
             doc.status = from_status;
 
@@ -1154,10 +1112,6 @@ mod property_tests {
             prop_assert_eq!(doc.status(), to_status);
         }
     }
-
-    // ========================================================================
-    // Category C: Content & Checksum (4 tests)
-    // ========================================================================
 
     proptest! {
         #[test]
@@ -1177,14 +1131,14 @@ mod property_tests {
                 "test.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"content1"),
+                Checksum::new("c1".repeat(32)).expect("valid checksum"),
             );
             let doc2 = Document::new(
                 path2,
                 "test.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"content2"),
+                Checksum::new("c2".repeat(32)).expect("valid checksum"),
             );
 
             prop_assert_ne!(doc1.checksum(), doc2.checksum());
@@ -1197,15 +1151,11 @@ mod property_tests {
 
         #[test]
         fn prop_checksum_update_marks_pending(mut doc in arbitrary_document()) {
-            let new_checksum = Checksum::from_bytes(b"new content");
+            let new_checksum = Checksum::new("d".repeat(64)).expect("valid checksum");
             doc.update_checksum(new_checksum);
             prop_assert_eq!(doc.status(), DocumentStatus::Pending);
         }
     }
-
-    // ========================================================================
-    // Category D: Rich Metadata (5 tests)
-    // ========================================================================
 
     proptest! {
         #[test]
@@ -1241,10 +1191,6 @@ mod property_tests {
         }
     }
 
-    // ========================================================================
-    // Category E: File Type Detection (4 tests)
-    // ========================================================================
-
     proptest! {
         #[test]
         fn prop_mime_type_preserved(mime in valid_mime_type()) {
@@ -1254,7 +1200,7 @@ mod property_tests {
                 "test.txt".to_string(),
                 mime.clone(),
                 100,
-                Checksum::from_bytes(b"test"),
+                Checksum::new("a".repeat(64)).expect("valid checksum"),
             );
 
             prop_assert_eq!(doc.mime_type(), &mime);
@@ -1268,7 +1214,7 @@ mod property_tests {
                 "test.txt".to_string(),
                 "text/plain".to_string(),
                 100,
-                Checksum::from_bytes(b"test"),
+                Checksum::new("a".repeat(64)).expect("valid checksum"),
             );
 
             prop_assert!(doc.is_text());
@@ -1282,7 +1228,7 @@ mod property_tests {
                 "test.pdf".to_string(),
                 "application/pdf".to_string(),
                 100,
-                Checksum::from_bytes(b"test"),
+                Checksum::new("a".repeat(64)).expect("valid checksum"),
             );
 
             prop_assert!(doc.is_pdf());
@@ -1294,10 +1240,6 @@ mod property_tests {
             prop_assert!(size_str.contains("B") || size_str.contains("KB") || size_str.contains("MB"));
         }
     }
-
-    // ========================================================================
-    // Category F: Serialization & Display (3 tests)
-    // ========================================================================
 
     proptest! {
         #[test]
@@ -1327,19 +1269,11 @@ mod property_tests {
     }
 }
 
-// ============================================================================
-// Unit Tests (Week 1.5 Mandatory Remediation - Oracle Mandate)
-// ============================================================================
-
 #[cfg(test)]
 mod unit_tests {
     use super::*;
     use std::path::PathBuf;
     use std::str::FromStr;
-
-    // ========================================================================
-    // Helper Functions
-    // ========================================================================
 
     fn temp_path(file_name: &str) -> PathBuf {
         std::env::temp_dir().join(file_name)
@@ -1348,7 +1282,7 @@ mod unit_tests {
     fn create_test_document() -> Document {
         let path =
             ValidatedFilePath::new(temp_path("test.txt")).expect("Failed to create validated path");
-        let checksum = Checksum::from_bytes(b"test content");
+        let checksum = Checksum::new("a".repeat(64)).expect("valid checksum");
 
         Document::new(
             path,
@@ -1362,10 +1296,6 @@ mod unit_tests {
     fn create_test_chunk(content: &str, chunk_number: usize) -> Chunk {
         Chunk::new(DocumentId::new(), content.to_string(), chunk_number)
     }
-
-    // ========================================================================
-    // Category 1: Display/FromStr Traits (9 tests)
-    // ========================================================================
 
     mod display_fromstr_tests {
         use super::*;
@@ -1478,8 +1408,6 @@ mod unit_tests {
 
         #[test]
         fn test_category_from_str_invalid_defaults_uncategorized() {
-            // Category::from_str uses to_lowercase(), so it accepts case-insensitive input
-            // "CODE" -> "code" -> matches Category::Code
             assert_eq!(Category::from_str("CODE").unwrap(), Category::Code);
 
             // These truly invalid inputs default to Uncategorized
@@ -1493,10 +1421,6 @@ mod unit_tests {
             );
         }
     }
-
-    // ========================================================================
-    // Category 2: Chunk Manipulation (9 tests)
-    // ========================================================================
 
     mod chunk_manipulation_tests {
         use super::*;
@@ -1516,7 +1440,6 @@ mod unit_tests {
         fn test_set_chunk_token_count_invalid_index() {
             let mut doc = create_test_document();
 
-            // Should not panic for out-of-bounds index
             doc.set_chunk_token_count(0, 42);
 
             // Document should remain valid
@@ -1538,7 +1461,6 @@ mod unit_tests {
         fn test_set_chunk_word_count_invalid_index() {
             let mut doc = create_test_document();
 
-            // Should not panic for out-of-bounds index
             doc.set_chunk_word_count(0, 5);
 
             // Document should remain valid
@@ -1560,7 +1482,6 @@ mod unit_tests {
         fn test_set_chunk_has_code_invalid_index() {
             let mut doc = create_test_document();
 
-            // Should not panic for out-of-bounds index
             doc.set_chunk_has_code(0, true);
 
             // Document should remain valid
@@ -1582,7 +1503,6 @@ mod unit_tests {
         fn test_set_chunk_section_invalid_index() {
             let mut doc = create_test_document();
 
-            // Should not panic for out-of-bounds index
             doc.set_chunk_section(0, Some("Introduction".to_string()));
 
             // Document should remain valid
@@ -1601,19 +1521,13 @@ mod unit_tests {
             doc.set_chunk_token_count(0, 10);
             doc.set_chunk_has_code(0, true);
 
-            // Verify first chunk was mutated
             assert_eq!(doc.chunks()[0].token_count(), 10);
             assert!(doc.chunks()[0].has_code());
 
-            // Verify second chunk was not affected
             assert_eq!(doc.chunks()[1].token_count(), 0);
             assert!(!doc.chunks()[1].has_code());
         }
     }
-
-    // ========================================================================
-    // Category 4: Metadata Operations (7 tests)
-    // ========================================================================
 
     mod metadata_operations_tests {
         use super::*;
@@ -1717,10 +1631,6 @@ mod unit_tests {
         }
     }
 
-    // ========================================================================
-    // Category 5: Factory Methods (5 tests - Oracle Mandate)
-    // ========================================================================
-
     mod factory_tests {
         use super::*;
         use crate::domain::value_objects::{ChunkingStrategy, FileMetadata};
@@ -1738,19 +1648,16 @@ mod unit_tests {
 
         #[test]
         fn test_from_file_happy_path() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("test.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"test content");
+            let checksum = Checksum::new("a".repeat(64)).expect("valid checksum");
             let content = "This is test content for the document.".to_string();
             let strategy = ChunkingStrategy::FixedSize { size: 512 };
 
-            // ACT
             let result =
                 Document::from_file(file_path, metadata, checksum, content.clone(), strategy);
 
-            // ASSERT
             assert!(result.is_ok());
             let doc = result.unwrap();
             assert_eq!(doc.status(), DocumentStatus::Pending);
@@ -1762,38 +1669,31 @@ mod unit_tests {
 
         #[test]
         fn test_from_file_computes_word_count() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("test.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"test");
+            let checksum = Checksum::new("a".repeat(64)).expect("valid checksum");
             let content = "One two three four five words here.".to_string();
             let strategy = ChunkingStrategy::default();
 
-            // ACT
             let doc = Document::from_file(file_path, metadata, checksum, content, strategy)
                 .expect("Failed to create document");
 
-            // ASSERT
-            // "One two three four five words here." = 7 words
             assert_eq!(doc.word_count(), 7);
         }
 
         #[test]
         fn test_from_file_sets_defaults() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("test.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"test");
+            let checksum = Checksum::new("a".repeat(64)).expect("valid checksum");
             let content = "Default test content".to_string();
             let strategy = ChunkingStrategy::default();
 
-            // ACT
             let doc = Document::from_file(file_path, metadata, checksum, content, strategy)
                 .expect("Failed to create document");
 
-            // ASSERT
             assert_eq!(doc.status(), DocumentStatus::Pending);
             assert_eq!(doc.quality_score(), 0.5);
             assert_eq!(doc.access_count(), 0);
@@ -1805,7 +1705,6 @@ mod unit_tests {
 
         #[test]
         fn test_from_file_preserves_metadata() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("example.md"))
                 .expect("Failed to create validated path");
             let modified_at = Utc::now();
@@ -1816,11 +1715,10 @@ mod unit_tests {
                 modified_at,
             )
             .expect("Failed to create metadata");
-            let checksum = Checksum::from_bytes(b"markdown content");
+            let checksum = Checksum::new("e".repeat(64)).expect("valid checksum");
             let content = "# Markdown Document\n\nContent here.".to_string();
             let strategy = ChunkingStrategy::default();
 
-            // ACT
             let doc = Document::from_file(
                 file_path,
                 metadata,
@@ -1830,7 +1728,6 @@ mod unit_tests {
             )
             .expect("Failed to create document");
 
-            // ASSERT
             assert_eq!(doc.file_name(), "example.md");
             assert_eq!(doc.mime_type(), "text/markdown");
             assert_eq!(doc.size_bytes(), 2048);
@@ -1842,19 +1739,16 @@ mod unit_tests {
 
         #[test]
         fn test_from_file_empty_content_word_count_zero() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("empty.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"");
+            let checksum = Checksum::new("b".repeat(64)).expect("valid checksum");
             let content = String::new();
             let strategy = ChunkingStrategy::default();
 
-            // ACT
             let doc = Document::from_file(file_path, metadata, checksum, content, strategy)
                 .expect("Failed to create document");
 
-            // ASSERT
             assert_eq!(doc.word_count(), 0);
             assert_eq!(doc.content(), "");
             assert_eq!(doc.status(), DocumentStatus::Pending);
@@ -1862,47 +1756,39 @@ mod unit_tests {
 
         #[test]
         fn test_from_file_generates_chunks() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("test.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"test content");
+            let checksum = Checksum::new("a".repeat(64)).expect("valid checksum");
             let content = "This is a test document with some content.".to_string();
             let strategy = ChunkingStrategy::FixedSize { size: 10 };
 
-            // ACT
             let document =
                 Document::from_file(file_path, metadata, checksum, content.clone(), strategy)
                     .expect("from_file should succeed");
 
-            // ASSERT
             assert!(!document.chunks().is_empty(), "Document must have chunks");
 
-            // Verify chunks belong to this document
             for chunk in document.chunks() {
                 assert_eq!(chunk.document_id(), document.id());
             }
 
-            // Verify chunk content matches source
             let reconstructed: String = document.chunks().iter().map(|c| c.content()).collect();
             assert_eq!(reconstructed, content);
         }
 
         #[test]
         fn test_from_file_empty_content_no_chunks() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("empty.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"");
+            let checksum = Checksum::new("b".repeat(64)).expect("valid checksum");
             let content = "".to_string();
             let strategy = ChunkingStrategy::default();
 
-            // ACT
             let document = Document::from_file(file_path, metadata, checksum, content, strategy)
                 .expect("from_file should succeed for empty content");
 
-            // ASSERT
             assert_eq!(
                 document.chunks().len(),
                 0,
@@ -1912,19 +1798,16 @@ mod unit_tests {
 
         #[test]
         fn test_from_file_whitespace_only_no_chunks() {
-            // ARRANGE
             let file_path = ValidatedFilePath::new(temp_path("whitespace.txt"))
                 .expect("Failed to create validated path");
             let metadata = create_test_metadata();
-            let checksum = Checksum::from_bytes(b"   \n\t   ");
+            let checksum = Checksum::new("f".repeat(64)).expect("valid checksum");
             let content = "   \n\t   ".to_string();
             let strategy = ChunkingStrategy::default();
 
-            // ACT
             let document = Document::from_file(file_path, metadata, checksum, content, strategy)
                 .expect("from_file should succeed for whitespace");
 
-            // ASSERT
             assert_eq!(
                 document.chunks().len(),
                 0,

@@ -201,7 +201,6 @@ pub async fn embedding_operation(
                 .await
                 .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-            // Validation
             if text.is_empty() {
                 return Err(AppError::InvalidInput("Text cannot be empty".into()));
             }
@@ -235,7 +234,6 @@ pub async fn embedding_operation(
                 return Err(AppError::InvalidInput("Batch too large (max 100)".into()));
             }
 
-            // Validate each text
             for text in &texts {
                 if text.len() > 10_000 {
                     return Err(AppError::InvalidInput("Text too long in batch".into()));

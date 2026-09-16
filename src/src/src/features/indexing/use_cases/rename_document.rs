@@ -147,7 +147,6 @@ impl RenameDocumentUseCase {
         let old_name = document.file_name().to_string();
 
         // 4. Apply the rename as a metadata-only update.
-        //
         // This used to rebuild the aggregate with `Document::with_id` and call
         // `save()`. `with_id` produces a document with `chunks: Vec::new()`,
         // and the aggregate save deletes every existing chunk before inserting
@@ -186,14 +185,12 @@ impl RenameDocumentUseCase {
         // Trim whitespace
         let trimmed = name.trim();
 
-        // Check not empty
         if trimmed.is_empty() {
             return Err(AppError::InvalidInput(
                 "Document name cannot be empty".to_string(),
             ));
         }
 
-        // Check length
         if trimmed.len() > 255 {
             return Err(AppError::InvalidInput(
                 "Document name cannot exceed 255 characters".to_string(),
@@ -207,7 +204,6 @@ impl RenameDocumentUseCase {
             ));
         }
 
-        // Check for null bytes and control characters
         if trimmed.contains('\0') || trimmed.chars().any(|c| c.is_control()) {
             return Err(AppError::InvalidInput(
                 "Document name cannot contain control characters".to_string(),
@@ -217,7 +213,3 @@ impl RenameDocumentUseCase {
         Ok(trimmed.to_string())
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================

@@ -5,6 +5,22 @@ use serde::{Deserialize, Serialize};
 /// Repository port for batch job persistence
 #[async_trait]
 pub trait BatchJobRepositoryPort: Send + Sync {
+    /// Atomically requeue failed files in an existing job. Successful items stay
+    /// committed, and concurrent retries must not start a second worker.
+    async fn requeue_failed_files(
+        &self,
+        _job_id: &str,
+        _item_id: Option<&str>,
+        _replacement_path: Option<&str>,
+    ) -> Result<usize, AppError> {
+        Err(AppError::InternalError("File retry is unavailable".into()))
+    }
+
+    /// Persisted import options are needed when resuming or retrying a job.
+    async fn get_job_options(&self, _job_id: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+
     /// Create a new batch job
     async fn create_batch_job(
         &self,

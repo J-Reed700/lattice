@@ -6,11 +6,10 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 use insta::assert_json_snapshot;
-use lattice::infrastructure::indexing::chunker::TextChunk;
-use lattice::infrastructure::indexing::events::IndexingEvent;
+use lattice::features::indexing::engine::chunker::TextChunk;
+use lattice::features::indexing::engine::events::IndexingEvent;
 use serde_json::json;
 #[test]
 fn test_text_chunk_output() {

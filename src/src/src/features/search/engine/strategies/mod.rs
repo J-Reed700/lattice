@@ -2,7 +2,7 @@ pub mod fusion;
 
 pub use fusion::{FusionStrategy, RrfFusion, WeightedFusion};
 
-use crate::infrastructure::search::hybrid::HybridSearchResult;
+use crate::features::search::engine::hybrid::HybridSearchResult;
 
 pub trait SearchFusionStrategy: Send + Sync {
     fn fuse(

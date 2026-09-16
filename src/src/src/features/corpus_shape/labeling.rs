@@ -1,8 +1,7 @@
 //! LLM-based cluster labeling.
 //!
 //! Given a handful of representative documents, produce a 3-5 word noun-phrase
-//! label and a one-sentence description. Phase 5.3 goal: good-enough labels
-//! Josh can eyeball without drowning the LLM in tokens.
+//! label and a one-sentence description without sending excessive context.
 //!
 //! The prompt asks for strict JSON so we can parse deterministically. If
 //! parsing fails (the LLM does what LLMs do) we fall back to a best-effort
@@ -63,7 +62,6 @@ pub async fn label_cluster(
     // `LLMPort` has no per-call generation overrides — the system prompt does
     // the work instead ("JSON only, no preamble"), the parser is tolerant, and
     // `MAX_LABEL_CHARS` truncates whatever runs long.
-    //
     // Ollama-style models want the "system" bit prepended to context, and
     // `generate` takes a plain prompt plus a context array, so the system
     // prompt goes in as context.

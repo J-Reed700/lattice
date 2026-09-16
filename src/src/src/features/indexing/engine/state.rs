@@ -1,4 +1,4 @@
-use super::progress::{IndexProgress, IndexStatus, ProgressTracker};
+use super::progress::{IndexProgress, ProgressTracker};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -244,7 +244,7 @@ impl IndexingState {
             .map(|t| t.subscribe())
             .unwrap_or_else(|_| {
                 // Fallback if lock fails (shouldn't happen)
-                let (tx, rx) = broadcast::channel(1);
+                let (_tx, rx) = broadcast::channel(1);
                 rx
             })
     }

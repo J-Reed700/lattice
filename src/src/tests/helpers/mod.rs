@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
-use lattice::error::Result;
+use lattice::shared::error::Result;
 use lattice::infrastructure::persistence::repositories::{
     chunk_repository::ChunkRepository,
     document_repository::DocumentRepository,
@@ -47,7 +47,6 @@ pub mod mocks;
 pub mod assertions;
 pub mod dependency_builder;
 
-// Re-export commonly used items
 pub use factories::*;
 pub use mocks::*;
 pub use dependency_builder::{
@@ -58,10 +57,6 @@ pub use dependency_builder::{
     create_minimal_document,
     create_chunked_document,
 };
-
-// ============================================================================
-// TestContext - Main Test Environment
-// ============================================================================
 
 /// Comprehensive test context for integration tests.
 ///
@@ -106,21 +101,18 @@ impl TestContext {
     /// Returns error if database initialization fails.
     pub async fn new() -> Result<Self> {
         let temp_dir = tempfile::tempdir()
-            .map_err(|e| lattice::error::AppError::Other(format!("Failed to create temp dir: {}", e)))?;
+            .map_err(|e| lattice::shared::error::AppError::Other(format!("Failed to create temp dir: {}", e)))?;
 
         let uuid = Uuid::new_v4().simple().to_string();
         let db_path = temp_dir.path().join(format!("test_{}.db", uuid));
         let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
 
-        // Create connection pool
         let pool = SqlitePool::connect(&db_url).await
-            .map_err(|e| lattice::error::AppError::Database(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| lattice::shared::error::AppError::Database(format!("Failed to connect: {}", e)))?;
 
-        // Initialize database schema
         lattice::infrastructure::persistence::database::init::initialize_database(&pool).await
-            .map_err(|e| lattice::error::AppError::Database(format!("Failed to initialize: {}", e)))?;
+            .map_err(|e| lattice::shared::error::AppError::Database(format!("Failed to initialize: {}", e)))?;
 
-        // Create mock embedder
         let embedder = Arc::new(MockEmbedder::new(384)); // Standard embedding dimension
 
         Ok(Self {
@@ -137,10 +129,6 @@ impl TestContext {
         ctx.embedder = Arc::new(MockEmbedder::new(dim));
         Ok(ctx)
     }
-
-    // ========================================================================
-    // Repository Accessors
-    // ========================================================================
 
     /// Get document repository instance.
     pub fn doc_repo(&self) -> DocumentRepository {
@@ -167,10 +155,6 @@ impl TestContext {
         EmbeddingRepository::new(self.pool.clone())
     }
 
-    // ========================================================================
-    // Test Data Factories (Convenience Methods)
-    // ========================================================================
-
     /// Create a test document with default values.
     ///
     /// # Arguments
@@ -182,13 +166,11 @@ impl TestContext {
     ///
     /// Created document with generated ID
     pub async fn create_test_document(&self, file_name: &str, content: &str) -> Result<TestDocument> {
-        // Use DependencyBuilder for proper test data creation
         let builder = DependencyBuilder::new(self.pool.clone())
             .with_document(file_name, content);
 
         let result = builder.build().await?;
 
-        // Convert from DependencyBuildResult to TestDocument
         let doc = TestDocument {
             id: result.document.id.clone(),
             vault_id: "test-lattice".to_string(),
@@ -225,7 +207,6 @@ impl TestContext {
                 .chunk_index(i as i32)
                 .build();
 
-            // Use repository to insert chunk
             let chunk_id = chunk.insert_into_db(&chunk_repo).await?;
             self.track_cleanup("chunk", &chunk_id).await;
             chunks.push(chunk);
@@ -283,7 +264,6 @@ impl TestContext {
                 .embedding(embedding_vec)
                 .build();
 
-            // Use repository to insert embedding
             embedding.insert_into_db(&embedding_repo).await?;
             self.track_cleanup("embedding", chunk_id).await;
             embeddings.push(embedding);
@@ -291,10 +271,6 @@ impl TestContext {
 
         Ok(embeddings)
     }
-
-    // ========================================================================
-    // Utility Methods
-    // ========================================================================
 
     /// Get temporary directory path.
     pub fn temp_path(&self) -> PathBuf {
@@ -305,7 +281,7 @@ impl TestContext {
     pub async fn create_temp_file(&self, name: &str, content: &str) -> Result<PathBuf> {
         let path = self.temp_dir.path().join(name);
         tokio::fs::write(&path, content).await
-            .map_err(|e| lattice::error::AppError::Other(format!("Failed to write file: {}", e)))?;
+            .map_err(|e| lattice::shared::error::AppError::Other(format!("Failed to write file: {}", e)))?;
         Ok(path)
     }
 
@@ -318,7 +294,7 @@ impl TestContext {
     /// Get database statistics.
     pub async fn get_db_stats(&self) -> Result<DatabaseStats> {
         let mut conn = self.pool.acquire().await
-            .map_err(|e| lattice::error::AppError::Database(format!("Failed to acquire: {}", e)))?;
+            .map_err(|e| lattice::shared::error::AppError::Database(format!("Failed to acquire: {}", e)))?;
 
         let doc_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
             .fetch_one(&mut *conn).await.unwrap_or(0);
@@ -343,14 +319,8 @@ impl TestContext {
 
 impl Drop for TestContext {
     fn drop(&mut self) {
-        // Cleanup is automatic - temp_dir will be deleted
-        // Database is in-memory, so no cleanup needed
     }
 }
-
-// ============================================================================
-// Helper Structs
-// ============================================================================
 
 #[derive(Debug, Clone)]
 struct CleanupTracker {
@@ -378,10 +348,6 @@ pub struct DatabaseStats {
     pub mentions: usize,
 }
 
-// ============================================================================
-// Standalone Helper Functions
-// ============================================================================
-
 /// Create an in-memory test database.
 ///
 /// # Returns
@@ -389,10 +355,10 @@ pub struct DatabaseStats {
 /// Initialized SQLite pool
 pub async fn setup_test_db() -> Result<SqlitePool> {
     let pool = SqlitePool::connect("sqlite::memory:").await
-        .map_err(|e| lattice::error::AppError::Database(format!("Failed to connect: {}", e)))?;
+        .map_err(|e| lattice::shared::error::AppError::Database(format!("Failed to connect: {}", e)))?;
 
     lattice::infrastructure::persistence::database::init::initialize_database(&pool).await
-        .map_err(|e| lattice::error::AppError::Database(format!("Failed to initialize: {}", e)))?;
+        .map_err(|e| lattice::shared::error::AppError::Database(format!("Failed to initialize: {}", e)))?;
 
     Ok(pool)
 }
@@ -409,10 +375,6 @@ pub async fn setup_test_db() -> Result<SqlitePool> {
 pub fn setup_test_embedder(dimensions: usize) -> Arc<MockEmbedder> {
     Arc::new(MockEmbedder::new(dimensions))
 }
-
-// ============================================================================
-// Test Data Models
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct TestDocument {

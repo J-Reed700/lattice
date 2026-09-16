@@ -328,8 +328,10 @@ async fn apply_note_index_action(
                 .map(|_| ())
         }
         // `Skip` returned above; `Remove` is the only case left.
-        _ => crate::features::file::plugin::commands::remove_indexed_file(path.clone(), container)
-            .await,
+        _ => {
+            crate::features::file::plugin::commands::remove_indexed_file(path.clone(), container)
+                .await
+        }
     };
 
     match outcome {

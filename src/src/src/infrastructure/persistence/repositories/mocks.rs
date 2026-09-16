@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! Following the "bricks and studs" philosophy:
+//! Reusable repository test doubles:
 //! - **Studs (Public Interface)**: Implement the same traits as production repositories
 //! - **Bricks (Implementation)**: In-memory HashMaps for storage
 //! - **Regeneratable**: Can be swapped with real repositories without code changes
@@ -47,12 +47,6 @@ use crate::shared::error::{AppError, Result};
 // Document removed - migrated to DDD (use crate::domain::entities::Document at line ~380)
 // Mention types removed - migrated to DDD (use crate::application::ports::mention_repository_port)
 // use crate::infrastructure::persistence::repositories::mention_repository::{DocumentMention, Mention, MentionWithContext};
-
-// ============================================================================
-// Mock Document Repository - REMOVED (migrated to DDD)
-// ============================================================================
-// Old MockDocumentRepository for legacy DocumentRepositoryTrait removed
-// See infrastructure/persistence/repositories/support/mocks.rs line ~400 for new DDD version
 
 /*
 /// In-memory mock implementation of DocumentRepositoryTrait (LEGACY)
@@ -225,10 +219,6 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
 }
 */
 
-// ============================================================================
-// Mock Chunk Repository - REMOVED (migrated to DDD)
-// ============================================================================
-// Mock chunk repository for testing
 #[derive(Clone)]
 pub struct MockChunkRepository {
     chunks: Arc<RwLock<HashMap<String, Chunk>>>,
@@ -405,10 +395,6 @@ impl RepositoryPort<ChunkEntity> for MockChunkRepository {
 }
 // END REMOVED MockChunkRepository
 
-// ============================================================================
-// Mock Document Repository (DDD Pattern)
-// ============================================================================
-
 // DocumentRepositoryPort, Filter, RepositoryPort already imported at top
 // Document already imported at line 34 with Chunk and Mention
 
@@ -487,7 +473,6 @@ impl RepositoryPort<Document> for MockDocumentRepository {
 
     async fn find_all(&self) -> Result<Vec<Document>> {
         let mut docs: Vec<_> = self.documents.read().values().cloned().collect();
-        // Sort by file path for deterministic ordering
         docs.sort_by(|a, b| a.file_path().cmp(b.file_path()));
         Ok(docs)
     }
@@ -557,7 +542,6 @@ impl DocumentRepositoryPort for MockDocumentRepository {
         &self,
         checksum: &crate::domain::value_objects::Checksum,
     ) -> Result<Option<crate::domain::entities::Document>> {
-        // Mock implementation: search through all documents for matching checksum
         let docs = self.documents.read();
         for doc in docs.values() {
             if doc.checksum().as_str() == checksum.as_str() {
@@ -572,7 +556,6 @@ impl DocumentRepositoryPort for MockDocumentRepository {
     }
 
     async fn count_chunks(&self) -> Result<i64> {
-        // Mock: sum up chunks across all documents
         let docs = self.documents.read();
         let total: usize = docs.values().map(|doc| doc.chunks().len()).sum();
         Ok(total as i64)
@@ -627,16 +610,13 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
         modified_at: &str,
         checksum: &str,
     ) -> Result<String> {
-        // Check if document exists
         if let Some(id) = self.paths.read().get(file_path).cloned() {
-            // Update existing
-            if let Some(doc) = self.documents.read().get(&id).cloned() {
+            if let Some(_doc) = self.documents.read().get(&id).cloned() {
                 // For mock, just return existing ID
                 return Ok(id);
             }
         }
 
-        // Create new
         let doc = self
             .create(
                 file_path,
@@ -667,12 +647,11 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
         RepositoryPort::find_all(self).await
     }
 
-    async fn update_status(&self, id: &str, status: &str) -> Result<()> {
+    async fn update_status(&self, id: &str, _status: &str) -> Result<()> {
         // For mock, just check if exists
         if !self.documents.read().contains_key(id) {
             return Err(AppError::NotFound(format!("Document not found: {}", id)));
         }
-        // Mock doesn't actually update status field
         Ok(())
     }
 
@@ -702,10 +681,6 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
         Ok(docs)
     }
 }
-
-// ============================================================================
-// Mock Embedding Repository
-// ============================================================================
 
 /// In-memory mock implementation of EmbeddingRepositoryTrait
 #[derive(Clone)]
@@ -756,10 +731,6 @@ impl Default for MockEmbeddingRepository {
     }
 }
 
-// ============================================================================
-// Legacy Trait Implementation - COMMENTED OUT (migrated to DDD)
-// ============================================================================
-
 /*
 #[async_trait]
 impl EmbeddingRepositoryTrait for MockEmbeddingRepository {
@@ -780,7 +751,6 @@ impl EmbeddingRepositoryTrait for MockEmbeddingRepository {
             .write()
             .insert(chunk_id.to_string(), id.clone());
 
-        // Update document index if we know the document for this chunk
         if let Some(document_id) = self.chunk_to_document.read().get(chunk_id) {
             self.document_index
                 .write()
@@ -863,10 +833,6 @@ impl EmbeddingRepositoryTrait for MockEmbeddingRepository {
 }
 */
 
-// ============================================================================
-// DDD Port Implementation
-// ============================================================================
-
 #[async_trait]
 impl EmbeddingRepositoryPort for MockEmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
@@ -888,7 +854,6 @@ impl EmbeddingRepositoryPort for MockEmbeddingRepository {
         let dto = EmbeddingMapper::to_dto(entity, vector);
         let embedding_id = uuid::Uuid::new_v4().to_string();
 
-        // Convert DTO to old Embedding struct for storage
         let embedding = Embedding {
             id: embedding_id.clone(),
             chunk_id: dto.chunk_id.clone(),
@@ -904,7 +869,6 @@ impl EmbeddingRepositoryPort for MockEmbeddingRepository {
             .write()
             .insert(dto.chunk_id.clone(), embedding_id.clone());
 
-        // Update document index if we know the document for this chunk
         if let Some(document_id) = self.chunk_to_document.read().get(&dto.chunk_id) {
             self.document_index
                 .write()
@@ -1026,22 +990,14 @@ impl EmbeddingRepositoryPort for MockEmbeddingRepository {
     }
 }
 
-// ============================================================================
 // MockTagRepository REMOVED - migrated to DDD
-// ============================================================================
-//
 // The old MockTagRepository using crate::models::tag::Tag has been removed.
 // Use the DDD version instead:
 // - Location: src/shared/traits.rs
 // - Uses: crate::domain::entities::tag::Tag (domain entity)
 // - Trait: crate::shared::traits::TagRepositoryTrait
-//
 // Migration note: This mock was obsolete and using the old Tag model.
 // The canonical mock is in shared/traits.rs with proper DDD structure.
-
-// ============================================================================
-// Mock Mention Repository
-// ============================================================================
 
 /// In-memory mock implementation of MentionRepositoryTrait (LEGACY - migrated to DDD)
 #[derive(Clone)]
@@ -1091,10 +1047,8 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         let id_str = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
 
-        // Check if exists
         if let Some(existing_id) = self.name_index.read().get(name).cloned() {
             if let Some(_mention) = self.mentions.read().get(&existing_id) {
-                // Return existing data
                 return Ok(crate::application::ports::MentionData {
                     id: existing_id,
                     name: name.to_string(),
@@ -1105,8 +1059,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
             }
         }
 
-        // Create a mention entity for storage
-        // Use dummy IDs for document and chunk since the mock doesn't track those
         let mention = Mention::new(
             DocumentId::new(), // Dummy document ID
             ChunkId::new(),    // Dummy chunk ID
@@ -1157,7 +1109,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         let mentions = self.mentions.read();
         let name_index = self.name_index.read();
 
-        // Build reverse map (id -> name) for the result
         let mut id_to_name: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         for (name, id) in name_index.iter() {
@@ -1218,7 +1169,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         &self,
         _document_id: &str,
     ) -> Result<Vec<crate::application::ports::MentionWithContextData>, AppError> {
-        // Mock implementation returns empty for simplicity
         Ok(vec![])
     }
 
@@ -1236,7 +1186,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
         _document_id: &str,
         _text: &str,
     ) -> Result<Vec<crate::application::ports::MentionWithContextData>, AppError> {
-        // Mock implementation returns empty for simplicity
         Ok(vec![])
     }
 
@@ -1251,7 +1200,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
             .get(id)
             .ok_or_else(|| AppError::NotFound(format!("Mention not found: {}", id)))?;
 
-        // Get the name from name_index
         let name_index = self.name_index.read();
         let name = name_index
             .iter()
@@ -1275,7 +1223,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 
     async fn delete_mention(&self, id: &str) -> Result<(), AppError> {
         if let Some(_mention) = self.mentions.write().remove(id) {
-            // Find and remove from name_index
             let mut name_to_remove = None;
             for (name, mention_id) in self.name_index.read().iter() {
                 if mention_id == id {
@@ -1292,18 +1239,13 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
     }
 }
 
-// ============================================================================
 // Legacy MentionRepositoryTrait implementation - MIGRATED TO DDD
-// ============================================================================
-//
 // This implementation has been replaced with MentionRepositoryPort.
 // See src/infrastructure/services/mocks/mock_mention.rs for the new DDD implementation.
 // See src/infrastructure/services/traits/mention.rs for migration guide.
-//
 // Migration:
 // - OLD: Arc<dyn MentionRepositoryTrait>
 // - NEW: Arc<dyn MentionRepositoryPort>
-//
 // #[async_trait]
 // impl MentionRepositoryTrait for MockMentionRepository {
 //     async fn create_mention(
@@ -1321,10 +1263,8 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //                 return Ok(mention.clone());
 //             }
 //         }
-//
 //         let id = Uuid::new_v4().to_string();
 //         let created_at = Utc::now().to_rfc3339();
-//
 //         let mention = Mention {
 //             id: id.clone(),
 //             name: name.to_string(),
@@ -1332,13 +1272,10 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //             metadata: metadata.map(|s| s.to_string()),
 //             created_at,
 //         };
-//
 //         self.mentions.write().insert(id.clone(), mention.clone());
 //         self.name_index.write().insert(name.to_string(), id);
-//
 //         Ok(mention)
 //     }
-//
 //     async fn find_mention_by_name(&self, name: &str) -> Result<Option<Mention>> {
 //         let name_index = self.name_index.read();
 //         if let Some(id) = name_index.get(name) {
@@ -1347,7 +1284,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //             Ok(None)
 //         }
 //     }
-//
 //     async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<Mention>> {
 //         let mentions = self.mentions.read();
 //         let mut results: Vec<Mention> = mentions
@@ -1359,7 +1295,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //         results.truncate(limit as usize);
 //         Ok(results)
 //     }
-//
 //     async fn get_mentions_by_type(&self, mention_type: &str) -> Result<Vec<Mention>> {
 //         let mentions = self.mentions.read();
 //         let mut results: Vec<Mention> = mentions
@@ -1370,7 +1305,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //         results.sort_by(|a, b| a.name.cmp(&b.name));
 //         Ok(results)
 //     }
-//
 //     async fn link_mention_to_document(
 //         &self,
 //         document_id: &str,
@@ -1380,7 +1314,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //     ) -> Result<DocumentMention> {
 //         let id = Uuid::new_v4().to_string();
 //         let created_at = Utc::now().to_rfc3339();
-//
 //         let doc_mention = DocumentMention {
 //             id,
 //             document_id: document_id.to_string(),
@@ -1389,22 +1322,18 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //             position,
 //             created_at,
 //         };
-//
 //         self.document_mentions
 //             .write()
 //             .entry(document_id.to_string())
 //             .or_insert_with(Vec::new)
 //             .push(doc_mention.clone());
-//
 //         self.mention_documents
 //             .write()
 //             .entry(mention_id.to_string())
 //             .or_insert_with(Vec::new)
 //             .push(document_id.to_string());
-//
 //         Ok(doc_mention)
 //     }
-//
 //     async fn get_mentions_for_document(
 //         &self,
 //         document_id: &str,
@@ -1430,7 +1359,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //             Ok(Vec::new())
 //         }
 //     }
-//
 //     async fn get_documents_with_mention(&self, mention_id: &str) -> Result<Vec<String>> {
 //         Ok(self
 //             .mention_documents
@@ -1439,7 +1367,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //             .cloned()
 //             .unwrap_or_default())
 //     }
-//
 //     async fn clear_document_mentions(&self, document_id: &str) -> Result<()> {
 //         if let Some(doc_mentions) = self.document_mentions.write().remove(document_id) {
 //             let mut mention_documents = self.mention_documents.write();
@@ -1451,11 +1378,9 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //         }
 //         Ok(())
 //     }
-//
 //     async fn delete_mention(&self, id: &str) -> Result<()> {
 //         if let Some(mention) = self.mentions.write().remove(id) {
 //             self.name_index.write().remove(&mention.name);
-//
 //             if let Some(doc_ids) = self.mention_documents.write().remove(id) {
 //                 let mut document_mentions = self.document_mentions.write();
 //                 for doc_id in doc_ids {
@@ -1467,16 +1392,12 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //         }
 //         Ok(())
 //     }
-//
 //     fn extract_mentions_from_text(&self, text: &str) -> HashMap<String, Vec<(String, usize)>> {
 //         use once_cell::sync::Lazy;
 //         use regex::Regex;
-//
 //         static AT_MENTION_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"@\[([^\]]+)\]").unwrap());
 //         static WIKILINK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
-//
 //         let mut mentions: HashMap<String, Vec<(String, usize)>> = HashMap::new();
-//
 //         for cap in AT_MENTION_RE.captures_iter(text) {
 //             let name = cap[1].to_string();
 //             let position = cap.get(0).unwrap().start();
@@ -1485,7 +1406,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //                 .or_insert_with(Vec::new)
 //                 .push((name, position));
 //         }
-//
 //         for cap in WIKILINK_RE.captures_iter(text) {
 //             let name = cap[1].to_string();
 //             let position = cap.get(0).unwrap().start();
@@ -1494,28 +1414,22 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //                 .or_insert_with(Vec::new)
 //                 .push((name, position));
 //         }
-//
 //         mentions
 //     }
-//
 //     async fn extract_and_store_mentions(
 //         &self,
 //         document_id: &str,
 //         text: &str,
 //     ) -> Result<Vec<MentionWithContext>> {
 //         self.clear_document_mentions(document_id).await?;
-//
 //         let extracted = self.extract_mentions_from_text(text);
 //         let mut results = Vec::new();
-//
 //         for (mention_type, occurrences) in extracted {
 //             for (name, position) in occurrences {
 //                 let mention = self.create_mention(&name, &mention_type, None).await?;
-//
 //                 let start = position.saturating_sub(50);
 //                 let end = (position + 50).min(text.len());
 //                 let context = text[start..end].to_string();
-//
 //                 self.link_mention_to_document(
 //                     document_id,
 //                     &mention.id,
@@ -1523,7 +1437,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //                     Some(position as i64),
 //                 )
 //                 .await?;
-//
 //                 results.push(MentionWithContext {
 //                     mention,
 //                     context: Some(context),
@@ -1531,7 +1444,6 @@ impl crate::application::ports::MentionRepositoryPort for MockMentionRepository 
 //                 });
 //             }
 //         }
-//
 //         Ok(results)
 //     }
 // }

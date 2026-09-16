@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-use crate::llm::types::LLMError;
+use crate::features::llm::engine::types::LLMError;
 
 /// Configuration for text generation.
 #[derive(Debug, Clone, Serialize, Deserialize)]

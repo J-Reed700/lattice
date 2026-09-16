@@ -5,11 +5,11 @@
 //! sentence boundary and then joins sentences with spaces — a line-based
 //! detector would lose the markers, a substring scan does not. The markers are
 //! read back out by `MetadataExtractor::extract_section` to produce each chunk's
-//! `section` (contract §4.8).
+//! `section`.
 
 use crate::application::ports::transcription_port::TranscriptSegment;
 
-/// Target speech per transcript window, in seconds (contract §4.16).
+/// Target speech per transcript window, in seconds.
 pub const TRANSCRIPT_WINDOW_SECS: u64 = 45;
 
 /// A run of consecutive segments rendered as one labelled block.

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::panic::PanicInfo as StdPanicInfo;
+use std::panic::PanicHookInfo as StdPanicHookInfo;
 
 /// Structured crash report with all debugging information.
 ///
@@ -66,7 +66,7 @@ impl CrashReport {
     ///
     /// SAFETY: This function MUST NOT PANIC.
     /// All operations are defensive with fallback values.
-    pub fn from_panic(panic_info: &StdPanicInfo) -> Self {
+    pub fn from_panic(panic_info: &StdPanicHookInfo) -> Self {
         Self {
             version: "1.0".to_string(),
             timestamp: Utc::now(),

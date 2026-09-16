@@ -18,7 +18,6 @@ impl UpdateTagUseCase {
 
     /// Execute the use case
     pub async fn execute(&self, request: UpdateTagRequestDto) -> Result<TagDto> {
-        // Update the tag
         let tag = self
             .tag_service
             .update_tag(
@@ -28,7 +27,6 @@ impl UpdateTagUseCase {
             )
             .await?;
 
-        // Convert to DTO
         Ok(TagDto {
             id: tag.id().as_str().to_string(),
             name: tag.name().as_str().to_string(),

@@ -5,8 +5,8 @@
 use crate::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
 use crate::application::services::FileType;
 use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
+use crate::features::web::article_detector::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
-use crate::infrastructure::web::WebArticleDetector;
 use crate::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -88,7 +88,6 @@ impl OpenFileByIdUseCase {
             .validate_path(full_path.to_string_lossy().to_string())
             .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
 
-        // Check file exists on disk
         if !self.file_storage.exists(&validated_path).await {
             return Err(AppError::NotFound(format!(
                 "File for document '{}' not found on disk: {}",

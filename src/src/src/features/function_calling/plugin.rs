@@ -12,15 +12,17 @@ use tauri::{
 };
 
 #[tauri::command]
+#[specta::specta]
 pub async fn list_available_functions(
     container: State<'_, Container>,
-) -> Result<Vec<serde_json::Value>, ApiError> {
+) -> Result<Vec<super::domain::ToolDefinition>, ApiError> {
     function_calling_commands::list_available_functions(container)
         .await
         .map_err(ApiError::from)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn execute_function(
     call: FunctionCall,
     container: State<'_, Container>,
@@ -31,6 +33,7 @@ pub async fn execute_function(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_function_stats(
     container: State<'_, Container>,
 ) -> Result<RegistryStats, ApiError> {

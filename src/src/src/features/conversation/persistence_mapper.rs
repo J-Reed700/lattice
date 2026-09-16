@@ -10,15 +10,11 @@
 use crate::domain::conversation::{
     Conversation, ConversationMessage, DocumentReference, MessageRole,
 };
-use crate::domain_types::ConversationId;
+use crate::shared::domain_types::ConversationId;
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-
-// ============================================================================
-// Database Models (Anemic DTOs)
-// ============================================================================
 
 /// Database model for conversations.
 ///
@@ -59,10 +55,6 @@ pub struct DocumentReferenceModel {
     pub relevance_score: Option<f32>,
     pub added_at: String,
 }
-
-// ============================================================================
-// Conversation Mapper
-// ============================================================================
 
 /// Mapper for Conversation entity and database model.
 ///
@@ -107,7 +99,6 @@ impl ConversationRowMapper {
     /// - `AppError::InvalidData` if timestamps cannot be parsed
     /// - `AppError::InvalidData` if conversation ID is invalid
     pub fn to_entity(model: &ConversationModel) -> Result<Conversation> {
-        // Parse timestamps
         let created_at = DateTime::parse_from_rfc3339(&model.created_at)
             .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
             .with_timezone(&Utc);
@@ -116,7 +107,6 @@ impl ConversationRowMapper {
             .map_err(|e| AppError::InvalidData(format!("Invalid updated_at timestamp: {}", e)))?
             .with_timezone(&Utc);
 
-        // Parse conversation ID
         let id = ConversationId::from_str(&model.id)?;
 
         Ok(Conversation {
@@ -149,10 +139,6 @@ impl ConversationRowMapper {
             .collect()
     }
 }
-
-// ============================================================================
-// Message Mapper
-// ============================================================================
 
 /// Mapper for ConversationMessage entity and database model.
 pub struct ConversationMessageMapper;
@@ -207,10 +193,6 @@ impl ConversationMessageMapper {
             .collect()
     }
 }
-
-// ============================================================================
-// Document Reference Mapper
-// ============================================================================
 
 /// Mapper for DocumentReference entity and database model.
 pub struct DocumentReferenceMapper;

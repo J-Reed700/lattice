@@ -71,7 +71,6 @@ impl ShowInFolderUseCase {
             .validate_path(&request.path)
             .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
 
-        // Check file exists (using validated path)
         if !self.file_storage.exists(&validated_path).await {
             return Err(AppError::NotFound(format!(
                 "File not found: {}",
@@ -252,6 +251,9 @@ mod tests {
         let result = use_case.execute(request).await;
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(crate::error::AppError::NotFound(_))));
+        assert!(matches!(
+            result,
+            Err(crate::shared::error::AppError::NotFound(_))
+        ));
     }
 }

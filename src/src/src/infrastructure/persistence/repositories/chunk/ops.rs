@@ -17,9 +17,9 @@ pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()
         INSERT INTO text_chunks (
             id, document_id, content, chunk_index,
             contextualized_content, context_prefix, start_char, end_char,
-            language, token_count, word_count, has_code, section
+            language, token_count, word_count, has_code, section, page_number
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             content = excluded.content,
             chunk_index = excluded.chunk_index,
@@ -31,7 +31,7 @@ pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()
             token_count = excluded.token_count,
             word_count = excluded.word_count,
             has_code = excluded.has_code,
-            section = excluded.section
+            section = excluded.section, page_number = excluded.page_number
         "#,
     )
     .bind(&model.id)
@@ -47,6 +47,7 @@ pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()
     .bind(model.word_count)
     .bind(model.has_code)
     .bind(&model.section)
+    .bind(model.page_number)
     .execute(conn)
     .await
     .map_err(|e| AppError::Database(format!("Failed to save chunk: {}", e)))?;
@@ -61,7 +62,7 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
             id, document_id, content, chunk_index,
             contextualized_content, context_prefix,
             start_char, end_char, language,
-            token_count, word_count, has_code, section
+            token_count, word_count, has_code, section, page_number
         FROM text_chunks
         WHERE id = ?
         "#,
@@ -84,7 +85,7 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<ChunkEntity>> {
             id, document_id, content, chunk_index,
             contextualized_content, context_prefix,
             start_char, end_char, language,
-            token_count, word_count, has_code, section
+            token_count, word_count, has_code, section, page_number
         FROM text_chunks
         ORDER BY document_id, chunk_index ASC
         "#,
@@ -111,7 +112,7 @@ pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<
                 id, document_id, content, chunk_index,
                 contextualized_content, context_prefix,
                 start_char, end_char, language,
-                token_count, word_count, has_code, section
+                token_count, word_count, has_code, section, page_number
             FROM text_chunks
             WHERE id IN ("#,
         );
@@ -144,7 +145,7 @@ pub async fn find_by_document(
             id, document_id, content, chunk_index,
             contextualized_content, context_prefix,
             start_char, end_char, language,
-            token_count, word_count, has_code, section
+            token_count, word_count, has_code, section, page_number
         FROM text_chunks
         WHERE document_id = ?
         ORDER BY chunk_index ASC
@@ -253,7 +254,7 @@ pub async fn save_batch_optimized(
             "INSERT INTO text_chunks (
                 id, document_id, content, chunk_index,
                 contextualized_content, context_prefix, start_char, end_char,
-                language, token_count, word_count, has_code, section
+                language, token_count, word_count, has_code, section, page_number
             ) ",
         );
 
@@ -270,7 +271,8 @@ pub async fn save_batch_optimized(
                 .push_bind(model.token_count)
                 .push_bind(model.word_count)
                 .push_bind(model.has_code)
-                .push_bind(&model.section);
+                .push_bind(&model.section)
+                .push_bind(model.page_number);
         });
 
         query_builder.push(

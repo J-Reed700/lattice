@@ -47,10 +47,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Validate that a domain is safe for use as a directory name.
 ///
 /// Security checks:
@@ -146,14 +142,12 @@ pub fn validate_domain(domain: &str) -> Result<()> {
 /// assert_eq!(sanitized, "hello-world-2024");
 /// ```
 pub fn sanitize_title(title: &str) -> String {
-    // Convert to lowercase and replace non-alphanumeric with hyphens
     let sanitized = title
         .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect::<String>();
 
-    // Remove consecutive hyphens
     let mut result = String::new();
     let mut prev_hyphen = false;
     for c in sanitized.chars() {
@@ -168,16 +162,11 @@ pub fn sanitize_title(title: &str) -> String {
         }
     }
 
-    // Remove leading/trailing hyphens
     let result = result.trim_matches('-');
 
     // Truncate to max 50 characters
     result.chars().take(50).collect()
 }
-
-// ============================================================================
-// Value Objects
-// ============================================================================
 
 /// Value Object: Web archive file path
 ///
@@ -194,7 +183,7 @@ pub fn sanitize_title(title: &str) -> String {
 ///
 /// ```rust,no_run
 /// # use lattice::domain::web_archive::WebArchivePath;
-/// # use lattice::domain_types::DocumentId;
+/// # use lattice::shared::domain_types::DocumentId;
 /// # use url::Url;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let url = Url::parse("https://github.com/rust-lang/rust")?;
@@ -225,15 +214,12 @@ impl WebArchivePath {
     /// - Generated path is unique (uses doc_id)
     /// - Filename is sanitized
     pub fn new(url: &Url, title: &str, doc_id: &DocumentId) -> Result<Self> {
-        // Validate URL has host
         let domain = url
             .host_str()
             .ok_or_else(|| AppError::InvalidInput("URL must have a host".to_string()))?;
 
-        // Validate domain is safe for filesystem use
         validate_domain(domain)?;
 
-        // Validate title is not empty
         if title.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Article title cannot be empty".to_string(),
@@ -243,7 +229,6 @@ impl WebArchivePath {
         // Sanitize title
         let sanitized_title = sanitize_title(title);
 
-        // Get first 8 characters of UUID for uniqueness
         let short_uuid = &doc_id.as_str()[..8];
 
         // Format: {domain}/{sanitized-title}-{short-uuid}.md
@@ -270,7 +255,7 @@ impl WebArchivePath {
     ///
     /// ```rust,no_run
     /// # use lattice::domain::web_archive::WebArchivePath;
-    /// # use lattice::domain_types::DocumentId;
+    /// # use lattice::shared::domain_types::DocumentId;
     /// # use url::Url;
     /// # use std::path::PathBuf;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -361,10 +346,6 @@ impl WebArchivePath {
     }
 }
 
-// ============================================================================
-// Article Metadata
-// ============================================================================
-
 /// Article metadata extracted from web content.
 ///
 /// Contains optional fields that may or may not be present
@@ -403,10 +384,6 @@ impl ArticleMetadata {
     }
 }
 
-// ============================================================================
-// Ingested Content
-// ============================================================================
-
 /// Content ingested from a web page.
 ///
 /// Contains the raw HTML, extracted text, and metadata
@@ -428,10 +405,6 @@ pub struct IngestedContent {
     /// Published date (if extracted)
     pub published_date: Option<DateTime<Utc>>,
 }
-
-// ============================================================================
-// Web Article Aggregate
-// ============================================================================
 
 /// Aggregate: Web Article Document
 ///
@@ -489,23 +462,19 @@ impl WebArticleAggregate {
     /// - Content is not empty
     /// - Title is not empty
     pub fn from_ingestion(url: Url, content: IngestedContent) -> Result<Self> {
-        // Validate content is not empty
         if content.text.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Article content cannot be empty".to_string(),
             ));
         }
 
-        // Extract title (required)
         let title = content
             .title
             .filter(|t| !t.trim().is_empty())
             .ok_or_else(|| AppError::InvalidInput("Article title is required".to_string()))?;
 
-        // Generate unique document ID
         let doc_id = DocumentId::new();
 
-        // Extract metadata
         let metadata = ArticleMetadata::from_content(&content.text, &url, content.published_date);
 
         Ok(Self {
@@ -580,10 +549,6 @@ impl WebArticleAggregate {
         output
     }
 
-    // ========================================================================
-    // Getters (read-only access)
-    // ========================================================================
-
     /// Get document ID.
     pub fn doc_id(&self) -> &DocumentId {
         &self.doc_id
@@ -615,17 +580,9 @@ impl WebArticleAggregate {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ========================================================================
-    // sanitize_title Tests
-    // ========================================================================
 
     #[test]
     fn test_sanitize_title_basic() {
@@ -653,10 +610,6 @@ mod tests {
     fn test_sanitize_title_removes_leading_trailing_hyphens() {
         assert_eq!(sanitize_title("--Hello World--"), "hello-world");
     }
-
-    // ========================================================================
-    // WebArchivePath Tests
-    // ========================================================================
 
     #[test]
     fn test_web_archive_path_creation() {
@@ -708,10 +661,6 @@ mod tests {
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
-    // ========================================================================
-    // ArticleMetadata Tests
-    // ========================================================================
-
     #[test]
     fn test_article_metadata_from_content() {
         let url = Url::parse("https://example.com").unwrap();
@@ -722,10 +671,6 @@ mod tests {
         assert_eq!(metadata.domain, "example.com");
         assert!(metadata.published_date.is_none());
     }
-
-    // ========================================================================
-    // WebArticleAggregate Tests
-    // ========================================================================
 
     #[test]
     fn test_web_article_from_ingestion() {
@@ -807,7 +752,6 @@ mod tests {
         let article = WebArticleAggregate::from_ingestion(url, content).unwrap();
         let markdown = article.to_markdown();
 
-        // Check frontmatter
         assert!(markdown.contains("---"));
         assert!(markdown.contains("source_url: https://example.com/article"));
         assert!(markdown.contains("title: Test Article"));
@@ -815,10 +759,8 @@ mod tests {
         assert!(markdown.contains("domain: example.com"));
         assert!(markdown.contains("word_count: 4"));
 
-        // Check content
         assert!(markdown.contains("Article content goes here"));
 
-        // Check footer
         assert!(markdown.contains("Source: https://example.com/article"));
     }
 
@@ -836,17 +778,11 @@ mod tests {
         let article = WebArticleAggregate::from_ingestion(url, content).unwrap();
         let markdown = article.to_markdown();
 
-        // Should not have author field if not provided
         assert!(!markdown.contains("author:"));
     }
 
-    // ========================================================================
-    // Integration Tests
-    // ========================================================================
-
     #[test]
     fn test_full_web_article_workflow() {
-        // Create article from ingestion
         let url = Url::parse("https://blog.example.com/2024/rust-tips").unwrap();
         let content = IngestedContent {
             html: "<html><body>Rust tips</body></html>".to_string(),
@@ -858,25 +794,18 @@ mod tests {
 
         let article = WebArticleAggregate::from_ingestion(url, content).unwrap();
 
-        // Generate archive path
         let path = article.archive_path().unwrap();
         assert!(path.as_str().contains("blog.example.com"));
         assert!(path.as_str().contains("rust-programming-tips"));
 
-        // Convert to markdown
         let markdown = article.to_markdown();
         assert!(markdown.contains("title: Rust Programming Tips"));
         assert!(markdown.contains("author: Jane Developer"));
         assert!(markdown.contains("Here are some useful Rust programming tips"));
 
-        // Verify metadata
         assert_eq!(article.metadata().domain, "blog.example.com");
         assert!(article.metadata().word_count > 0);
     }
-
-    // ========================================================================
-    // validate_domain Tests
-    // ========================================================================
 
     #[test]
     fn test_validate_domain_rejects_traversal() {
@@ -938,11 +867,6 @@ mod tests {
     fn test_web_archive_path_rejects_malicious_domain() {
         let doc_id = DocumentId::new();
 
-        // Test various malicious domain patterns
-        // Note: These would need to be valid URLs, so we test with query params
-        // that might trick the parser but contain path traversal in host
-
-        // Test empty host rejection (already covered by existing test)
         let file_url = Url::parse("file:///local/path").unwrap();
         let result = WebArchivePath::new(&file_url, "Test", &doc_id);
         assert!(result.is_err());
@@ -962,7 +886,6 @@ mod tests {
         let temp_dir = env::temp_dir().join("test_web_archive_toctou");
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        // Test 1: ParentDir in path - should be rejected
         let malicious1 = WebArchivePath {
             relative_path: PathBuf::from("../../../etc/passwd"),
         };
@@ -971,7 +894,6 @@ mod tests {
             "Should reject path with .."
         );
 
-        // Test 2: Mixed normal and parent dirs - should be rejected
         let malicious2 = WebArchivePath {
             relative_path: PathBuf::from("safe/../../etc/passwd"),
         };
@@ -980,21 +902,18 @@ mod tests {
             "Should reject mixed path with .."
         );
 
-        // Test 3: Valid path should work
         let valid = WebArchivePath {
             relative_path: PathBuf::from("github.com/article.md"),
         };
         let valid_result = valid.to_absolute(&temp_dir);
         assert!(valid_result.is_ok(), "Should accept valid path");
 
-        // Test 4: Verify directory was created for valid path
         let valid_path = valid_result.unwrap();
         assert!(
             valid_path.parent().unwrap().exists(),
             "Parent directory should be created"
         );
 
-        // Test 5: Verify the path is within temp_dir
         let canonical_temp = temp_dir.canonicalize().unwrap();
         assert!(
             valid_path.starts_with(&canonical_temp),

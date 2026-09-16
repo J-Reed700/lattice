@@ -44,12 +44,9 @@
 //! Pure delegation pattern - command delegates directly to DocumentRepository
 //! via RepositoryPort trait. No rate limiting or audit logging needed for read operations.
 
-use crate::application::ports::RepositoryPort;
-use crate::domain::entities::Document as DocumentEntity;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result, ResultExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tauri::State;
 
 /// Document metadata DTO for display in UI
@@ -210,62 +207,4 @@ pub async fn get_document(
     document_id: String,
 ) -> Result<DocumentMetadataDto> {
     get_document_impl(&container, document_id).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::entities::chunk::Chunk;
-    use crate::domain::entities::document::Document;
-    use crate::domain::entities::document::{Category, Language};
-    use crate::interfaces::di::Container;
-    use crate::shared::domain_types::{ChunkId, DocumentId, ValidatedFilePath};
-    use chrono::Utc;
-    use sqlx::sqlite::SqlitePoolOptions;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use tempfile::TempDir;
-
-    async fn create_test_container() -> (Container, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
-            .await
-            .unwrap();
-
-        // Run migrations
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("Failed to run migrations");
-
-        let data_dir = temp_dir.path().to_path_buf();
-        let db_conn = Arc::new(
-            crate::infrastructure::persistence::database::DatabaseConnection::new(db_path.clone())
-                .await
-                .unwrap(),
-        );
-        let container = Container::new(
-            pool,
-            db_conn,
-            None, // No embedding model for tests
-            "http://localhost:11434",
-            "llama2",
-            data_dir,
-        )
-        .await
-        .unwrap();
-        (container, temp_dir)
-    }
-
-    // Tests using create_test_document removed - helper was removed as it was
-    // testing aggregate construction which is not this layer's responsibility
-
-    // Tests removed - these test Tauri command layer which requires State
-    // Repository layer is tested in the tests above
-
-    // Helper function removed - no longer used after test removal
 }

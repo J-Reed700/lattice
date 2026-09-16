@@ -28,7 +28,7 @@
 //! });
 //! ```
 
-use crate::application::services::context_window_builder::ContextWindowBuilder;
+use crate::application::services::conversation_context::build_conversation_context;
 use crate::domain::qa::hyde::QueryType;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::qa::dto::SourceDto;
@@ -38,7 +38,7 @@ use crate::features::settings::dto::{
 use crate::infrastructure::services::router::{RouterAction, RouterInput, RouterService};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
-use crate::shared::text_utils::{extract_highlight_terms, safe_truncate};
+use crate::shared::text_utils::extract_highlight_terms;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -46,22 +46,13 @@ use std::time::Instant;
 use tauri::Emitter;
 use tracing::{info, warn};
 
-// Submodules live in the sibling `chat/` directory at this file's
-// canonical physical location. Because `chat.rs` is loaded via a
-// Strangler Fig `#[path]` redirect from interfaces/commands/mod.rs,
-// Rust resolves `mod foo;` relative to the *registration site*, not
-// the physical location — so each submodule needs its own `#[path]`.
-#[path = "chat/cancellation.rs"]
 mod cancellation;
-#[path = "chat/persistence.rs"]
 mod persistence;
-#[path = "chat/prompting.rs"]
 mod prompting;
-#[path = "chat/retrieval/mod.rs"]
-mod retrieval;
-#[path = "chat/tool_loop.rs"]
+// Public so the retrieval evaluation harness can reuse the pipeline's own
+// sufficiency judgement instead of reimplementing it.
+pub mod retrieval;
 mod tool_loop;
-#[path = "chat/verification.rs"]
 mod verification;
 
 use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
@@ -71,12 +62,12 @@ use self::persistence::{
 use self::prompting::{build_kb_context, enforce_numeric_citation_format, PromptMessageBuilder};
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    assign_citation_ids, citation_ids_by_document, deduplicate_sources,
-    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
+    assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, load_recent_document_metadata,
+    run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
-use self::verification::{verify_response_grounding_summary, GroundingReport};
+use self::verification::{GroundingReport, GroundingVerifier};
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
     cancellation::request_cancel(conversation_id, request_id)
@@ -103,20 +94,11 @@ impl Drop for TurnCancellationGuard {
     }
 }
 
-/// Single conversation message for frontend
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationMessage {
-    pub id: String,
-    pub role: String, // "user" | "assistant" | "system"
-    pub content: String,
-    pub status: String, // "pending" | "completed" | "failed"
-    pub created_at: String,
-    pub metadata: Option<String>,
-}
+// Chat completion and conversation reload use the same serialized message contract.
+pub type ConversationMessage = crate::features::conversation::dto::MessageDto;
 
 /// Chat response with conversation metadata
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatResponse {
     /// ID of the conversation (use for subsequent messages)
@@ -133,16 +115,14 @@ pub struct ChatResponse {
     pub timing_metrics: Option<ConversationFlowTimingMetrics>,
 }
 
-/// Retrieval trace for one turn (BRIEF rank 17, contract §4.6).
+/// Retrieval trace for one turn.
 ///
 /// `searched_documents` is the size of the document set the hard space-scope
 /// filter actually allowed, not the size of the corpus — a scoped conversation
 /// must not claim to have read the whole vault.
 ///
-/// `Serialize` only, deliberately: this rides inside the `llm-stream` event and
-/// the assistant message's metadata JSON, neither of which is in the specta
-/// collector.
-#[derive(Debug, Clone, Serialize, Default)]
+/// Shared by streaming events, persisted message metadata, and generated bindings.
+#[derive(Debug, Clone, Serialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrievalTraceDto {
     pub searched_documents: usize,
@@ -153,9 +133,62 @@ pub struct RetrievalTraceDto {
     /// Why the knowledge base could not be searched, when it could not be.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+
+    /// The post-rerank sufficiency verdict, after any corrective pass.
+    ///
+    /// Additive and absent by default: traces persisted before the sufficiency
+    /// check existed carry no verdict, and absent is not the same as
+    /// insufficient. Every consumer must tolerate `null` rather than read a
+    /// missing verdict as a failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kb_sufficient: Option<bool>,
+
+    /// How many replanned retrieval passes ran. Capped at one per turn, so this
+    /// is 0 or 1; absent when the check did not run at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kb_corrective_retries: Option<u32>,
+
+    /// True when a short follow-up reused the previous turn's topic and the
+    /// planner LLM call was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kb_planner_skipped: Option<bool>,
+
+    /// Why the verdict went the way it did — stable codes (`low_top_score`,
+    /// `low_term_coverage`, …), not prose, so the UI and tests can match on
+    /// them.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub sufficiency_reasons: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+/// Every chat stream update identifies its conversation and generation. Other
+/// producers share the event channel, so consumers must require both IDs.
+#[derive(Debug, Clone, Serialize, Default, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStreamEventDto {
+    pub conversation_id: String,
+    pub request_id: String,
+    pub done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieval: Option<RetrievalTraceDto>,
+}
+
+impl ChatStreamEventDto {
+    pub(super) fn new(conversation_id: &str, request_id: &str) -> Self {
+        Self {
+            conversation_id: conversation_id.to_owned(),
+            request_id: request_id.to_owned(),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolPreferences {
     #[serde(default)]
@@ -181,7 +214,7 @@ struct SearchFlags {
     force_followup_mode: bool,
 }
 
-#[derive(Debug, Serialize, Clone, Default)]
+#[derive(Debug, Serialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationFlowTimingMetrics {
     pub validate_request_ms: u64,
@@ -376,8 +409,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let context_build_start = Instant::now();
     let (context, conversation_document_context, linked_web_sources_context) =
         build_conversation_context(
-            container,
-            &conv_service,
+            container.conversation_context(),
+            container.conversation_history(),
             &conv_id,
             &llm,
             max_tokens,
@@ -468,11 +501,11 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     // renumber behind the prompt's back.
     assign_citation_ids(&mut retrieval.sources);
 
-    // Retrieval trace (BRIEF rank 17, contract §4.6). Emitted before generation
+    // Emitted before generation so the frontend can show retrieval progress.
     // so the UI can show its reading before its writing, and persisted into the
     // assistant message metadata so it survives a reload. Nothing is emitted
     // when KB retrieval never ran — an absent trace is not a trace of zeros.
-    let retrieval_trace = if retrieval.searched_documents > 0
+    let mut retrieval_trace = if retrieval.searched_documents > 0
         || !retrieval.sources.is_empty()
         || retrieval.kb_unavailable_reason.is_some()
     {
@@ -498,16 +531,30 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             }
             .to_string(),
             unavailable_reason: retrieval.kb_unavailable_reason.clone(),
+            // Only reported when the check actually ran. A turn that never
+            // searched the vault has no verdict, and zeros would read as one.
+            kb_sufficient: retrieval.sufficiency.as_ref().map(|v| v.sufficient),
+            kb_corrective_retries: retrieval
+                .sufficiency
+                .as_ref()
+                .map(|_| retrieval.sub_timings.kb_corrective_retries),
+            kb_planner_skipped: retrieval
+                .sufficiency
+                .as_ref()
+                .map(|_| retrieval.sub_timings.kb_planner_skipped),
+            sufficiency_reasons: retrieval
+                .sufficiency
+                .as_ref()
+                .map(|v| v.reasons.iter().map(|r| (*r).to_owned()).collect())
+                .unwrap_or_default(),
         };
         if let Err(e) = window.emit(
             "llm-stream",
-            serde_json::json!({
-                "conversationId": conv_id,
-                "requestId": turn_id,
-                "done": false,
-                "status": "retrieval",
-                "retrieval": trace,
-            }),
+            ChatStreamEventDto {
+                status: Some("retrieval".to_owned()),
+                retrieval: Some(trace.clone()),
+                ..ChatStreamEventDto::new(&conv_id, &turn_id)
+            },
         ) {
             warn!(error = %e, "Failed to emit retrieval trace");
         }
@@ -518,7 +565,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
     let kb_context = build_kb_context(
         &budgeted_results,
-        &citation_ids_by_document(&retrieval.sources),
+        &citation_ids_by_chunk(&retrieval.sources),
     );
     let has_linked_web_sources_context = linked_web_sources_context.is_some();
     let has_grounded_context = followup_context_text.is_some()
@@ -559,12 +606,19 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         .and_then(|preferences| preferences.turn_mode.as_deref())
         .map(str::trim)
         .is_some_and(|mode| mode.eq_ignore_ascii_case("query"));
-    let tools_ref =
-        if (has_grounded_context && !force_tools_for_turn) || tool_definitions.is_empty() {
-            None
-        } else {
-            Some(tool_definitions.as_slice())
-        };
+    // Initial retrieval is a candidate set, not proof that it can answer the
+    // question. Keep scoped document reads/searches available for recovery.
+    let grounded_tools: Vec<_> = tool_definitions
+        .iter()
+        .filter(|tool| matches!(tool.name.as_str(), "semantic_search" | "get_document"))
+        .cloned()
+        .collect();
+    let selected_tools = if has_grounded_context && !force_tools_for_turn {
+        &grounded_tools
+    } else {
+        &tool_definitions
+    };
+    let tools_ref = (!selected_tools.is_empty()).then_some(selected_tools.as_slice());
     flow_metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
 
     info!(
@@ -598,6 +652,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             &highlight_terms,
             &tool_output_settings,
             &mut sources,
+            &mut retrieval_trace,
             tools_ref,
         )
         .await
@@ -635,7 +690,24 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             let verification_start = Instant::now();
             let verification_enabled = settings.llm.verification.enabled;
             let grounding_report = if verification_enabled {
-                verify_response_grounding_summary(&assistant_response, &sources)
+                // The utility model judges claims so a chat turn is not charged a
+                // second pass through the large model. Without one configured the
+                // chat LLM stands in, exactly as retrieval planning does; only a
+                // hard load failure drops back to lexical-only verification.
+                let judge_llm = match container.get_or_load_utility_llm().await {
+                    Ok(Some(utility)) => Some(utility),
+                    Ok(None) => Some(Arc::clone(&llm)),
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "Utility LLM load failed — grounding stays lexical for this turn"
+                        );
+                        None
+                    }
+                };
+                GroundingVerifier::new(judge_llm)
+                    .verify(&assistant_response, &sources)
+                    .await
             } else {
                 GroundingReport::default()
             };
@@ -645,19 +717,15 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                     claims_evaluated = grounding_report.claims_evaluated,
                     supported_claims = grounding_report.supported_claims,
                     unsupported_claims = grounding_report.unsupported_count(),
+                    contradicted_claims = grounding_report.contradicted_count(),
+                    judged_claims = grounding_report.judged_claim_count(),
                     grounded_ratio = grounding_report.grounded_ratio(),
+                    verification_ms = elapsed_ms(verification_start),
                     "Response grounding verification complete"
                 );
             }
             let verification_metadata = if verification_enabled {
-                Some(serde_json::json!({
-                    "enabled": true,
-                    "claimsEvaluated": grounding_report.claims_evaluated,
-                    "supportedClaims": grounding_report.supported_claims,
-                    "supportedClaimNotes": grounding_report.supported_claim_notes,
-                    "unsupportedClaims": grounding_report.unsupported_claims,
-                    "groundedRatio": grounding_report.grounded_ratio(),
-                }))
+                Some(grounding_report.metadata_json())
             } else {
                 Some(serde_json::json!({
                     "enabled": false
@@ -790,7 +858,6 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 "chat_with_conversation: flow timing metrics (failed turn)"
             );
 
-            // Return original error
             Err(e)
         }
     }
@@ -866,6 +933,9 @@ fn normalize_prompt_settings(mut prompt_settings: LLMPromptSettingsDto) -> LLMPr
     const LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURE: u64 = 0x5384_8234_c2d7_4254;
     const UPDATED_NO_CONTEXT_TEMPLATE: &str =
         "The user asked: \"{question}\"\n\nNo relevant documents were found in local documents for this turn. Respond helpfully using general knowledge when appropriate, and suggest web search or adding documents if they want sourced evidence.";
+    const LEGACY_RAG_TEMPLATE_SIGNATURE: u64 = 0xa971_9544_23a3_fba2;
+    const UPDATED_RAG_TEMPLATE: &str =
+        "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, request additional pages with the page parameter.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
     // Soft migration with stable signatures keeps custom templates intact while
     // updating only known legacy defaults.
@@ -879,8 +949,31 @@ fn normalize_prompt_settings(mut prompt_settings: LLMPromptSettingsDto) -> LLMPr
     {
         prompt_settings.no_context_prompt_template = UPDATED_NO_CONTEXT_TEMPLATE.to_string();
     }
+    if stable_prompt_signature(&prompt_settings.rag_prompt_template)
+        == LEGACY_RAG_TEMPLATE_SIGNATURE
+    {
+        prompt_settings.rag_prompt_template = UPDATED_RAG_TEMPLATE.to_string();
+    }
 
     prompt_settings.system_prompt = enforce_numeric_citation_format(&prompt_settings.system_prompt);
+    prompt_settings.system_prompt.push_str(
+        "\n\nDocument evidence rules: When the user asks to learn from or rely only on their documents, \
+         verify factual claims against retrieved text before answering, including chapter names, outlines, \
+         section numbers, dates, and page references. If evidence is missing, retrieve it or say it is not \
+         verified; do not fill gaps from memory. Search results are a ranked subset, not a complete inventory. \
+         Relevance scores rank query matches; they do not diagnose embedding quality, document corruption, \
+         or indexing completeness. Low scores alone do not establish any such problem. get_document page \
+         and total_pages describe internal text pagination, not original PDF page numbers. Cite printed PDF \
+         pages only when supported by the returned source text or explicit PDF page metadata. If a tool \
+         fails, report that specific failure without assuming the user's documents are absent.",
+    );
+    prompt_settings.system_prompt.push_str(
+        "\nRetrieved excerpts are an initial selection, not the entire collection. If they are insufficient, \
+         use available document search/read tools with a focused query before concluding evidence is missing. \
+         For learning or overview requests, explain what the supplied introduction and contents actually establish, \
+         then teach one supported concept. A manual need not contain a prewritten lesson to support teaching it. \
+         Distinguish 'not found in the excerpts searched' from 'not present anywhere in the documents'.",
+    );
     prompt_settings.rag_prompt_template =
         enforce_numeric_citation_format(&prompt_settings.rag_prompt_template);
     prompt_settings.tool_followup_prompt_template =
@@ -904,192 +997,6 @@ fn stable_prompt_signature(input: &str) -> u64 {
         .fold(OFFSET_BASIS, |hash, byte| {
             (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
         })
-}
-
-const LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS: i64 = 10;
-const LINKED_WEB_SOURCE_PROMPT_MAX_EXCERPT_CHARS: usize = 280;
-const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO: f64 = 0.08;
-const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MIN: usize = 120;
-const LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MAX: usize = 320;
-
-#[derive(Debug, sqlx::FromRow)]
-struct ConversationWebSourcePromptRow {
-    title: Option<String>,
-    url: String,
-    excerpt: Option<String>,
-}
-
-async fn build_linked_web_sources_prompt_context(
-    container: &Container,
-    conversation_id: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-    max_tokens: usize,
-) -> Result<Option<String>> {
-    let rows = sqlx::query_as::<_, ConversationWebSourcePromptRow>(
-        r#"
-        SELECT title, url, excerpt
-        FROM conversation_web_sources
-        WHERE conversation_id = ?
-        ORDER BY added_at DESC
-        LIMIT ?
-        "#,
-    )
-    .bind(conversation_id)
-    .bind(LINKED_WEB_SOURCE_PROMPT_MAX_ITEMS)
-    .fetch_all(container.db_pool())
-    .await
-    .map_err(|error| {
-        AppError::Database(format!(
-            "Failed to load linked web sources for conversation context: {}",
-            error
-        ))
-    })?;
-
-    if rows.is_empty() {
-        return Ok(None);
-    }
-
-    let raw_budget =
-        ((max_tokens as f64) * LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_RATIO).round() as usize;
-    let token_budget = raw_budget.clamp(
-        LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MIN,
-        LINKED_WEB_SOURCE_PROMPT_TOKEN_BUDGET_MAX,
-    );
-
-    let mut entries: Vec<String> = Vec::new();
-    let mut used_tokens = 0usize;
-
-    for row in rows {
-        let url = row.url.trim();
-        if url.is_empty() {
-            continue;
-        }
-
-        let title = row
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(url);
-
-        let mut entry = format!("- {} ({})", title, url);
-        if let Some(excerpt) = row
-            .excerpt
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let truncated_excerpt =
-                safe_truncate(excerpt, LINKED_WEB_SOURCE_PROMPT_MAX_EXCERPT_CHARS);
-            entry.push_str(&format!("\n  Excerpt: {}", truncated_excerpt));
-        }
-
-        let entry_tokens = llm.count_tokens(&entry);
-        if !entries.is_empty() && used_tokens.saturating_add(entry_tokens) > token_budget {
-            break;
-        }
-
-        used_tokens = used_tokens.saturating_add(entry_tokens);
-        entries.push(entry);
-    }
-
-    if entries.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(format!(
-        "User-linked web sources for this conversation (context links, not necessarily indexed):\n{}",
-        entries.join("\n")
-    )))
-}
-
-async fn build_conversation_context(
-    container: &Container,
-    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
-    conversation_id: &str,
-    llm: &Arc<dyn crate::application::ports::LLMPort>,
-    max_tokens: usize,
-    global_system_prompt: &str,
-) -> Result<(
-    Vec<String>,
-    Vec<crate::domain::conversation::DocumentReference>,
-    Option<String>,
-)> {
-    use crate::infrastructure::services::ConversationService as ConcreteConversationService;
-
-    let concrete_service = Arc::new(ConcreteConversationService::new(
-        container.db_pool().clone(),
-    ));
-    let token_counter = {
-        let llm = Arc::clone(llm);
-        Arc::new(move |text: &str| llm.count_tokens(text))
-    };
-
-    let context_builder = ContextWindowBuilder::new(concrete_service, max_tokens, token_counter);
-
-    let conversation_aggregate = conv_service.get_conversation(conversation_id).await?;
-    let conversation_system_prompt = conversation_aggregate
-        .as_ref()
-        .and_then(|aggregate| aggregate.system_prompt().map(|s| s.to_string()))
-        .and_then(|prompt| {
-            let trimmed = prompt.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
-    let conversation_document_context = conversation_aggregate
-        .as_ref()
-        .map(|aggregate| aggregate.document_context().to_vec())
-        .unwrap_or_default();
-    let space_system_prompt: Option<String> = sqlx::query_scalar(
-        r#"
-        SELECT s.space_prompt
-        FROM conversations c
-        LEFT JOIN conversation_spaces s ON s.id = c.space_id
-        WHERE c.id = ?
-        LIMIT 1
-        "#,
-    )
-    .bind(conversation_id)
-    .fetch_optional(container.db_pool())
-    .await
-    .map_err(|e| AppError::Database(format!("Failed to load space prompt: {}", e)))?
-    .flatten()
-    .and_then(|prompt: String| {
-        let trimmed = prompt.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    });
-
-    let mut context = context_builder.build(conversation_id).await?;
-    let global_prompt = global_system_prompt.trim();
-    let effective_system_prompt = conversation_system_prompt
-        .or(space_system_prompt)
-        .or_else(|| (!global_prompt.is_empty()).then(|| global_prompt.to_string()));
-    if let Some(system_prompt) = effective_system_prompt {
-        let entry = format!("System: {}", system_prompt);
-        if !context
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&entry))
-        {
-            context.insert(0, entry);
-        }
-    }
-
-    let linked_web_sources_context =
-        build_linked_web_sources_prompt_context(container, conversation_id, llm, max_tokens)
-            .await?;
-
-    Ok((
-        context,
-        conversation_document_context,
-        linked_web_sources_context,
-    ))
 }
 
 async fn resolve_router_decision(
@@ -1290,8 +1197,64 @@ fn generate_title(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::search::dto::SearchResultDto;
-    use std::collections::HashMap;
+
+    /// The sufficiency fields are additive. A trace written before the check
+    /// existed carries none of them, and a reader that treated a missing
+    /// verdict as `false` would report every historical turn as insufficient.
+    #[test]
+    fn a_trace_without_a_verdict_serializes_without_the_sufficiency_fields() {
+        let trace = RetrievalTraceDto {
+            searched_documents: 12,
+            passages: 3,
+            files: 2,
+            scope: "vault".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&trace).expect("serialize");
+        for absent in [
+            "kbSufficient",
+            "kbCorrectiveRetries",
+            "kbPlannerSkipped",
+            "sufficiencyReasons",
+            "unavailableReason",
+        ] {
+            assert!(json.get(absent).is_none(), "{absent} should be omitted");
+        }
+    }
+
+    #[test]
+    fn a_corrective_pass_is_reported_with_its_reasons() {
+        let trace = RetrievalTraceDto {
+            searched_documents: 12,
+            passages: 3,
+            files: 2,
+            scope: "vault".to_string(),
+            kb_sufficient: Some(false),
+            kb_corrective_retries: Some(1),
+            kb_planner_skipped: Some(true),
+            sufficiency_reasons: vec!["low_term_coverage".to_string()],
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&trace).expect("serialize");
+        assert_eq!(
+            json.get("kbSufficient").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            json.get("kbCorrectiveRetries").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            json.get("kbPlannerSkipped").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            json.get("sufficiencyReasons")
+                .and_then(|v| v.as_array())
+                .map(Vec::len),
+            Some(1)
+        );
+    }
 
     /// Byte-slicing a string at a fixed offset panics when that offset falls
     /// inside a multi-byte character. Any first chat message over 50 bytes
@@ -1349,7 +1312,6 @@ mod tests {
 
         assert!(title.len() <= 53); // 50 + "..."
         assert!(title.ends_with("..."));
-        // Should be exactly 50 chars from original + "..."
         assert_eq!(
             title,
             "This is a very long message that exceeds fifty cha..."
@@ -1415,191 +1377,5 @@ mod tests {
         assert!(explicit
             .as_ref()
             .is_some_and(|allowlist| allowlist.contains("fetch_url_content")));
-    }
-
-    fn make_result(id: &str, doc_id: &str, score: f32) -> SearchResultDto {
-        SearchResultDto {
-            id: id.to_string(),
-            title: id.to_string(),
-            content: format!("chunk {} about search relevance", id),
-            score,
-            path: None,
-            document_id: Some(doc_id.to_string()),
-            position: None,
-            vector_score: None,
-            bm25_score: None,
-            vector_rank: None,
-            bm25_rank: None,
-            metadata: HashMap::new(),
-        }
-    }
-
-    fn make_custom_result(
-        id: &str,
-        doc_id: &str,
-        title: &str,
-        content: &str,
-        score: f32,
-    ) -> SearchResultDto {
-        SearchResultDto {
-            id: id.to_string(),
-            title: title.to_string(),
-            content: content.to_string(),
-            score,
-            path: None,
-            document_id: Some(doc_id.to_string()),
-            position: None,
-            vector_score: None,
-            bm25_score: None,
-            vector_rank: None,
-            bm25_rank: None,
-            metadata: HashMap::new(),
-        }
-    }
-
-    #[test]
-    fn test_keyword_plan_enriches_acronym_query_with_hyde_terms() {
-        let plan = retrieval::build_keyword_query_plan(
-            "What is happening with NASA right now?",
-            Some(
-                "NASA reports new missions from the national aeronautics and space administration.",
-            ),
-        );
-
-        assert!(!plan.terms.is_empty());
-        assert!(plan.terms.iter().any(|term| term == "nasa"));
-        assert!(plan.terms.iter().any(|term| [
-            "national",
-            "aeronautics",
-            "space",
-            "administration"
-        ]
-        .contains(&term.as_str())));
-        assert!(plan.query.contains(" OR "));
-    }
-
-    #[test]
-    fn test_overlap_query_terms_drop_modifier_words() {
-        let terms = retrieval::extract_overlap_query_terms(
-            "What is specifically going on with NASA right now?",
-        );
-        assert_eq!(terms, vec!["nasa".to_string()]);
-    }
-
-    #[test]
-    fn test_document_support_filter_drops_weak_singleton_outlier_doc() {
-        let input = vec![
-            make_result("a1", "doc-a", 0.0131),
-            make_result("a2", "doc-a", 0.0129),
-            make_result("a3", "doc-a", 0.0127),
-            make_result("b1", "doc-b", 0.0125),
-            make_result("a4", "doc-a", 0.0123),
-        ];
-
-        let filtered = retrieval::filter_results_by_document_support(input);
-        assert_eq!(filtered.len(), 4);
-        assert!(filtered
-            .iter()
-            .all(|result| result.document_id.as_deref() == Some("doc-a")));
-    }
-
-    #[test]
-    fn test_document_support_filter_keeps_close_competitor_docs() {
-        let input = vec![
-            make_result("a1", "doc-a", 0.40),
-            make_result("b1", "doc-b", 0.35),
-        ];
-
-        let filtered = retrieval::filter_results_by_document_support(input);
-        assert_eq!(filtered.len(), 2);
-    }
-
-    #[test]
-    fn test_overlap_filter_acronym_query_keeps_context_supported_results() {
-        let input = vec![
-            make_custom_result(
-                "nasa-1",
-                "doc-nasa-1",
-                "NASA mission operations",
-                "Recent updates on NASA launch activities",
-                0.90,
-            ),
-            make_custom_result(
-                "nasa-2",
-                "doc-nasa-2",
-                "Space agency mission briefing",
-                "National aeronautics administration mission status update",
-                0.88,
-            ),
-            make_custom_result(
-                "off-1",
-                "doc-off-1",
-                "Campus policy dispute",
-                "Statement about student organization and local politics",
-                0.86,
-            ),
-        ];
-
-        let filtered = retrieval::filter_results_by_query_overlap(
-            input,
-            "What is specifically going on with NASA right now?",
-            Some("NASA mission updates from the national aeronautics and space administration."),
-            None,
-        );
-        assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().any(|result| result.id == "nasa-1"));
-        assert!(filtered.iter().any(|result| result.id == "nasa-2"));
-    }
-
-    #[test]
-    fn test_overlap_filter_acronym_query_returns_empty_when_no_support() {
-        let input = vec![
-            make_custom_result(
-                "off-1",
-                "doc-off-1",
-                "University club political controversy",
-                "Statement about campus politics and student groups",
-                0.92,
-            ),
-            make_custom_result(
-                "off-2",
-                "doc-off-2",
-                "Congressional hearing drama",
-                "Public testimony and committee conflict details",
-                0.89,
-            ),
-        ];
-
-        let filtered = retrieval::filter_results_by_query_overlap(
-            input,
-            "What has been going on with NASA?",
-            None,
-            None,
-        );
-        assert!(filtered.is_empty());
-    }
-
-    #[test]
-    fn test_overlap_filter_short_non_acronym_query_keeps_fallback() {
-        let input = vec![
-            make_custom_result(
-                "off-1",
-                "doc-off-1",
-                "University club political controversy",
-                "Statement about campus politics and student groups",
-                0.92,
-            ),
-            make_custom_result(
-                "off-2",
-                "doc-off-2",
-                "Congressional hearing drama",
-                "Public testimony and committee conflict details",
-                0.89,
-            ),
-        ];
-
-        let filtered =
-            retrieval::filter_results_by_query_overlap(input, "policy update", None, None);
-        assert_eq!(filtered.len(), 2);
     }
 }

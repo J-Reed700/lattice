@@ -8,9 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
-use crate::features::corpus_shape::entity::{
-    Cluster, ClusterMember, ClusterRun, LabelSource,
-};
+use crate::features::corpus_shape::entity::{Cluster, ClusterMember, ClusterRun, LabelSource};
 use crate::shared::error::{AppError, Result};
 
 /// Port for persisting cluster runs + clusters. Kept narrow — `corpus_shape`
@@ -56,12 +54,7 @@ impl SqliteClusterRepository {
         bytes
             .chunks_exact(4)
             .filter_map(|c| {
-                let arr: [u8; 4] = [
-                    *c.first()?,
-                    *c.get(1)?,
-                    *c.get(2)?,
-                    *c.get(3)?,
-                ];
+                let arr: [u8; 4] = [*c.first()?, *c.get(1)?, *c.get(2)?, *c.get(3)?];
                 Some(f32::from_le_bytes(arr))
             })
             .collect()
@@ -129,7 +122,11 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
             .map_err(|e| AppError::Database(format!("insert cluster: {}", e)))?;
 
             for member in members {
-                let is_rep = if member.is_representative { 1_i64 } else { 0_i64 };
+                let is_rep = if member.is_representative {
+                    1_i64
+                } else {
+                    0_i64
+                };
                 sqlx::query(
                     r#"
                     INSERT INTO cluster_members (cluster_id, document_id, membership_probability, is_representative)
@@ -273,12 +270,10 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
                 fingerprint: row
                     .try_get("fingerprint")
                     .map_err(|e| AppError::Database(format!("row.fingerprint: {}", e)))?,
-                label_source: LabelSource::from_str(&label_source_str),
-                inherited_from_cluster_id: row
-                    .try_get("inherited_from_cluster_id")
-                    .map_err(|e| {
-                        AppError::Database(format!("row.inherited_from_cluster_id: {}", e))
-                    })?,
+                label_source: LabelSource::from_storage(&label_source_str),
+                inherited_from_cluster_id: row.try_get("inherited_from_cluster_id").map_err(
+                    |e| AppError::Database(format!("row.inherited_from_cluster_id: {}", e)),
+                )?,
                 created_at,
             });
         }

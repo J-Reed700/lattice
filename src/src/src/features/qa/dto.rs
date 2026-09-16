@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Request for question-answering.
 ///
 /// Contains the question and optional parameters for context retrieval.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct QARequestDto {
     /// The question to answer
     pub question: String,
@@ -33,7 +33,7 @@ pub struct QARequestDto {
 /// Response from question-answering.
 ///
 /// Contains the generated answer and source citations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct QAResponseDto {
     /// The generated answer
     pub answer: String,
@@ -51,7 +51,7 @@ pub struct QAResponseDto {
 /// Source citation for Q&A response.
 ///
 /// Represents a document chunk used as context for the answer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceChunkExcerptDto {
     /// Chunk ID
@@ -67,6 +67,9 @@ pub struct SourceChunkExcerptDto {
     /// Optional chunk index within the document
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_index: Option<usize>,
+    /// One-based physical PDF page, independently of printed page labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_number: Option<u32>,
 
     /// Relevance score for this chunk
     pub score: f32,
@@ -79,7 +82,7 @@ pub struct SourceChunkExcerptDto {
 /// Source citation for Q&A response.
 ///
 /// Represents a document (with one or more chunks) used as context for the answer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceDto {
     /// Document ID
@@ -100,7 +103,7 @@ pub struct SourceDto {
     /// Optional position within document
     pub position: Option<usize>,
 
-    // Rich metadata for citation footnotes (Phase 1)
+    // Metadata used by citation footnotes
     /// File name
     pub file_name: String,
 
@@ -134,6 +137,9 @@ pub struct SourceDto {
     /// Optional chunk index within the document
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_index: Option<usize>,
+    /// One-based physical PDF page, independently of printed page labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_number: Option<u32>,
 
     /// Optional chunk excerpts grouped under this source document.
     /// Includes the primary chunk and any additional supporting chunks.
@@ -157,7 +163,7 @@ pub struct SourceDto {
 /// Metadata about Q&A response generation.
 ///
 /// Contains statistics and configuration used for generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct QAMetadataDto {
     /// Model used for generation
     pub model: String,
@@ -178,7 +184,7 @@ pub struct QAMetadataDto {
 /// Stream chunk for streaming Q&A response.
 ///
 /// Represents a partial update during RAG generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")] // Flattened structure: { "type": "token", "content": "..." }
 #[serde(rename_all = "camelCase")]
 pub enum StreamChunkDto {
@@ -194,10 +200,6 @@ pub enum StreamChunkDto {
     /// Error occurred
     Error { error: String },
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -226,6 +228,7 @@ mod tests {
         let response = QAResponseDto {
             answer: "Machine learning is...".to_string(),
             sources: vec![SourceDto {
+                page_number: None,
                 document_id: "doc-123".to_string(),
                 chunk_id: "chunk-456".to_string(),
                 content: "ML context...".to_string(),
@@ -265,6 +268,7 @@ mod tests {
     #[test]
     fn test_source_dto_serialization() {
         let source = SourceDto {
+            page_number: None,
             document_id: "doc-789".to_string(),
             chunk_id: "chunk-101".to_string(),
             content: "Relevant content".to_string(),
@@ -291,4 +295,13 @@ mod tests {
         assert_eq!(deserialized.document_id, "doc-789");
         assert_eq!(deserialized.score, 0.92);
     }
+}
+
+/// Serialized health response from the QA command.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct LLMHealthStatusDto {
+    pub available: bool,
+    pub model: String,
+    pub max_context_tokens: usize,
+    pub backend: String,
 }

@@ -22,13 +22,21 @@ fn chunk(id: &str, content: &str, index: usize) -> RetrievedChunk {
 
 fn sample_chunks() -> Vec<RetrievedChunk> {
     vec![
-        chunk("chunk_1", "This paper reviews prior literature on sleep.", 0),
+        chunk(
+            "chunk_1",
+            "This paper reviews prior literature on sleep.",
+            0,
+        ),
         chunk(
             "chunk_2",
             "We conducted a randomised controlled trial across four sites.",
             1,
         ),
-        chunk("chunk_3", "Funding was provided by the national council.", 2),
+        chunk(
+            "chunk_3",
+            "Funding was provided by the national council.",
+            2,
+        ),
     ]
 }
 

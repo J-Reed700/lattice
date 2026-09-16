@@ -15,10 +15,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// Phase 1: Core Retrieval Functions
-// =============================================================================
-
 /// Input for semantic_search function.
 ///
 /// Searches the user's document lattice using semantic similarity.
@@ -392,10 +388,6 @@ pub struct ListDocumentsOutput {
     pub has_more: bool,
 }
 
-// =============================================================================
-// Phase 2: Web Integration Functions
-// =============================================================================
-
 /// Input for web_search function.
 ///
 /// Searches the web using DuckDuckGo when information isn't in the lattice.
@@ -730,10 +722,6 @@ pub struct CleanArticle {
     pub excerpt: Option<String>,
 }
 
-// =============================================================================
-// Common Error Response
-// =============================================================================
-
 /// Standard error response for function calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionCallError {
@@ -747,10 +735,6 @@ pub struct FunctionCallError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -212,7 +212,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_valid_https_url() {
-        // Arrange
         let mock_service = Arc::new(MockWebIngestionService::new());
         let expected = WebIngestionResult {
             document_id: "doc-456".to_string(),
@@ -228,14 +227,12 @@ mod tests {
 
         let use_case = IngestWebUrlUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(IngestWebUrlRequestDto {
                 url: "https://example.com/article".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.document_id, "doc-456");
@@ -248,36 +245,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_valid_http_url() {
-        // Arrange
         let mock_service = Arc::new(MockWebIngestionService::new());
         let use_case = IngestWebUrlUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(IngestWebUrlRequestDto {
                 url: "http://example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         assert_eq!(mock_service.get_call_count(), 1);
     }
 
     #[tokio::test]
     async fn test_ingest_invalid_url_no_protocol() {
-        // Arrange
         let mock_service = Arc::new(MockWebIngestionService::new());
         let use_case = IngestWebUrlUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(IngestWebUrlRequestDto {
                 url: "example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         assert_eq!(mock_service.get_call_count(), 0); // Should not call service
         match result.unwrap_err() {
@@ -290,36 +281,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_invalid_url_ftp() {
-        // Arrange
         let mock_service = Arc::new(MockWebIngestionService::new());
         let use_case = IngestWebUrlUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(IngestWebUrlRequestDto {
                 url: "ftp://example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         assert_eq!(mock_service.get_call_count(), 0);
     }
 
     #[tokio::test]
     async fn test_ingest_empty_url() {
-        // Arrange
         let mock_service = Arc::new(MockWebIngestionService::new());
         let use_case = IngestWebUrlUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(IngestWebUrlRequestDto {
                 url: "".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         assert_eq!(mock_service.get_call_count(), 0);
         match result.unwrap_err() {
@@ -332,7 +317,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_network_error_propagates() {
-        // Arrange
         struct FailingService;
 
         #[async_trait]
@@ -344,14 +328,12 @@ mod tests {
 
         let use_case = IngestWebUrlUseCase::new(Arc::new(FailingService));
 
-        // Act
         let result = use_case
             .execute(IngestWebUrlRequestDto {
                 url: "https://example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Network(msg) => assert_eq!(msg, "Connection timeout"),

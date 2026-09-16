@@ -190,16 +190,11 @@ impl HealthCheckUseCase {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
 
-    // Mock embedding service for testing
     struct MockEmbedder {
         is_ready: bool,
     }
@@ -223,7 +218,6 @@ mod tests {
         }
     }
 
-    // Mock LLM service for testing
     struct MockLLM {
         is_ready: bool,
     }
@@ -323,7 +317,6 @@ mod tests {
         let use_case = HealthCheckUseCase::new(pool, embedder, llm);
         let response = use_case.execute().await.unwrap();
 
-        // Verify timestamp is a valid RFC3339 string
         chrono::DateTime::parse_from_rfc3339(&response.timestamp).unwrap();
     }
 }

@@ -60,10 +60,7 @@ fn appending_to_an_empty_page_writes_the_snippet_alone() {
 
 #[test]
 fn appending_to_a_written_page_keeps_one_blank_line() {
-    assert_eq!(
-        appended_capture("earlier", "later"),
-        "earlier\n\nlater"
-    );
+    assert_eq!(appended_capture("earlier", "later"), "earlier\n\nlater");
 }
 
 #[tokio::test]
@@ -150,11 +147,21 @@ async fn find_by_title_matches_exactly_and_lists_newest_first() {
     let repository = fresh_repository().await;
 
     repository
-        .insert(&record("a", "Week of Sep 1", "old", "2026-09-01T10:00:00.000Z"))
+        .insert(&record(
+            "a",
+            "Week of Sep 1",
+            "old",
+            "2026-09-01T10:00:00.000Z",
+        ))
         .await
         .unwrap();
     repository
-        .insert(&record("b", "Week of Sep 1", "new", "2026-09-03T10:00:00.000Z"))
+        .insert(&record(
+            "b",
+            "Week of Sep 1",
+            "new",
+            "2026-09-03T10:00:00.000Z",
+        ))
         .await
         .unwrap();
 

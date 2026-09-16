@@ -6,11 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
-
 
 //! Integration tests for wikilink parser.
-// Test code - allow common test patterns
 
 //!
 //! Tests comprehensive link parsing, resolution, and title extraction.
@@ -153,7 +150,6 @@ fn test_edge_cases() {
 
     // Link with spaces
     let spaces = parser.parse_document("[[  spaced link  ]]", "test.md");
-    // Should trim or preserve spaces depending on spec
     assert!(!spaces.is_empty());
 }
 
@@ -181,7 +177,6 @@ Content here
 
     let title = parser.extract_title(content);
 
-    // Should extract from frontmatter
     assert!(title.is_some());
     assert!(title.unwrap().contains("Frontmatter") || title.unwrap().contains("Content"));
 }
@@ -193,7 +188,6 @@ fn test_title_extraction_fallback() {
     let content = "First line without markdown\n\nMore content";
     let title = parser.extract_title(content);
 
-    // Should fall back to first line
     assert_eq!(title, Some("First line without markdown".to_string()));
 }
 
@@ -306,7 +300,6 @@ fn test_link_resolution_multiple_candidates() {
         },
     ];
 
-    // Should prefer closest or first match
     let resolved = parser.resolve_link("test", "notes/index.md", &documents);
 
     assert!(resolved.is_some());
@@ -378,17 +371,14 @@ Normal paragraph with [[embedded link]] in text.
     // Count expected links
     assert!(links.len() >= 9);
 
-    // Verify some specific ones
     let targets: Vec<String> = links.iter().map(|l| l.target.clone()).collect();
     assert!(targets.contains(&"basic link".to_string()));
     assert!(targets.contains(&"display".to_string()) || targets.contains(&"Custom Text".to_string()));
     assert!(targets.contains(&"note".to_string()));
     assert!(targets.contains(&"final link".to_string()));
 
-    // Check that line numbers are tracked
     assert!(links.iter().any(|l| l.line_number > 0));
 
-    // Check that contexts are populated
     assert!(links.iter().all(|l| !l.context.is_empty()));
 }
 
@@ -396,7 +386,6 @@ Normal paragraph with [[embedded link]] in text.
 fn test_performance_with_large_document() {
     let parser = LinkParser::new();
 
-    // Create a large document with many links
     let mut content = String::new();
     for i in 0..1000 {
         content.push_str(&format!("This is line {} with [[link{}]].\n", i, i));

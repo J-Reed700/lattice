@@ -1,8 +1,9 @@
 //! Batch File Import Service Trait
 //!
-//! Defines the contract for batch file import operations following the "bricks and studs" philosophy.
+//! Defines the contract for batch file import operations.
 //! This trait is the "stud" (public interface) that different implementations can connect to.
 
+use crate::application::factories::FileMetadataFactory;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::AppError;
@@ -52,7 +53,7 @@ pub struct ProcessedFileInfo {
 ///
 /// # Architecture
 ///
-/// Following the "bricks and studs" philosophy:
+/// Implementations should keep orchestration separate from file processing:
 /// - **Stud (Public Interface)**: This trait defines what batch import must do
 /// - **Bricks (Implementations)**: BatchFileImportService (production), MockBatchFileImportService (testing)
 /// - **Regeneratable**: Can swap implementations without changing callers
@@ -279,32 +280,23 @@ impl BatchFileImportServiceTrait for MockBatchFileImportService {
         &self,
         _file_paths: Vec<ValidatedFilePath>,
     ) -> Result<String, AppError> {
-        // Return a mock job ID
         Ok(uuid::Uuid::new_v4().to_string())
     }
 
     fn validate_file(&self, path: &ValidatedFilePath) -> Result<FileMetadata, AppError> {
         let path_str = path.as_path().to_string_lossy().to_string();
 
-        // Check if configured to fail
         if let Some(error) = self.should_fail.lock().get(&path_str) {
             return Err(AppError::InvalidInput(error.clone()));
         }
 
-        // Use deprecated method (will be replaced with factory in future)
-        #[allow(deprecated)]
-        FileMetadata::from_path(path.as_path())
+        FileMetadataFactory::from_path(path.as_path())
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_processed_file_info_default() {

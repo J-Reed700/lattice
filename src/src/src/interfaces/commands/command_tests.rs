@@ -11,14 +11,9 @@
 mod tests {
     use serde_json::json;
 
-    // ============================================================================
-    // Error Handling Tests
-    // ============================================================================
-
     #[test]
     fn test_error_response_serialization() {
         use crate::shared::error::AppError;
-        use serde_json;
 
         let error = AppError::InvalidInput("Test error".to_string());
         let error_str = error.to_string();
@@ -41,10 +36,6 @@ mod tests {
         let error = AppError::Database("Query failed".to_string());
         assert!(error.to_string().contains("Query failed"));
     }
-
-    // ============================================================================
-    // Input Validation Tests
-    // ============================================================================
 
     #[test]
     fn test_validate_search_query_empty() {
@@ -69,13 +60,9 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // JSON Serialization Tests
-    // ============================================================================
-
     #[test]
     fn test_search_result_serialization() {
-        use crate::infrastructure::search::SearchResult;
+        use crate::features::search::engine::SearchResult;
 
         let result = SearchResult {
             id: "1".to_string(),
@@ -110,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_search_result_with_nulls() {
-        use crate::infrastructure::search::SearchResult;
+        use crate::features::search::engine::SearchResult;
 
         let result = SearchResult {
             id: "1".to_string(),
@@ -140,13 +127,8 @@ mod tests {
         assert!(value["content"].is_null());
     }
 
-    // ============================================================================
-    // State Management Tests
-    // ============================================================================
-
     #[test]
     fn test_app_state_creation() {
-        // Test that AppState can be created
         use parking_lot::Mutex;
         use std::sync::Arc;
 
@@ -188,10 +170,6 @@ mod tests {
         assert_eq!(*counter.lock(), 1000);
     }
 
-    // ============================================================================
-    // Command Parameter Validation Tests
-    // ============================================================================
-
     #[test]
     fn test_validate_file_path() {
         let valid_paths = vec![
@@ -214,7 +192,6 @@ mod tests {
         ];
 
         for path in malicious_paths {
-            // Check for path traversal patterns
             assert!(
                 path.contains("..") || path.starts_with("/etc/"),
                 "Should detect malicious pattern in: {}",
@@ -222,10 +199,6 @@ mod tests {
             );
         }
     }
-
-    // ============================================================================
-    // Response Format Tests
-    // ============================================================================
 
     #[test]
     fn test_success_response_format() {
@@ -256,10 +229,6 @@ mod tests {
         assert_eq!(response["error"]["code"], "NOT_FOUND");
     }
 
-    // ============================================================================
-    // Permission and Authorization Tests
-    // ============================================================================
-
     #[test]
     fn test_permission_check() {
         use crate::infrastructure::security::auth::Permission;
@@ -283,10 +252,6 @@ mod tests {
         let serialized = serde_json::to_string(&permission).unwrap();
         assert!(serialized.contains("Read"));
     }
-
-    // ============================================================================
-    // Error Code Tests
-    // ============================================================================
 
     #[test]
     fn test_error_codes_unique() {

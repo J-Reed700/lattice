@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 use lattice::infrastructure::crash::crash_report::{
     AppInfo, CrashReport, PanicInfo, SystemInfo, ThreadInfo,

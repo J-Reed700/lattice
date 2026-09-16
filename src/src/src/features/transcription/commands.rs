@@ -14,9 +14,7 @@ use crate::features::transcription::dto::{TranscriptDto, TranscriptionStatusDto}
 use crate::features::transcription::use_cases::{
     GetTranscriptionStatusUseCase, TranscribeFileUseCase,
 };
-use crate::infrastructure::services::file_type_detector::{
-    FileCategory, FileTypeDetector,
-};
+use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 

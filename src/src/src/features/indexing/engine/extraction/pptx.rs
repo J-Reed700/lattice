@@ -1,7 +1,7 @@
 //! PowerPoint (PPTX) extraction.
 
 use super::types::{ContentMetadata, ExtractedContent};
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -43,6 +43,7 @@ pub async fn extract_pptx(path: &Path, max_file_size: u64) -> Result<ExtractedCo
             .to_string(),
         metadata,
         page_ranges: vec![],
+        needs_ocr: Vec::new(),
     })
 }
 

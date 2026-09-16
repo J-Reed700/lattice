@@ -1,4 +1,4 @@
-//! Corpus-derived chat starters (BRIEF rank 11, contract §4.7).
+//! Corpus-derived chat starters.
 //!
 //! Three questions the user could plausibly ask about the documents they
 //! actually have, generated once per corpus *shape* and cached against a
@@ -43,8 +43,7 @@ const CACHE_KEEP_ROWS: i64 = 8;
 ///
 /// It also owns the two aggregate reads the starter prompt needs (type mix and
 /// the newest `indexed_at`), because no document port exposes a `GROUP BY
-/// file_type`. Keeping them here means the command impl issues no SQL of its
-/// own (CLAUDE.md rule 2).
+/// file_type`. Keeping them here keeps SQL out of the command implementation.
 pub struct ChatStarterCacheRepository {
     pool: SqlitePool,
 }
@@ -161,13 +160,10 @@ impl ChatStarterCacheRepository {
 
     /// Newest `indexed_at` in the corpus, or an empty string when there is none.
     pub async fn latest_indexed_at(&self) -> Result<String> {
-        let value: Option<String> =
-            sqlx::query_scalar("SELECT MAX(indexed_at) FROM documents")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| {
-                    AppError::Database(format!("Failed to read latest indexed_at: {}", e))
-                })?;
+        let value: Option<String> = sqlx::query_scalar("SELECT MAX(indexed_at) FROM documents")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to read latest indexed_at: {}", e)))?;
         Ok(value.unwrap_or_default())
     }
 }
@@ -418,7 +414,9 @@ mod tests {
         let repo = fresh_repository().await;
         let json = r#"[{"question":"What did I decide about pricing?"}]"#;
 
-        repo.put("fp-1", json, "2026-09-06T10:00:00Z").await.unwrap();
+        repo.put("fp-1", json, "2026-09-06T10:00:00Z")
+            .await
+            .unwrap();
 
         let found = repo.get("fp-1").await.unwrap().unwrap();
         assert_eq!(found.0, json);
@@ -480,8 +478,9 @@ mod tests {
 
     #[test]
     fn test_parse_starters_dedupes_case_insensitively() {
-        let parsed =
-            parse_starters(r#"[{"question":"Same One"},{"question":"same one"},{"question":"Other"}]"#);
+        let parsed = parse_starters(
+            r#"[{"question":"Same One"},{"question":"same one"},{"question":"Other"}]"#,
+        );
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[1].question, "Other");
     }
@@ -568,6 +567,9 @@ mod tests {
         assert_eq!(mix[0], ("pdf".to_string(), 2));
         assert_eq!(mix[1], ("md".to_string(), 1));
 
-        assert_eq!(repo.latest_indexed_at().await.unwrap(), "2026-09-03T00:00:00Z");
+        assert_eq!(
+            repo.latest_indexed_at().await.unwrap(),
+            "2026-09-03T00:00:00Z"
+        );
     }
 }

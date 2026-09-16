@@ -31,10 +31,6 @@ struct DownloadDefaultModelResponse {
     file_size_bytes: u64,
 }
 
-// =============================================================================
-// Gateway Impl Functions - Async implementations for gateway dispatch
-// =============================================================================
-
 /// Check first-run status implementation.
 ///
 /// Detects if this is the first run by checking for existing .onnx models.
@@ -146,10 +142,6 @@ pub async fn download_default_embedding_model_impl(
     serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {}", e))
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,18 +153,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        // Create empty DB file first
         std::fs::File::create(&db_path).unwrap();
 
         let db_url = format!("sqlite:{}", db_path.display());
 
         let pool = sqlx::SqlitePool::connect(&db_url).await.unwrap();
 
-        // Run migrations
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-
-        let security_context =
-            std::sync::Arc::new(crate::infrastructure::security::SecurityContext::new());
 
         let db_conn = std::sync::Arc::new(
             crate::infrastructure::persistence::database::DatabaseConnection::new(db_path.clone())
@@ -195,7 +182,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires writable filesystem, run manually with --ignored
+    #[ignore = "Requires writable filesystem, run manually with --ignored"]
     async fn test_check_first_run_status_command() {
         let (container, _temp_dir) = create_test_container().await;
 
@@ -204,18 +191,16 @@ mod tests {
         let use_case = CheckFirstRunStatusUseCase::new(repository);
         let response = use_case.execute().await.unwrap();
 
-        // Should need setup (no embedding models in fresh registry)
         assert!(response.needs_setup);
     }
 
     #[tokio::test]
-    #[ignore] // Requires writable filesystem, run manually with --ignored
+    #[ignore = "Requires writable filesystem, run manually with --ignored"]
     async fn test_models_path_from_container() {
-        let (container, temp_dir) = create_test_container().await;
+        let (container, _temp_dir) = create_test_container().await;
 
         let models_path = container.models_path();
 
-        // Should be a valid path
         assert!(models_path.to_string_lossy().contains("models"));
 
         // Verify fallback works (should use home dir)

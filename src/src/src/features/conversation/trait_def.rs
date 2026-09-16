@@ -7,6 +7,16 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait ConversationServiceTrait: Send + Sync {
+    async fn fail_pending_turn(&self, user_message_id: &str) -> Result<()>;
+    /// Persist both sides of a successfully completed turn as one operation.
+    async fn complete_turn(
+        &self,
+        conversation_id: &str,
+        user_message_id: &str,
+        content: String,
+        tokens: i64,
+        metadata: Option<String>,
+    ) -> Result<crate::domain::conversation::ConversationMessage>;
     /// Create a new conversation
     ///
     /// # Arguments

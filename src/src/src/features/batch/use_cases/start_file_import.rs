@@ -1,82 +1,43 @@
-//! # Start Batch File Import Use Case
-//!
-//! Creates a batch file import job and spawns background processing.
-//!
-//! This use case orchestrates:
-//! 1. Batch size validation (1-100 files)
-//! 2. File path validation
-//! 3. Batch job creation
-//! 4. Batch item creation
-//! 5. Background processing spawn
-//!
-//! ## Example
-//!
-//! ```rust,no_run
-//! use lattice::application::use_cases::batch::StartBatchFileImportUseCase;
-//! use lattice::application::dtos::batch_dto::StartBatchFileImportRequestDto;
-//!
-//! # async fn example(use_case: StartBatchFileImportUseCase) -> Result<(), Box<dyn std::error::Error>> {
-//! let request = StartBatchFileImportRequestDto {
-//!     file_paths: vec![
-//!         "/path/to/file1.txt".to_string(),
-//!         "/path/to/file2.pdf".to_string(),
-//!     ],
-//! };
-//!
-//! let response = use_case.execute(request).await?;
-//! println!("Batch job started: {}", response.job_id);
-//! # Ok(())
-//! # }
-//! ```
-
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Instant;
-
-use tracing::{info, instrument};
-use uuid::Uuid;
-
-use crate::application::ports::BatchJobRepositoryPort;
-use crate::domain::repositories::UnitOfWorkFactory;
+//! File imports prepare and commit one document at a time so progress is durable.
+use crate::application::ports::{BatchJobRepositoryPort, UnitOfWorkFactory};
 use crate::features::batch::dto::{
     StartBatchFileImportRequestDto, StartBatchFileImportResponseDto,
 };
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
-use crate::features::indexing::use_cases::index_file::PrepareForIndexingOutcome;
-use crate::features::indexing::use_cases::IndexFileUseCase;
-use crate::shared::domain_types::ValidatedFilePath;
-use crate::shared::error::{AppError, Result};
+use crate::features::indexing::use_cases::{
+    index_file::PrepareForIndexingOutcome, IndexFileUseCase,
+};
+use crate::shared::{
+    domain_types::ValidatedFilePath,
+    error::{AppError, Result},
+};
+use std::{path::PathBuf, sync::Arc};
+use uuid::Uuid;
 
 const MIN_BATCH_SIZE: usize = 1;
 const MAX_BATCH_SIZE: usize = 100;
 
-/// Start batch file import use case.
-///
-/// Coordinates batch file import, including:
-/// - Batch size validation
-/// - File path validation
-/// - Job creation
-/// - Background processing
-///
-/// ## Dependencies
-///
-/// - `BatchJobRepositoryPort`: Persists batch job and items
-/// - `IndexFileUseCase`: Processes individual files
-/// - `UnitOfWorkFactory`: Creates transactions for atomic batch processing
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(Default)]
+struct FileImportOptions {
+    #[serde(default)]
+    space_id: Option<String>,
+    #[serde(default)]
+    indexing: Option<crate::features::batch::dto::FileIndexingOptionsDto>,
+    #[serde(default)]
+    file_order: Vec<String>,
+}
+
+#[derive(Clone)]
 pub struct StartBatchFileImportUseCase {
     batch_repo: Arc<dyn BatchJobRepositoryPort>,
     index_file_use_case: Arc<IndexFileUseCase>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
+    document_scope: Option<Arc<dyn crate::application::ports::document_scope::DocumentScopePort>>,
 }
 
 impl StartBatchFileImportUseCase {
-    /// Create a new start batch file import use case.
-    ///
-    /// # Arguments
-    ///
-    /// * `batch_repo` - Repository for batch job persistence
-    /// * `index_file_use_case` - Use case for indexing individual files
-    /// * `uow_factory` - Factory for creating Unit of Work transactions
     pub fn new(
         batch_repo: Arc<dyn BatchJobRepositoryPort>,
         index_file_use_case: Arc<IndexFileUseCase>,
@@ -86,798 +47,321 @@ impl StartBatchFileImportUseCase {
             batch_repo,
             index_file_use_case,
             uow_factory,
+            document_scope: None,
         }
     }
 
-    /// Execute batch file import creation.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Request containing file paths to import
-    ///
-    /// # Returns
-    ///
-    /// Response with job ID for status tracking
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Batch is empty
-    /// - Batch exceeds maximum size (100 files)
-    /// - Any file path is invalid
-    /// - Job creation fails
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use lattice::application::use_cases::batch::StartBatchFileImportUseCase;
-    /// # use lattice::application::dtos::batch_dto::StartBatchFileImportRequestDto;
-    /// # async fn example(use_case: StartBatchFileImportUseCase) -> Result<(), Box<dyn std::error::Error>> {
-    /// let request = StartBatchFileImportRequestDto {
-    ///     file_paths: vec!["/docs/file1.txt".to_string()],
-    /// };
-    ///
-    /// let response = use_case.execute(request).await?;
-    /// println!("Job ID: {}", response.job_id);
-    /// # Ok(())
-    /// # }
-    /// ```
+    pub fn with_document_scope(
+        mut self,
+        scope: Arc<dyn crate::application::ports::document_scope::DocumentScopePort>,
+    ) -> Self {
+        self.document_scope = Some(scope);
+        self
+    }
+
     pub async fn execute(
         &self,
         request: StartBatchFileImportRequestDto,
     ) -> Result<StartBatchFileImportResponseDto> {
-        // 1. Validate batch size
-        let batch_size = request.file_paths.len();
-
-        if batch_size < MIN_BATCH_SIZE {
+        let count = request.file_paths.len();
+        if count < MIN_BATCH_SIZE {
             return Err(AppError::InvalidInput(
-                "Batch must contain at least 1 file".to_string(),
+                "Batch must contain at least 1 file".into(),
             ));
         }
-
-        if batch_size > MAX_BATCH_SIZE {
+        if count > MAX_BATCH_SIZE {
             return Err(AppError::InvalidInput(format!(
-                "Batch size {} exceeds maximum of {}",
-                batch_size, MAX_BATCH_SIZE
+                "Batch size {count} exceeds maximum of {MAX_BATCH_SIZE}"
             )));
         }
-
-        // 2. Validate each file path
-        let mut validated_paths = Vec::new();
-        for path_str in &request.file_paths {
-            let path = PathBuf::from(path_str);
-            let validated = ValidatedFilePath::new(path)?;
-            validated_paths.push(validated);
+        for path in &request.file_paths {
+            ValidatedFilePath::new(PathBuf::from(path))?;
         }
-
-        // 3. Generate job ID
+        if let Some(space_id) = &request.space_id {
+            let scope = self.document_scope.as_ref().ok_or_else(|| {
+                AppError::ServiceNotAvailable("Space assignment is unavailable".into())
+            })?;
+            if !scope.space_exists(space_id).await? {
+                return Err(AppError::InvalidInput(format!(
+                    "Space not found: {space_id}"
+                )));
+            }
+        }
+        if let Some(group) = request
+            .indexing
+            .as_ref()
+            .and_then(|i| i.source_group.as_ref())
+        {
+            group.validate()?;
+        }
+        let unique: std::collections::HashSet<_> = request.file_paths.iter().collect();
+        if request
+            .indexing
+            .as_ref()
+            .and_then(|i| i.source_group.as_ref())
+            .is_some()
+            && unique.len() != count
+        {
+            return Err(AppError::InvalidInput(
+                "The same file was selected more than once".into(),
+            ));
+        }
         let job_id = Uuid::new_v4().to_string();
-
-        // 4. Create batch job record
+        let options = serde_json::to_string(&FileImportOptions {
+            space_id: request.space_id,
+            indexing: request.indexing,
+            file_order: request.file_paths.clone(),
+        })?;
         self.batch_repo
-            .create_batch_job(
-                &job_id,
-                "file_import",
-                batch_size as i64,
-                None, // No additional options for now
-            )
+            .create_batch_job(&job_id, "file_import", count as i64, Some(&options))
             .await?;
-
-        // 5. Create batch items (one per file)
-        // Note: BatchJobRepositoryPort expects URLs, but we use file paths
         self.batch_repo
-            .create_batch_items(&job_id, request.file_paths.clone())
+            .create_batch_items(&job_id, request.file_paths)
             .await?;
-
-        // 6. Spawn background processing task
-        let batch_repo = Arc::clone(&self.batch_repo);
-        let index_file_use_case = Arc::clone(&self.index_file_use_case);
-        let uow_factory = Arc::clone(&self.uow_factory);
-        let job_id_clone = job_id.clone();
-        let file_paths = request.file_paths.clone();
-
-        tokio::spawn(async move {
-            if let Ok(status) = batch_repo.get_batch_job(&job_id_clone).await {
-                if status.status == "cancelled" {
-                    return;
-                }
-            } else {
-                return;
-            }
-
-            // Update job status to "running"
-            if let Err(e) = batch_repo
-                .update_job_status(
-                    &job_id_clone,
-                    "running",
-                    Some(chrono::Utc::now().to_rfc3339()),
-                    None,
-                )
-                .await
-            {
-                info!(
-                    job_id = %job_id_clone,
-                    error = %e,
-                    "Failed to update batch job status to running"
-                );
-                return;
-            }
-
-            // Get pending items
-            let pending_items = match batch_repo.get_pending_items(&job_id_clone).await {
-                Ok(items) => items,
-                Err(e) => {
-                    if let Err(update_err) = batch_repo
-                        .update_job_status(
-                            &job_id_clone,
-                            "failed",
-                            None,
-                            Some(chrono::Utc::now().to_rfc3339()),
-                        )
-                        .await
-                    {
-                        info!(
-                            job_id = %job_id_clone,
-                            error = %update_err,
-                            "Failed to update batch job status after pending item error"
-                        );
-                    }
-                    info!(
-                        job_id = %job_id_clone,
-                        error = %e,
-                        "Failed to load pending batch items"
-                    );
-                    return;
-                }
-            };
-
-            let mut completed = 0i64;
-            let mut failed = 0i64;
-            let total = pending_items.len() as i64;
-
-            let batch_start = Instant::now();
-            info!(
-                job_id = %job_id_clone,
-                total_files = total,
-                "Starting batch file import with Prepare-Then-Commit pattern"
-            );
-
-            // ============================================================================
-            // PHASE 1: PREPARE (No Transaction - Heavy CPU/IO Work)
-            // ============================================================================
-            // Extract content and generate embeddings for ALL files BEFORE opening DB transaction.
-            // This prevents holding SQLite write lock during slow operations.
-
-            info!(
-                job_id = %job_id_clone,
-                "Phase 1: Preparing files (extraction + embeddings, no transaction)"
-            );
-
-            let preparation_start = Instant::now();
-            let mut prepared_files = Vec::new();
-            let mut cleanup_candidates: Vec<(String, bool)> = Vec::new();
-
-            for (index, item) in pending_items.iter().enumerate() {
-                let job_status = batch_repo.get_batch_job(&job_id_clone).await;
-                if let Ok(status) = job_status {
-                    if status.status == "cancelled" {
-                        info!(
-                            job_id = %job_id_clone,
-                            prepared_files = cleanup_candidates.len(),
-                            "Batch job cancelled during preparation"
-                        );
-                        for (library_path, imported_new) in &cleanup_candidates {
-                            if !*imported_new {
-                                continue;
-                            }
-                            if let Err(cleanup_err) =
-                                index_file_use_case.cleanup_library_file(library_path).await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    file_path = %library_path,
-                                    error = %cleanup_err,
-                                    "Failed to cleanup imported file after cancellation"
-                                );
-                            }
-                        }
-                        return;
-                    }
-                } else {
-                    info!(
-                        job_id = %job_id_clone,
-                        "Failed to load batch job status during preparation"
-                    );
-                    return;
-                }
-
-                let file_start = Instant::now();
-                let index_request = IndexFileRequestDto {
-                    path: item.url.clone(),
-                    chunking_strategy: ChunkingStrategyDto::Semantic { max_tokens: 800 },
-                    tags: None,
-                    metadata: None,
-                    space_id: None,
-                };
-
-                // Prepare file (extraction + embeddings) WITHOUT transaction
-                match index_file_use_case
-                    .prepare_for_indexing(index_request)
-                    .await
-                {
-                    Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
-                        let (aggregate, embedding_entries, library_path, imported_new) = *prepared;
-                        let file_duration = file_start.elapsed();
-                        let chunks_created = aggregate.chunks().len();
-                        let document_id = aggregate.document().id().to_string();
-
-                        info!(
-                            job_id = %job_id_clone,
-                            file_index = index + 1,
-                            total_files = total,
-                            file_path = %item.url,
-                            document_id = %document_id,
-                            file_duration_ms = file_duration.as_millis(),
-                            chunks_created = chunks_created,
-                            "File prepared successfully (extraction + embeddings)"
-                        );
-
-                        cleanup_candidates.push((library_path.clone(), imported_new));
-                        prepared_files.push((
-                            item.id.clone(),
-                            aggregate,
-                            embedding_entries,
-                            library_path,
-                            imported_new,
-                        ));
-                    }
-                    Ok(PrepareForIndexingOutcome::Duplicate { document_id }) => {
-                        info!(
-                            job_id = %job_id_clone,
-                            file_index = index + 1,
-                            total_files = total,
-                            file_path = %item.url,
-                            document_id = %document_id,
-                            "File already indexed (duplicate detected)"
-                        );
-
-                        if let Err(e) = batch_repo
-                            .update_item_status(&item.id, "completed", Some(&document_id), None)
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                item_id = %item.id,
-                                error = %e,
-                                "Failed to update batch item status to completed"
-                            );
-                        }
-
-                        completed += 1;
-                        let progress = (completed + failed) as f64 / total as f64;
-                        if let Err(e) = batch_repo
-                            .update_progress(&job_id_clone, completed, failed, progress)
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                error = %e,
-                                "Failed to update batch progress after duplicate"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        failed += 1;
-                        let file_duration = file_start.elapsed();
-
-                        info!(
-                            job_id = %job_id_clone,
-                            file_index = index + 1,
-                            total_files = total,
-                            file_path = %item.url,
-                            file_duration_ms = file_duration.as_millis(),
-                            error = %e,
-                            "File preparation failed (extraction or embeddings)"
-                        );
-
-                        if let Err(update_err) = batch_repo
-                            .update_item_status(&item.id, "failed", None, Some(&e.to_string()))
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                item_id = %item.id,
-                                error = %update_err,
-                                "Failed to update batch item status to failed"
-                            );
-                        }
-
-                        let progress = (completed + failed) as f64 / total as f64;
-                        if let Err(update_err) = batch_repo
-                            .update_progress(&job_id_clone, completed, failed, progress)
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                error = %update_err,
-                                "Failed to update batch progress after preparation failure"
-                            );
-                        }
-                    }
-                }
-            }
-
-            let preparation_duration = preparation_start.elapsed();
-            info!(
-                job_id = %job_id_clone,
-                prepared_count = prepared_files.len(),
-                failed_count = failed,
-                preparation_duration_ms = preparation_duration.as_millis(),
-                "Phase 1 complete: All files prepared"
-            );
-
-            let job_status = batch_repo.get_batch_job(&job_id_clone).await;
-            if let Ok(status) = job_status {
-                if status.status == "cancelled" {
-                    info!(
-                        job_id = %job_id_clone,
-                        prepared_files = cleanup_candidates.len(),
-                        "Batch job cancelled before commit"
-                    );
-                    for (library_path, imported_new) in &cleanup_candidates {
-                        if !*imported_new {
-                            continue;
-                        }
-                        if let Err(cleanup_err) =
-                            index_file_use_case.cleanup_library_file(library_path).await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                file_path = %library_path,
-                                error = %cleanup_err,
-                                "Failed to cleanup imported file after cancellation"
-                            );
-                        }
-                    }
-                    return;
-                }
-            } else {
-                info!(
-                    job_id = %job_id_clone,
-                    "Failed to load batch job status before commit"
-                );
-                return;
-            }
-
-            // ============================================================================
-            // PHASE 2: COMMIT (Fast DB Transaction)
-            // ============================================================================
-            // Now save all prepared aggregates in a SINGLE fast transaction.
-            // This is where we hold the SQLite write lock - only for database operations.
-
-            if !prepared_files.is_empty() {
-                info!(
-                    job_id = %job_id_clone,
-                    files_to_save = prepared_files.len(),
-                    "Phase 2: Saving prepared files (fast transaction)"
-                );
-
-                let commit_start = Instant::now();
-
-                // Create UoW and save all prepared files
-                let mut uow = match uow_factory.create().await {
-                    Ok(uow) => uow,
-                    Err(e) => {
-                        info!(
-                            job_id = %job_id_clone,
-                            error = %e,
-                            "Failed to create UoW for batch commit"
-                        );
-
-                        // Mark all prepared files as failed
-                        for (item_id, _, _, _, _) in prepared_files {
-                            if let Err(update_err) = batch_repo
-                                .update_item_status(
-                                    &item_id,
-                                    "failed",
-                                    None,
-                                    Some("Failed to create database transaction"),
-                                )
-                                .await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    item_id = %item_id,
-                                    error = %update_err,
-                                    "Failed to mark batch item failed after UoW error"
-                                );
-                            }
-                        }
-
-                        for (library_path, imported_new) in &cleanup_candidates {
-                            if !*imported_new {
-                                continue;
-                            }
-                            if let Err(cleanup_err) =
-                                index_file_use_case.cleanup_library_file(library_path).await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    file_path = %library_path,
-                                    error = %cleanup_err,
-                                    "Failed to cleanup imported file after UoW creation failure"
-                                );
-                            }
-                        }
-
-                        if let Err(update_err) = batch_repo
-                            .update_job_status(
-                                &job_id_clone,
-                                "failed",
-                                None,
-                                Some(chrono::Utc::now().to_rfc3339()),
-                            )
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                error = %update_err,
-                                "Failed to update batch job status after UoW error"
-                            );
-                        }
-
-                        return;
-                    }
-                };
-
-                // Collect item IDs before scope consumes prepared_files
-                let all_item_ids: Vec<String> = prepared_files
-                    .iter()
-                    .map(|(item_id, _, _, _, _)| item_id.clone())
-                    .collect();
-
-                // PATTERN: Inner scope ensures repositories are dropped before commit/rollback
-                // This satisfies Rust's borrow checker - repositories borrow UoW immutably,
-                // but commit/rollback need mutable access. Scope ensures borrows end first.
-                //
-                // CRITICAL: Do NOT call batch_repo inside this scope! That would cause
-                // SQLITE_BUSY deadlocks (batch_repo uses separate connection, uow holds write lock).
-                let (db_error_occurred, save_results, failed_items) = {
-                    // Get repositories from UoW
-                    let document_repo = match uow.document_repository() {
-                        Ok(repo) => repo,
-                        Err(e) => {
-                            info!(
-                                job_id = %job_id_clone,
-                                error = %e,
-                                "Failed to get document repository from UoW"
-                            );
-                            // Cannot rollback here - repo borrow exists in Ok branch
-                            // Will handle via outer error propagation
-                            return;
-                        }
-                    };
-
-                    let embedding_repo = match uow.embedding_repository() {
-                        Ok(repo) => repo,
-                        Err(e) => {
-                            info!(
-                                job_id = %job_id_clone,
-                                error = %e,
-                                "Failed to get embedding repository from UoW"
-                            );
-                            return;
-                        }
-                    };
-
-                    // Save all aggregates and embeddings
-                    let mut db_error_occurred = false;
-                    let mut save_results = Vec::new();
-                    let mut failed_items = Vec::new();
-
-                    for (item_id, aggregate, embedding_entries, _library_path, _imported_new) in
-                        prepared_files
-                    {
-                        let document_id = aggregate.document().id().to_string();
-                        let chunks_created = aggregate.chunks().len();
-
-                        // Save document aggregate
-                        if let Err(e) = document_repo.save(&aggregate).await {
-                            info!(
-                                job_id = %job_id_clone,
-                                document_id = %document_id,
-                                error = %e,
-                                "Failed to save document aggregate"
-                            );
-
-                            // Don't call batch_repo here (SQLITE_BUSY risk)
-                            // Store failure for later processing outside transaction
-                            failed_items.push((item_id, format!("DB save failed: {}", e)));
-                            db_error_occurred = true;
-                            break; // CRITICAL: Stop on first DB error
-                        }
-
-                        // Save embeddings batch
-                        if let Err(e) = embedding_repo.save_batch(embedding_entries).await {
-                            info!(
-                                job_id = %job_id_clone,
-                                document_id = %document_id,
-                                error = %e,
-                                "Failed to save embeddings"
-                            );
-
-                            // Don't call batch_repo here (SQLITE_BUSY risk)
-                            failed_items.push((item_id, format!("Embedding save failed: {}", e)));
-                            db_error_occurred = true;
-                            break; // CRITICAL: Stop on first DB error
-                        }
-
-                        // Store successful save result
-                        save_results.push((item_id, document_id, chunks_created));
-                    }
-
-                    // Repositories are dropped HERE when scope exits
-                    (db_error_occurred, save_results, failed_items)
-                };
-
-                // NOW we can safely commit/rollback - no repository borrows exist
-                // Explicit state tracking to prevent ghost record anomalies
-                let commit_duration = commit_start.elapsed();
-
-                if db_error_occurred {
-                    // ROLLBACK PATH: Database error occurred
-                    let root_cause = failed_items
-                        .first()
-                        .map(|(_, msg)| msg.clone())
-                        .unwrap_or_else(|| "unknown database error".to_string());
-                    info!(
-                        job_id = %job_id_clone,
-                        root_cause = %root_cause,
-                        "Database error occurred, rolling back transaction"
-                    );
-
-                    let rollback_result = uow.rollback().await;
-
-                    if let Err(e) = rollback_result {
-                        info!(
-                            job_id = %job_id_clone,
-                            error = %e,
-                            commit_duration_ms = commit_duration.as_millis(),
-                            "Rollback failed"
-                        );
-                    } else {
-                        info!(
-                            job_id = %job_id_clone,
-                            commit_duration_ms = commit_duration.as_millis(),
-                            "Transaction rolled back successfully"
-                        );
-                    }
-
-                    // CRITICAL: Mark ALL prepared files as failed (rollback = nothing was saved)
-                    for item_id in &all_item_ids {
-                        failed += 1;
-
-                        if let Err(e) = batch_repo
-                            .update_item_status(
-                                item_id,
-                                "failed",
-                                None,
-                                Some(&format!(
-                                    "Batch transaction rolled back due to database error: {}",
-                                    root_cause
-                                )),
-                            )
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                item_id = %item_id,
-                                error = %e,
-                                "Failed to update batch item status after rollback"
-                            );
-                        }
-
-                        let progress = (completed + failed) as f64 / total as f64;
-                        if let Err(e) = batch_repo
-                            .update_progress(&job_id_clone, completed, failed, progress)
-                            .await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                error = %e,
-                                "Failed to update batch progress after rollback"
-                            );
-                        }
-                    }
-
-                    for (library_path, imported_new) in &cleanup_candidates {
-                        if !*imported_new {
-                            continue;
-                        }
-                        if let Err(cleanup_err) =
-                            index_file_use_case.cleanup_library_file(library_path).await
-                        {
-                            info!(
-                                job_id = %job_id_clone,
-                                file_path = %library_path,
-                                error = %cleanup_err,
-                                "Failed to cleanup imported file after rollback"
-                            );
-                        }
-                    }
-                } else {
-                    // COMMIT PATH: All database saves succeeded
-                    info!(
-                        job_id = %job_id_clone,
-                        files_to_commit = save_results.len(),
-                        "All files saved successfully, committing transaction"
-                    );
-
-                    let commit_result = uow.commit().await;
-
-                    if let Err(e) = commit_result {
-                        // COMMIT FAILED: Treat as rollback
-                        info!(
-                            job_id = %job_id_clone,
-                            error = %e,
-                            commit_duration_ms = commit_duration.as_millis(),
-                            "Commit failed, transaction rolled back"
-                        );
-
-                        // Mark ALL prepared files as failed
-                        for item_id in &all_item_ids {
-                            failed += 1;
-
-                            if let Err(update_err) = batch_repo
-                                .update_item_status(
-                                    item_id,
-                                    "failed",
-                                    None,
-                                    Some(&format!("Commit failed: {}", e)),
-                                )
-                                .await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    item_id = %item_id,
-                                    error = %update_err,
-                                    "Failed to update batch item status after commit failure"
-                                );
-                            }
-
-                            for (library_path, imported_new) in &cleanup_candidates {
-                                if !*imported_new {
-                                    continue;
-                                }
-                                if let Err(cleanup_err) =
-                                    index_file_use_case.cleanup_library_file(library_path).await
-                                {
-                                    info!(
-                                        job_id = %job_id_clone,
-                                        file_path = %library_path,
-                                        error = %cleanup_err,
-                                        "Failed to cleanup imported file after commit failure"
-                                    );
-                                }
-                            }
-
-                            let progress = (completed + failed) as f64 / total as f64;
-                            if let Err(update_err) = batch_repo
-                                .update_progress(&job_id_clone, completed, failed, progress)
-                                .await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    error = %update_err,
-                                    "Failed to update batch progress after commit failure"
-                                );
-                            }
-                        }
-                    } else {
-                        // COMMIT SUCCEEDED: Mark files as completed
-                        info!(
-                            job_id = %job_id_clone,
-                            commit_duration_ms = commit_duration.as_millis(),
-                            "Phase 2 complete: Transaction committed successfully"
-                        );
-
-                        // Update batch job status for successfully saved files
-                        for (item_id, document_id, chunks_created) in save_results {
-                            completed += 1;
-
-                            info!(
-                                job_id = %job_id_clone,
-                                document_id = %document_id,
-                                chunks_created = chunks_created,
-                                "Document saved to database"
-                            );
-
-                            if let Err(update_err) = batch_repo
-                                .update_item_status(&item_id, "completed", Some(&document_id), None)
-                                .await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    item_id = %item_id,
-                                    error = %update_err,
-                                    "Failed to update batch item status to completed"
-                                );
-                            }
-
-                            // Update progress
-                            let progress = (completed + failed) as f64 / total as f64;
-                            if let Err(update_err) = batch_repo
-                                .update_progress(&job_id_clone, completed, failed, progress)
-                                .await
-                            {
-                                info!(
-                                    job_id = %job_id_clone,
-                                    error = %update_err,
-                                    "Failed to update batch progress after completion"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Mark job as completed
-            if let Ok(status) = batch_repo.get_batch_job(&job_id_clone).await {
-                if status.status == "cancelled" {
-                    return;
-                }
-            }
-
-            let final_status = if failed == total {
-                "failed"
-            } else {
-                "completed"
-            };
-
-            let batch_duration = batch_start.elapsed();
-            let files_per_second = if batch_duration.as_secs() > 0 {
-                total as f64 / batch_duration.as_secs_f64()
-            } else {
-                total as f64
-            };
-
-            info!(
-                job_id = %job_id_clone,
-                total_files = total,
-                completed = completed,
-                failed = failed,
-                batch_duration_ms = batch_duration.as_millis(),
-                batch_duration_sec = batch_duration.as_secs_f64(),
-                files_per_second = format!("{:.2}", files_per_second),
-                final_status = final_status,
-                "Batch file import completed"
-            );
-
-            if let Err(e) = batch_repo
-                .update_job_status(
-                    &job_id_clone,
-                    final_status,
-                    None,
-                    Some(chrono::Utc::now().to_rfc3339()),
-                )
-                .await
-            {
-                info!(
-                    job_id = %job_id_clone,
-                    error = %e,
-                    "Failed to update final batch job status"
-                );
-            }
-        });
-
-        // 7. Return job ID immediately
+        self.spawn_job(job_id.clone());
         Ok(StartBatchFileImportResponseDto { job_id })
     }
-}
 
-// ============================================================================
-// Tests
-// ============================================================================
+    pub async fn retry_failed(
+        &self,
+        job_id: &str,
+        item_id: Option<&str>,
+        replacement_path: Option<&str>,
+    ) -> Result<usize> {
+        if let Some(path) = replacement_path {
+            ValidatedFilePath::new(PathBuf::from(path))?;
+        }
+        let count = self
+            .batch_repo
+            .requeue_failed_files(job_id, item_id, replacement_path)
+            .await?;
+        self.spawn_job(job_id.to_owned());
+        Ok(count)
+    }
+
+    /// Called only during startup, before new imports can start. Completed files
+    /// remain committed; an interrupted current file is safely deduplicated on retry.
+    pub async fn resume_interrupted(&self, job_id: String) -> Result<()> {
+        let job = self.batch_repo.get_batch_job(&job_id).await?;
+        if job.job_type != "file_import" || !matches!(job.status.as_str(), "pending" | "running") {
+            return Ok(());
+        }
+        for item in job
+            .items
+            .iter()
+            .filter(|item| matches!(item.status.as_str(), "running" | "processing"))
+        {
+            self.batch_repo
+                .update_item_status(&item.id, "pending", None, None)
+                .await?;
+        }
+        self.spawn_job(job_id);
+        Ok(())
+    }
+
+    fn spawn_job(&self, job_id: String) {
+        let worker = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = worker.process_job(&job_id).await {
+                tracing::error!(%job_id, %error, "Batch file import stopped");
+                // Surface orchestration failures instead of leaving a job running forever.
+                if let Ok(job) = worker.batch_repo.get_batch_job(&job_id).await {
+                    if job.status == "cancelled" {
+                        return;
+                    }
+                    let mut failed = job.failed_items;
+                    for item in job.items.iter().filter(|item| {
+                        matches!(item.status.as_str(), "pending" | "running" | "processing")
+                    }) {
+                        if worker
+                            .batch_repo
+                            .update_item_status(&item.id, "failed", None, Some(&error.to_string()))
+                            .await
+                            .is_ok()
+                        {
+                            failed += 1;
+                        }
+                    }
+                    let progress =
+                        (job.completed_items + failed) as f64 / job.total_items.max(1) as f64;
+                    let _ = worker
+                        .batch_repo
+                        .update_progress(&job_id, job.completed_items, failed, progress)
+                        .await;
+                }
+                let _ = worker
+                    .batch_repo
+                    .update_job_status(
+                        &job_id,
+                        "failed",
+                        None,
+                        Some(chrono::Utc::now().to_rfc3339()),
+                    )
+                    .await;
+            }
+        });
+    }
+
+    async fn process_job(&self, job_id: &str) -> Result<()> {
+        let job = self.batch_repo.get_batch_job(job_id).await?;
+        if job.status == "cancelled" {
+            return Ok(());
+        }
+        self.batch_repo
+            .update_job_status(
+                job_id,
+                "running",
+                Some(chrono::Utc::now().to_rfc3339()),
+                None,
+            )
+            .await?;
+        let items = self.batch_repo.get_pending_items(job_id).await?;
+        let options = self.batch_repo.get_job_options(job_id).await?;
+        let options = options
+            .map(|json| serde_json::from_str::<FileImportOptions>(&json))
+            .transpose()?
+            .unwrap_or_default();
+        let space_id = options.space_id.clone();
+        // Recompute from items: the app may have exited between committing an
+        // item and updating the aggregate counters.
+        let mut completed = job
+            .items
+            .iter()
+            .filter(|item| item.status == "completed")
+            .count() as i64;
+        let mut failed = job
+            .items
+            .iter()
+            .filter(|item| item.status == "failed")
+            .count() as i64;
+        let total = job.total_items.max(items.len() as i64).max(1);
+        self.batch_repo
+            .update_progress(
+                job_id,
+                completed,
+                failed,
+                (completed + failed) as f64 / total as f64,
+            )
+            .await?;
+        for item in items {
+            if self.batch_repo.get_batch_job(job_id).await?.status == "cancelled" {
+                return Ok(());
+            }
+            self.batch_repo
+                .update_item_status(&item.id, "processing", None, None)
+                .await?;
+            let request = IndexFileRequestDto {
+                path: item.url.clone(),
+                chunking_strategy: ChunkingStrategyDto::Semantic { max_tokens: 800 },
+                tags: None,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    if let Some(indexing) = &options.indexing {
+                        if indexing.rebuild_existing {
+                            metadata.insert("rebuild_existing".into(), "true".into());
+                        }
+                        if let Some(group) = &indexing.source_group {
+                            // item IDs are stable across retries; repository creation order is stable.
+                            let position = options
+                                .file_order
+                                .iter()
+                                .position(|path| path == &item.url)
+                                .or_else(|| {
+                                    job.items
+                                        .iter()
+                                        .position(|candidate| candidate.id == item.id)
+                                })
+                                .ok_or_else(|| {
+                                    AppError::InvalidState(
+                                        "Import item has no reading position".into(),
+                                    )
+                                })?;
+                            let context =
+                                crate::domain::value_objects::source_context::SourceContext {
+                                    group: group.clone(),
+                                    position: position as u32,
+                                };
+                            metadata
+                                .insert("source_context".into(), serde_json::to_string(&context)?);
+                        }
+                    }
+                    Some(metadata)
+                },
+                space_id: space_id.clone(),
+            };
+            let outcome = self.index_file_use_case.prepare_for_indexing(request).await;
+            if self.batch_repo.get_batch_job(job_id).await?.status == "cancelled" {
+                self.batch_repo
+                    .update_item_status(&item.id, "skipped", None, Some("Import cancelled"))
+                    .await?;
+                return Ok(());
+            }
+            let result = match outcome {
+                Ok(PrepareForIndexingOutcome::Duplicate { document_id }) => Ok(document_id),
+                Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
+                    self.index_file_use_case
+                        .commit_prepared(*prepared, self.uow_factory.as_ref())
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            let result = match (result, space_id.as_deref()) {
+                (Ok(document_id), Some(space)) => match self.document_scope.as_ref() {
+                    Some(scope) => scope
+                        .assign_documents(std::slice::from_ref(&document_id), space)
+                        .await
+                        .map(|()| document_id),
+                    None => Err(AppError::ServiceNotAvailable(
+                        "Space assignment is unavailable".into(),
+                    )),
+                },
+                (result, _) => result,
+            };
+            match result {
+                Ok(document_id) => {
+                    self.batch_repo
+                        .update_item_status(&item.id, "completed", Some(&document_id), None)
+                        .await?;
+                    completed += 1;
+                }
+                Err(error) => {
+                    tracing::warn!(%job_id, file = %item.url, %error, "File import failed");
+                    self.batch_repo
+                        .update_item_status(&item.id, "failed", None, Some(&error.to_string()))
+                        .await?;
+                    failed += 1;
+                }
+            }
+            // The document and its embeddings are already committed. No batch
+            // repository writes occur while the document transaction is open.
+            self.batch_repo
+                .update_progress(
+                    job_id,
+                    completed,
+                    failed,
+                    (completed + failed) as f64 / total as f64,
+                )
+                .await?;
+        }
+        if self.batch_repo.get_batch_job(job_id).await?.status != "cancelled" {
+            self.batch_repo
+                .update_job_status(
+                    job_id,
+                    if failed > 0 {
+                        "failed"
+                    } else if completed < total {
+                        "cancelled"
+                    } else {
+                        "completed"
+                    },
+                    None,
+                    Some(chrono::Utc::now().to_rfc3339()),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -889,18 +373,15 @@ mod tests {
     use crate::application::ports::batch_job_repository_port::{
         BatchJobItem, BatchJobStatus as PortBatchJobStatus, BatchJobSummary,
     };
-    use crate::features::indexing::dto::IndexFileResponseDto;
 
-    // Mock UnitOfWorkFactory
     struct MockUoWFactory;
 
     #[async_trait]
-    impl crate::domain::repositories::UnitOfWorkFactory for MockUoWFactory {
-        async fn create(&self) -> Result<Box<dyn crate::domain::repositories::UnitOfWork + Send>> {
+    impl crate::application::ports::UnitOfWorkFactory for MockUoWFactory {
+        async fn create(&self) -> Result<Box<dyn crate::application::ports::UnitOfWork + Send>> {
             use crate::domain::repositories::mocks::MockUnitOfWork;
             let mut mock = MockUnitOfWork::new();
 
-            // Setup basic expectations
             mock.expect_commit().returning(|| Ok(()));
             mock.expect_rollback().returning(|| Ok(()));
 
@@ -908,7 +389,6 @@ mod tests {
         }
     }
 
-    // Mock batch repository
     struct MockBatchRepo {
         jobs: Arc<Mutex<HashMap<String, String>>>, // job_id -> status
         items: Arc<Mutex<HashMap<String, Vec<String>>>>, // job_id -> file_paths
@@ -1032,13 +512,12 @@ mod tests {
         }
     }
 
-    // Mock index file use case
     fn create_mock_index_file_use_case() -> IndexFileUseCase {
+        use crate::application::ports::UnitOfWorkFactory;
         use crate::application::ports::{
             EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, RepositoryPort,
         };
         use crate::domain::entities::document::Document;
-        use crate::domain::repositories::UnitOfWorkFactory;
         use crate::features::embedding::entity::Embedding;
         use std::path::Path;
 
@@ -1113,6 +592,7 @@ mod tests {
                         text: "Mock content".to_string(),
                         mime_type: "text/plain".to_string(),
                         page_count: Some(1),
+                        page_ranges: Vec::new(),
                         word_count: 2,
                         char_count: 12,
                     },
@@ -1259,7 +739,7 @@ mod tests {
         struct MockUnitOfWork;
 
         #[async_trait]
-        impl crate::domain::repositories::UnitOfWork for MockUnitOfWork {
+        impl crate::application::ports::UnitOfWork for MockUnitOfWork {
             fn chunk_repository(
                 &self,
             ) -> Result<Box<dyn crate::application::ports::ChunkRepositoryPort + Send + '_>>
@@ -1309,7 +789,7 @@ mod tests {
 
             fn model_repository(
                 &self,
-            ) -> Result<Box<dyn crate::domain::repositories::unit_of_work::ModelRepositoryPort + '_>>
+            ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelRepositoryPort + '_>>
             {
                 Err(AppError::InvalidState(
                     "Model repository not used in test".to_string(),
@@ -1319,7 +799,7 @@ mod tests {
             fn model_file_repository(
                 &self,
             ) -> Result<
-                Box<dyn crate::domain::repositories::unit_of_work::ModelFileRepositoryPort + '_>,
+                Box<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort + '_>,
             > {
                 Err(AppError::InvalidState(
                     "Model file repository not used in test".to_string(),
@@ -1341,7 +821,7 @@ mod tests {
         impl UnitOfWorkFactory for MockUnitOfWorkFactory {
             async fn create(
                 &self,
-            ) -> Result<Box<dyn crate::domain::repositories::UnitOfWork + Send>> {
+            ) -> Result<Box<dyn crate::application::ports::UnitOfWork + Send>> {
                 Ok(Box::new(MockUnitOfWork))
             }
         }
@@ -1377,12 +857,15 @@ mod tests {
         let use_case =
             StartBatchFileImportUseCase::new(batch_repo.clone(), index_file, uow_factory);
 
-        let request = StartBatchFileImportRequestDto { file_paths };
+        let request = StartBatchFileImportRequestDto {
+            indexing: None,
+            file_paths,
+            space_id: None,
+        };
         let response = use_case.execute(request).await.unwrap();
 
         assert!(!response.job_id.is_empty());
 
-        // Verify job was created
         let jobs = batch_repo.jobs.lock().unwrap();
         assert!(jobs.contains_key(&response.job_id));
     }
@@ -1394,7 +877,11 @@ mod tests {
         let uow_factory = Arc::new(MockUoWFactory);
         let use_case = StartBatchFileImportUseCase::new(batch_repo, index_file, uow_factory);
 
-        let request = StartBatchFileImportRequestDto { file_paths: vec![] };
+        let request = StartBatchFileImportRequestDto {
+            indexing: None,
+            file_paths: vec![],
+            space_id: None,
+        };
 
         let result = use_case.execute(request).await;
         assert!(result.is_err());
@@ -1417,7 +904,11 @@ mod tests {
         let file_paths = (0..101)
             .map(|i| temp_path(&format!("file{}.txt", i)))
             .collect();
-        let request = StartBatchFileImportRequestDto { file_paths };
+        let request = StartBatchFileImportRequestDto {
+            indexing: None,
+            file_paths,
+            space_id: None,
+        };
 
         let result = use_case.execute(request).await;
         assert!(result.is_err());
@@ -1438,7 +929,10 @@ mod tests {
         let use_case = StartBatchFileImportUseCase::new(batch_repo, index_file, uow_factory);
 
         let request = StartBatchFileImportRequestDto {
+            indexing: None,
             file_paths: vec!["../../../etc/passwd".to_string()],
+
+            space_id: None,
         };
 
         let result = use_case.execute(request).await;
@@ -1462,7 +956,10 @@ mod tests {
             StartBatchFileImportUseCase::new(batch_repo.clone(), index_file, uow_factory);
 
         let request = StartBatchFileImportRequestDto {
+            indexing: None,
             file_paths: vec![file_path.to_str().unwrap().to_string()],
+
+            space_id: None,
         };
 
         let response = use_case.execute(request).await.unwrap();
@@ -1470,7 +967,6 @@ mod tests {
         // Wait for background processing
         sleep(Duration::from_millis(100)).await;
 
-        // Check that status was updated
         let jobs = batch_repo.jobs.lock().unwrap();
         let status = jobs.get(&response.job_id).unwrap();
 
@@ -1483,3 +979,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod progress_tests;

@@ -17,7 +17,7 @@ This directory holds the `llama-server` sidecar binaries that ship inside the La
 To get the binaries locally:
 
 ```bash
-cd src/app/src
+cd src/src
 bash scripts/fetch-llama-binaries.sh
 ```
 

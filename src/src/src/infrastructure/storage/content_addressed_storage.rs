@@ -172,7 +172,7 @@ impl ContentAddressedStorage {
     /// # Errors
     ///
     /// - `AppError::InvalidState` if home directory cannot be determined
-    fn default_library_root() -> Result<PathBuf> {
+    pub(crate) fn default_library_root() -> Result<PathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| AppError::InvalidState("Cannot determine home directory".to_string()))?;
 
@@ -194,7 +194,6 @@ impl ContentAddressedStorage {
     /// - `AppError::FileNotFound` if file doesn't exist
     /// - `AppError::FileRead` if cannot read file
     async fn compute_file_hash(&self, path: &Path) -> Result<String> {
-        // Read file content
         let content = fs::read(path).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => AppError::FileNotFound {
                 path: path.to_string_lossy().to_string(),
@@ -208,12 +207,10 @@ impl ContentAddressedStorage {
             },
         })?;
 
-        // Compute SHA-256 hash
         let mut hasher = Sha256::new();
         hasher.update(&content);
         let hash = hasher.finalize();
 
-        // Convert to hex string
         Ok(format!("{:x}", hash))
     }
 
@@ -330,7 +327,6 @@ impl ContentAddressedStoragePortTrait for ContentAddressedStorage {
             return Ok(None);
         }
 
-        // Find first file in hash directory
         let mut entries = fs::read_dir(&hash_dir)
             .await
             .map_err(|e| AppError::FileStorage(format!("Failed to read hash directory: {}", e)))?;
@@ -348,10 +344,6 @@ impl ContentAddressedStoragePortTrait for ContentAddressedStorage {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,16 +355,12 @@ mod tests {
         let library_root = temp_dir.path().join("library");
         let source_file = temp_dir.path().join("source.txt");
 
-        // Create source file
         fs::write(&source_file, "Test content").await.unwrap();
 
-        // Create storage
         let storage = ContentAddressedStorage::with_root(library_root.clone());
 
-        // Import file
         let (library_path, hash) = storage.import_file(&source_file).await.unwrap();
 
-        // Verify library path structure
         assert!(library_path.starts_with(&library_root));
         assert!(
             library_path
@@ -386,12 +374,10 @@ mod tests {
         );
         assert_eq!(library_path.file_name().unwrap(), "source.txt");
 
-        // Verify file was copied
         assert!(library_path.exists());
         let content = fs::read_to_string(&library_path).await.unwrap();
         assert_eq!(content, "Test content");
 
-        // Verify hash is hex string
         assert_eq!(hash.len(), 64); // SHA-256 = 64 hex chars
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -403,22 +389,17 @@ mod tests {
         let source_file1 = temp_dir.path().join("file1.txt");
         let source_file2 = temp_dir.path().join("file2.txt");
 
-        // Create two files with identical content
         fs::write(&source_file1, "Identical content").await.unwrap();
         fs::write(&source_file2, "Identical content").await.unwrap();
 
         let storage = ContentAddressedStorage::with_root(library_root.clone());
 
-        // Import first file
         let (path1, hash1) = storage.import_file(&source_file1).await.unwrap();
 
-        // Import second file (duplicate)
         let (path2, hash2) = storage.import_file(&source_file2).await.unwrap();
 
-        // Should have same hash
         assert_eq!(hash1, hash2);
 
-        // Should return same library path (or path in same hash directory)
         assert_eq!(path1.parent(), path2.parent());
     }
 
@@ -429,20 +410,16 @@ mod tests {
         let source_file1 = temp_dir.path().join("file1.txt");
         let source_file2 = temp_dir.path().join("file2.txt");
 
-        // Create two files with different content
         fs::write(&source_file1, "Content 1").await.unwrap();
         fs::write(&source_file2, "Content 2").await.unwrap();
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        // Import both files
         let (path1, hash1) = storage.import_file(&source_file1).await.unwrap();
         let (path2, hash2) = storage.import_file(&source_file2).await.unwrap();
 
-        // Should have different hashes
         assert_ne!(hash1, hash2);
 
-        // Should have different library paths
         assert_ne!(path1, path2);
 
         // Both files should exist
@@ -460,10 +437,8 @@ mod tests {
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        // Import file
         let (_path, hash) = storage.import_file(&source_file).await.unwrap();
 
-        // Check existence
         assert!(storage.exists_by_hash(&hash).await.unwrap());
         assert!(!storage.exists_by_hash("nonexistent_hash").await.unwrap());
     }
@@ -478,7 +453,6 @@ mod tests {
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        // Import file
         let (original_path, hash) = storage.import_file(&source_file).await.unwrap();
 
         // Retrieve path by hash

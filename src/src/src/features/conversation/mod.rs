@@ -18,14 +18,14 @@
 //! - `crate::features::conversation::plugin::init()` — Tauri plugin
 //! - `crate::features::conversation::ConversationServiceTrait` — service trait
 //!
-//! ## Kept as shared
+//! - `crate::features::conversation::repository` — SQLite persistence
+//! - `crate::features::conversation::persistence_mapper`
+//! - `crate::features::conversation::service` — ConversationService
 //!
-//! - `crate::domain::conversation` — consumed through the domain namespace
-//! - `crate::infrastructure::persistence::repositories::conversation_repository`
-//! - `crate::infrastructure::persistence::mappers::conversation_mapper`
-//!   (persistence mapper)
-//! - `crate::infrastructure::services::conversation_service`
+//! Domain types (Conversation, ConversationMessage, MessageRole, ...) live in
+//! `crate::domain::conversation` because the application layer depends on them.
 
+mod branching;
 pub mod branching_dto;
 pub mod chat;
 pub mod commands;
@@ -37,10 +37,15 @@ pub mod plugin;
 pub mod plugin_impl;
 pub mod space_dto;
 pub mod space_repository;
+mod synthesis;
 pub mod trait_def;
 pub mod use_cases;
+pub mod workspace_dto;
 
 #[cfg(test)]
 pub mod mocks;
 
 pub use trait_def::ConversationServiceTrait;
+pub mod persistence_mapper;
+pub mod repository;
+pub mod service;

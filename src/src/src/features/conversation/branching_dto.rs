@@ -1,8 +1,7 @@
-//! DTOs for regenerate / edit-and-resend / branch (BRIEF rank 4, contract §4.2).
+//! DTOs for regenerate, edit-and-resend, and branch operations.
 //!
 //! No schema change: a branch is a sibling conversation with copied messages.
-//! `MessageDto` and `ConversationDto` are reused rather than mirrored — two
-//! structs describing one message is exactly the split-brain CLAUDE.md forbids.
+//! `MessageDto` and `ConversationDto` are reused rather than mirrored.
 
 use serde::{Deserialize, Serialize};
 

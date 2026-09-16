@@ -1,6 +1,6 @@
 //! Test file to demonstrate download_helpers usage and verify compilation
 //!
-//! This file serves as both a test and a demonstration of Oracle-approved patterns.
+//! Tests and examples for download helpers.
 
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]

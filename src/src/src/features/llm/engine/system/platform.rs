@@ -57,7 +57,6 @@ mod tests {
     #[test]
     fn test_platform_detection() {
         let platform = Platform::detect();
-        // Should match the actual platform
         #[cfg(target_os = "macos")]
         assert_eq!(platform, Platform::MacOS);
 

@@ -22,7 +22,7 @@
 //! let recommendations = use_case.execute(request).await?;
 //! ```
 
-use crate::application::ports::model_catalog::{ExternalModelMetadata, ModelCatalogPort};
+use crate::application::ports::model_catalog::ModelCatalogPort;
 use crate::features::llm::dto::{
     GetRecommendationsRequestDto, ModelInfoDto, PerformanceTier, RecommendedModelDto,
     RecommendedModelsDto,
@@ -137,7 +137,6 @@ impl GetRecommendedModelsUseCase {
         tier: &PerformanceTier,
         has_gpu: bool,
     ) -> Vec<(ModelMetadata, String)> {
-        // Sort by: capabilities count (desc), context length (desc), size (desc)
         models.sort_by(|a, b| {
             b.capabilities
                 .len()
@@ -228,7 +227,6 @@ mod tests {
             assert_eq!(rec.tier, PerformanceTier::Low);
         }
 
-        // Should contain tinyllama (1.1GB, 2GB min RAM)
         let has_tinyllama = result
             .recommendations
             .iter()
@@ -247,14 +245,12 @@ mod tests {
         let request = GetRecommendationsRequestDto { tier: None };
         let result = use_case.execute(request).await.unwrap();
 
-        // Should recommend models that fit in 12GB total RAM
         assert!(!result.recommendations.is_empty());
         for rec in &result.recommendations {
             assert!(rec.model.minimum_ram_gb <= 12.0);
             assert_eq!(rec.tier, PerformanceTier::Medium);
         }
 
-        // Should include phi-3-mini (4GB min RAM)
         let has_phi3 = result
             .recommendations
             .iter()
@@ -275,14 +271,12 @@ mod tests {
         let request = GetRecommendationsRequestDto { tier: None };
         let result = use_case.execute(request).await.unwrap();
 
-        // Should recommend larger models
         assert!(!result.recommendations.is_empty());
         for rec in &result.recommendations {
             assert!(rec.model.minimum_ram_gb <= 64.0);
             assert_eq!(rec.tier, PerformanceTier::High);
         }
 
-        // Should include mixtral-8x7b (largest model in MockModelCatalogPort)
         let has_mixtral = result
             .recommendations
             .iter()
@@ -302,7 +296,6 @@ mod tests {
         };
         let result = use_case.execute(request).await.unwrap();
 
-        // Should respect explicit tier
         for rec in &result.recommendations {
             assert_eq!(rec.tier, PerformanceTier::Low);
             assert!(rec.model.minimum_ram_gb <= 4.0);
@@ -318,7 +311,6 @@ mod tests {
         let request = GetRecommendationsRequestDto { tier: None };
         let result = use_case.execute(request).await.unwrap();
 
-        // Should return at most 3 recommendations
         assert!(result.recommendations.len() <= 3);
     }
 
@@ -351,7 +343,6 @@ mod tests {
         let request = GetRecommendationsRequestDto { tier: None };
         let result = use_case.execute(request).await;
 
-        // Should return error with helpful message
         assert!(result.is_err());
         match result {
             Err(AppError::InvalidState(msg)) => {
@@ -376,7 +367,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_tier_determination() {
-        // Test tier boundaries
         assert_eq!(
             GetRecommendedModelsUseCase::determine_tier(4.0),
             PerformanceTier::Low

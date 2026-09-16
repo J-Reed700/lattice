@@ -37,25 +37,15 @@
 //! ```
 
 pub mod chunk_mapper;
-// Vertical-slice migration (conversation): persistence mapper lives in features/conversation/persistence_mapper.rs.
-#[path = "../../../features/conversation/persistence_mapper.rs"]
-pub mod conversation_mapper;
 pub mod document_mapper;
 // TODO: Add mention_mapper when mention entity structure is finalized
 
-// Re-export mappers (public API)
 pub use crate::features::embedding::persistence_mapper::EmbeddingMapper;
 pub use crate::features::tags::persistence_mapper::TagMapper;
 pub use chunk_mapper::ChunkMapper;
-pub use conversation_mapper::{
-    ConversationMessageMapper, ConversationRowMapper, DocumentReferenceMapper,
-};
 pub use document_mapper::DocumentMapper;
 
 // DB models are private to infrastructure crate (prevent leakage)
 pub(crate) use crate::features::tags::persistence_mapper::TagModel;
 pub(crate) use chunk_mapper::ChunkModel;
-pub(crate) use conversation_mapper::{
-    ConversationMessageModel, ConversationModel, DocumentReferenceModel,
-};
 pub(crate) use document_mapper::DocumentModel;

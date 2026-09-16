@@ -104,7 +104,6 @@ impl CredentialMigration {
         let contents = std::fs::read_to_string(config_path)?;
         let mut config_json: serde_json::Value = serde_json::from_str(&contents)?;
 
-        // Get mutable reference to object, or return error if not an object
         let config_obj = config_json
             .as_object_mut()
             .ok_or("Config file is not a valid JSON object")?;
@@ -181,7 +180,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_migration_from_plaintext_config() {
         let temp_file = NamedTempFile::new().unwrap();
         let config_path = temp_file.path();

@@ -1,6 +1,6 @@
 use crate::infrastructure::persistence::database::initialize_database;
-use crate::infrastructure::indexing::actor::IndexingService;
-use crate::infrastructure::indexing::storage::IndexStorage;
+use crate::features::indexing::engine::actor::IndexingService;
+use crate::features::indexing::engine::storage::IndexStorage;
 use crate::features::embedding::service::EmbeddingService;
 use sqlx::SqlitePool;
 use std::io::Write;
@@ -60,7 +60,7 @@ async fn test_contextualized_storage() -> anyhow::Result<()> {
 
     let storage = IndexStorage::new(pool.clone());
 
-    let chunks = vec![crate::infrastructure::indexing::chunker::ContextualizedChunk {
+    let chunks = vec![crate::features::indexing::engine::chunker::ContextualizedChunk {
         original_content: "Test content".to_string(),
         contextualized_content: "[Document: test.txt]\n\nTest content".to_string(),
         context_prefix: "[Document: test.txt]".to_string(),
@@ -113,7 +113,7 @@ async fn test_context_improves_search_relevance() -> anyhow::Result<()> {
     writeln!(doc2, "Employee satisfaction increased by 23%.")?;
     doc2.flush()?;
 
-    let chunks1 = vec![crate::infrastructure::indexing::chunker::ContextualizedChunk {
+    let chunks1 = vec![crate::features::indexing::engine::chunker::ContextualizedChunk {
         original_content: "The revenue grew by 23% this quarter.".to_string(),
         contextualized_content: "[Document: financial_report.txt | Section: Revenue]\n\nThe revenue grew by 23% this quarter.".to_string(),
         context_prefix: "[Document: financial_report.txt | Section: Revenue]".to_string(),
@@ -123,7 +123,7 @@ async fn test_context_improves_search_relevance() -> anyhow::Result<()> {
         end_idx: 38,
     }];
 
-    let chunks2 = vec![crate::infrastructure::indexing::chunker::ContextualizedChunk {
+    let chunks2 = vec![crate::features::indexing::engine::chunker::ContextualizedChunk {
         original_content: "Employee satisfaction increased by 23%.".to_string(),
         contextualized_content: "[Document: hr_report.txt | Section: Satisfaction]\n\nEmployee satisfaction increased by 23%.".to_string(),
         context_prefix: "[Document: hr_report.txt | Section: Satisfaction]".to_string(),
@@ -198,7 +198,7 @@ async fn test_pdf_page_range_tracking() -> anyhow::Result<()> {
     ];
 
     for (i, &chunk_start) in chunk_start_positions.iter().enumerate() {
-        let page = crate::infrastructure::indexing::metadata_extractor::determine_page_number(
+        let page = crate::features::indexing::engine::metadata_extractor::determine_page_number(
             chunk_start,
             &page_ranges,
         );
@@ -215,7 +215,7 @@ async fn test_multiple_chunks_same_document() -> anyhow::Result<()> {
     let storage = IndexStorage::new(pool.clone());
 
     let chunks = vec![
-        crate::infrastructure::indexing::chunker::ContextualizedChunk {
+        crate::features::indexing::engine::chunker::ContextualizedChunk {
             original_content: "First chunk content.".to_string(),
             contextualized_content: "[Document: test.txt | Page: 1]\n\nFirst chunk content."
                 .to_string(),
@@ -225,7 +225,7 @@ async fn test_multiple_chunks_same_document() -> anyhow::Result<()> {
             start_idx: 0,
             end_idx: 20,
         },
-        crate::infrastructure::indexing::chunker::ContextualizedChunk {
+        crate::features::indexing::engine::chunker::ContextualizedChunk {
             original_content: "Second chunk content.".to_string(),
             contextualized_content: "[Document: test.txt | Page: 2]\n\nSecond chunk content."
                 .to_string(),
@@ -235,7 +235,7 @@ async fn test_multiple_chunks_same_document() -> anyhow::Result<()> {
             start_idx: 20,
             end_idx: 41,
         },
-        crate::infrastructure::indexing::chunker::ContextualizedChunk {
+        crate::features::indexing::engine::chunker::ContextualizedChunk {
             original_content: "Third chunk content.".to_string(),
             contextualized_content: "[Document: test.txt | Page: 2]\n\nThird chunk content."
                 .to_string(),

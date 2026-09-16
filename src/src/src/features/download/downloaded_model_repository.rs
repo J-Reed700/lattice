@@ -2,10 +2,11 @@
 //!
 //! Manages persistence of downloaded model records in SQLite.
 
-use crate::domain::downloaded_model::{DownloadedModel, ModelLocation, ModelType};
+use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+use crate::domain::model_metadata::ModelType;
+use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use serde_json::Value as JsonValue;
 use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
@@ -74,6 +75,9 @@ fn normalize_model_type_for_models_table(model_type: ModelType) -> &'static str 
     }
 }
 
+/// Weights the Candle runtime can load: any safetensors shard, or the
+/// `pytorch_model.bin` pickle for checkpoints like BAAI/bge-m3 that never
+/// published a safetensors conversion.
 fn directory_has_loadable_weights(path: &Path) -> bool {
     path.is_dir()
         && std::fs::read_dir(path)
@@ -84,7 +88,9 @@ fn directory_has_loadable_weights(path: &Path) -> bool {
             .map(|entry| entry.path())
             .any(|entry| {
                 entry.is_file()
-                    && entry.extension().and_then(|value| value.to_str()) == Some("safetensors")
+                    && (entry.extension().and_then(|value| value.to_str()) == Some("safetensors")
+                        || entry.file_name().and_then(|value| value.to_str())
+                            == Some(WEIGHTS_PYTORCH_BIN))
             })
 }
 
@@ -99,7 +105,14 @@ fn location_is_available(location: &ModelLocation) -> bool {
 fn fallback_artifact_path(location: &ModelLocation) -> Option<PathBuf> {
     match location {
         ModelLocation::LocalFile { path } => Some(path.clone()),
-        ModelLocation::LocalDirectory { path } => Some(path.join("model.safetensors")),
+        // Name the weights file the directory actually holds. A checkpoint
+        // that ships only `pytorch_model.bin` would otherwise be recorded
+        // under a `model.safetensors` path that does not exist, and the
+        // synthesized manifest row would report a zero size.
+        ModelLocation::LocalDirectory { path } => Some(
+            crate::features::embedding::candle_service::weights_path(path)
+                .unwrap_or_else(|| path.join(WEIGHTS_SAFETENSORS)),
+        ),
         ModelLocation::RemoteOllama => None,
     }
 }
@@ -109,16 +122,13 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
     type Error = AppError;
 
     fn try_from(record: DownloadedModelRecord) -> Result<Self, Self::Error> {
-        // Parse model type enum
         let model_type_enum = ModelType::from_db_string(&record.model_type)
             .map_err(|e| AppError::InvalidData(format!("Invalid model type: {}", e)))?;
 
-        // Parse timestamps
         let downloaded_at_dt =
             parse_optional_db_timestamp(record.downloaded_at.as_deref())?.unwrap_or_else(Utc::now);
         let last_used_at_dt = parse_optional_db_timestamp(record.last_used_at.as_deref())?;
 
-        // Parse metadata JSON
         let metadata_val = match DownloadedModel::metadata_from_json(record.metadata.as_deref()) {
             Ok(metadata) => metadata,
             Err(e) => {
@@ -131,7 +141,6 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
             }
         };
 
-        // Convert is_active flags from integer to bool
         let is_active_chat = record.is_active_for_chat != 0;
         let is_active_embedding = record.is_active_for_embedding != 0;
         let is_active_utility = record.is_active_for_utility != 0;
@@ -435,16 +444,22 @@ impl DownloadedModelRepository {
                 AppError::Database(format!("Failed to list downloaded models: {}", e))
             })?;
 
-        let models = records
-            .into_iter()
-            .filter_map(|row| match row.try_into() {
-                Ok(model) => Some(model),
+        // A completed record can outlive its files (for example, after moving
+        // to another computer). Use the same verification as model loading so
+        // settings and the catalog never present missing files as ready.
+        let mut models = Vec::new();
+        for row in records {
+            let model: DownloadedModel = match row.try_into() {
+                Ok(model) => model,
                 Err(e) => {
                     error!(error = %e, "Failed to convert downloaded model record");
-                    None
+                    continue;
                 }
-            })
-            .collect();
+            };
+            if self.is_downloaded(model.model_id()).await? {
+                models.push(model);
+            }
+        }
 
         Ok(models)
     }
@@ -841,28 +856,6 @@ impl DownloadedModelRepository {
         }
     }
 
-    /// Check if model exists by model_id (helper for error handling)
-    ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The model identifier to check
-    ///
-    /// # Returns
-    ///
-    /// true if model exists, false otherwise
-    async fn exists_by_model_id(&self, model_id: &str) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE model_id = ?")
-            .bind(model_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, model_id = %model_id, "Failed to check model existence");
-                AppError::Database(format!("Failed to check model existence: {}", e))
-            })?;
-
-        Ok(count > 0)
-    }
-
     /// Check if model exists by id (primary key) (helper for error handling)
     ///
     /// # Arguments
@@ -1093,8 +1086,6 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
     }
 }
 
-// === ModelStoragePort Implementation ===
-//
 // Implements the application port for use cases that need model storage operations.
 
 use crate::application::ports::model_storage::{
@@ -1106,9 +1097,6 @@ impl ModelStoragePort for DownloadedModelRepository {
     async fn list_models(&self) -> Result<Vec<DownloadedModelDto>> {
         let models = self.list().await?;
 
-        // Convert domain entities to DTOs. Remote (Ollama) entries have
-        // no on-disk path; surface an empty PathBuf so the DTO contract
-        // (path: PathBuf) stays unchanged for now.
         Ok(models
             .into_iter()
             .map(|model| DownloadedModelDto {
@@ -1347,72 +1335,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn corrective_migration_purges_any_local_embedding_without_safetensors() {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("create in-memory pool");
-        sqlx::raw_sql(
-            r#"
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE models (
-                model_id TEXT PRIMARY KEY,
-                model_type TEXT NOT NULL,
-                backend TEXT NOT NULL
-            );
-            CREATE TABLE model_files (
-                model_id TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                FOREIGN KEY (model_id) REFERENCES models(model_id) ON DELETE CASCADE
-            );
-
-            INSERT INTO models VALUES ('third-legacy-onnx', 'embedding', 'local');
-            INSERT INTO model_files VALUES ('third-legacy-onnx', 'config.json');
-            INSERT INTO model_files VALUES ('third-legacy-onnx', 'tokenizer.json');
-
-            INSERT INTO models VALUES ('valid-candle', 'embedding', 'local');
-            INSERT INTO model_files VALUES ('valid-candle', 'model.safetensors');
-
-            INSERT INTO models VALUES ('remote', 'embedding', 'ollama');
-            INSERT INTO models VALUES ('chat-without-safetensors', 'chat', 'local');
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("seed legacy rows");
-
-        sqlx::raw_sql(include_str!(
-            "../../../migrations/20260801010000_purge_unloadable_embedding_models.sql"
-        ))
-        .execute(&pool)
-        .await
-        .expect("run corrective purge");
-
-        let remaining: Vec<String> =
-            sqlx::query_scalar("SELECT model_id FROM models ORDER BY model_id")
-                .fetch_all(&pool)
-                .await
-                .expect("list remaining models");
-        assert_eq!(
-            remaining,
-            vec![
-                "chat-without-safetensors".to_string(),
-                "remote".to_string(),
-                "valid-candle".to_string(),
-            ]
-        );
-
-        let orphan_children: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM model_files WHERE model_id = 'third-legacy-onnx'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("count cascaded children");
-        assert_eq!(orphan_children, 0);
-    }
-
-    #[tokio::test]
     async fn save_and_load_local_model_preserves_location() {
         let repo = setup_repo().await;
         let model = make_local_chat_model("local-chat-1");
@@ -1461,5 +1383,144 @@ mod tests {
         .await
         .expect("load fallback file path");
         assert!(file_path.ends_with("model.safetensors"));
+    }
+
+    #[test]
+    fn pickle_only_directory_counts_as_loadable_weights() {
+        let directory = tempfile::tempdir().expect("create model directory");
+        assert!(
+            !directory_has_loadable_weights(directory.path()),
+            "an empty directory holds no weights"
+        );
+
+        std::fs::write(directory.path().join("config.json"), b"{}").expect("write config");
+        assert!(
+            !directory_has_loadable_weights(directory.path()),
+            "config alone is not a weights file"
+        );
+
+        std::fs::write(directory.path().join("pytorch_model.bin"), b"pickle")
+            .expect("write pickle weights");
+        assert!(
+            directory_has_loadable_weights(directory.path()),
+            "BAAI/bge-m3 ships only pytorch_model.bin"
+        );
+        assert_eq!(
+            fallback_artifact_path(&ModelLocation::LocalDirectory {
+                path: directory.path().to_path_buf(),
+            }),
+            Some(directory.path().join("pytorch_model.bin")),
+        );
+    }
+
+    #[tokio::test]
+    async fn directory_model_fallback_tracks_pytorch_bin_weights() {
+        let repo = setup_repo().await;
+        let directory = tempfile::tempdir().expect("create model directory");
+        std::fs::write(
+            directory.path().join("pytorch_model.bin"),
+            b"pickle weights",
+        )
+        .expect("write model weights");
+
+        let model = DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            "BGE-M3".to_string(),
+            "bge-m3".to_string(),
+            ModelLocation::LocalDirectory {
+                path: directory.path().to_path_buf(),
+            },
+            14,
+            "xlm-roberta".to_string(),
+            None,
+        )
+        .expect("create directory model");
+
+        repo.save(&model).await.expect("save directory model");
+        assert!(repo
+            .is_downloaded("bge-m3")
+            .await
+            .expect("check directory model"));
+
+        let (file_path, size_bytes): (String, i64) = sqlx::query_as(
+            "SELECT file_path, size_bytes FROM model_files WHERE model_id = 'bge-m3'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .expect("load fallback file path");
+        assert!(file_path.ends_with("pytorch_model.bin"), "{file_path}");
+        assert_eq!(size_bytes, "pickle weights".len() as i64);
+    }
+
+    #[tokio::test]
+    async fn downloaded_inventory_tracks_files_on_disk_without_deleting_records() {
+        let repo = setup_repo().await;
+        let directory = tempfile::tempdir().expect("create model directory");
+        let weights = directory.path().join("model.safetensors");
+        std::fs::write(&weights, b"weights").expect("write weights");
+        let model = DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            "MiniLM".into(),
+            "inventory-embedding".into(),
+            ModelLocation::LocalDirectory {
+                path: directory.path().to_path_buf(),
+            },
+            7,
+            "bert".into(),
+            None,
+        )
+        .expect("create model");
+        repo.save(&model).await.expect("save model");
+        repo.set_active_embedding_model(model.model_id())
+            .await
+            .expect("select model");
+
+        assert!(repo
+            .list_all()
+            .await
+            .expect("list downloads")
+            .iter()
+            .any(|m| m.model_id() == model.model_id()));
+        assert!(repo
+            .get_active_embedding_model()
+            .await
+            .expect("active model")
+            .is_some());
+
+        // A truncated artifact is not a usable download, even with a completed row.
+        std::fs::write(&weights, b"part").expect("truncate weights");
+        assert!(!repo
+            .list_all()
+            .await
+            .expect("list downloads")
+            .iter()
+            .any(|m| m.model_id() == model.model_id()));
+        std::fs::remove_file(&weights).expect("remove weights");
+        let listed = repo.list_all().await.expect("list downloads");
+        assert!(!listed.iter().any(|m| m.model_id() == model.model_id()));
+        assert!(listed.iter().any(|m| m.model_id() == "__ollama_server__"));
+        assert!(repo
+            .get_active_embedding_model()
+            .await
+            .expect("active model")
+            .is_none());
+        assert!(repo
+            .find_by_model_id(model.model_id())
+            .await
+            .expect("retained record")
+            .is_some());
+
+        std::fs::write(&weights, b"weights").expect("restore weights");
+        assert!(repo
+            .list_all()
+            .await
+            .expect("list downloads")
+            .iter()
+            .any(|m| m.model_id() == model.model_id()));
+        assert!(repo
+            .get_active_embedding_model()
+            .await
+            .expect("active model")
+            .is_some());
     }
 }

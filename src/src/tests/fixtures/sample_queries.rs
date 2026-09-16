@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 use serde::{Deserialize, Serialize};
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -17,7 +15,6 @@ use serde::{Deserialize, Serialize};
 #![allow(clippy::useless_vec)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestQuery {

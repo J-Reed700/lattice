@@ -241,10 +241,6 @@ pub async fn get_version_info(container: State<'_, Container>) -> Result<Version
     Ok(version_info)
 }
 
-// ============================================================================
-// Gateway Pattern Implementations
-// ============================================================================
-
 /// Check for updates implementation for gateway pattern
 ///
 /// This async function is called directly by the gateway adapter.

@@ -1,6 +1,6 @@
 //! File checksum calculation utilities.
 
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use tokio::io::AsyncReadExt;

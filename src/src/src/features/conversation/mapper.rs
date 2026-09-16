@@ -4,8 +4,8 @@
 //!
 //! This mapper handles conversion between conversation domain models and their DTO representations.
 
-use crate::domain::{Conversation, ConversationAggregate, ConversationMessage};
-use crate::features::conversation::dto::{ConversationDto, MessageDto};
+use crate::domain::{Conversation, ConversationAggregate};
+use crate::features::conversation::dto::ConversationDto;
 
 /// Mapper for conversation-related conversions.
 pub struct ConversationDtoMapper;
@@ -57,14 +57,9 @@ impl ConversationDtoMapper {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::MessageRole;
     use crate::shared::domain_types::ConversationId;
     use chrono::Utc;
 

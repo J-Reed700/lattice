@@ -1,6 +1,6 @@
 //! Comprehensive tests for ConversationalQAService
 //!
-//! Phase 4 Week 2 Day 3 - Conversation Domain Services Testing
+//! Tests for conversation domain services.
 //! Step 2: conversational_qa_service.rs (7 tests - adapted for manual mocks)
 //!
 //! **DEVIATION FROM SPEC**: Original spec called for 18 tests with mockall mocks,
@@ -37,16 +37,11 @@ mod tests {
     use crate::infrastructure::services::traits::ContextManagerTrait;
     use crate::shared::error::{AppError, Result};
 
-    // ========================================================================
-    // Test Helpers
-    // ========================================================================
-
     /// Helper 1: Create test conversation aggregate
     async fn create_test_conversation(
         service: &MockConversationService,
         message_count: usize,
     ) -> String {
-        // Create conversation
         let conversation = service
             .create_conversation(
                 "Test Conversation".to_string(),
@@ -58,7 +53,6 @@ mod tests {
 
         let conv_id = conversation.id.to_string();
 
-        // Add messages
         for i in 0..message_count {
             if i % 2 == 0 {
                 service
@@ -121,16 +115,10 @@ mod tests {
         (service, mock_conv, mock_context, mock_qa)
     }
 
-    // ========================================================================
-    // Category 1: Q&A Orchestration Flow (P0) - 5 tests
-    // ========================================================================
-
     #[tokio::test]
     async fn test_ask_question_orchestrates_full_flow() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
-        // Create conversation with 2 messages
         let conv_id = create_test_conversation(&mock_conv, 2).await;
 
         // Configure answer
@@ -138,12 +126,10 @@ mod tests {
 
         let search_results = create_test_search_results(3);
 
-        // ACT
         let answer = service
             .ask_question(&conv_id, "What is RAG?", search_results.clone())
             .await?;
 
-        // ASSERT
         assert_eq!(answer.answer, "Sample answer");
         assert_eq!(answer.sources.len(), 3);
         assert_eq!(answer.conversation_id, conv_id);
@@ -155,10 +141,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ask_question_builds_context_with_conversation_history() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
-        // Create conversation with 3 prior messages
         let conv_id = create_test_conversation(&mock_conv, 3).await;
 
         // Configure answer
@@ -166,14 +150,11 @@ mod tests {
 
         let search_results = create_test_search_results(2);
 
-        // ACT
         let answer = service
             .ask_question(&conv_id, "Follow-up question", search_results)
             .await?;
 
-        // ASSERT
         assert_eq!(answer.answer, "Answer");
-        // Verify context was built (checked by fact that answer was generated)
         assert!(
             answer.message_count > 3,
             "Should have more than 3 messages after adding new Q&A"
@@ -184,10 +165,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ask_question_saves_user_and_assistant_messages() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
-        // Create conversation with no messages
         let conv_id = create_test_conversation(&mock_conv, 0).await;
 
         // Configure answer
@@ -195,13 +174,10 @@ mod tests {
 
         let search_results = create_test_search_results(2);
 
-        // ACT
         let _answer = service
             .ask_question(&conv_id, "Question?", search_results)
             .await?;
 
-        // ASSERT
-        // Get conversation to verify messages were saved
         let aggregate = mock_conv
             .get_conversation(&conv_id)
             .await?
@@ -222,7 +198,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_ask_question_estimates_tokens() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
         let conv_id = create_test_conversation(&mock_conv, 0).await;
@@ -234,18 +209,15 @@ mod tests {
 
         let search_results = create_test_search_results(1);
 
-        // ACT
         let _answer = service
             .ask_question(&conv_id, "12345678", search_results)
             .await?; // 8 chars = 2 tokens
 
-        // ASSERT
         let aggregate = mock_conv
             .get_conversation(&conv_id)
             .await?
             .expect("Conversation should exist");
 
-        // Verify token counts
         assert_eq!(
             aggregate.messages()[0].tokens,
             2,
@@ -265,13 +237,8 @@ mod tests {
     // Reason: Metrics fields are private, cannot access in tests
     // Coverage: This is tested via integration/E2E tests
 
-    // ========================================================================
-    // Category 2: Multi-Turn Conversations (P0) - 2 tests
-    // ========================================================================
-
     #[tokio::test]
     async fn test_multi_turn_conversation_maintains_history() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
         let conv_id = create_test_conversation(&mock_conv, 0).await;
@@ -281,12 +248,10 @@ mod tests {
 
         let search_results1 = create_test_search_results(1);
 
-        // ACT - Turn 1
         let answer1 = service
             .ask_question(&conv_id, "What is ML?", search_results1)
             .await?;
 
-        // Verify first turn
         let aggregate = mock_conv
             .get_conversation(&conv_id)
             .await?
@@ -301,12 +266,10 @@ mod tests {
         mock_qa.set_answer("*", "Answer 2".to_string()).await;
         let search_results2 = create_test_search_results(1);
 
-        // ACT - Turn 2
         let answer2 = service
             .ask_question(&conv_id, "How does it work?", search_results2)
             .await?;
 
-        // ASSERT
         assert_eq!(answer1.answer, "Answer 1");
         assert_eq!(answer2.answer, "Answer 2");
         assert_eq!(
@@ -314,7 +277,6 @@ mod tests {
             "Should have 4 messages after 2 turns"
         );
 
-        // Verify history maintained
         let final_aggregate = mock_conv
             .get_conversation(&conv_id)
             .await?
@@ -330,7 +292,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_multi_turn_conversation_updates_stats() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
         let conv_id = create_test_conversation(&mock_conv, 0).await;
@@ -342,17 +303,13 @@ mod tests {
 
         let search_results = create_test_search_results(1);
 
-        // ACT
         let answer = service
             .ask_question(&conv_id, "Q1 16 chars!!!", search_results)
             .await?; // 15 chars / 4 = 3 tokens
 
-        // ASSERT
-        // Stats should be updated
         assert!(answer.total_tokens > 0);
         assert_eq!(answer.message_count, 2);
 
-        // Verify in aggregate
         let aggregate = mock_conv
             .get_conversation(&conv_id)
             .await?
@@ -367,13 +324,8 @@ mod tests {
         Ok(())
     }
 
-    // ========================================================================
-    // Category 3: Metadata Validation (P0) - 1 test
-    // ========================================================================
-
     #[tokio::test]
     async fn test_metadata_validation_provides_user_friendly_error() -> Result<()> {
-        // ARRANGE
         let (service, mock_conv, _mock_context, mock_qa) = setup_qa_test().await;
 
         let conv_id = create_test_conversation(&mock_conv, 0).await;
@@ -381,14 +333,10 @@ mod tests {
         // Configure answer
         mock_qa.set_answer("*", "Answer".to_string()).await;
 
-        // Create 1000 search results to exceed 65KB limit
-        // Each result serializes to ~250-300 bytes, so 1000 = ~250KB > 65KB limit
         let oversized_results = create_test_search_results(1000);
 
-        // ACT
         let result = service.ask_question(&conv_id, "Q", oversized_results).await;
 
-        // ASSERT
         assert!(result.is_err(), "Should fail with oversized metadata");
         match result {
             Err(AppError::Other(msg)) => {
@@ -419,9 +367,7 @@ mod tests {
         Ok(())
     }
 
-    // ========================================================================
     // Category 4: Helper Methods (P2) - SKIPPED
-    // ========================================================================
     // Test: convert_search_results() - SKIPPED
     // Reason: Method is private, cannot access in tests
     // Coverage: This is tested indirectly via functional tests above

@@ -72,7 +72,6 @@ impl GetFilePathByIdUseCase {
             .validate_path(full_path.to_string_lossy().to_string())
             .map_err(|e| AppError::InvalidInput(format!("Invalid file path: {}", e)))?;
 
-        // Check if file exists on disk
         let exists = self.file_storage.exists(&validated_path).await;
 
         Ok(GetFilePathByIdResponseDto {

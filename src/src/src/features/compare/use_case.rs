@@ -240,7 +240,9 @@ pub async fn compare_documents_impl(
 ) -> Result<CompareTableDto> {
     let columns = sanitize_columns(request.columns);
     if columns.is_empty() {
-        return Err(AppError::InvalidInput("Name at least one column.".to_string()));
+        return Err(AppError::InvalidInput(
+            "Name at least one column.".to_string(),
+        ));
     }
 
     let document_ids = sanitize_document_ids(request.document_ids);

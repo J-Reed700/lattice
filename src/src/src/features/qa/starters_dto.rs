@@ -1,4 +1,4 @@
-//! DTOs for corpus-derived chat starters (BRIEF rank 11, contract §4.7).
+//! DTOs for corpus-derived chat starters.
 
 use serde::{Deserialize, Serialize};
 

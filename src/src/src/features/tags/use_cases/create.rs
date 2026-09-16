@@ -18,13 +18,11 @@ impl CreateTagUseCase {
 
     /// Execute the use case
     pub async fn execute(&self, request: CreateTagRequestDto) -> Result<CreateTagResponseDto> {
-        // Create the tag
         let tag = self
             .tag_service
             .create_tag(&request.name, request.color.as_deref())
             .await?;
 
-        // Convert to DTO
         let tag_dto = TagDto {
             id: tag.id().as_str().to_string(),
             name: tag.name().as_str().to_string(),

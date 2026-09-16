@@ -1,5 +1,5 @@
 use super::crash_report::{AppInfo, PanicInfo, SystemInfo, ThreadInfo};
-use std::panic::PanicInfo as StdPanicInfo;
+use std::panic::PanicHookInfo as StdPanicHookInfo;
 
 impl AppInfo {
     /// Capture application metadata.
@@ -41,7 +41,7 @@ impl SystemInfo {
     fn get_os_version() -> String {
         use sysinfo::System;
 
-        let sys = System::new_all();
+        let _sys = System::new_all();
         format!(
             "{} {}",
             System::name().unwrap_or_else(|| "Unknown".to_string()),
@@ -61,10 +61,10 @@ impl SystemInfo {
 }
 
 impl PanicInfo {
-    /// Extract panic information from std::panic::PanicInfo.
+    /// Extract panic information from std::panic::PanicHookInfo.
     ///
     /// SAFETY: Never panics. Uses defensive pattern matching.
-    pub fn from_panic_info(info: &StdPanicInfo) -> Self {
+    pub fn from_panic_info(info: &StdPanicHookInfo) -> Self {
         let message = info
             .payload()
             .downcast_ref::<&str>()

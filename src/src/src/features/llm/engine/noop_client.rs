@@ -20,8 +20,8 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::infrastructure::llm::NoOpLLMClient;
-//! use crate::llm::traits::LLMClient;
+//! use crate::features::llm::engine::NoOpLLMClient;
+//! use crate::features::llm::engine::traits::LLMClient;
 //!
 //! // Create NoOp client with error message
 //! let client = NoOpLLMClient::new(
@@ -40,8 +40,8 @@ use async_trait::async_trait;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-use crate::llm::traits::{ChatMessage, GenerationConfig, LLMClient};
-use crate::llm::types::LLMError;
+use crate::features::llm::engine::traits::{ChatMessage, GenerationConfig, LLMClient};
+use crate::features::llm::engine::types::LLMError;
 
 /// No-operation LLM client that returns errors instead of panicking.
 ///

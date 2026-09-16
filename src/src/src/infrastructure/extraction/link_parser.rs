@@ -307,9 +307,8 @@ impl LinkParser {
     pub fn extract_title(&self, content: &str) -> Option<String> {
         let lines: Vec<&str> = content.lines().collect();
 
-        // Check for YAML frontmatter
         if content.starts_with("---") {
-            let in_frontmatter = true;
+            let _in_frontmatter = true;
             for line in lines.iter().skip(1) {
                 if line.trim() == "---" {
                     break;
@@ -322,7 +321,6 @@ impl LinkParser {
             }
         }
 
-        // Check for H1 heading
         for line in &lines {
             let trimmed = line.trim();
             if trimmed.starts_with("# ") {
@@ -330,7 +328,6 @@ impl LinkParser {
             }
         }
 
-        // Check first line as title (if it's short and doesn't look like code)
         if !lines.is_empty() {
             let first_line = lines.first().map(|s| s.trim()).unwrap_or("");
             if !first_line.is_empty()

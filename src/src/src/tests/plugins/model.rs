@@ -3,9 +3,7 @@
 //! These are integration smoke tests that verify each model management command can run
 //! without panicking. They test the HAPPY PATH and ONE ERROR PATH per command.
 //!
-//! # Oracle Mandate
-//!
-//! "100% smoke test coverage - every command runs once without exploding."
+//! Each command runs at least once without panicking.
 //! Pattern: command_impl(container, payload).await.is_ok()
 //!
 //! # Test Strategy
@@ -34,11 +32,9 @@ async fn smoke_test_get_models_with_metadata_happy_path() {
 
     let result = get_models_with_metadata_impl(&container).await;
 
-    // Assert: Command completes without panic
     match result {
         Ok(json_str) => {
             println!("✅ get_models_with_metadata_impl returned JSON");
-            // Verify it's valid JSON
             let parse_result: Result<Vec<serde_json::Value>, _> = serde_json::from_str(&json_str);
             assert!(parse_result.is_ok(), "Should return valid JSON array");
         }
@@ -68,7 +64,6 @@ async fn smoke_test_set_active_chat_model_nonexistent() {
     // Try to set a model that doesn't exist
     let result = set_active_chat_model_impl(&container, "nonexistent-model-id").await;
 
-    // Assert: Command handles error without panic
     match result {
         Ok(_) => {
             // If it succeeds, that's surprising but acceptable (maybe creates entry)
@@ -191,7 +186,6 @@ async fn smoke_test_delete_model_nonexistent() {
 
     match result {
         Ok(_) => {
-            // Deleting nonexistent model might be idempotent (acceptable)
             println!("✅ delete_downloaded_model_and_file_impl handled nonexistent model");
         }
         Err(e) => {

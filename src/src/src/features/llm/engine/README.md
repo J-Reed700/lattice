@@ -13,7 +13,7 @@ This module provides async HTTP clients for various LLM providers:
 
 ### Brick Design Philosophy
 
-This module follows the "bricks and studs" design:
+The module is organized around small, composable interfaces:
 
 - **Self-contained**: All LLM client code in one module
 - **Clear public API**: Only exports necessary types and clients

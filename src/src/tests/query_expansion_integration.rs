@@ -6,9 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
-use lattice::search::{BM25Search, QueryExpander, QueryExpansionConfig};
+use lattice::features::search::engine::{BM25Search, QueryExpander, QueryExpansionConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::collections::HashSet;
 async fn setup_test_corpus() -> BM25Search {

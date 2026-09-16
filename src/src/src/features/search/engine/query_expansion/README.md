@@ -84,7 +84,7 @@ pub use query_expansion::{
 ### Usage Example
 
 ```rust
-use crate::infrastructure::search::query_expansion::{QueryExpander, QueryExpansionConfig};
+use crate::features::search::engine::query_expansion::{QueryExpander, QueryExpansionConfig};
 
 // Create expander with default config
 let config = QueryExpansionConfig::default();
@@ -155,12 +155,12 @@ cargo test --lib query_expansion
 
 ### Before (query_expander.rs)
 ```rust
-use crate::infrastructure::search::query_expander::{QueryExpander, QueryExpansion, QueryExpansionConfig};
+use crate::features::search::engine::query_expander::{QueryExpander, QueryExpansion, QueryExpansionConfig};
 ```
 
 ### After (query_expansion/)
 ```rust
-use crate::infrastructure::search::query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
+use crate::features::search::engine::query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
 ```
 
 **Note**: Only the module name changed (`query_expander` → `query_expansion`). All public APIs remain identical.

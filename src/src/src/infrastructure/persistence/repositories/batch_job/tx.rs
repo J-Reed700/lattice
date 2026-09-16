@@ -28,6 +28,12 @@ impl SqliteBatchJobRepositoryTx {
 
 #[async_trait]
 impl BatchJobRepositoryPort for SqliteBatchJobRepositoryTx {
+    async fn get_job_options(&self, job_id: &str) -> Result<Option<String>, AppError> {
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::get_job_options(&mut tx, job_id).await
+    }
+
     async fn create_batch_job(
         &self,
         job_id: &str,

@@ -2,39 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-// DEPRECATED: Legacy compatibility - new code should use String
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ModelType {
-    Chat,
-    Embedding,
-    Unknown,
-}
-
-impl fmt::Display for ModelType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ModelType::Chat => write!(f, "chat"),
-            ModelType::Embedding => write!(f, "embedding"),
-            ModelType::Unknown => write!(f, "unknown"),
-        }
-    }
-}
-
-impl FromStr for ModelType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "chat" => Ok(ModelType::Chat),
-            "embedding" => Ok(ModelType::Embedding),
-            "unknown" => Ok(ModelType::Unknown),
-            _ => Err(format!("Invalid ModelType: {}", s)),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 pub enum ModelStatus {
     Pending,
     Downloading,
@@ -67,8 +35,7 @@ impl FromStr for ModelStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileStatus {
     Pending,
     Downloading,

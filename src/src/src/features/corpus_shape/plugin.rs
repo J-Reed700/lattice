@@ -1,7 +1,6 @@
 //! Corpus-shape Tauri plugin.
 //!
-//! Exposes the Phase 5.3 clustering commands to the frontend. All three are
-//! explicit / user-triggered.
+//! Exposes user-triggered clustering commands to the frontend.
 
 use tauri::{
     plugin::{Builder, TauriPlugin},

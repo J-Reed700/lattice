@@ -62,7 +62,9 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             let file_type: String = row.try_get("file_type").unwrap_or_default();
             let n: i64 = row.try_get("n").unwrap_or(0);
             total += n;
-            *buckets.entry(type_label(&source_type, &file_type)).or_insert(0) += n;
+            *buckets
+                .entry(type_label(&source_type, &file_type))
+                .or_insert(0) += n;
         }
 
         let mut by_type: Vec<(String, i64)> = buckets.into_iter().collect();

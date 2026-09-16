@@ -10,7 +10,8 @@
 //! Async functions store their state on the heap (in Future objects), not the stack.
 //! Deep async call chains don't cause stack overflow - that's the whole point of async.
 
-use crate::domain::downloaded_model::{DownloadedModel, ModelLocation, ModelType};
+use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+use crate::domain::model_metadata::ModelType;
 use crate::features::model_management::use_cases::{
     CheckIsDownloadedUseCase, DeleteDownloadedModelUseCase, GetActiveChatModelUseCase,
     GetActiveEmbeddingModelUseCase, GetDownloadedModelsWithMetadataUseCase,
@@ -1014,6 +1015,22 @@ pub async fn set_active_embedding_model_impl(
 
     let logger = get_audit_logger();
     let use_case = SetActiveEmbeddingModelUseCase::new(repository);
+
+    let candidate = container
+        .downloaded_model_repository()
+        .find_by_model_id(&validated_model_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Embedding model not found".to_owned())?;
+    let dir = candidate
+        .location()
+        .enclosing_dir()
+        .ok_or_else(|| "Select a downloaded embedding model".to_owned())?;
+    let model = crate::features::embedding::candle_service::CandleEmbeddingService::new(&dir)
+        .map_err(|e| e.to_string())?;
+    crate::features::embedding::generation::prepare(container.db_pool(), &model)
+        .await
+        .map_err(|e| e.to_string())?;
 
     match use_case.execute(&validated_model_id).await {
         Ok(()) => {

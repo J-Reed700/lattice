@@ -95,7 +95,6 @@ impl SecureFileStorage {
     /// - Resolve symlinks
     /// - Check for null bytes
     fn validate_path(&self, path: &Path) -> Result<()> {
-        // Check for directory traversal
         let path_str = path.to_string_lossy();
         if path_str.contains("..") {
             return Err(AppError::InvalidInput(format!(
@@ -104,14 +103,12 @@ impl SecureFileStorage {
             )));
         }
 
-        // Check for null bytes
         if path_str.contains('\0') {
             return Err(AppError::InvalidInput(
                 "Path contains null bytes".to_string(),
             ));
         }
 
-        // Check for symlink paths (when path exists)
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(AppError::InvalidInput(format!(
@@ -146,10 +143,8 @@ impl Default for SecureFileStorage {
 #[async_trait]
 impl FileStoragePort for SecureFileStorage {
     async fn read_file(&self, path: &Path) -> Result<String> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Read file
         let content = fs::read_to_string(path).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => AppError::FileNotFound {
                 path: path.to_string_lossy().to_string(),
@@ -167,10 +162,8 @@ impl FileStoragePort for SecureFileStorage {
     }
 
     async fn read_file_bytes(&self, path: &Path) -> Result<Vec<u8>> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Read file
         let content = fs::read(path).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => AppError::FileNotFound {
                 path: path.to_string_lossy().to_string(),
@@ -188,17 +181,14 @@ impl FileStoragePort for SecureFileStorage {
     }
 
     async fn write_file(&self, path: &Path, content: &str) -> Result<()> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Create parent directories if needed
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
                 AppError::FileStorage(format!("Failed to create parent directory: {}", e))
             })?;
         }
 
-        // Write file atomically
         let path_buf = path.to_path_buf();
         let content = content.as_bytes().to_vec();
         tokio::task::spawn_blocking(move || AtomicFs::write_file(&path_buf, &content))
@@ -212,17 +202,14 @@ impl FileStoragePort for SecureFileStorage {
     }
 
     async fn write_file_bytes(&self, path: &Path, content: &[u8]) -> Result<()> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Create parent directories if needed
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
                 AppError::FileStorage(format!("Failed to create parent directory: {}", e))
             })?;
         }
 
-        // Write file atomically
         let path_buf = path.to_path_buf();
         let content = content.to_vec();
         tokio::task::spawn_blocking(move || AtomicFs::write_file(&path_buf, &content))
@@ -236,16 +223,13 @@ impl FileStoragePort for SecureFileStorage {
     }
 
     async fn delete_file(&self, path: &Path) -> Result<()> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Check if file exists
         if !path.exists() {
             // No-op if file doesn't exist
             return Ok(());
         }
 
-        // Delete file
         fs::remove_file(path).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::PermissionDenied => {
                 AppError::PermissionDenied(format!("Cannot delete file: {}", path.display()))
@@ -257,25 +241,20 @@ impl FileStoragePort for SecureFileStorage {
     }
 
     async fn compute_hash(&self, path: &Path) -> Result<String> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Read file bytes
         let content = self.read_file_bytes(path).await?;
 
-        // Compute SHA-256 hash
         let mut hasher = Sha256::new();
         hasher.update(&content);
         let hash = hasher.finalize();
 
-        // Convert to hex string
         let hash_string = format!("{:x}", hash);
 
         Ok(hash_string)
     }
 
     async fn exists(&self, path: &Path) -> bool {
-        // Validate path (ignore errors for existence check)
         if self.validate_path(path).is_err() {
             return false;
         }
@@ -284,10 +263,8 @@ impl FileStoragePort for SecureFileStorage {
     }
 
     async fn metadata(&self, path: &Path) -> Result<FileMetadata> {
-        // Validate path
         self.validate_path(path)?;
 
-        // Get file metadata
         let metadata = fs::metadata(path).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => AppError::FileNotFound {
                 path: path.to_string_lossy().to_string(),
@@ -299,7 +276,6 @@ impl FileStoragePort for SecureFileStorage {
             _ => AppError::FileStorage(format!("Failed to get file metadata: {}", e)),
         })?;
 
-        // Get modification time
         let modified_at = metadata
             .modified()
             .map_err(|e| AppError::FileStorage(format!("Failed to get modification time: {}", e)))?
@@ -315,10 +291,6 @@ impl FileStoragePort for SecureFileStorage {
         })
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -372,13 +344,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
 
-        // Write file
         storage
             .write_file(&file_path, "Hello world")
             .await
             .expect("Failed to write file");
 
-        // Read file
         let content = storage
             .read_file(&file_path)
             .await
@@ -395,13 +365,11 @@ mod tests {
 
         let data = vec![0x01, 0x02, 0x03, 0x04];
 
-        // Write bytes
         storage
             .write_file_bytes(&file_path, &data)
             .await
             .expect("Failed to write bytes");
 
-        // Read bytes
         let content = storage
             .read_file_bytes(&file_path)
             .await
@@ -416,11 +384,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
 
-        // Create file
         storage.write_file(&file_path, "test").await.unwrap();
         assert!(file_path.exists());
 
-        // Delete file
         storage
             .delete_file(&file_path)
             .await
@@ -435,7 +401,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("nonexistent.txt");
 
-        // Deleting nonexistent file should be a no-op
         let result = storage.delete_file(&file_path).await;
         assert!(result.is_ok());
     }
@@ -446,16 +411,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
 
-        // Write file
         storage.write_file(&file_path, "Hello world").await.unwrap();
 
-        // Compute hash
         let hash = storage
             .compute_hash(&file_path)
             .await
             .expect("Failed to compute hash");
 
-        // Verify hash is hex string
         assert_eq!(hash.len(), 64); // SHA-256 is 256 bits = 64 hex chars
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
 
@@ -490,7 +452,6 @@ mod tests {
         // File doesn't exist yet
         assert!(!storage.exists(&file_path).await);
 
-        // Create file
         storage.write_file(&file_path, "test").await.unwrap();
 
         // File now exists
@@ -503,11 +464,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
 
-        // Write file
         let content = "Hello world";
         storage.write_file(&file_path, content).await.unwrap();
 
-        // Get metadata
         let metadata = storage
             .metadata(&file_path)
             .await
@@ -537,16 +496,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("nested/dir/test.txt");
 
-        // Write file (should create parent directories)
         storage
             .write_file(&file_path, "test")
             .await
             .expect("Failed to write file with nested directories");
 
-        // Verify file exists
         assert!(file_path.exists());
 
-        // Verify parent directories exist
         assert!(file_path.parent().unwrap().exists());
     }
 }

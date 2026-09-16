@@ -4,11 +4,10 @@
 
 use crate::application::ports::FileStoragePort;
 use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
-use crate::infrastructure::indexing::extraction::ContentExtractor;
+use crate::features::indexing::engine::extraction::ContentExtractor;
 use crate::infrastructure::security::{FileAccessConfig, ValidatedFile};
 use crate::shared::error::{AppError, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
 use std::sync::Arc;
 
 /// Maximum file size for reading (10 MB)
@@ -71,7 +70,6 @@ impl ReadFileContentUseCase {
         let is_directory = validated_file.metadata().is_dir();
         let size_bytes = validated_file.metadata().len();
 
-        // Verify it's a file, not a directory
         if is_directory {
             return Err(AppError::InvalidInput(format!(
                 "Cannot read directory as file: {}",
@@ -199,13 +197,6 @@ mod tests {
             self
         }
 
-        fn with_large_file(mut self, path: &str) -> Self {
-            // Create a file larger than MAX_FILE_SIZE_BYTES
-            let size = MAX_FILE_SIZE_BYTES + 1;
-            self.files.push((path.to_string(), String::new(), size));
-            self
-        }
-
         fn with_directory(mut self, path: &str) -> Self {
             let dir_path = if path.ends_with('/') {
                 path.to_string()
@@ -277,7 +268,6 @@ mod tests {
                     p == &path_str || p == &path.display().to_string() || p == &path_with_slash
                 })
                 .map(|(p, _, size)| {
-                    // Check if it's a directory (marked with trailing slash)
                     let is_directory = p.ends_with('/');
 
                     crate::application::ports::FileMetadata {
@@ -352,7 +342,7 @@ mod tests {
         let test_file = temp_dir.join("large_test.txt");
         std::fs::write(&test_file, "").ok();
 
-        let canonical_path = test_file.canonicalize().unwrap_or(test_file.clone());
+        let _canonical_path = test_file.canonicalize().unwrap_or(test_file.clone());
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
         std::fs::OpenOptions::new()
             .write(true)

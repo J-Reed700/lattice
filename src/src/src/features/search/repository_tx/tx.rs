@@ -1,5 +1,5 @@
 use crate::domain::repositories::search_repository::{SearchRepository, SearchResult};
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use async_trait::async_trait;
 use sqlx::{Sqlite, Transaction};
 use std::sync::{Arc, Weak};

@@ -16,11 +16,9 @@ impl AtomicFs {
             .parent()
             .ok_or_else(|| AppError::InvalidInput("Invalid file path".to_string()))?;
 
-        // Create a temporary file in the same directory
         let temp_name = format!(".tmp_{}", Uuid::new_v4());
         let temp_path = parent.join(&temp_name);
 
-        // Write to temporary file
         let mut temp_file = File::create(&temp_path).context("Failed to create temporary file")?;
         temp_file
             .write_all(content)
@@ -148,7 +146,6 @@ mod tests {
         // File doesn't exist
         assert!(AtomicFs::read_if_exists(&file_path).unwrap().is_none());
 
-        // Create file
         fs::write(&file_path, b"test").unwrap();
 
         // File exists

@@ -14,10 +14,6 @@
 //!
 //! # Migration Notes
 //!
-//! - Phase 1: Created domain entities and mappers
-//! - Phase 2: Implemented `RepositoryPort<DocumentEntity>`
-//! - Phase 3: Implemented DocumentRepositoryPort for file operations
-//! - Phase 4: Implemented `RepositoryPort<Document>` for DDD compliance (current)
 //! - DB models are now internal and NOT exported
 
 use crate::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
@@ -109,7 +105,7 @@ impl DocumentRepository {
                     id, file_path, file_name, file_type, mime_type,
                     size_bytes, modified_at, indexed_at, checksum, status,
                     language, category, quality_score, access_count,
-                    last_accessed_at, word_count
+                    last_accessed_at, word_count, source_context
                 FROM documents
                 WHERE file_path = ?
                 "#
@@ -154,15 +150,12 @@ impl DocumentRepository {
 
         match entity {
             Some(doc_entity) => {
-                // Convert entity to aggregate Document
                 let document = Self::entity_to_aggregate_document(&doc_entity)?;
 
-                // Fetch chunks for this document
                 let chunks = self
                     .fetch_chunks_for_document(doc_entity.id().as_str())
                     .await?;
 
-                // Fetch tags for this document
                 let tags = self
                     .fetch_tags_for_document(doc_entity.id().as_str())
                     .await?;
@@ -200,7 +193,7 @@ impl DocumentRepository {
                     id, file_path, file_name, file_type, mime_type,
                     size_bytes, modified_at, indexed_at, checksum, status,
                     language, category, quality_score, access_count,
-                    last_accessed_at, word_count
+                    last_accessed_at, word_count, source_context
                 FROM documents
                 WHERE file_path LIKE ?
                 ORDER BY file_path DESC
@@ -291,10 +284,6 @@ impl DocumentRepository {
         Ok(count)
     }
 
-    // ========================================================================
-    // Aggregate Repository Helper Methods
-    // ========================================================================
-
     /// Convert DocumentEntity to aggregate Document.
     ///
     /// Converts the anemic DocumentEntity (from database) to the rich
@@ -311,59 +300,8 @@ impl DocumentRepository {
     /// # Errors
     ///
     /// - `AppError::InvalidData` if conversion fails
-    fn entity_to_aggregate_document(
-        entity: &DocumentEntity,
-    ) -> Result<crate::domain::entities::document::Document> {
-        use crate::domain::entities::document::{
-            Document as AggregateDocument, DocumentStatus as AggregateStatus,
-        };
-        use crate::domain::value_objects::checksum::Checksum;
-        use crate::domain::value_objects::file_metadata::FileMetadata;
-
-        // Create FileMetadata value object from entity fields
-        let metadata = FileMetadata::new(
-            entity.file_name().to_string(),
-            entity.mime_type().to_string(),
-            entity.size_bytes(),
-            *entity.modified_at(), // Dereference to get DateTime<Utc>
-        )?;
-
-        // Create Checksum value object from hex string
-        let checksum = Checksum::new(entity.checksum().to_string())?;
-
-        // Map status enum
-        let status = match entity.status() {
-            crate::domain::entities::document::DocumentStatus::Pending => {
-                AggregateStatus::Processing
-            }
-            crate::domain::entities::document::DocumentStatus::Processing => {
-                AggregateStatus::Processing
-            }
-            crate::domain::entities::document::DocumentStatus::Indexed => AggregateStatus::Indexed,
-            crate::domain::entities::document::DocumentStatus::Failed => AggregateStatus::Failed,
-        };
-
-        // Create aggregate Document via with_id (Oracle: Document is the single source of truth)
-        Ok(AggregateDocument::with_id(
-            entity.id().clone(),
-            entity.validated_file_path().clone(),
-            entity.file_name().to_string(),
-            entity.file_type().map(|s| s.to_string()),
-            entity.mime_type().to_string(),
-            entity.size_bytes(),
-            *entity.modified_at(),
-            *entity.indexed_at(),
-            checksum,
-            status,
-            entity.error_message().map(|s| s.to_string()),
-            entity.language().clone(),
-            entity.category().clone(),
-            entity.quality_score(),
-            entity.access_count(),
-            entity.last_accessed_at().copied(),
-            entity.word_count(),
-            entity.content().to_string(),
-        ))
+    fn entity_to_aggregate_document(entity: &DocumentEntity) -> Result<Document> {
+        Ok(entity.clone())
     }
 
     /// Convert aggregate Document to DocumentModel for database persistence.
@@ -410,7 +348,10 @@ impl DocumentRepository {
             access_count: doc.access_count() as i64,   // Convert i32 -> i64 for SQLite
             last_accessed_at: doc.last_accessed_at().map(|dt| dt.to_rfc3339()),
             word_count: doc.word_count() as i64, // Convert i32 -> i64 for SQLite
-            content: doc.content().to_string(),  // Oracle Step 1: Content field
+            source_context: doc
+                .source_context()
+                .map(|v| serde_json::json!(v).to_string()),
+            content: doc.content().to_string(),
         }
     }
 
@@ -434,7 +375,7 @@ impl DocumentRepository {
                 id, document_id, content, chunk_index,
                 contextualized_content, context_prefix,
                 start_char, end_char, language,
-                token_count, word_count, has_code, section
+                token_count, word_count, has_code, section, page_number
             FROM text_chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
@@ -496,14 +437,12 @@ impl DocumentRepository {
         chunks: &[Chunk],
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> Result<()> {
-        // Delete existing chunks
         sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
             .bind(doc_id)
             .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete old chunks: {}", e)))?;
 
-        // Insert new chunks
         for chunk in chunks {
             let model = ChunkMapper::to_model(chunk);
 
@@ -511,9 +450,9 @@ impl DocumentRepository {
                 r#"
                 INSERT INTO text_chunks (
                     id, document_id, content, chunk_index,
-                    contextualized_content, context_prefix, start_char, end_char
+                    contextualized_content, context_prefix, start_char, end_char, language, token_count, word_count, has_code, section, page_number
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&model.id)
@@ -524,6 +463,7 @@ impl DocumentRepository {
             .bind(&model.context_prefix)
             .bind(model.start_char)
             .bind(model.end_char)
+            .bind(&model.language).bind(model.token_count).bind(model.word_count).bind(model.has_code).bind(&model.section).bind(model.page_number)
             .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to insert chunk: {}", e)))?;
@@ -551,13 +491,11 @@ impl DocumentRepository {
         tags: &[TagId],
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> Result<()> {
-        // Delete existing tag relationships
         sqlx::query!("DELETE FROM document_tags WHERE document_id = ?", doc_id)
             .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete old tags: {}", e)))?;
 
-        // Insert new tag relationships
         for tag_id in tags {
             let tag_id_str = tag_id.as_str();
             sqlx::query!(
@@ -584,7 +522,7 @@ impl DocumentRepository {
                     id, file_path, file_name, file_type, mime_type,
                     size_bytes, modified_at, indexed_at, checksum, status,
                     language, category, quality_score, access_count,
-                    last_accessed_at, word_count
+                    last_accessed_at, word_count, source_context
                 FROM documents
                 WHERE id = ?
                 "#,
@@ -611,7 +549,7 @@ impl DocumentRepository {
                     id, file_path, file_name, file_type, mime_type,
                     size_bytes, modified_at, indexed_at, checksum, status,
                     language, category, quality_score, access_count,
-                    last_accessed_at, word_count
+                    last_accessed_at, word_count, source_context
                 FROM documents
                 ORDER BY indexed_at DESC
                 "#,
@@ -647,7 +585,7 @@ impl DocumentRepository {
                     id, file_path, file_name, file_type, mime_type,
                     size_bytes, modified_at, indexed_at, checksum, status,
                     language, category, quality_score, access_count,
-                    last_accessed_at, word_count
+                    last_accessed_at, word_count, source_context
                 FROM documents
                 WHERE 1=1
                 "#,
@@ -738,6 +676,10 @@ impl DocumentRepository {
 /// This implementation provides file path lookups and document-file relationship queries.
 #[async_trait]
 impl DocumentRepositoryPort for DocumentRepository {
+    async fn list_metadata(&self) -> Result<Vec<Document>> {
+        self.find_all_entities_internal().await
+    }
+
     async fn find_file_path_by_id(&self, document_id: &str) -> Result<String> {
         let pool = self.pool.clone();
         let id = document_id.to_string();
@@ -849,7 +791,7 @@ impl DocumentRepositoryPort for DocumentRepository {
                     quality_score,
                     access_count,
                     last_accessed_at,
-                    word_count
+                    word_count, source_context
                 FROM documents
                 WHERE checksum = ?
                 "#,
@@ -915,7 +857,7 @@ impl DocumentRepositoryPort for DocumentRepository {
                         quality_score,
                         access_count,
                         last_accessed_at,
-                        word_count
+                        word_count, source_context
                     FROM documents
                     ORDER BY indexed_at DESC
                     LIMIT ?
@@ -989,10 +931,8 @@ impl RepositoryPort<Document> for DocumentRepository {
     }
 
     async fn find_all(&self) -> Result<Vec<Document>> {
-        // Get all documents directly from storage
         let entities = self.find_all_entities_internal().await?;
 
-        // Load chunks/tags for each to build aggregates
         let mut aggregates = Vec::new();
         for entity in entities {
             let doc_id = entity.id().as_str();
@@ -1014,7 +954,7 @@ impl RepositoryPort<Document> for DocumentRepository {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         // 1. Convert aggregate Document to database model
-        let doc = aggregate.document();
+        let doc = aggregate;
         let model = Self::aggregate_document_to_model(doc);
 
         sqlx::query!(
@@ -1064,6 +1004,16 @@ impl RepositoryPort<Document> for DocumentRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to save document: {}", e)))?;
 
+        sqlx::query("UPDATE documents SET source_context = ? WHERE id = ?")
+            .bind(
+                aggregate
+                    .source_context()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+            )
+            .bind(aggregate.id().as_str())
+            .execute(&mut *tx)
+            .await?;
         // 2. Save chunks (replace all)
         let doc_id = &aggregate.document_id();
         self.save_chunks_transactional(doc_id, aggregate.chunks(), &mut tx)
@@ -1094,8 +1044,7 @@ impl RepositoryPort<Document> for DocumentRepository {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         for aggregate in aggregates {
-            // Convert aggregate Document to database model
-            let doc = aggregate.document();
+            let doc = aggregate;
             let model = Self::aggregate_document_to_model(doc);
 
             sqlx::query!(
@@ -1145,12 +1094,20 @@ impl RepositoryPort<Document> for DocumentRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to save document in batch: {}", e)))?;
 
-            // Save chunks
             let doc_id = &aggregate.document_id();
+            sqlx::query("UPDATE documents SET source_context = ? WHERE id = ?")
+                .bind(
+                    aggregate
+                        .source_context()
+                        .map(serde_json::to_string)
+                        .transpose()?,
+                )
+                .bind(doc_id)
+                .execute(&mut *tx)
+                .await?;
             self.save_chunks_transactional(doc_id, aggregate.chunks(), &mut tx)
                 .await?;
 
-            // Save tags
             self.save_tags_transactional(doc_id, aggregate.tags(), &mut tx)
                 .await?;
         }
@@ -1180,10 +1137,6 @@ impl RepositoryPort<Document> for DocumentRepository {
         self.exists_internal(id).await
     }
 }
-
-// ============================================================================
-// Unified Trait Implementation (E0225 Fix)
-// ============================================================================
 
 /// Unified document repository trait implementation.
 ///

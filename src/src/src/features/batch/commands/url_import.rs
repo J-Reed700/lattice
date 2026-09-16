@@ -139,7 +139,7 @@ pub struct BatchImportOptions {
 ///
 /// # Architecture
 ///
-/// Thin controller following Phase 4 Command Migration pattern:
+/// Command flow:
 /// 1. Rate limiting via SecurityContext (CWE-770)
 /// 2. Batch job creation via StartBatchUrlImportUseCase
 /// 3. Background task spawned for URL processing
@@ -199,7 +199,6 @@ pub async fn start_batch_url_import(
 
     let url_count = request.urls.len();
 
-    // Start batch (returns job_id immediately, processing happens in background)
     let use_case_request = StartBatchUrlImportRequestDto {
         urls: request.urls.clone(),
         options: request
@@ -372,7 +371,7 @@ pub async fn start_batch_url_import(
 ///
 /// # Architecture
 ///
-/// Thin controller following Phase 4 Command Migration pattern:
+/// Command flow:
 /// 1. Fetch job status via GetBatchJobStatusUseCase
 /// 2. Return serialized BatchJobStatus
 ///
@@ -514,7 +513,7 @@ pub async fn get_batch_job_status(
 ///
 /// # Architecture
 ///
-/// Thin controller following Phase 4 Command Migration pattern:
+/// Command flow:
 /// 1. Cancel batch job via CancelBatchJobUseCase
 /// 2. Audit logging via AuditLogger (CWE-778)
 ///

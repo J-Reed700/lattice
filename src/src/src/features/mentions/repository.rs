@@ -50,7 +50,6 @@ impl MentionRepository {
     fn extract_mentions_from_text(&self, text: &str) -> HashMap<String, Vec<(String, usize)>> {
         let mut mentions: HashMap<String, Vec<(String, usize)>> = HashMap::new();
 
-        // Extract @[person] mentions
         for cap in at_mention_regex().captures_iter(text) {
             // Defensive: cap[0] should always exist for captures_iter matches,
             // but we handle gracefully to avoid production panics
@@ -67,7 +66,6 @@ impl MentionRepository {
                 .push((name, position));
         }
 
-        // Extract [[wikilink]] mentions
         for cap in wikilink_regex().captures_iter(text) {
             // Defensive: cap[0] should always exist for captures_iter matches,
             // but we handle gracefully to avoid production panics
@@ -154,17 +152,13 @@ impl MentionRepository {
         // Clear existing mentions for this document
         self.clear_document_mentions(document_id).await?;
 
-        // Extract mentions from text
         let extracted = self.extract_mentions_from_text(text);
         let mut results = Vec::new();
 
-        // Store each mention
         for (mention_type, occurrences) in extracted {
             for (name, position) in occurrences {
-                // Create or get mention
                 let mention = self.create_mention(&name, &mention_type, None).await?;
 
-                // Extract context
                 let context = self.extract_context(text, position);
 
                 // Link to document
@@ -398,17 +392,13 @@ impl MentionRepositoryPort for MentionRepository {
         // Clear existing mentions for this document
         self.clear_document_mentions(document_id).await?;
 
-        // Extract mentions from text
         let extracted = self.extract_mentions_from_text(text);
         let mut results = Vec::new();
 
-        // Store each mention
         for (mention_type, occurrences) in extracted {
             for (name, position) in occurrences {
-                // Create or get mention
                 let mention = self.create_mention(&name, &mention_type, None).await?;
 
-                // Extract context
                 let context = self.extract_context(text, position);
 
                 // Link to document
@@ -452,11 +442,9 @@ impl MentionRepositoryPort for MentionRepository {
         .map_err(|e| AppError::Database(format!("Failed to fetch mention: {}", e)))?
         .ok_or_else(|| AppError::NotFound(format!("Mention not found: {}", id)))?;
 
-        // Use provided values or keep existing ones
         let new_type = mention_type.unwrap_or(&current.r#type);
         let new_metadata = metadata.or(current.metadata.as_deref());
 
-        // Update the mention
         let row = sqlx::query!(
             r#"
             UPDATE mentions
@@ -502,7 +490,6 @@ mod tests {
     async fn create_test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
 
-        // Setup schema
         sqlx::query(
             r#"
             CREATE TABLE mentions (

@@ -1,6 +1,5 @@
 //! Deletes a downloaded model record and optionally the file.
 
-use crate::audit::AuditAction;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
 use std::path::Path;
@@ -309,8 +308,6 @@ mod tests {
         .expect("construct local model")
     }
 
-    // ---- is_safe_model_directory ----------------------------------------
-
     #[test]
     fn safe_directory_accepts_model_dir_under_models() {
         let path = Path::new("/home/u/.cache/lattice/models/my-model");
@@ -346,8 +343,6 @@ mod tests {
         let path = Path::new("/home/u/.cache/lattice/models/vendor/unrelated");
         assert!(is_safe_model_directory(path, "my-model").is_err());
     }
-
-    // ---- execute ---------------------------------------------------------
 
     #[tokio::test]
     async fn deletes_record_and_file_for_inactive_local_model() {

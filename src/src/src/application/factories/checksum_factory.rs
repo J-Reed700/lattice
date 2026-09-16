@@ -23,8 +23,8 @@ pub struct ChecksumFactory;
 impl ChecksumFactory {
     /// Compute SHA-256 checksum from file path (with file I/O).
     ///
-    /// This method performs file system operations and should be used instead of
-    /// the deprecated `Checksum::compute()` method.
+    /// This method performs file system operations, keeping file I/O out of the
+    /// domain layer.
     ///
     /// # Errors
     ///
@@ -43,20 +43,18 @@ impl ChecksumFactory {
     /// # }
     /// ```
     pub fn from_path(path: &Path) -> Result<Checksum> {
-        // Read file contents
         let content = std::fs::read(path).map_err(|e| AppError::Io {
             message: format!("Failed to read file for checksum: {}", e),
             kind: format!("{:?}", e.kind()),
         })?;
 
-        // Compute checksum from content
         Self::from_bytes(&content)
     }
 
     /// Compute SHA-256 checksum from byte content.
     ///
-    /// This method uses the sha2 cryptography library and should be used instead of
-    /// the deprecated `Checksum::from_bytes()` method.
+    /// This method uses the sha2 cryptography library, keeping cryptography out of
+    /// the domain layer.
     ///
     /// # Errors
     ///
@@ -75,11 +73,9 @@ impl ChecksumFactory {
     /// # }
     /// ```
     pub fn from_bytes(content: &[u8]) -> Result<Checksum> {
-        // Compute SHA-256 hash
         let hash = Sha256::digest(content);
         let checksum_str = format!("{:x}", hash);
 
-        // Use pure domain constructor
         Checksum::new(checksum_str)
     }
 
@@ -139,10 +135,6 @@ impl ChecksumFactory {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,7 +146,6 @@ mod tests {
         let content = b"hello world";
         let checksum = ChecksumFactory::from_bytes(content).unwrap();
 
-        // Verify checksum format (64 hex characters)
         assert_eq!(checksum.as_str().len(), 64);
         assert!(checksum.as_str().chars().all(|c| c.is_ascii_hexdigit()));
 
@@ -165,7 +156,6 @@ mod tests {
 
     #[test]
     fn test_from_path_computes_correct_checksum() {
-        // Create temporary file with known content
         let mut temp_file = NamedTempFile::new().unwrap();
         write!(temp_file, "hello world").unwrap();
         temp_file.flush().unwrap();
@@ -253,5 +243,79 @@ mod tests {
         // SHA-256 of empty string
         let expected = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         assert_eq!(checksum.as_str(), expected);
+    }
+
+    #[cfg(test)]
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn valid_file_content() -> impl Strategy<Value = Vec<u8>> {
+            prop::collection::vec(any::<u8>(), 0..1000) // 0-1KB for test speed
+        }
+
+        proptest! {
+            #[test]
+            fn prop_from_bytes_creates_valid_hash(content in valid_file_content()) {
+                // GIVEN: File content
+                // WHEN: Computing a checksum from bytes
+                let checksum = ChecksumFactory::from_bytes(&content).unwrap();
+
+                // THEN: Should produce a valid 64-char hex hash
+                prop_assert_eq!(checksum.as_str().len(), 64);
+                prop_assert!(checksum.as_str().chars().all(|c| c.is_ascii_hexdigit()));
+            }
+
+            #[test]
+            fn prop_from_bytes_is_deterministic(content in valid_file_content()) {
+                // GIVEN: The same content hashed twice
+                let checksum1 = ChecksumFactory::from_bytes(&content).unwrap();
+                let checksum2 = ChecksumFactory::from_bytes(&content).unwrap();
+
+                // THEN: Checksums should be equal (value equality)
+                prop_assert_eq!(&checksum1, &checksum2);
+                prop_assert!(checksum1.matches(&checksum2));
+            }
+
+            #[test]
+            fn prop_from_bytes_serde_roundtrip(content in valid_file_content()) {
+                // GIVEN: A computed checksum
+                let checksum = ChecksumFactory::from_bytes(&content).unwrap();
+
+                // WHEN: Serializing and deserializing
+                let json = serde_json::to_string(&checksum).unwrap();
+                let deserialized: Checksum = serde_json::from_str(&json).unwrap();
+
+                // THEN: Should roundtrip successfully
+                prop_assert_eq!(checksum, deserialized);
+            }
+
+            #[test]
+            fn prop_verify_consistent(content in valid_file_content()) {
+                // GIVEN: Checksum computed from content
+                let checksum = ChecksumFactory::from_bytes(&content).unwrap();
+
+                // WHEN: Verifying the same content
+                let result = ChecksumFactory::verify(&checksum, &content);
+
+                // THEN: Should verify successfully
+                prop_assert!(result);
+            }
+
+            #[test]
+            fn prop_from_path_matches_from_bytes(content in valid_file_content()) {
+                // GIVEN: A file containing the content
+                let mut temp_file = NamedTempFile::new().unwrap();
+                temp_file.write_all(&content).unwrap();
+                temp_file.flush().unwrap();
+
+                // WHEN: Computing checksums from the path and from the bytes
+                let from_path = ChecksumFactory::from_path(temp_file.path()).unwrap();
+                let from_bytes = ChecksumFactory::from_bytes(&content).unwrap();
+
+                // THEN: They should agree
+                prop_assert_eq!(from_path, from_bytes);
+            }
+        }
     }
 }

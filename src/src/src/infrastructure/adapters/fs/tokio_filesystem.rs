@@ -3,7 +3,7 @@
 use crate::domain::ports::file_access::{DirectoryEntry, FileSystemAccess};
 use crate::shared::error::AppError;
 use async_trait::async_trait;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Default)]
 pub struct TokioFileSystemAdapter;

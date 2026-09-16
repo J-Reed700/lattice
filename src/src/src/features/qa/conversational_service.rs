@@ -11,7 +11,7 @@
 //!
 //! # Architecture
 //!
-//! This service follows the "bricks and studs" philosophy:
+//! This service is composed from focused collaborators:
 //! - **Self-contained**: All conversational Q&A business logic in one place
 //! - **Clear boundaries**: Depends on well-defined service traits
 //! - **Testable**: Easy to inject mocks for all dependencies
@@ -44,16 +44,12 @@ use tracing::{info, warn};
 
 use crate::domain::ValidatedMetadata;
 use crate::features::conversation::ConversationServiceTrait;
+use crate::features::qa::engine::types::StreamChunk;
 use crate::features::qa::{ConversationalQAServiceTrait, QAEngineTrait};
 use crate::features::search::dto::SearchResultDto;
 use crate::infrastructure::observability::Metrics;
-use crate::infrastructure::qa::types::StreamChunk;
 use crate::infrastructure::services::traits::ContextManagerTrait;
 use crate::shared::error::{AppError, Result};
-
-// ============================================================================
-// Response Types
-// ============================================================================
 
 /// Response from conversational Q&A (non-streaming)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,10 +66,6 @@ pub struct ConversationalAnswer {
     /// Total tokens used in conversation
     pub total_tokens: i64,
 }
-
-// ============================================================================
-// Service Implementation
-// ============================================================================
 
 /// Service for conversational question-answering with RAG
 ///
@@ -412,12 +404,10 @@ impl ConversationalQAService {
                 full_answer.push_str(content);
             }
 
-            // Emit to frontend
             window
                 .emit_to(window.label(), "llm-stream", &chunk)
                 .map_err(|e| AppError::Other(format!("Failed to emit event: {}", e)))?;
 
-            // Check for completion or error
             if matches!(chunk, StreamChunk::Done) {
                 break;
             }
@@ -479,10 +469,6 @@ impl ConversationalQAService {
         Ok(())
     }
 
-    // ========================================================================
-    // Helper Methods
-    // ========================================================================
-
     /// Convert SearchResult to Q&A engine SearchResult format
     ///
     /// The command layer uses a different SearchResult type than the Q&A engine.
@@ -498,10 +484,10 @@ impl ConversationalQAService {
     fn convert_search_results(
         &self,
         results: &[SearchResultDto],
-    ) -> Vec<crate::infrastructure::search::service::SearchResult> {
+    ) -> Vec<crate::features::search::engine::service::SearchResult> {
         results
             .iter()
-            .map(|r| crate::infrastructure::search::service::SearchResult {
+            .map(|r| crate::features::search::engine::service::SearchResult {
                 id: r.id.clone(),
                 score: r.score,
                 index: 0,
@@ -578,23 +564,21 @@ impl ConversationalQAServiceTrait for ConversationalQAService {
 mod tests {
     use super::*;
     use crate::features::conversation::mocks::MockConversationService;
-    use crate::infrastructure::qa::QAEngine;
+    use crate::features::llm::engine::OllamaClient;
+    use crate::features::qa::engine::QAEngine;
     use crate::infrastructure::services::mocks::MockContextManager;
-    use crate::llm::OllamaClient;
 
     #[tokio::test]
     async fn test_conversational_qa_service_creation() {
-        // Create mock dependencies
         let conversation_service =
             Arc::new(MockConversationService::new()) as Arc<dyn ConversationServiceTrait>;
         let context_manager = Arc::new(MockContextManager::new()) as Arc<dyn ContextManagerTrait>;
         let llm_client = Arc::new(OllamaClient::new("http://localhost:11434").unwrap());
         let qa_engine = Arc::new(QAEngine::new(
-            llm_client as Arc<dyn crate::llm::traits::LLMClient>,
+            llm_client as Arc<dyn crate::features::llm::engine::traits::LLMClient>,
         )) as Arc<dyn QAEngineTrait>;
         let metrics = Arc::new(Metrics::new());
 
-        // Create service
         let _service =
             ConversationalQAService::new(conversation_service, context_manager, qa_engine, metrics);
 
@@ -636,7 +620,6 @@ mod tests {
 
     #[test]
     fn test_metadata_size_validation_rejects_oversized() {
-        // Create oversized search results (1000 sources with large content)
         let large_results: Vec<SearchResultDto> = (0..1000)
             .map(|i| SearchResultDto {
                 id: format!("chunk_{}", i),
@@ -657,7 +640,6 @@ mod tests {
         let json = serde_json::to_string(&large_results).unwrap();
         println!("Large JSON size: {} bytes", json.len());
 
-        // Should fail validation
         let result = ValidatedMetadata::new(json);
         assert!(result.is_err(), "Should reject oversized metadata");
 
@@ -677,7 +659,6 @@ mod tests {
 
     #[test]
     fn test_metadata_size_validation_boundary() {
-        // Test at boundary (just under 64KB)
         let num_sources = 50; // Should be safe
         let content_size = 500; // ~500 bytes per source
 
@@ -701,7 +682,6 @@ mod tests {
         let json = serde_json::to_string(&boundary_results).unwrap();
         println!("Boundary JSON size: {} bytes", json.len());
 
-        // Should succeed if under limit
         if json.len() < ValidatedMetadata::max_size_bytes() {
             let result = ValidatedMetadata::new(json);
             assert!(result.is_ok(), "Should accept boundary-sized metadata");

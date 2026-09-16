@@ -104,10 +104,8 @@ impl AuditSink for MemoryAuditSink {
     async fn log(&self, event: &AuditEvent) -> Result<()> {
         let mut events = self.events.write().await;
 
-        // Add the new event
         events.push(event.clone());
 
-        // Remove oldest events if we exceed capacity
         if events.len() > self.max_events {
             let overflow = events.len() - self.max_events;
             events.drain(0..overflow);
@@ -136,11 +134,9 @@ impl AuditSink for MemoryAuditSink {
     async fn query(&self, limit: usize, offset: usize) -> Result<Vec<AuditEvent>> {
         let events = self.events.read().await;
 
-        // Sort by timestamp descending (most recent first)
         let mut sorted_events = events.clone();
         sorted_events.sort_by_key(|event| std::cmp::Reverse(event.timestamp));
 
-        // Apply pagination
         let result = sorted_events.into_iter().skip(offset).take(limit).collect();
 
         debug!(
@@ -187,7 +183,6 @@ mod tests {
     async fn test_capacity_limit() {
         let sink = MemoryAuditSink::new(5);
 
-        // Add 10 events
         for i in 0..10 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success())
                 .with_resource_id(format!("file{}", i));
@@ -197,14 +192,12 @@ mod tests {
         // Should only have 5 events (newest ones)
         assert_eq!(sink.len().await, 5);
 
-        // Verify we kept the newest events
         let events = sink.get_all().await;
         let resource_ids: Vec<_> = events
             .iter()
             .filter_map(|e| e.resource_id.as_ref())
             .collect();
 
-        // Should have file5 through file9
         assert!(resource_ids.contains(&&"file9".to_string()));
         assert!(!resource_ids.contains(&&"file0".to_string()));
     }
@@ -213,7 +206,6 @@ mod tests {
     async fn test_query_with_pagination() {
         let sink = MemoryAuditSink::new(100);
 
-        // Add 10 events
         for i in 0..10 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success())
                 .with_resource_id(format!("file{}", i));
@@ -230,7 +222,6 @@ mod tests {
         let second_page = sink.query(5, 5).await.unwrap();
         assert_eq!(second_page.len(), 5);
 
-        // Verify ordering (most recent first)
         assert!(first_page[0].timestamp >= first_page[4].timestamp);
     }
 
@@ -238,7 +229,6 @@ mod tests {
     async fn test_clear() {
         let sink = MemoryAuditSink::new(100);
 
-        // Add events
         for _ in 0..5 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success());
             sink.log(&event).await.unwrap();
@@ -258,7 +248,6 @@ mod tests {
 
         assert_eq!(sink.count().await.unwrap(), 0);
 
-        // Add events
         for _ in 0..3 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success());
             sink.log(&event).await.unwrap();
@@ -271,7 +260,6 @@ mod tests {
     async fn test_close() {
         let sink = MemoryAuditSink::new(100);
 
-        // Add events
         for _ in 0..5 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success());
             sink.log(&event).await.unwrap();
@@ -286,7 +274,6 @@ mod tests {
     async fn test_unlimited_sink() {
         let sink = MemoryAuditSink::unlimited();
 
-        // Add many events
         for _ in 0..1000 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success());
             sink.log(&event).await.unwrap();
@@ -300,7 +287,6 @@ mod tests {
     async fn test_get_all() {
         let sink = MemoryAuditSink::new(100);
 
-        // Add events
         for i in 0..3 {
             let event = AuditEvent::new(AuditAction::FileIndexed, AuditResult::success())
                 .with_resource_id(format!("file{}", i));

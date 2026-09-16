@@ -1,12 +1,11 @@
 //! Batch URL import service implementation
 //!
 //! Orchestrates batch URL import workflow: create job → process URLs → track progress.
-//! Uses the "bricks and studs" philosophy with clear service boundaries.
+//! Keeps orchestration and URL processing behind explicit service boundaries.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
-use tokio::task;
 use uuid::Uuid;
 
 use crate::application::ports::batch_job_repository_port::{
@@ -104,7 +103,6 @@ impl BatchUrlImportService {
     ) -> Result<(), AppError> {
         tracing::info!("Starting batch job {}", job_id);
 
-        // Update status to running
         batch_job_repository
             .update_job_status(&job_id, "running", Some(Utc::now().to_rfc3339()), None)
             .await?;
@@ -112,18 +110,14 @@ impl BatchUrlImportService {
         let mut completed = 0i64;
         let mut failed = 0i64;
 
-        // Get pending items
         let items = batch_job_repository.get_pending_items(&job_id).await?;
         let total = items.len() as i64;
 
-        // Process each item sequentially
         for item in items {
-            // Update item status to processing
             batch_job_repository
                 .update_item_status(&item.id, "processing", None, None)
                 .await?;
 
-            // Process URL
             match Self::process_single_url(web_ingestion_service.clone(), &item.url).await {
                 Ok(document_id) => {
                     // Success
@@ -165,14 +159,12 @@ impl BatchUrlImportService {
                 }
             }
 
-            // Update progress
             let progress = ((completed + failed) as f64 / total as f64) * 100.0;
             batch_job_repository
                 .update_progress(&job_id, completed, failed, progress)
                 .await?;
         }
 
-        // Update final status
         let final_status = if failed == total {
             "failed"
         } else {
@@ -313,14 +305,9 @@ impl BatchUrlImportServiceTrait for BatchUrlImportService {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::DocumentRepositoryPort;
     use crate::features::web::mocks::MockWebIngestionService;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -469,102 +456,6 @@ mod tests {
         }
     }
 
-    /// Mock DocumentRepository for testing
-    struct MockDocumentRepository;
-
-    #[async_trait]
-    impl
-        crate::application::ports::repository_port::RepositoryPort<
-            crate::domain::entities::Document,
-        > for MockDocumentRepository
-    {
-        async fn find_by_id(
-            &self,
-            _id: &str,
-        ) -> Result<Option<crate::domain::entities::Document>, AppError> {
-            Ok(None)
-        }
-
-        async fn find_by_filter(
-            &self,
-            _filter: &dyn crate::application::ports::repository_port::Filter,
-        ) -> Result<Vec<crate::domain::entities::Document>, AppError> {
-            Ok(vec![])
-        }
-
-        async fn find_all(&self) -> Result<Vec<crate::domain::entities::Document>, AppError> {
-            Ok(vec![])
-        }
-
-        async fn save(&self, _entity: &crate::domain::entities::Document) -> Result<(), AppError> {
-            Ok(())
-        }
-
-        async fn save_batch(
-            &self,
-            _entities: &[crate::domain::entities::Document],
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: &str) -> Result<(), AppError> {
-            Ok(())
-        }
-
-        async fn delete_batch(&self, _ids: &[&str]) -> Result<(), AppError> {
-            Ok(())
-        }
-
-        async fn count(&self) -> Result<usize, AppError> {
-            Ok(0)
-        }
-
-        async fn exists(&self, _id: &str) -> Result<bool, AppError> {
-            Ok(false)
-        }
-    }
-
-    #[async_trait]
-    impl DocumentRepositoryPort for MockDocumentRepository {
-        async fn find_file_path_by_id(&self, _document_id: &str) -> Result<String, AppError> {
-            Ok("/test/path".to_string())
-        }
-
-        async fn document_exists(&self, _document_id: &str) -> Result<bool, AppError> {
-            Ok(false)
-        }
-
-        async fn find_id_by_path(&self, _file_path: &str) -> Result<Option<String>, AppError> {
-            Ok(None)
-        }
-
-        async fn delete(&self, _document_id: &str) -> Result<(), AppError> {
-            Ok(())
-        }
-
-        async fn find_by_checksum(
-            &self,
-            _checksum: &crate::domain::value_objects::Checksum,
-        ) -> Result<Option<crate::domain::entities::Document>, AppError> {
-            Ok(None)
-        }
-
-        async fn count_documents(&self) -> Result<i64, AppError> {
-            Ok(0)
-        }
-
-        async fn count_chunks(&self) -> Result<i64, AppError> {
-            Ok(0)
-        }
-
-        async fn find_all_paginated(
-            &self,
-            _limit: usize,
-        ) -> Result<Vec<crate::domain::entities::Document>, AppError> {
-            Ok(vec![])
-        }
-    }
-
     #[tokio::test]
     async fn test_start_batch_import_creates_job() {
         let web_ingestion_service = Arc::new(MockWebIngestionService::new());
@@ -578,7 +469,6 @@ mod tests {
 
         assert!(!job_id.is_empty());
 
-        // Verify job was created
         let status = batch_job_repository.get_batch_job(&job_id).await.unwrap();
         assert_eq!(status.total_items, 1);
         assert_eq!(status.status, "pending");

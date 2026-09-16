@@ -18,11 +18,12 @@
 //! - `context_prefix` - Context for the chunk (infrastructure concern)
 //! - `start_char`, `end_char` - Character positions (infrastructure concern)
 //!
-//! These are infrastructure-level details and are not exposed to the domain layer.
+//! Citation provenance and retrieval context survive both mapping directions.
+//! Original content stays separate from embedding/lexical context.
 
 use crate::domain::entities::chunk::Chunk as DomainChunk;
 use crate::domain::entities::document::Language;
-use crate::domain_types::{ChunkId, DocumentId};
+use crate::shared::domain_types::{ChunkId, DocumentId};
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -44,14 +45,15 @@ pub struct ChunkModel {
     pub context_prefix: Option<String>,
     pub start_char: Option<i64>,
     pub end_char: Option<i64>,
-    // Rich metadata fields (Phase 2)
+    // Extended metadata
     // SQLite types: TEXT, INTEGER (i64)
     pub language: String,
     pub token_count: i64, // SQLite INTEGER = i64
-    // Phase 1 metadata
     pub word_count: i64,
     pub has_code: i64, // SQLite BOOLEAN = INTEGER (0/1)
     pub section: Option<String>,
+    #[sqlx(default)]
+    pub page_number: Option<i64>,
 }
 
 /// Mapper for Chunk entity and database model.
@@ -72,9 +74,7 @@ impl ChunkMapper {
     ///
     /// # Note
     ///
-    /// Infrastructure-only fields (contextualized_content, context_prefix, etc.)
-    /// are set to None/default values. These should be populated separately
-    /// by infrastructure services if needed.
+    /// Preserves contextual indexing text and exact source provenance.
     ///
     /// # Example
     ///
@@ -92,17 +92,17 @@ impl ChunkMapper {
             content: entity.content().to_string(),
             chunk_index: entity.index() as i64,
             // Infrastructure-only fields - not in domain entity
-            contextualized_content: None,
-            context_prefix: None,
-            start_char: None,
-            end_char: None,
+            contextualized_content: entity.context_prefix().map(|_| entity.embedding_text()),
+            context_prefix: entity.context_prefix().map(str::to_owned),
+            start_char: entity.start_char().map(|v| v as i64),
+            end_char: entity.end_char().map(|v| v as i64),
             // Rich metadata fields (convert to SQLite types)
             language: entity.language().to_string(),
             token_count: entity.token_count() as i64, // Convert i32 -> i64 for SQLite
-            // Phase 1 metadata
             word_count: entity.word_count() as i64,
             has_code: if entity.has_code() { 1 } else { 0 },
             section: entity.section().map(|s| s.to_string()),
+            page_number: entity.page_number().map(i64::from),
         }
     }
 
@@ -124,8 +124,7 @@ impl ChunkMapper {
     ///
     /// # Note
     ///
-    /// Infrastructure-only fields (contextualized_content, etc.) are discarded
-    /// during conversion. The domain entity only contains core business data.
+    /// Restores contextual prefix and source offsets/page without changing text.
     ///
     /// # Example
     ///
@@ -136,15 +135,12 @@ impl ChunkMapper {
     /// let entity = ChunkMapper::to_entity(&db_model)?;
     /// ```
     pub fn to_entity(model: &ChunkModel) -> Result<DomainChunk> {
-        // Parse chunk ID
         let id = ChunkId::from_string(model.id.clone())
             .map_err(|e| AppError::InvalidData(format!("Invalid chunk ID: {}", e)))?;
 
-        // Parse document ID
         let document_id = DocumentId::from_string(model.document_id.clone())
             .map_err(|e| AppError::InvalidData(format!("Invalid document ID: {}", e)))?;
 
-        // Validate chunk_index is non-negative
         if model.chunk_index < 0 {
             return Err(AppError::InvalidData(format!(
                 "Chunk index cannot be negative: {}",
@@ -152,7 +148,6 @@ impl ChunkMapper {
             )));
         }
 
-        // Parse language
         let language = model
             .language
             .parse::<Language>()
@@ -161,7 +156,7 @@ impl ChunkMapper {
         // Create domain entity (convert SQLite types back to domain types)
         // Note: Infrastructure-only fields are not passed to domain entity
         use crate::domain::entities::chunk::ChunkParams;
-        Ok(DomainChunk::with_id(ChunkParams {
+        let mut chunk = DomainChunk::with_id(ChunkParams {
             id,
             document_id,
             content: model.content.clone(),
@@ -171,7 +166,14 @@ impl ChunkMapper {
             word_count: model.word_count as usize,
             has_code: model.has_code != 0, // Convert SQLite INTEGER (0/1) to bool
             section: model.section.clone(),
-        }))
+        });
+        chunk.set_provenance(
+            model.context_prefix.clone(),
+            model.start_char.and_then(|n| n.try_into().ok()),
+            model.end_char.and_then(|n| n.try_into().ok()),
+            model.page_number.and_then(|n| n.try_into().ok()),
+        );
+        Ok(chunk)
     }
 
     /// Convert a batch of database models to domain entities.
@@ -205,7 +207,3 @@ impl ChunkMapper {
         entities.iter().map(Self::to_model).collect()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================

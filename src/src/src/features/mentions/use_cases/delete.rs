@@ -51,7 +51,6 @@ impl DeleteMentionUseCase {
     /// that reference this mention. The mention will be permanently removed
     /// from the database.
     pub async fn execute(&self, id: String) -> Result<(), AppError> {
-        // Validate input
         if id.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Mention ID cannot be empty".to_string(),
@@ -60,7 +59,6 @@ impl DeleteMentionUseCase {
 
         tracing::debug!(id = %id, "Deleting mention");
 
-        // Delete the mention (repository handles cascading to document_mentions)
         self.mention_repository.delete_mention(&id).await?;
 
         tracing::info!(
@@ -243,12 +241,10 @@ mod tests {
 
         let use_case = DeleteMentionUseCase::new(repository.clone());
 
-        // Delete first mention
         use_case.execute("mention-1".to_string()).await.unwrap();
         assert!(repository.was_deleted("mention-1"));
         assert!(!repository.mention_exists("mention-1"));
 
-        // Delete second mention
         use_case.execute("mention-2".to_string()).await.unwrap();
         assert!(repository.was_deleted("mention-2"));
         assert!(!repository.mention_exists("mention-2"));

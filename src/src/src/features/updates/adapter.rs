@@ -153,7 +153,6 @@ impl UpdateCheckerPort for UpdateCheckerAdapter {
             }
             Err(e) => {
                 error!("Failed to check for updates: {}", e);
-                // Return current version info without error
                 Ok(UpdateInfoData {
                     available: false,
                     current_version: self.current_version.clone(),

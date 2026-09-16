@@ -6,21 +6,20 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! WebIngestionService Integration Tests
 //!
 //! NOTE: These tests reference old module paths that have been reorganized in the DDD migration:
 //! - lattice::services::web_ingestion_service -> Not in public API
 //! - lattice::services::traits -> lattice::infrastructure::services::traits
-//! - lattice::web_ingestion -> Not in public API (moved to infrastructure::web)
+//! - lattice::web_ingestion -> Not in public API (moved to features::web)
 //! - lattice::db::init -> lattice::infrastructure::persistence::database::init
 //!
 //! Tests the complete web ingestion workflow with real database operations.
 //! These tests need to be rewritten to use the new DDD architecture.
 
 // All tests in this file are ignored pending DDD architecture migration.
-// The web ingestion functionality is now at: lattice::infrastructure::web
+// The web ingestion functionality is now at: lattice::features::web
 
 #[tokio::test]
 #[ignore = "Test needs update for DDD architecture - web_ingestion_service moved to infrastructure layer"]

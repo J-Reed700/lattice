@@ -53,7 +53,7 @@ pub(super) async fn run_retrieval_pipeline(
 
     // Held until `outcome` exists below. This is the single honest source for
     // the "answered without your documents" line: the frontend must never
-    // infer it (BRIEF rank 17, contract §4.6).
+    // infer it.
     let mut embedding_unavailable_reason: Option<String> = None;
     if let Err(e) = container.get_or_load_embedding().await {
         debug!(error = %e, "Embedding model not available for RAG — search will be skipped");
@@ -68,7 +68,7 @@ pub(super) async fn run_retrieval_pipeline(
             }
             Ok(None) => {
                 tracing::debug!(
-                    "No utility LLM configured — falling back to chat LLM for HyDE \
+                    "No utility LLM configured — external search rewriting may use the chat LLM \
                  (set one in Settings → Model Catalog to speed up retrieval)"
                 );
                 Arc::clone(llm)
@@ -76,7 +76,7 @@ pub(super) async fn run_retrieval_pipeline(
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "Utility LLM load failed — falling back to chat LLM"
+                    "Utility LLM load failed — external search rewriting may use the chat LLM"
                 );
                 Arc::clone(llm)
             }
@@ -114,6 +114,7 @@ pub(super) async fn run_retrieval_pipeline(
         sub_timings: RetrievalSubTimingMetrics::default(),
         searched_documents: 0,
         scope_is_linked: false,
+        sufficiency: None,
     };
     let tuning = &search_settings.retrieval_tuning;
 
@@ -174,6 +175,7 @@ pub(super) async fn run_retrieval_pipeline(
         outcome.sub_timings = kb_outcome.timings;
         outcome.searched_documents = kb_outcome.searched_documents;
         outcome.scope_is_linked = kb_outcome.scope_is_linked;
+        outcome.sufficiency = kb_outcome.sufficiency;
         outcome.sub_timings.kb_total_ms = elapsed_ms(kb_retrieval_start);
         kb_has_results = !outcome.search_response.results.is_empty();
         kb_low_confidence = kb_outcome.low_confidence;
@@ -236,8 +238,7 @@ pub(super) async fn run_retrieval_pipeline(
         let external_hyde_start = Instant::now();
         // HyDE runs on the utility LLM (small, fast, local) when set,
         // not the chat LLM. See utility_llm resolution above.
-        let hyde_service =
-            crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(&utility_llm));
+        let hyde_service = crate::features::qa::hyde::HyDEService::new(Arc::clone(&utility_llm));
         let hyde_context =
             build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
         external_hyde_context = hyde_context.clone();
@@ -389,8 +390,7 @@ pub(super) async fn run_retrieval_pipeline(
         let mut generated_web_query: Option<String> = None;
         let mut web_query_source = "hyde_generated";
         // Web-query rewriting also runs on the utility LLM, not chat.
-        let hyde_service =
-            crate::infrastructure::services::hyde::HyDEService::new(Arc::clone(&utility_llm));
+        let hyde_service = crate::features::qa::hyde::HyDEService::new(Arc::clone(&utility_llm));
         let web_query = match hyde_service
             .generate_web_search_query_with_context(
                 validated_message,
@@ -651,6 +651,11 @@ pub(super) async fn run_retrieval_pipeline(
         kb_merge_shortlist_gate_ms = outcome.sub_timings.kb_merge_shortlist_gate_ms,
         kb_post_filters_ms = outcome.sub_timings.kb_post_filters_ms,
         kb_rerank_ms = outcome.sub_timings.kb_rerank_ms,
+        kb_sufficiency_ms = outcome.sub_timings.kb_sufficiency_ms,
+        kb_corrective_retry_ms = outcome.sub_timings.kb_corrective_retry_ms,
+        kb_corrective_retries = outcome.sub_timings.kb_corrective_retries,
+        kb_sufficient = ?outcome.sub_timings.kb_sufficient,
+        kb_planner_skipped = outcome.sub_timings.kb_planner_skipped,
         kb_build_sources_ms = outcome.sub_timings.kb_build_sources_ms,
         kb_persist_references_ms = outcome.sub_timings.kb_persist_references_ms,
         external_hyde_interpretation_ms = outcome.sub_timings.external_hyde_interpretation_ms,

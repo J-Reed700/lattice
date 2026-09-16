@@ -1,15 +1,14 @@
-use crate::domain::download::{DownloadError, DownloadProgress};
+use crate::domain::download::DownloadError;
 use crate::shared::utils::reqwest_client_builder;
 use async_trait::async_trait;
 use reqwest::{header, Client, Response, StatusCode};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use sysinfo::{Disks, System};
+use sysinfo::Disks;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -184,7 +183,6 @@ impl HttpDownloadEngine {
         })?;
 
         let mut hasher = Sha256::new();
-        // Use a larger buffer for efficient post-resume checksum calculation.
         let buffer_len = self.chunk_size.max(256 * 1024);
         let mut buffer = vec![0u8; buffer_len];
 
@@ -327,7 +325,6 @@ impl HttpDownloadEngine {
             "Received HTTP response"
         );
 
-        // Validate HTTP status
         if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
             let status_code = status.as_u16();
             let error_message = match status {
@@ -434,7 +431,6 @@ impl HttpDownloadEngine {
         };
         let elapsed = start_time.elapsed();
 
-        // Validate bytes downloaded
         if bytes_downloaded == 0 {
             error!(
                 url = %url,
@@ -446,7 +442,6 @@ impl HttpDownloadEngine {
             ));
         }
 
-        // Validate against expected total if known
         if let Some(expected_total) = total_bytes {
             let actual_downloaded = bytes_downloaded.saturating_sub(resume_offset);
             let expected_download = expected_total.saturating_sub(resume_offset);
@@ -546,8 +541,6 @@ impl DownloadEngine for HttpDownloadEngine {
     async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError> {
         debug!(url = %url, "Getting file size via HEAD request");
 
-        // Step 1: Try HEAD request WITHOUT following redirects first
-        // (HuggingFace puts x-linked-size in the 302 redirect response)
         let response = reqwest_client_builder()
             .connect_timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none()) // Don't follow redirects
@@ -562,12 +555,10 @@ impl DownloadEngine for HttpDownloadEngine {
 
         let status = response.status();
 
-        // Check if this is a redirect response with x-linked-size header
         if status.is_redirection() {
             if let Some(size_header) = response.headers().get("x-linked-size") {
                 if let Ok(size_str) = size_header.to_str() {
                     if let Ok(size) = size_str.parse::<u64>() {
-                        // Get the redirect location
                         let final_url = if let Some(location) = response.headers().get("location") {
                             let location = location.to_str().map_err(|error| {
                                 DownloadError::InvalidResponse(format!(
@@ -592,7 +583,6 @@ impl DownloadEngine for HttpDownloadEngine {
             }
         }
 
-        // Step 2: If not a redirect or no x-linked-size, follow redirects normally
         let response = self
             .client
             .head(url)
@@ -644,7 +634,6 @@ impl DownloadEngine for HttpDownloadEngine {
                     .and_then(|s| s.parse::<u64>().ok())
             });
 
-        // Check if redirects occurred
         if final_url.as_str() != url {
             info!(
                 original_url = %url,
@@ -661,7 +650,6 @@ impl DownloadEngine for HttpDownloadEngine {
             "HEAD request completed"
         );
 
-        // Step 2: If HEAD didn't return valid content length, try GET with Range: bytes=0-0
         if !is_content_length_valid(content_length) {
             if let Some(size) = content_length {
                 warn!(
@@ -713,7 +701,6 @@ impl DownloadEngine for HttpDownloadEngine {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .or_else(|| {
-                    // Parse Content-Range header (format: "bytes 0-0/123456")
                     range_response
                         .headers()
                         .get(header::CONTENT_RANGE)
@@ -921,17 +908,14 @@ pub mod mock {
                 std::future::pending::<()>().await;
             }
 
-            // Check for permanent failure
             if let Some(error) = self.permanent_failure.lock().unwrap().as_ref() {
                 return Err(DownloadError::ValidationFailed(error.clone()));
             }
 
-            // Check for network error
             if let Some(error) = self.network_error.lock().unwrap().as_ref() {
                 return Err(DownloadError::NetworkError(error.clone()));
             }
 
-            // Check for HTTP error
             if let Some((status, message)) = self.http_error.lock().unwrap().as_ref() {
                 return Err(DownloadError::HttpError {
                     status: *status,
@@ -939,7 +923,6 @@ pub mod mock {
                 });
             }
 
-            // Check for transient failure (decrement count)
             let mut failures = self.failure_count.lock().unwrap();
             if *failures > 0 {
                 *failures -= 1;
@@ -993,6 +976,7 @@ pub mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn nested_mount_is_more_specific_than_root_mount() {
@@ -1151,7 +1135,6 @@ mod tests {
         let calls = engine.get_download_calls();
         assert_eq!(calls.len(), 2);
 
-        // Verify second call captured resume_from parameter
         let last_call = engine.get_last_call().unwrap();
         assert_eq!(last_call.url, "https://example.com/file2.bin");
         assert_eq!(last_call.resume_from, Some(5000));
@@ -1174,7 +1157,6 @@ mod tests {
 
     #[test]
     fn test_is_content_length_valid_small_redirect_html() {
-        // Test small HTML response (like HuggingFace redirect: 1309 bytes)
         assert!(!is_content_length_valid(Some(1309)));
     }
 
@@ -1195,13 +1177,11 @@ mod tests {
 
     #[test]
     fn test_is_content_length_valid_typical_model_file() {
-        // Test typical model file size (724,923 bytes, like HuggingFace model)
         assert!(is_content_length_valid(Some(724_923)));
     }
 
     #[test]
     fn test_is_content_length_valid_large_file() {
-        // Test large file (1 GB)
         assert!(is_content_length_valid(Some(1024 * 1024 * 1024)));
     }
 
@@ -1244,11 +1224,9 @@ mod tests {
     async fn test_download_engine_http_download() {
         use std::time::Duration;
 
-        // ARRANGE: Create test data
         let test_data = b"This is test file content for HTTP download";
         let test_url = "https://example.com/file.bin";
 
-        // Create mock engine with success behavior
         let mock_engine = mock::MockDownloadEngine::new();
         mock_engine.set_download_result(
             test_url,
@@ -1260,7 +1238,6 @@ mod tests {
             }),
         );
 
-        // ACT: Download file
         let options = DownloadOptions {
             url: test_url.to_string(),
             destination: temp_path("test_download.bin"),
@@ -1271,7 +1248,6 @@ mod tests {
 
         let result = mock_engine.download(options).await;
 
-        // ASSERT: Verify successful download
         assert!(result.is_ok(), "Download should succeed");
         let download_result = result.unwrap();
         assert_eq!(download_result.bytes_downloaded, test_data.len() as u64);
@@ -1282,7 +1258,7 @@ mod tests {
         // and verify file contents with: verify_file_contents(&dest_path, test_data).await.unwrap();
     }
 
-    /// Helper function to collect progress events from mpsc channel (Oracle pattern)
+    /// Collect progress events from the mpsc channel.
     ///
     /// Collects (bytes_downloaded, speed) tuples until timeout or channel closes
     async fn collect_progress_events(
@@ -1305,10 +1281,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_engine_progress_callbacks() {
-        // ARRANGE: Create mpsc channel for progress events
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
-        // Create mock engine with multiple progress updates
         let mock_engine = mock::MockDownloadEngine::new();
         mock_engine.set_download_result(
             "https://example.com/large_file.bin",
@@ -1320,12 +1294,11 @@ mod tests {
             }),
         );
 
-        // Progress callback that sends to channel (Oracle pattern)
+        // Progress callback that sends to the channel.
         let progress_callback: ProgressCallback = Arc::new(move |bytes, speed| {
             tx.send((bytes, speed)).ok();
         });
 
-        // ACT: Download with progress callback
         let options = DownloadOptions {
             url: "https://example.com/large_file.bin".to_string(),
             destination: temp_path("large_file.bin"),
@@ -1336,15 +1309,13 @@ mod tests {
 
         let result = mock_engine.download(options).await;
 
-        // ASSERT: Download succeeded
         assert!(result.is_ok(), "Download should succeed");
         let download_result = result.unwrap();
         assert_eq!(download_result.bytes_downloaded, 10000);
 
-        // Collect progress events (Oracle pattern)
+        // Collect progress events.
         let progress_events = collect_progress_events(rx, Duration::from_secs(2)).await;
 
-        // Verify progress events (Oracle requirement: monotonically increasing)
         assert!(!progress_events.is_empty(), "Should have progress events");
 
         // MockDownloadEngine sends single progress callback - verify it was received
@@ -1358,7 +1329,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_engine_range_request() {
-        // ARRANGE: Create mock engine with resume capability
         let mock_engine = mock::MockDownloadEngine::new();
 
         // Set up response for range request (remaining content after 500 bytes)
@@ -1373,7 +1343,6 @@ mod tests {
             }),
         );
 
-        // ACT: Download with resume_from (simulating partial download)
         let options = DownloadOptions {
             url: "https://example.com/partial_file.bin".to_string(),
             destination: temp_path("partial_file.bin"),
@@ -1384,7 +1353,6 @@ mod tests {
 
         let result = mock_engine.download(options).await;
 
-        // ASSERT: Download succeeded
         assert!(result.is_ok(), "Range request download should succeed");
 
         // CRITICAL: Verify engine was called with resume_from
@@ -1403,17 +1371,11 @@ mod tests {
         // assert_eq!(range_header, Some("bytes=500-".to_string()));
     }
 
-    // =====================================================================
-    // PHASE 4: RESILIENCE TESTS - ENGINE ERROR HANDLING (Tests 28-29)
-    // =====================================================================
-
     #[tokio::test]
     async fn test_download_engine_network_error() {
-        // Arrange: Create mock engine with network error
         let mock_engine = mock::MockDownloadEngine::new();
         mock_engine.set_network_error("Connection timeout".to_string());
 
-        // Act: Attempt download
         let options = DownloadOptions {
             url: "https://example.com/unreachable.bin".to_string(),
             destination: temp_path("unreachable.bin"),
@@ -1424,7 +1386,6 @@ mod tests {
 
         let result = mock_engine.download(options).await;
 
-        // Assert: Should return network error
         assert!(result.is_err(), "Download should fail with network error");
 
         let error = result.unwrap_err();
@@ -1443,11 +1404,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_engine_404_handling() {
-        // Arrange: Create mock engine with 404 response
         let mock_engine = mock::MockDownloadEngine::new();
         mock_engine.set_http_error(404, "Not Found".to_string());
 
-        // Act: Attempt download
         let options = DownloadOptions {
             url: "https://example.com/nonexistent.bin".to_string(),
             destination: temp_path("nonexistent.bin"),
@@ -1458,7 +1417,6 @@ mod tests {
 
         let result = mock_engine.download(options).await;
 
-        // Assert: Should return 404 error
         assert!(result.is_err(), "Download should fail with 404 error");
 
         let error = result.unwrap_err();
@@ -1475,13 +1433,8 @@ mod tests {
         );
     }
 
-    // =====================================================================
-    // PHASE 5: ENGINE CANCELLATION TEST (Test 30)
-    // =====================================================================
-
     #[tokio::test]
     async fn test_download_engine_cancellation() {
-        // Arrange: Create mock engine
         let mock_engine = mock::MockDownloadEngine::new();
         mock_engine.set_download_result(
             "https://example.com/cancellable.bin",
@@ -1493,7 +1446,6 @@ mod tests {
             }),
         );
 
-        // Act: Download with auth_token set (used as cancellation signal in mock)
         let options = DownloadOptions {
             url: "https://example.com/cancellable.bin".to_string(),
             destination: temp_path("cancellable.bin"),
@@ -1512,7 +1464,6 @@ mod tests {
             "Download should either complete or be cancelled"
         );
 
-        // Verify auth_token was provided (cancellation capability)
         let calls = mock_engine.get_download_calls();
         assert!(!calls.is_empty(), "Download should have been called");
         assert!(

@@ -35,8 +35,8 @@ use std::sync::Arc;
 use crate::features::indexing::dto::{
     IndexDirectoryRequestDto, IndexDirectoryResponseDto, IndexFileRequestDto,
 };
+use crate::features::indexing::engine::IndexingState;
 use crate::features::indexing::use_cases::index_file::IndexFileUseCase;
-use crate::infrastructure::indexing::IndexingState;
 use crate::shared::error::Result;
 
 /// Index directory use case.
@@ -105,7 +105,6 @@ impl IndexDirectoryUseCase {
             request.include_extensions.as_ref(),
         )?;
 
-        // Update progress with total count
         self.indexing_state.set_total_files(files.len());
 
         // 2. Index each file
@@ -118,7 +117,6 @@ impl IndexDirectoryUseCase {
         let mut cancelled = false;
 
         for file_path in files {
-            // Check for cancellation
             if self.indexing_state.is_cancelled() {
                 cancelled = true;
                 break;
@@ -156,7 +154,8 @@ impl IndexDirectoryUseCase {
                     errors.push(format!("{}: {}", file_path.display(), e));
                     // Keep the path and the reason, not just the count — the
                     // failure list in the UI is built from these.
-                    self.indexing_state.record_failure(&file_path, e.to_string());
+                    self.indexing_state
+                        .record_failure(&file_path, e.to_string());
                     self.indexing_state.file_failed();
                     // We don't abort on file error, just record it and continue.
                 }
@@ -164,7 +163,6 @@ impl IndexDirectoryUseCase {
         }
 
         // 3. Mark the terminal state.
-        //
         // `complete()` forces `status: Complete, percentage: 100`, so calling
         // it unconditionally reported a cancelled, partial index to the user
         // as "Complete — 100%". `IndexStatus::Cancelled` already exists; a
@@ -211,7 +209,7 @@ impl IndexDirectoryUseCase {
 
         // repository-barrier-allow: indexing walks the user-provided directory resource.
         if !path.is_dir() {
-            return Err(crate::error::AppError::NotFound(format!(
+            return Err(crate::shared::error::AppError::NotFound(format!(
                 "Directory not found: {}",
                 path.display()
             )));
@@ -240,7 +238,6 @@ impl IndexDirectoryUseCase {
 
             // repository-barrier-allow: classify entries in the user-provided ingestion tree.
             if path.is_file() {
-                // Check if file extension matches filter
                 if let Some(extensions) = include_extensions {
                     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                         if extensions.contains(&ext.to_string()) {

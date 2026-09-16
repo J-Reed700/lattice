@@ -164,7 +164,6 @@ impl MockArticleExtractorService {
     /// ```
     pub fn new_disabled(error_message: String) -> Self {
         let service = Self::new();
-        // Store error message as a special marker
         service.responses.lock().insert(
             "__disabled__".to_string(),
             CleanArticle {
@@ -221,14 +220,12 @@ impl ArticleExtractorServiceTrait for MockArticleExtractorService {
     }
 
     async fn extract_article(&self, _html: &str, url: &str) -> Result<CleanArticle> {
-        // Check if service is disabled
         if let Some(error_message) = self.is_disabled() {
             return Err(crate::shared::error::AppError::ServiceNotAvailable(
                 error_message,
             ));
         }
 
-        // Return configured response if available
         if let Some(article) = self.responses.lock().get(url).cloned() {
             return Ok(article);
         }

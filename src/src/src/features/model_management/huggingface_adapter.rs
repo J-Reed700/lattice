@@ -45,6 +45,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::application::ports::{ExternalModelMetadata, ModelCatalogPort};
+use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::AppError;
 use crate::shared::utils::reqwest_client_builder;
 
@@ -237,26 +238,34 @@ impl HuggingFaceModel {
         Some((chosen.filename.clone(), chosen.size))
     }
 
-    /// Choose a preferred safetensors file for Candle-backed embedding models.
+    /// Choose the weights file Candle would load for an embedding repo.
     ///
-    /// Candle loads weights directly from `model.safetensors`. Requires
-    /// `tokenizer.json` and `config.json` at repo root. Returns `None` if
-    /// the repo is missing any of these.
-    fn select_preferred_safetensors_file(&self) -> Option<(String, Option<u64>)> {
-        let safetensors: Vec<&HuggingFaceSibling> = self
+    /// `model.safetensors` first; `pytorch_model.bin` when the repo never
+    /// published a safetensors conversion (BAAI/bge-m3), which the loader
+    /// reads through `candle_core::pickle`. Requires `tokenizer.json` and
+    /// `config.json` at repo root. Returns `None` if the repo is missing any
+    /// of these.
+    fn select_preferred_weights_file(&self) -> Option<(String, Option<u64>)> {
+        let root_level: Vec<&HuggingFaceSibling> = self
             .siblings
             .iter()
             .filter(|s| {
                 let lower = s.filename.to_lowercase();
-                lower.ends_with(".safetensors")
+                (lower.ends_with(".safetensors") || s.filename == WEIGHTS_PYTORCH_BIN)
                     && !lower.ends_with(".safetensors.index.json")
                     && !s.filename.contains('/') // single-file only for now
             })
             .collect();
 
-        let chosen = safetensors
-            .into_iter()
-            .find(|s| s.filename == "model.safetensors")?;
+        let chosen = root_level
+            .iter()
+            .find(|s| s.filename == WEIGHTS_SAFETENSORS)
+            .or_else(|| {
+                root_level
+                    .iter()
+                    .find(|s| s.filename == WEIGHTS_PYTORCH_BIN)
+            })
+            .copied()?;
 
         let has_tokenizer = self.siblings.iter().any(|s| s.filename == "tokenizer.json");
         let has_config = self.siblings.iter().any(|s| s.filename == "config.json");
@@ -274,7 +283,7 @@ impl HuggingFaceModel {
     /// lack safetensors. For all other models, prefers GGUF files.
     fn select_preferred_file(&self) -> Option<(String, Option<u64>)> {
         if self.is_embedding_model() {
-            self.select_preferred_safetensors_file()
+            self.select_preferred_weights_file()
                 .or_else(|| self.select_preferred_onnx_file())
                 .or_else(|| self.select_preferred_gguf_file())
         } else {
@@ -391,7 +400,6 @@ impl HuggingFaceModel {
         let name = self.name.clone().unwrap_or_else(|| id.clone());
         let preferred_file = self.select_preferred_file();
 
-        // Add pipeline_tag to tags if present
         let mut tags = self.tags.clone();
         if let Some(pipeline) = &self.pipeline_tag {
             if !tags.contains(pipeline) {
@@ -407,7 +415,8 @@ impl HuggingFaceModel {
         let description = self.build_description(&id, preferred_is_gguf);
 
         // Detect Candle compatibility from architecture tags AND from
-        // whether the repo actually ships safetensors. Both gates exist
+        // whether the repo actually ships weights the loader can read
+        // (safetensors, or a root `pytorch_model.bin`). Both gates exist
         // because a repo can have a Compatible architecture tag (e.g.
         // bert) but only publish .onnx weights — in which case the
         // download path falls back to ONNX, the loader rejects it, and
@@ -415,14 +424,14 @@ impl HuggingFaceModel {
         // catalog must promise only what the runtime can actually deliver.
         let embedding_compatibility = if self.is_embedding_model() {
             let arch_compat = crate::features::embedding::compatibility::detect_from_tags(&tags);
-            let has_safetensors = self.select_preferred_safetensors_file().is_some();
+            let has_weights = self.select_preferred_weights_file().is_some();
             let final_compat = match arch_compat {
                 crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible {
                     architecture,
-                } if !has_safetensors => {
+                } if !has_weights => {
                     crate::features::embedding::compatibility::EmbeddingCompatibility::Incompatible {
                         architecture,
-                        reason: "Repo doesn't ship model.safetensors. The local Candle runtime needs safetensors weights — look for the original sentence-transformers upstream of this model.".to_string(),
+                        reason: "Repo doesn't ship model.safetensors or pytorch_model.bin at its root. The local Candle runtime needs one of those weights files — look for the original sentence-transformers upstream of this model.".to_string(),
                     }
                 }
                 other => other,
@@ -649,6 +658,88 @@ impl ModelCatalogPort for HuggingFaceAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn embedding_repo_with(files: &[&str]) -> HuggingFaceModel {
+        let siblings: Vec<serde_json::Value> = files
+            .iter()
+            .map(|name| serde_json::json!({ "rfilename": name, "size": 4_usize }))
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "modelId": "BAAI/bge-m3",
+            "id": "BAAI/bge-m3",
+            "tags": ["sentence-transformers", "xlm-roberta"],
+            "pipeline_tag": "feature-extraction",
+            "siblings": siblings,
+        }))
+        .expect("deserialize embedding repo")
+    }
+
+    #[test]
+    fn weights_selection_falls_back_to_pytorch_bin() {
+        let repo = embedding_repo_with(&["pytorch_model.bin", "tokenizer.json", "config.json"]);
+        let (filename, _) = repo
+            .select_preferred_weights_file()
+            .expect("pickle-only repo is loadable");
+        assert_eq!(filename, "pytorch_model.bin");
+        assert_eq!(
+            repo.select_preferred_file().map(|(name, _)| name),
+            Some("pytorch_model.bin".to_string()),
+        );
+    }
+
+    #[test]
+    fn weights_selection_prefers_safetensors_over_pytorch_bin() {
+        let repo = embedding_repo_with(&[
+            "pytorch_model.bin",
+            "model.safetensors",
+            "tokenizer.json",
+            "config.json",
+        ]);
+        let (filename, _) = repo
+            .select_preferred_weights_file()
+            .expect("repo with both is loadable");
+        assert_eq!(filename, "model.safetensors");
+    }
+
+    #[test]
+    fn weights_selection_still_requires_tokenizer_and_config() {
+        let repo = embedding_repo_with(&["pytorch_model.bin", "config.json"]);
+        assert!(repo.select_preferred_weights_file().is_none());
+    }
+
+    #[test]
+    fn pytorch_bin_repo_is_reported_candle_compatible() {
+        let repo = embedding_repo_with(&["pytorch_model.bin", "tokenizer.json", "config.json"]);
+        let compatibility = repo
+            .to_external_metadata()
+            .embedding_compatibility
+            .expect("embedding repos carry a compatibility verdict");
+        assert!(
+            matches!(
+                compatibility,
+                crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible { .. }
+            ),
+            "pickle-only repo must not be rejected: {compatibility:?}",
+        );
+    }
+
+    #[test]
+    fn repo_without_any_weights_names_both_candidates() {
+        let repo = embedding_repo_with(&["tokenizer.json", "config.json"]);
+        let compatibility = repo
+            .to_external_metadata()
+            .embedding_compatibility
+            .expect("embedding repos carry a compatibility verdict");
+        let reason = match compatibility {
+            crate::features::embedding::compatibility::EmbeddingCompatibility::Incompatible {
+                reason,
+                ..
+            } => reason,
+            other => panic!("expected an incompatible verdict, got {other:?}"),
+        };
+        assert!(reason.contains("model.safetensors"), "{reason}");
+        assert!(reason.contains("pytorch_model.bin"), "{reason}");
+    }
 
     #[test]
     fn test_huggingface_adapter_creation() {

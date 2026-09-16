@@ -25,7 +25,6 @@ pub struct HfTokenStatus {
 pub async fn set_huggingface_token(token: String) -> Result<(), String> {
     let logger = crate::audit::get_audit_logger();
 
-    // Validate token format (hf_xxx...)
     if !token.starts_with("hf_") || token.len() < 35 {
         error!("Invalid HuggingFace token format");
 
@@ -45,7 +44,6 @@ pub async fn set_huggingface_token(token: String) -> Result<(), String> {
         );
     }
 
-    // Store in keyring
     let storage = SecureStorage::new();
     storage.store_api_key(HF_TOKEN_KEY, &token).map_err(|e| {
         error!(error = %e, "Failed to store HuggingFace token");
@@ -149,12 +147,11 @@ mod tests {
         let wrong_prefix = "sk_".to_string() + &"x".repeat(33);
         assert!(set_huggingface_token(wrong_prefix).await.is_err());
 
-        // Clean up
         delete_huggingface_token().await.ok();
     }
 
     #[tokio::test]
-    #[ignore] // Requires OS keyring access, run manually with --ignored
+    #[ignore = "Requires OS keyring access, run manually with --ignored"]
     async fn test_token_lifecycle() {
         let test_token = "hf_".to_string() + &"test".repeat(9);
 
@@ -164,21 +161,16 @@ mod tests {
         let status = get_huggingface_token_status().await.unwrap();
         assert!(!status.is_set);
 
-        // Set token
         set_huggingface_token(test_token.clone()).await.unwrap();
 
-        // Should be set now
         let status = get_huggingface_token_status().await.unwrap();
         assert!(status.is_set);
 
-        // Get token should return it
         let retrieved = get_huggingface_token().await.unwrap();
         assert_eq!(retrieved, Some(test_token));
 
-        // Delete token
         delete_huggingface_token().await.unwrap();
 
-        // Should not be set anymore
         let status = get_huggingface_token_status().await.unwrap();
         assert!(!status.is_set);
     }

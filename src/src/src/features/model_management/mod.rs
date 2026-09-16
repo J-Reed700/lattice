@@ -27,6 +27,7 @@ pub mod cache_adapter;
 pub mod catalog_cache;
 pub mod commands;
 pub mod commands_extra;
+pub mod di;
 pub mod domain;
 pub mod huggingface_adapter;
 pub mod plugin;

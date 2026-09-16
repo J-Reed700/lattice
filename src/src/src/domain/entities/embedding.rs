@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::embedding::Embedding;
-/// use lattice::domain_types::ChunkId;
+/// use lattice::shared::domain_types::ChunkId;
 ///
 /// use lattice::domain::embedding_constants::{
 ///     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_NAME
@@ -70,7 +70,7 @@ impl Embedding {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::embedding::Embedding;
-    /// use lattice::domain_types::ChunkId;
+    /// use lattice::shared::domain_types::ChunkId;
     ///
     /// use lattice::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
     /// let embedding = Embedding::new(
@@ -168,7 +168,7 @@ impl Embedding {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::embedding::Embedding;
-    /// use lattice::domain_types::ChunkId;
+    /// use lattice::shared::domain_types::ChunkId;
     ///
     /// let emb1 = Embedding::new(
     ///     ChunkId::new(),
@@ -205,10 +205,6 @@ impl Embedding {
             .num_seconds()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -254,7 +250,6 @@ mod tests {
 
     #[test]
     fn test_is_stale() {
-        // Create an old embedding
         let old_time = Utc::now() - Duration::days(7);
         let old_embedding =
             Embedding::with_timestamp(ChunkId::new(), "model".to_string(), 384, old_time);
@@ -263,7 +258,6 @@ mod tests {
         assert!(old_embedding.is_stale(86400)); // Stale after 1 day
         assert!(!old_embedding.is_stale(86400 * 30)); // Not stale if threshold is 30 days
 
-        // Create a fresh embedding
         let fresh_embedding = Embedding::new(ChunkId::new(), "model".to_string(), 384);
 
         assert!(!fresh_embedding.is_stale(86400)); // Not stale

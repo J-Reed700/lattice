@@ -135,7 +135,6 @@ pub async fn ask_question_stream<R: Runtime>(
     while let Some(result) = stream.next().await {
         match result {
             Ok(chunk) => {
-                // Emit event to frontend (using llm-stream to match frontend listener)
                 if let Err(e) = app_handle.emit("llm-stream", &chunk) {
                     tracing::warn!("Failed to emit qa stream event: {}", e);
                 }
@@ -207,7 +206,9 @@ pub async fn get_qa_model(container: State<'_, Container>) -> Result<String> {
 /// detailed information about the model's capabilities and current status. Useful
 /// for displaying service health in UI, debugging connectivity issues, and gracefully
 /// handling LLM unavailability.
-pub async fn check_llm_health(container: State<'_, Container>) -> Result<serde_json::Value> {
+pub async fn check_llm_health(
+    container: State<'_, Container>,
+) -> Result<super::dto::LLMHealthStatusDto> {
     // 1. Rate limiting
     container
         .security_context()
@@ -222,12 +223,12 @@ pub async fn check_llm_health(container: State<'_, Container>) -> Result<serde_j
     let is_ready = llm.is_ready().await?;
 
     // 3. Build health response
-    let health_response = serde_json::json!({
-        "available": is_ready,
-        "model": llm.model_name(),
-        "max_context_tokens": llm.max_context_tokens(),
-        "backend": "rust-ddd"
-    });
+    let health_response = super::dto::LLMHealthStatusDto {
+        available: is_ready,
+        model: llm.model_name().to_string(),
+        max_context_tokens: llm.max_context_tokens(),
+        backend: "rust-ddd".to_string(),
+    };
 
     // 4. Audit logging
     let logger = crate::audit::get_audit_logger();

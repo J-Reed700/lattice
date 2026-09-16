@@ -61,7 +61,7 @@
 //! ### Basic Semantic Search
 //!
 //! ```rust,no_run
-//! use lattice::search::USearchVectorIndex;
+//! use lattice::features::search::engine::USearchVectorIndex;
 //!
 //! let index = USearchVectorIndex::new(768, None)?;
 //!
@@ -72,7 +72,7 @@
 //! ### Hybrid Search (Recommended)
 //!
 //! ```rust,no_run
-//! use lattice::search::{
+//! use lattice::features::search::engine::{
 //!     HybridSearchService, SearchMode, SearchConfig
 //! };
 //!
@@ -91,7 +91,7 @@
 //! ### With Query Expansion
 //!
 //! ```rust,no_run
-//! use lattice::search::{QueryExpander, QueryExpansionConfig};
+//! use lattice::features::search::engine::{QueryExpander, QueryExpansionConfig};
 //!
 //! let expander = QueryExpander::new(QueryExpansionConfig::default());
 //! let expanded = expander.expand("ML").await?;
@@ -105,7 +105,7 @@
 //! Search behavior can be tuned via `SearchConfig`:
 //!
 //! ```rust
-//! use lattice::search::{SearchConfig, SearchMode};
+//! use lattice::features::search::engine::{SearchConfig, SearchMode};
 //!
 //! let config = SearchConfig {
 //!     mode: SearchMode::Hybrid,
@@ -137,7 +137,7 @@
 //! Access via `PerformanceMetrics`:
 //!
 //! ```rust,no_run
-//! use lattice::search::Profiler;
+//! use lattice::features::search::engine::Profiler;
 //!
 //! let profiler = Profiler::new();
 //! profiler.start("search");
@@ -152,6 +152,7 @@ pub mod builder;
 pub mod fusion;
 pub mod index;
 pub mod profiler;
+pub mod qwen3_reranker;
 pub mod recency;
 pub mod reranker;
 pub mod service;
@@ -161,6 +162,7 @@ pub mod vector_ops;
 // Directory-backed sub-modules.
 pub mod hybrid;
 pub mod query_expansion;
+pub mod sparse_search;
 pub mod strategies;
 pub mod text_search;
 pub mod vector_search;
@@ -174,9 +176,14 @@ pub use hybrid::{HybridSearchResult, HybridSearchService, SearchConfig, SearchMo
 pub use index::EmbeddingIndex;
 pub use profiler::{PerformanceMetrics, Profiler};
 pub use query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
+pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};
-pub use reranker::{RerankResult, RerankerService};
+pub use reranker::{
+    blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
+    Reranker, RerankerService,
+};
 pub use service::{BruteForceSearch, SearchResult};
+pub use sparse_search::{SparseSearchService, SqliteSparseTermStore};
 pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_vector};
 pub use vector_search::USearchVectorIndex;
 

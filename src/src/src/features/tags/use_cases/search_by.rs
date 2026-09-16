@@ -42,7 +42,6 @@ mod tests {
     async fn test_search_by_tag() {
         let mock_service = Arc::new(MockTagService::new());
 
-        // Apply same tag to multiple documents
         mock_service
             .apply_tags("doc-1", vec!["rust".to_string()])
             .await

@@ -38,7 +38,7 @@ use std::collections::HashMap;
 ///     }),
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ToolDefinition {
     /// Function name (alphanumeric + underscores)
     pub name: String,
@@ -88,12 +88,10 @@ impl ToolDefinition {
             ));
         }
 
-        // Validate description
         if description.is_empty() {
             return Err("Tool description cannot be empty".to_string());
         }
 
-        // Validate schema is an object
         if !input_schema.is_object() {
             return Err("Input schema must be a JSON object".to_string());
         }
@@ -123,7 +121,7 @@ impl ToolDefinition {
 ///     }),
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct FunctionCall {
     /// Unique identifier for this function call
     ///
@@ -175,7 +173,7 @@ impl FunctionCall {
 ///     "Document with ID abc123 not found"
 /// );
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct FunctionResult {
     /// Whether the function executed successfully
     pub success: bool,
@@ -229,7 +227,7 @@ impl FunctionResult {
 /// Function registry statistics
 ///
 /// Tracks registered functions and usage metrics.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 pub struct RegistryStats {
     /// Number of registered functions
     pub total_functions: usize,

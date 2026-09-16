@@ -28,7 +28,7 @@ pub trait IndexingServiceTrait: Send + Sync {
     async fn index_file(
         &self,
         path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()>;
+    ) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Index all files in a folder
     ///
@@ -50,7 +50,7 @@ pub trait IndexingServiceTrait: Send + Sync {
         &self,
         path: std::path::PathBuf,
         recursive: bool,
-    ) -> crate::infrastructure::indexing::error::Result<()>;
+    ) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Reindex an existing file
     ///
@@ -64,7 +64,7 @@ pub trait IndexingServiceTrait: Send + Sync {
     async fn reindex_file(
         &self,
         path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()>;
+    ) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Remove a file from the index
     ///
@@ -78,7 +78,7 @@ pub trait IndexingServiceTrait: Send + Sync {
     async fn remove_file(
         &self,
         path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()>;
+    ) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Cancel all ongoing indexing operations
     ///
@@ -86,7 +86,7 @@ pub trait IndexingServiceTrait: Send + Sync {
     ///
     /// # Returns
     /// Ok(()) if cancellation was successful
-    async fn cancel_all(&self) -> crate::infrastructure::indexing::error::Result<()>;
+    async fn cancel_all(&self) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Get current indexing progress
     ///
@@ -100,7 +100,7 @@ pub trait IndexingServiceTrait: Send + Sync {
     /// let progress = service.get_progress().await;
     /// println!("Progress: {}/{}", progress.processed, progress.total_files);
     /// ```
-    async fn get_progress(&self) -> crate::infrastructure::indexing::progress::IndexProgress;
+    async fn get_progress(&self) -> crate::features::indexing::engine::progress::IndexProgress;
 
     /// Subscribe to progress updates
     ///
@@ -118,16 +118,12 @@ pub trait IndexingServiceTrait: Send + Sync {
     /// ```
     async fn subscribe_progress(
         &self,
-    ) -> tokio::sync::broadcast::Receiver<crate::infrastructure::indexing::progress::IndexProgress>;
+    ) -> tokio::sync::broadcast::Receiver<crate::features::indexing::engine::progress::IndexProgress>;
 
-    async fn pause_indexing(&self) -> crate::infrastructure::indexing::error::Result<()>;
+    async fn pause_indexing(&self) -> crate::features::indexing::engine::error::Result<()>;
 
-    async fn resume_indexing(&self) -> crate::infrastructure::indexing::error::Result<()>;
+    async fn resume_indexing(&self) -> crate::features::indexing::engine::error::Result<()>;
 }
-
-// ============================================================================
-// Mock Indexing Service
-// ============================================================================
 
 /// Mock implementation of IndexingServiceTrait for testing
 ///
@@ -150,42 +146,42 @@ pub trait IndexStorageTrait: Send + Sync {
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::infrastructure::indexing::chunker::TextChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::TextChunk>,
         embeddings: Vec<Vec<f32>>,
-    ) -> crate::infrastructure::indexing::error::Result<String>;
+    ) -> crate::features::indexing::engine::error::Result<String>;
 
     /// Check if a document exists by path.
     async fn document_exists(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<bool>;
+    ) -> crate::features::indexing::engine::error::Result<bool>;
 
     /// Get document record by path.
     async fn get_document_by_path(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<
-        Option<crate::infrastructure::indexing::storage::DocumentRecord>,
+    ) -> crate::features::indexing::engine::error::Result<
+        Option<crate::features::indexing::engine::storage::DocumentRecord>,
     >;
 
     /// Check if document needs reindexing.
     async fn needs_reindex(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<bool>;
+    ) -> crate::features::indexing::engine::error::Result<bool>;
 
     /// Update document status.
     async fn mark_document_status(
         &self,
         path: &Path,
         status: &str,
-    ) -> crate::infrastructure::indexing::error::Result<()>;
+    ) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Remove a document.
     async fn remove_document(
         &self,
         path: &Path,
-    ) -> crate::infrastructure::indexing::error::Result<()>;
+    ) -> crate::features::indexing::engine::error::Result<()>;
 
     /// Store file metadata only.
     async fn store_file_metadata_only(
@@ -193,13 +189,13 @@ pub trait IndexStorageTrait: Send + Sync {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-    ) -> crate::infrastructure::indexing::error::Result<String>;
+    ) -> crate::features::indexing::engine::error::Result<String>;
 
     /// Get count of indexed documents.
-    async fn get_indexed_count(&self) -> crate::infrastructure::indexing::error::Result<i64>;
+    async fn get_indexed_count(&self) -> crate::features::indexing::engine::error::Result<i64>;
 
     /// Get total number of chunks.
-    async fn get_total_chunks(&self) -> crate::infrastructure::indexing::error::Result<i64>;
+    async fn get_total_chunks(&self) -> crate::features::indexing::engine::error::Result<i64>;
 
     /// Store multiple documents in batch.
     async fn batch_store_documents(
@@ -207,19 +203,31 @@ pub trait IndexStorageTrait: Send + Sync {
         documents: Vec<(
             std::path::PathBuf,
             String,
-            Vec<crate::infrastructure::indexing::chunker::TextChunk>,
+            Vec<crate::features::indexing::engine::chunker::TextChunk>,
             Vec<Vec<f32>>,
         )>,
-    ) -> crate::infrastructure::indexing::error::Result<Vec<String>>;
+    ) -> crate::features::indexing::engine::error::Result<Vec<String>>;
 
     /// Store document with contextualized chunks.
+    async fn store_document_with_context_for_model(
+        &self,
+        path: &std::path::Path,
+        mime_type: &str,
+        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
+        embeddings: Vec<Vec<f32>>,
+        _model_identity: &str,
+    ) -> crate::shared::error::Result<String> {
+        self.store_document_with_context(path, mime_type, chunks, embeddings)
+            .await
+    }
+
     async fn store_document_with_context(
         &self,
         path: &Path,
         mime_type: &str,
-        chunks: Vec<crate::infrastructure::indexing::chunker::ContextualizedChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
-    ) -> crate::infrastructure::indexing::error::Result<String>;
+    ) -> crate::features::indexing::engine::error::Result<String>;
 
     /// Store document with context and file ID.
     async fn store_document_with_context_and_file(
@@ -227,7 +235,7 @@ pub trait IndexStorageTrait: Send + Sync {
         path: &Path,
         file_id: &str,
         mime_type: &str,
-        chunks: Vec<crate::infrastructure::indexing::chunker::ContextualizedChunk>,
+        chunks: Vec<crate::features::indexing::engine::chunker::ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
-    ) -> crate::infrastructure::indexing::error::Result<String>;
+    ) -> crate::features::indexing::engine::error::Result<String>;
 }

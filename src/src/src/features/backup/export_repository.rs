@@ -1,8 +1,7 @@
 //! Read models for exporting conversations and journal pages.
 //!
-//! SQL lives here, in a repository, not in the use case (CLAUDE.md rule 2).
-//! These are projections for serialisation, not a second registry for
-//! conversations or notes (rule 4) — nothing writes through them.
+//! These read-only projections keep export SQL out of the use case. They are
+//! not a second registry for conversations or notes.
 //!
 //! Runtime-checked `sqlx::query_as` rather than the `query!` macros, so the
 //! offline `.sqlx` cache stays valid (see `features/corpus_shape/repository.rs`).

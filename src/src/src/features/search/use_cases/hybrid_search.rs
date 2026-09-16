@@ -133,7 +133,7 @@ impl HybridSearchUseCase {
         match mode {
             SearchModeDto::Vector => {
                 let threshold = request.threshold.unwrap_or(0.5);
-                let query_embedding = self.embedding_service.embed_single(&request.query).await?;
+                let query_embedding = self.embedding_service.embed_query(&request.query).await?;
                 let vector_port_dtos = self.vector_search.search_scoped(
                     &query_embedding,
                     limit,
@@ -166,7 +166,7 @@ impl HybridSearchUseCase {
                 bm25_weight,
             } => {
                 // 1. Perform vector search (returns port DTOs)
-                let query_embedding = self.embedding_service.embed_single(&request.query).await?;
+                let query_embedding = self.embedding_service.embed_query(&request.query).await?;
                 let vector_port_dtos = self.vector_search.search_scoped(
                     &query_embedding,
                     limit * 2,
@@ -239,7 +239,7 @@ impl HybridSearchUseCase {
         let query_signal = Self::build_query_signal(query_text, &vector, &text);
 
         let mut scores: HashMap<String, (f32, f32, f32, SearchResult)> = HashMap::new();
-        let rrf_k = 60.0_f32;
+        let rrf_k = crate::shared::constants::DEFAULT_RRF_K;
 
         for (rank, result) in vector.into_iter().enumerate() {
             let weighted_score = vw * (1.0 / (rrf_k + (rank + 1) as f32));
@@ -593,10 +593,6 @@ impl HybridSearchUseCase {
         }
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

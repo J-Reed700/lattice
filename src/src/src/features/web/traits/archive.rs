@@ -4,7 +4,7 @@
 //!
 //! ## Architecture
 //!
-//! Following the "bricks and studs" philosophy:
+//! Archive extraction contracts:
 //! - **Stud (Public Interface)**: WebArchiveServiceTrait defines archive operations
 //! - **Brick (Implementation)**: WebArchiveService manages ~/.lattice/web-archive
 //! - **Regeneratable**: Can swap storage backend (local files, cloud sync, etc.)
@@ -20,7 +20,7 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::features::function_calling::dto::{CleanArticle, UrlPreview};
+use crate::features::function_calling::dto::CleanArticle;
 use crate::shared::error::Result;
 
 /// Trait for web archive operations

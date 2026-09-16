@@ -1,9 +1,9 @@
 use crate::domain::repositories::search_repository::SearchResult;
-use crate::error::AppError;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use sqlx::{Row, SqliteConnection};
+use crate::shared::error::AppError;
+use sqlx::{Connection, Row, SqliteConnection};
 use tracing::{debug, error};
 
 pub async fn search_bm25(
@@ -18,15 +18,16 @@ pub async fn search_bm25(
         sqlx::query(
             "SELECT
                 fts.chunk_id,
-                fts.document_id,
+                c.document_id,
                 bm25(chunks_fts) as score,
                 d.file_name as filename,
                 d.mime_type,
                 d.size_bytes,
                 d.created_at,
                 fts.content
-             FROM text_chunks_fts fts
-             LEFT JOIN documents d ON fts.document_id = d.id
+             FROM chunks_fts fts
+             INNER JOIN text_chunks c ON fts.chunk_id = c.id
+             INNER JOIN documents d ON c.document_id = d.id
              WHERE chunks_fts MATCH ?
              ORDER BY score
              LIMIT ?",
@@ -84,7 +85,7 @@ pub async fn count_searchable_chunks(conn: &mut SqliteConnection) -> Result<i64,
 
 pub async fn optimize_index(conn: &mut SqliteConnection) -> Result<(), AppError> {
     query_with_heavy_timeout(|| async {
-        sqlx::query("INSERT INTO documents_fts(documents_fts) VALUES('optimize')")
+        sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
             .execute(conn)
             .await
     })
@@ -100,9 +101,16 @@ pub async fn optimize_index(conn: &mut SqliteConnection) -> Result<(), AppError>
 
 pub async fn rebuild_index(conn: &mut SqliteConnection) -> Result<(), AppError> {
     query_with_heavy_timeout(|| async {
-        sqlx::query("INSERT INTO documents_fts(documents_fts) VALUES('rebuild')")
-            .execute(conn)
-            .await
+        let mut tx = conn.begin().await?;
+        sqlx::query("DELETE FROM chunks_fts")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO chunks_fts(chunk_id, content) SELECT id, content FROM text_chunks",
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
     })
     .await
     .map_err(|e| {
@@ -112,4 +120,35 @@ pub async fn rebuild_index(conn: &mut SqliteConnection) -> Result<(), AppError> 
 
     debug!("Index rebuild completed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bm25_and_rebuild_use_migrated_chunk_index() {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) VALUES ('doc', '/manual.pdf', 'manual.pdf', 1, CURRENT_TIMESTAMP, 'checksum')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES ('chunk', 'doc', 'patent examination', 0)")
+            .execute(&pool).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let hits = search_bm25(&mut conn, "patent", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].document_id, "doc");
+        assert_eq!(hits[0].filename.as_deref(), Some("manual.pdf"));
+        sqlx::query("DELETE FROM chunks_fts")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert!(search_bm25(&mut conn, "patent", 10)
+            .await
+            .unwrap()
+            .is_empty());
+        rebuild_index(&mut conn).await.unwrap();
+        optimize_index(&mut conn).await.unwrap();
+        assert_eq!(search_bm25(&mut conn, "patent", 10).await.unwrap().len(), 1);
+    }
 }

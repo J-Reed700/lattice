@@ -62,14 +62,12 @@ impl CreateMentionUseCase {
         mention_type: String,
         metadata: Option<String>,
     ) -> Result<MentionDto, AppError> {
-        // Validate input
         if name.trim().is_empty() {
             return Err(AppError::InvalidInput(
                 "Mention name cannot be empty".to_string(),
             ));
         }
 
-        // Validate mention type
         let valid_types = ["person", "organization", "location", "general"];
         if !valid_types.contains(&mention_type.as_str()) {
             return Err(AppError::InvalidInput(format!(

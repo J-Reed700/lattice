@@ -128,7 +128,7 @@ Don't write an ADR for:
 ## Related Documentation
 
 - [Tauri Architecture](../architecture.md)
-- [Development Guide](../../../../CLAUDE.md)
+- [Contribution guide](../../../../../CONTRIBUTING.md)
 - [Backend README](../../../README.md)
 
 ## References

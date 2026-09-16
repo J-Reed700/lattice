@@ -118,15 +118,10 @@ impl ResetSettingsUseCase {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::application::ports::MockSettingsRepository;
-    use crate::features::settings::dto::UpdateSettingsRequestDto;
     use crate::features::settings::use_cases::update::UpdateSettingsUseCase;
     use serde_json::json;
     use std::collections::HashMap;
@@ -144,18 +139,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify settings were changed
         let settings = repository.get_all().await.unwrap();
         assert_eq!(settings.search.max_results, 50);
 
-        // Reset search category
         let reset_use_case = ResetSettingsUseCase::new(repository.clone());
         let request = ResetSettingsRequestDto {
             category: Some(SettingsCategory::Search),
         };
         let result = reset_use_case.execute(request).await.unwrap();
 
-        // Verify reset to default
         assert_eq!(result.search.max_results, 10);
     }
 
@@ -172,14 +164,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset indexing category
         let reset_use_case = ResetSettingsUseCase::new(repository.clone());
         let result = reset_use_case
             .reset_category(SettingsCategory::Indexing)
             .await
             .unwrap();
 
-        // Verify reset to default
         assert_eq!(result.indexing.chunk_size, 800);
     }
 
@@ -204,11 +194,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset all settings
         let reset_use_case = ResetSettingsUseCase::new(repository.clone());
         let result = reset_use_case.reset_all().await.unwrap();
 
-        // Verify all reset to defaults
         assert_eq!(result.search.max_results, 10);
         assert_eq!(result.indexing.chunk_size, 800);
         assert_eq!(result.llm.temperature, 0.7);
@@ -242,7 +230,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify search is reset but indexing is preserved
         assert_eq!(result.search.max_results, 10);
         assert_eq!(result.indexing.chunk_size, 2048); // Still modified
     }

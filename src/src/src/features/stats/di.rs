@@ -16,6 +16,7 @@ use crate::features::tags::entity::Tag as TagEntity;
 use crate::infrastructure::persistence::repositories::{
     ChunkRepositoryImpl, DocumentRepositoryImpl, TagRepositoryImpl,
 };
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct StatsDi {
@@ -42,5 +43,17 @@ pub fn build(db_pool: SqlitePool) -> StatsDi {
             database_stats,
         )),
         get_corpus_shape_use_case: Arc::new(GetCorpusShapeUseCase::new(corpus_shape_repo)),
+    }
+}
+
+/// Stats' registrar surface on `Container`.
+impl Container {
+    // Stats (from SystemModule)
+    pub fn get_system_stats_use_case(&self) -> Arc<GetSystemStatsUseCase> {
+        Arc::clone(self.system.get_system_stats_use_case())
+    }
+
+    pub fn get_corpus_shape_use_case(&self) -> Arc<GetCorpusShapeUseCase> {
+        Arc::clone(self.system.get_corpus_shape_use_case())
     }
 }

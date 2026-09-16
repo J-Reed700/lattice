@@ -1,5 +1,5 @@
-use crate::infrastructure::indexing::error::{IndexingError, Result};
-use crate::infrastructure::indexing::metadata_extractor::DocumentMetadata;
+use crate::features::indexing::engine::error::{IndexingError, Result};
+use crate::features::indexing::engine::metadata_extractor::DocumentMetadata;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
@@ -76,7 +76,15 @@ impl SemanticChunker {
     /// Returns an error if the configuration is invalid (e.g., overlap >= max_tokens).
     pub fn new(tokenizer: Arc<Tokenizer>, config: ChunkerConfig) -> Result<Self> {
         config.validate()?;
-        Ok(Self { tokenizer, config })
+        let mut source_tokenizer = (*tokenizer).clone();
+        source_tokenizer
+            .with_truncation(None)
+            .map_err(|e| crate::shared::error::AppError::InvalidConfig(e.to_string()))?;
+        source_tokenizer.with_padding(None);
+        Ok(Self {
+            tokenizer: Arc::new(source_tokenizer),
+            config,
+        })
     }
 
     pub fn chunk_text(&self, text: &str) -> Result<Vec<TextChunk>> {
@@ -275,19 +283,20 @@ impl SemanticChunker {
         Ok(contextualized)
     }
 
-    fn build_context_prefix(&self, metadata: &DocumentMetadata, chunk_index: usize) -> String {
-        let mut parts = vec![format!("Document: {}", metadata.title)];
-
-        if let Some(page) = metadata.page_number {
-            parts.push(format!("Page: {}", page));
-        }
-
-        if let Some(section) = &metadata.section {
-            parts.push(format!("Section: {}", section));
-        }
-
-        format!("[{}]", parts.join(" | "))
+    fn build_context_prefix(&self, metadata: &DocumentMetadata, _chunk_index: usize) -> String {
+        context_prefix(metadata)
     }
+}
+
+pub fn context_prefix(metadata: &DocumentMetadata) -> String {
+    let mut parts = vec![format!("Document: {}", metadata.title)];
+    if let Some(page) = metadata.page_number {
+        parts.push(format!("Page: {page}"));
+    }
+    if let Some(section) = &metadata.section {
+        parts.push(format!("Section: {section}"));
+    }
+    format!("[{}]", parts.join(" | "))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,7 +327,6 @@ mod tests {
         use tokenizers::models::bpe::BPE;
         use tokenizers::pre_tokenizers::whitespace::Whitespace;
 
-        // Create a BPE tokenizer with a basic vocabulary
         let mut vocab = HashMap::new();
         for c in b'a'..=b'z' {
             vocab.insert(String::from_utf8(vec![c]).unwrap(), c as u32);

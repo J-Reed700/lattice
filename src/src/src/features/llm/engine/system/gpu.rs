@@ -159,7 +159,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_gpu() {
-        // Should not panic, may return None on systems without GPU
         let _gpu_info = detect_gpu().await;
     }
 }

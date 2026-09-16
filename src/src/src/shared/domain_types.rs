@@ -10,7 +10,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use lattice::domain_types::*;
+//! use lattice::shared::domain_types::*;
 //!
 //! // Type-safe IDs prevent mistakes
 //! let doc_id = DocumentId::new();
@@ -42,10 +42,6 @@ pub enum DomainTypeError {
     ValueTooLong(usize, usize),
 }
 
-// ============================================================================
-// Document ID
-// ============================================================================
-
 /// Strongly-typed document identifier
 ///
 /// Prevents accidental mixing of document IDs with other entity IDs.
@@ -53,7 +49,7 @@ pub enum DomainTypeError {
 /// # Examples
 ///
 /// ```rust
-/// use lattice::domain_types::DocumentId;
+/// use lattice::shared::domain_types::DocumentId;
 ///
 /// let id = DocumentId::new();
 /// let id_str = id.to_string();
@@ -122,10 +118,6 @@ impl From<DocumentId> for String {
     }
 }
 
-// ============================================================================
-// Tag ID
-// ============================================================================
-
 /// Strongly-typed tag identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
 #[serde(transparent)]
@@ -185,10 +177,6 @@ impl From<TagId> for String {
     }
 }
 
-// ============================================================================
-// Chunk ID
-// ============================================================================
-
 /// Strongly-typed chunk identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
 #[serde(transparent)]
@@ -245,10 +233,6 @@ impl From<ChunkId> for String {
         id.0
     }
 }
-
-// ============================================================================
-// Mention ID
-// ============================================================================
 
 /// Strongly-typed mention identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
@@ -307,10 +291,6 @@ impl From<MentionId> for String {
     }
 }
 
-// ============================================================================
-// Conversation ID
-// ============================================================================
-
 /// Strongly-typed conversation identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
 #[serde(transparent)]
@@ -368,10 +348,6 @@ impl From<ConversationId> for String {
     }
 }
 
-// ============================================================================
-// Tag Name (validated)
-// ============================================================================
-
 const MAX_TAG_NAME_LENGTH: usize = 50;
 
 /// Validated tag name with length constraints
@@ -424,10 +400,6 @@ impl FromStr for TagName {
         Self::new(s.to_string())
     }
 }
-
-// ============================================================================
-// File Path (validated)
-// ============================================================================
 
 use std::path::{Path, PathBuf};
 
@@ -490,10 +462,6 @@ impl From<ValidatedFilePath> for PathBuf {
         vfp.0
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -563,17 +531,9 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========================================================================
-    // Property-Based Tests
-    // ========================================================================
-
     mod property_tests {
         use super::*;
         use proptest::prelude::*;
-
-        // ====================================================================
-        // Test Strategies
-        // ====================================================================
 
         /// Generate valid non-empty strings
         fn non_empty_string() -> impl Strategy<Value = String> {
@@ -592,7 +552,6 @@ mod tests {
 
         /// Generate valid file paths
         fn valid_file_path() -> impl Strategy<Value = String> {
-            // Generate paths that don't contain ".." or other path traversal patterns
             prop::collection::vec("[a-zA-Z0-9_-]{1,20}", 1..5)
                 .prop_map(|components| format!("/{}", components.join("/")))
         }
@@ -601,10 +560,6 @@ mod tests {
         fn valid_uuid() -> impl Strategy<Value = String> {
             Just(()).prop_map(|_| Uuid::new_v4().to_string())
         }
-
-        // ====================================================================
-        // DocumentId Properties
-        // ====================================================================
 
         proptest! {
             /// Property: DocumentId roundtrip through string conversion
@@ -674,10 +629,6 @@ mod tests {
             }
         }
 
-        // ====================================================================
-        // TagId Properties
-        // ====================================================================
-
         proptest! {
             /// Property: TagId roundtrip through string conversion
             #[test]
@@ -711,10 +662,6 @@ mod tests {
             }
         }
 
-        // ====================================================================
-        // ChunkId Properties
-        // ====================================================================
-
         proptest! {
             /// Property: ChunkId roundtrip through string conversion
             #[test]
@@ -739,10 +686,6 @@ mod tests {
             }
         }
 
-        // ====================================================================
-        // MentionId Properties
-        // ====================================================================
-
         proptest! {
             /// Property: MentionId roundtrip through string conversion
             #[test]
@@ -766,10 +709,6 @@ mod tests {
                 prop_assert_ne!(id1, id2);
             }
         }
-
-        // ====================================================================
-        // TagName Properties
-        // ====================================================================
 
         proptest! {
             /// Property: Valid tag names are accepted
@@ -852,10 +791,6 @@ mod tests {
             }
         }
 
-        // ====================================================================
-        // ValidatedFilePath Properties
-        // ====================================================================
-
         proptest! {
             /// Property: Valid file paths are accepted
             #[test]
@@ -914,9 +849,7 @@ mod tests {
             }
         }
 
-        // ====================================================================
         // Type Safety Properties
-        // ====================================================================
 
         proptest! {
             /// Property: Different ID types are not interchangeable
@@ -944,16 +877,11 @@ mod tests {
                 takes_chunk(&chunk_id);
                 takes_mention(&mention_id);
 
-                // Verify they're actually different as strings
                 prop_assert_ne!(doc_id.as_str(), tag_id.as_str());
                 prop_assert_ne!(doc_id.as_str(), chunk_id.as_str());
                 prop_assert_ne!(tag_id.as_str(), chunk_id.as_str());
             }
         }
-
-        // ====================================================================
-        // Hash and Equality Properties
-        // ====================================================================
 
         proptest! {
             /// Property: IDs with same string are equal
@@ -1004,10 +932,6 @@ mod tests {
             }
         }
 
-        // ====================================================================
-        // Serialization Properties
-        // ====================================================================
-
         proptest! {
             /// Property: DocumentId serialization roundtrip
             #[test]
@@ -1042,10 +966,6 @@ mod tests {
                 prop_assert_eq!(validated, deserialized);
             }
         }
-
-        // ====================================================================
-        // Invariant Properties
-        // ====================================================================
 
         proptest! {
             /// Property: Once created, IDs are immutable

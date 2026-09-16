@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use crate::features::search::engine::bm25::BM25Search;
+use crate::features::search::engine::hybrid::HybridSearchService;
+use crate::features::search::engine::reranker::Reranker;
 use crate::features::search::{BM25SearchTrait, SearchServiceTrait};
-use crate::infrastructure::search::bm25::BM25Search;
-use crate::infrastructure::search::hybrid::HybridSearchService;
-use crate::infrastructure::search::reranker::RerankerService;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -19,7 +19,7 @@ pub struct HybridSearchBuilder<State = Uninitialized> {
     pool: Option<SqlitePool>,
     enrichment: Option<Arc<dyn SearchEnrichmentServiceTrait>>,
     rrf_k: f32,
-    reranker: Option<RerankerService>,
+    reranker: Option<Arc<dyn Reranker>>,
     _state: PhantomData<State>,
 }
 
@@ -30,7 +30,7 @@ impl HybridSearchBuilder<Uninitialized> {
             bm25_search: None,
             pool: None,
             enrichment: None,
-            rrf_k: 60.0,
+            rrf_k: crate::shared::constants::DEFAULT_RRF_K,
             reranker: None,
             _state: PhantomData,
         }
@@ -88,7 +88,7 @@ impl<State> HybridSearchBuilder<State> {
         self
     }
 
-    pub fn reranker(mut self, reranker: RerankerService) -> Self {
+    pub fn reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
         self.reranker = Some(reranker);
         self
     }

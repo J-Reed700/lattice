@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Migration Validation Test Suite
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -52,10 +50,6 @@ use lattice::interfaces::di::Container as ServiceContainer;
 use lattice::shared::error::Result;
 use lattice::infrastructure::persistence::repositories::TagRepository;
 use tauri::State;
-
-// ============================================================================
-// Migration Validation Checklist
-// ============================================================================
 
 /// Comprehensive migration validation
 ///
@@ -108,24 +102,17 @@ async fn test_migration_validation_comprehensive() {
     println!("🎉 Migration Validation PASSED - Ready for Production!");
 }
 
-// ============================================================================
-// Validation Helper Functions
-// ============================================================================
-
 async fn validate_service_injection(container: &ServiceContainer) {
-    // Test infrastructure services
     let _db = container.db_pool();
     let _security = container.security_context();
     let _metrics = container.metrics();
 
-    // Test core services
     let embedding = container.embedding_service();
     assert!(embedding.embed_single("test").await.is_ok());
 
     let search = container.search_service();
     assert_eq!(search.search(&vec![0.1; 384], 10).len(), 0);
 
-    // Test domain services
     let tags = container.tag_service();
     assert!(tags.get_or_create("test", "#fff").await.is_ok());
 
@@ -138,7 +125,6 @@ async fn validate_service_injection(container: &ServiceContainer) {
 }
 
 async fn validate_command_compatibility(container: &ServiceContainer) {
-    // Create test document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -151,11 +137,9 @@ async fn validate_command_compatibility(container: &ServiceContainer) {
 
     let state = State::from(container);
 
-    // Test health command
     let health = health_check(state.clone()).await;
     assert!(health.is_ok(), "Health check command should work");
 
-    // Test tag commands
     let tag = create_tag("rust".to_string(), None, state.clone()).await;
     assert!(tag.is_ok(), "Create tag command should work");
 
@@ -177,7 +161,6 @@ async fn validate_command_compatibility(container: &ServiceContainer) {
 async fn validate_business_logic(container: &ServiceContainer) {
     use lattice::services::tag_service::TagService;
 
-    // Test tag merging logic
     let existing = vec!["rust".to_string(), "programming".to_string()];
     let generated = vec!["RUST".to_string(), "tutorial".to_string()];
     let merged = TagService::merge_tags(existing, generated);
@@ -187,7 +170,6 @@ async fn validate_business_logic(container: &ServiceContainer) {
     assert!(merged.contains(&"programming".to_string()));
     assert!(merged.contains(&"tutorial".to_string()));
 
-    // Test tag normalization
     let state = State::from(container);
     let tag = create_tag("  RUST Programming  ".to_string(), None, state)
         .await
@@ -198,7 +180,6 @@ async fn validate_business_logic(container: &ServiceContainer) {
 async fn validate_data_consistency(container: &ServiceContainer) {
     let tag_repo = TagRepository::new(container.db_pool().clone());
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -209,10 +190,8 @@ async fn validate_data_consistency(container: &ServiceContainer) {
     .await
     .unwrap();
 
-    // Create tag via repository
     let tag1 = tag_repo.create("repo-tag", None).await.unwrap();
 
-    // Create tag via command
     let state = State::from(container);
     let tag2 = create_tag("cmd-tag".to_string(), None, state.clone())
         .await
@@ -230,7 +209,6 @@ async fn validate_data_consistency(container: &ServiceContainer) {
 }
 
 async fn validate_performance(container: &ServiceContainer) {
-    // Test container access performance
     let start = std::time::Instant::now();
     for _ in 0..100 {
         let _ = container.embedding_service();
@@ -243,7 +221,6 @@ async fn validate_performance(container: &ServiceContainer) {
         "Service access should be fast"
     );
 
-    // Test command performance
     let state = State::from(container);
     let start = std::time::Instant::now();
     let _ = health_check(state).await.unwrap();
@@ -257,14 +234,12 @@ async fn validate_performance(container: &ServiceContainer) {
 async fn validate_error_handling(container: &ServiceContainer) {
     let state = State::from(container);
 
-    // Test handling of non-existent resources
     let result = get_document_tags("nonexistent".to_string(), state.clone()).await;
     assert!(
         result.is_ok() || result.is_err(),
         "Should handle missing resources gracefully"
     );
 
-    // Test handling of invalid operations
     let result = remove_tag_from_document(
         "nonexistent".to_string(),
         "nonexistent".to_string(),
@@ -278,7 +253,6 @@ async fn validate_error_handling(container: &ServiceContainer) {
 }
 
 async fn validate_concurrency(container: &ServiceContainer) {
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -313,10 +287,6 @@ async fn validate_concurrency(container: &ServiceContainer) {
         assert!(result.is_ok(), "Concurrent operations should succeed");
     }
 }
-
-// ============================================================================
-// Individual Validation Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_validation_container_initialization() {
@@ -381,10 +351,6 @@ async fn test_validation_concurrency() {
     validate_concurrency(&container).await;
     println!("✅ Concurrency validated");
 }
-
-// ============================================================================
-// Migration Readiness Checklist
-// ============================================================================
 
 #[tokio::test]
 async fn test_migration_readiness_checklist() {
@@ -495,15 +461,10 @@ async fn test_migration_readiness_checklist() {
     assert_eq!(passed, total, "All migration checks must pass");
 }
 
-// ============================================================================
-// Regression Prevention Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_no_regression_in_existing_functionality() {
     let container = create_test_container().await.unwrap();
 
-    // Test that all existing functionality still works
     assert_container_initialized(&container).await;
 
     let state = State::from(&container);
@@ -523,7 +484,6 @@ async fn test_migration_maintains_api_compatibility() {
     let container = create_test_container().await.unwrap();
     let state = State::from(&container);
 
-    // Verify command signatures haven't changed
     let _health: Result<HealthStatus, _> = health_check(state.clone()).await;
     let _tag: Result<lattice::models::tag::Tag, _> =
         create_tag("test".to_string(), None, state.clone()).await;

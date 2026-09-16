@@ -1,8 +1,7 @@
-//! File Plugin Commands (Phase 2: Wired to Implementation)
+//! File plugin commands.
 //!
 //! Connects plugin stubs to actual implementations in `interfaces::commands`.
 
-use crate::application::ports::DocumentRepositoryPort;
 use crate::features::file::commands as file_commands;
 use crate::features::file::dto::UpdateFileMetadataRequestDto;
 use crate::features::indexing::commands as indexing_commands;
@@ -180,11 +179,9 @@ pub async fn delete_file_index(
         // 2. Delete using implementation (now returns ApiResult)
         let result = indexing_commands::delete_document_impl(&container, doc_id).await;
 
-        // Check if successful
         if result.is_ok() {
             Ok(())
         } else {
-            // Extract error message from ApiResult
             match result {
                 crate::shared::api_result::ApiResult::Error { error, .. } => Err(ApiError {
                     code: ErrorCode::InternalError,
@@ -284,9 +281,7 @@ pub struct CorpusShapeDto {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_corpus_shape(
-    container: State<'_, Container>,
-) -> Result<CorpusShapeDto, ApiError> {
+pub async fn get_corpus_shape(container: State<'_, Container>) -> Result<CorpusShapeDto, ApiError> {
     let shape = container
         .get_corpus_shape_use_case()
         .execute()

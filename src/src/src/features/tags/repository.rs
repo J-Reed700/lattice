@@ -11,14 +11,12 @@
 //!
 //! # Migration Notes
 //!
-//! - Phase 1: Created domain entities and mappers
-//! - Phase 2: Implemented `RepositoryPort<TagEntity>` (current)
 //! - DB models are now internal and NOT exported
 
 use crate::application::ports::{Filter, RepositoryPort};
-use crate::domain_types::TagName;
 use crate::features::tags::entity::Tag as TagEntity;
 use crate::infrastructure::persistence::mappers::{TagMapper, TagModel};
+use crate::shared::domain_types::TagName;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
@@ -129,13 +127,11 @@ impl TagRepository {
             return Ok(tag);
         }
 
-        // Create new tag
         let tag_name = TagName::new(name.to_string())
             .map_err(|e| AppError::InvalidData(format!("Invalid tag name: {}", e)))?;
         let tag_color = color.unwrap_or("#6366f1");
         let entity = TagEntity::new(tag_name, tag_color.to_string());
 
-        // Save to database
         self.save(&entity).await?;
 
         Ok(entity)
@@ -341,13 +337,11 @@ impl TagRepository {
         name: Option<&str>,
         color: Option<&str>,
     ) -> Result<TagEntity> {
-        // Get existing tag
         let mut tag = self
             .find_by_id(tag_id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Tag with id {} not found", tag_id)))?;
 
-        // Update fields if provided
         if let Some(new_name) = name {
             let tag_name = TagName::new(new_name.to_string())
                 .map_err(|e| AppError::InvalidData(format!("Invalid tag name: {}", e)))?;
@@ -358,7 +352,6 @@ impl TagRepository {
             tag = tag.with_color(new_color.to_string());
         }
 
-        // Save updated tag
         self.save(&tag).await?;
 
         Ok(tag)
@@ -388,9 +381,7 @@ impl TagRepository {
         let mut tags = Vec::new();
 
         for name in tag_names {
-            // Get or create tag
             let tag = self.get_or_create(&name, None).await?;
-            // Add to document
             let tag_id = tag.id();
             self.add_tag_to_document(document_id, tag_id.as_str())
                 .await?;
@@ -738,7 +729,6 @@ impl RepositoryPort<TagEntity> for TagRepository {
     }
 
     async fn save(&self, entity: &TagEntity) -> Result<()> {
-        // Convert entity to DB model
         let model = TagMapper::to_model(entity);
 
         sqlx::query!(
@@ -854,10 +844,6 @@ impl RepositoryPort<TagEntity> for TagRepository {
     }
 }
 
-// ============================================================================
-// Service Trait Implementation
-// ============================================================================
-
 #[async_trait]
 impl crate::features::tags::TagRepositoryTrait for TagRepository {
     async fn create_tag(
@@ -865,7 +851,6 @@ impl crate::features::tags::TagRepositoryTrait for TagRepository {
         name: &str,
         color: Option<&str>,
     ) -> Result<crate::features::tags::entity::Tag> {
-        use crate::shared::domain_types::{TagId, TagName};
         let entity = self.get_or_create(name, color).await?;
         Ok(crate::features::tags::entity::Tag::with_id(
             entity.id().clone(),
@@ -1091,7 +1076,6 @@ mod tests {
 
         let all_tags = repo.find_all().await.unwrap();
         assert_eq!(all_tags.len(), 2);
-        // Should be ordered by name
         assert_eq!(all_tags[0].name().as_str(), "python");
         assert_eq!(all_tags[1].name().as_str(), "rust");
     }
@@ -1207,7 +1191,6 @@ mod tests {
 
         repo.save_batch(&entities).await.unwrap();
 
-        // Filter by name pattern
         let filter = TagFilter {
             name_pattern: Some("ru".to_string()),
             limit: None,

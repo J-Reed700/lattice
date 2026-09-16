@@ -39,13 +39,11 @@ impl CreateConversationUseCase {
         &self,
         request: CreateConversationRequestDto,
     ) -> Result<CreateConversationResponseDto> {
-        // Create the conversation via service
         let conversation = self
             .conversation_service
             .create_conversation(request.title, request.model_name, request.system_prompt)
             .await?;
 
-        // Convert to DTO
         let conversation_dto = ConversationDtoMapper::to_dto(&conversation);
 
         Ok(CreateConversationResponseDto {
@@ -81,6 +79,19 @@ mod tests {
 
     #[async_trait]
     impl ConversationServiceTrait for MockConversationService {
+        async fn fail_pending_turn(&self, _: &str) -> Result<()> {
+            panic!("Turn failure is not part of create-conversation tests")
+        }
+        async fn complete_turn(
+            &self,
+            _: &str,
+            _: &str,
+            _: String,
+            _: i64,
+            _: Option<String>,
+        ) -> Result<crate::domain::conversation::ConversationMessage> {
+            panic!("Turn finalization is not part of create-conversation tests")
+        }
         async fn create_conversation(
             &self,
             title: String,

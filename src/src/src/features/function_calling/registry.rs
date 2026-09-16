@@ -100,7 +100,6 @@ impl FunctionRegistryTrait for FunctionRegistry {
     fn register(&self, tool: ToolDefinition) -> Result<()> {
         let mut tools = self.tools.write();
 
-        // Check for duplicates
         if tools.contains_key(&tool.name) {
             return Err(AppError::InvalidData(format!(
                 "Function '{}' is already registered",
@@ -108,10 +107,8 @@ impl FunctionRegistryTrait for FunctionRegistry {
             )));
         }
 
-        // Insert tool
         tools.insert(tool.name.clone(), tool);
 
-        // Update stats
         let mut stats = self.stats.write();
         stats.total_functions = tools.len();
 
@@ -149,11 +146,9 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     let registry = FunctionRegistry::new();
 
-    // Phase 1: Core Retrieval Functions
-
     registry.register(ToolDefinition::new(
         "semantic_search",
-        "Search the user's document lattice using semantic similarity. Use this when the user asks to find, search, or retrieve information from their documents.",
+        "Search the user's document lattice using semantic, keyword, or hybrid ranking. Returns a ranked subset, not a complete inventory. Scores measure query relevance within the selected algorithm; they are not confidence probabilities or diagnostics of embedding quality. Verify claims from the returned text.",
         json!({
             "type": "object",
             "properties": {
@@ -203,7 +198,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     registry.register(ToolDefinition::new(
         "get_document",
-        "Retrieve content from a specific document by ID. Use this after semantic_search to inspect document text, and request additional pages for large documents.",
+        "Retrieve content from a specific document by ID. Use this after semantic_search to inspect document text, and request additional pages for large documents. page and total_pages describe internal text pagination, not the original PDF's page count or printed page numbers.",
         json!({
             "type": "object",
             "properties": {
@@ -296,8 +291,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
         })
     )?)?;
 
-    // Phase 2: Web Integration Functions
-
     registry.register(ToolDefinition::new(
         "web_search",
         "Search the web with pagination and provider enrichment when information isn't in the lattice. Supports DuckDuckGo, Bing, and optional Wikipedia blending.",
@@ -373,8 +366,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
             "required": ["url"]
         })
     )?)?;
-
-    // Phase 2.5: Wikipedia Functions (keyless enrichment)
 
     registry.register(ToolDefinition::new(
         "wiki_search",
@@ -513,10 +504,8 @@ mod tests {
         let registry = init_function_registry().unwrap();
         let tools = registry.list_tools();
 
-        // Should have all 7 built-in functions
         assert_eq!(tools.len(), 7);
 
-        // Verify each function exists
         assert!(registry.get_tool("semantic_search").is_some());
         assert!(registry.get_tool("get_document").is_some());
         assert!(registry.get_tool("list_documents").is_some());

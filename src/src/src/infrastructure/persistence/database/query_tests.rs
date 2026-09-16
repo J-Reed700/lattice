@@ -14,10 +14,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::timeout;
 
-    // ============================================================================
-    // Helper Functions
-    // ============================================================================
-
     async fn setup_test_db() -> (SqlitePool, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -26,7 +22,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Create test schema
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS documents (
@@ -53,15 +48,10 @@ mod tests {
         (pool, temp_dir)
     }
 
-    // ============================================================================
-    // Query Timeout Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_query_timeout_enforcement() {
         let (pool, _temp_dir) = setup_test_db().await;
 
-        // Insert test data
         for i in 0..1000 {
             sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
                 .bind(format!("doc_{}", i))
@@ -97,10 +87,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ============================================================================
-    // Foreign Key Constraint Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_foreign_key_constraint_enforced() {
         let (pool, _temp_dir) = setup_test_db().await;
@@ -121,7 +107,6 @@ mod tests {
         .execute(&pool)
         .await;
 
-        // Should fail due to foreign key constraint
         assert!(result.is_err(), "Foreign key constraint should be enforced");
     }
 
@@ -135,7 +120,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Insert document
         sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
             .bind("doc_1")
             .bind("Test Document")
@@ -143,7 +127,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Insert chunks
         for i in 0..5 {
             sqlx::query(
                 "INSERT INTO text_chunks (document_id, content, chunk_index) VALUES (?, ?, ?)",
@@ -156,7 +139,6 @@ mod tests {
             .unwrap();
         }
 
-        // Verify chunks exist
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE document_id = ?")
                 .bind("doc_1")
@@ -165,14 +147,12 @@ mod tests {
                 .unwrap();
         assert_eq!(count, 5);
 
-        // Delete document
         sqlx::query("DELETE FROM documents WHERE id = ?")
             .bind("doc_1")
             .execute(&pool)
             .await
             .unwrap();
 
-        // Verify chunks were cascaded
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE document_id = ?")
                 .bind("doc_1")
@@ -182,18 +162,12 @@ mod tests {
         assert_eq!(count, 0, "Chunks should be deleted via CASCADE");
     }
 
-    // ============================================================================
-    // Transaction Rollback Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_transaction_rollback_on_error() {
         let (pool, _temp_dir) = setup_test_db().await;
 
-        // Start transaction
         let mut tx = pool.begin().await.unwrap();
 
-        // Insert a document
         sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
             .bind("doc_1")
             .bind("Test")
@@ -201,7 +175,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify it exists in transaction
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)")
                 .bind("doc_1")
@@ -227,10 +200,8 @@ mod tests {
     async fn test_transaction_commit() {
         let (pool, _temp_dir) = setup_test_db().await;
 
-        // Start transaction
         let mut tx = pool.begin().await.unwrap();
 
-        // Insert multiple documents
         for i in 0..10 {
             sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
                 .bind(format!("doc_{}", i))
@@ -243,7 +214,6 @@ mod tests {
         // Commit
         tx.commit().await.unwrap();
 
-        // Verify all exist
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
@@ -251,15 +221,10 @@ mod tests {
         assert_eq!(count, 10);
     }
 
-    // ============================================================================
-    // Concurrent Query Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_concurrent_reads() {
         let (pool, _temp_dir) = setup_test_db().await;
 
-        // Insert test data
         for i in 0..100 {
             sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
                 .bind(format!("doc_{}", i))
@@ -315,7 +280,6 @@ mod tests {
             handle.await.unwrap();
         }
 
-        // Verify all records were inserted
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
@@ -323,15 +287,10 @@ mod tests {
         assert_eq!(count, 100);
     }
 
-    // ============================================================================
-    // Index Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_index_usage() {
         let (pool, _temp_dir) = setup_test_db().await;
 
-        // Insert documents and chunks
         sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
             .bind("doc_1")
             .bind("Test")

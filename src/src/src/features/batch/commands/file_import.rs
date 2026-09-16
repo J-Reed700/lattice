@@ -1,9 +1,5 @@
-//! Batch File Import Commands
-//!
-//! Thin command layer for batch file import operations.
-//! Follows CLAUDE.md command pattern: validation → delegation → audit logging.
+//! Thin command layer for batch file imports: validate, delegate, and log.
 
-use crate::application::ports::EmbeddingPort;
 use crate::features::batch::dto::StartBatchFileImportRequestDto;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
@@ -59,7 +55,18 @@ use tauri::State;
 /// ```
 pub async fn start_batch_file_import(
     file_paths: Vec<String>,
+    space_id: Option<String>,
+    indexing: Option<crate::features::batch::dto::FileIndexingOptionsDto>,
     container: State<'_, Container>,
+) -> Result<String, AppError> {
+    start_batch_file_import_impl(file_paths, space_id, indexing, container.inner()).await
+}
+
+pub async fn start_batch_file_import_impl(
+    file_paths: Vec<String>,
+    space_id: Option<String>,
+    indexing: Option<crate::features::batch::dto::FileIndexingOptionsDto>,
+    container: &Container,
 ) -> Result<String, AppError> {
     // 1. Input validation - batch size
     if file_paths.is_empty() {
@@ -101,7 +108,11 @@ pub async fn start_batch_file_import(
     // 4. Start batch import (delegate to use case)
     let use_case = container.start_batch_file_import_use_case();
     let result = use_case
-        .execute(StartBatchFileImportRequestDto { file_paths })
+        .execute(StartBatchFileImportRequestDto {
+            file_paths,
+            space_id,
+            indexing,
+        })
         .await
         .map(|response| response.job_id);
 
@@ -141,16 +152,9 @@ pub async fn start_batch_file_import(
     result
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::batch::services::file_import_trait::MockBatchFileImportService;
-    use crate::features::batch::BatchFileImportServiceTrait;
-    use std::sync::Arc;
 
     // Note: Full integration tests require Container setup.
     // These tests verify the command structure and validation logic.

@@ -62,10 +62,6 @@ use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Conversation Aggregate Root
-// ============================================================================
-
 /// Conversation aggregate root.
 ///
 /// Encapsulates a conversation with its messages and document context.
@@ -306,7 +302,6 @@ impl ConversationAggregate {
             return Ok(());
         }
 
-        // Calculate cumulative tokens from most recent to oldest
         let mut cumulative_tokens = 0;
         let mut keep_from_index = self.messages.len();
 
@@ -419,10 +414,6 @@ impl ConversationAggregate {
     }
 }
 
-// ============================================================================
-// Conversation Entity
-// ============================================================================
-
 /// Conversation entity.
 ///
 /// Core conversation metadata without messages.
@@ -438,10 +429,6 @@ pub struct Conversation {
     pub message_count: i64,
     pub total_tokens: i64,
 }
-
-// ============================================================================
-// Message Value Object
-// ============================================================================
 
 /// Conversation message.
 ///
@@ -552,10 +539,6 @@ impl std::str::FromStr for MessageRole {
     }
 }
 
-// ============================================================================
-// Document Reference
-// ============================================================================
-
 /// Reference to a document in the conversation context.
 ///
 /// Tracks which documents/chunks are relevant to this conversation.
@@ -567,10 +550,6 @@ pub struct DocumentReference {
     pub relevance_score: Option<f32>,
     pub added_at: DateTime<Utc>,
 }
-
-// ============================================================================
-// LLM Message Format
-// ============================================================================
 
 /// Message format for LLM API calls.
 ///

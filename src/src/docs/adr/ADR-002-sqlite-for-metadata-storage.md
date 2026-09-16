@@ -155,7 +155,7 @@ tx.commit().await?;
 - Superior concurrency (MVCC)
 - Built-in vector search via pgvector extension
 - Advanced features (partitioning, replication, full-text search)
-- Used by backend service (`src/api`)
+- Formerly also used by the Python backend service (`src/api`, removed 2026-09-16)
 
 **Cons**:
 - **Rejected**: Requires separate server process (not local-first)
@@ -277,12 +277,13 @@ sqlx migrate add create_documents_table
 sqlx migrate run --database-url sqlite:lattice.db
 ```
 
-Migration files in `src-tauri/migrations/`:
+Migration files in `src/migrations/`. Lattice is pre-release with no legacy
+database support, so the historical chain was squashed into one canonical
+schema migration; existing development databases are deleted rather than
+upgraded:
 ```
 migrations/
-├── 20250115_001_initial_schema.sql
-├── 20250115_002_add_search_history.sql
-└── 20250115_003_add_vector_index.sql
+└── 20260916000000_init_schema.sql
 ```
 
 ### Backup Strategy
@@ -312,7 +313,7 @@ PRAGMA integrity_check;
 
 If we need to scale beyond SQLite's limitations:
 
-1. **Multi-device sync**: Add separate sync service with PostgreSQL backend (already implemented in `src/api`)
+1. **Multi-device sync**: Add separate sync service with PostgreSQL backend (scaffolded in `api-rust`; the earlier Python implementation was removed)
 2. **Sharding**: Split database by document collections or time ranges
 3. **Hybrid approach**: Keep metadata in SQLite, move vectors to specialized store
 4. **Read replicas**: Use SQLite replication tools for read scaling

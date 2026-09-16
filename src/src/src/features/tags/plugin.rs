@@ -4,8 +4,7 @@
 
 use crate::features::tags::commands as tag_commands_full;
 use crate::features::tags::dto::{
-    ApplyTagsRequestDto, ApplyTagsResponseDto, GenerateTagsRequestDto, GenerateTagsResponseDto,
-    RemoveTagRequestDto, TagDto, TagWithCountDto,
+    ApplyTagsRequestDto, GenerateTagsRequestDto, RemoveTagRequestDto, TagDto, TagWithCountDto,
 };
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;

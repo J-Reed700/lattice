@@ -1,4 +1,4 @@
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use async_trait::async_trait;
 
 /// Search result for BM25 and hybrid search queries

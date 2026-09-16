@@ -136,7 +136,7 @@ impl EmbeddingServiceTrait for RemoteEmbeddingService {
 
     async fn embed_contextualized_chunks(
         &self,
-        chunks: &[crate::infrastructure::indexing::chunker::ContextualizedChunk],
+        chunks: &[crate::features::indexing::engine::chunker::ContextualizedChunk],
     ) -> Result<Vec<Vec<f32>>> {
         let texts: Vec<String> = chunks
             .iter()

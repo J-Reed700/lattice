@@ -3,9 +3,11 @@
 //! Provides async HTTP client for interacting with Ollama's REST API.
 //! Supports both non-streaming and streaming generation requests.
 
-use crate::llm::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError};
-use crate::llm::traits::{GenerationConfig, LLMClient};
-use crate::llm::types::*;
+use crate::features::llm::engine::circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
+};
+use crate::features::llm::engine::traits::{GenerationConfig, LLMClient};
+use crate::features::llm::engine::types::*;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::reqwest_client_builder;
 use async_trait::async_trait;
@@ -78,7 +80,7 @@ impl From<OllamaClientError> for LLMError {
         match err {
             OllamaClientError::Connection(msg) => LLMError::ClientUnavailable(msg),
             OllamaClientError::Api(msg) => LLMError::GenerationFailed(msg),
-            OllamaClientError::Timeout(msg) => LLMError::Timeout,
+            OllamaClientError::Timeout(_msg) => LLMError::Timeout,
             OllamaClientError::InvalidRequest(msg) => LLMError::InvalidConfig(msg),
             OllamaClientError::Serialization(e) => LLMError::Other(e.to_string()),
         }
@@ -106,7 +108,7 @@ impl From<AppError> for LLMError {
 /// # Example
 ///
 /// ```no_run
-/// use lattice::llm::{OllamaClient, OllamaGenerateRequest};
+/// use lattice::features::llm::engine::{OllamaClient, OllamaGenerateRequest};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -500,7 +502,7 @@ impl OllamaClient {
     /// # Example
     ///
     /// ```no_run
-    /// use lattice::llm::{OllamaClient, OllamaGenerateRequest};
+    /// use lattice::features::llm::engine::{OllamaClient, OllamaGenerateRequest};
     /// use futures::StreamExt;
     ///
     /// async fn stream_example() -> Result<(), Box<dyn std::error::Error>> {
@@ -700,7 +702,6 @@ impl OllamaClient {
             request = request.with_images(imgs);
         }
 
-        // Apply generation config
         let mut options = std::collections::HashMap::new();
         options.insert(
             "temperature".to_string(),
@@ -742,7 +743,6 @@ impl OllamaClient {
             request = request.with_images(imgs);
         }
 
-        // Apply generation config
         let mut options = std::collections::HashMap::new();
         options.insert(
             "temperature".to_string(),
@@ -765,7 +765,6 @@ impl OllamaClient {
             .await
             .map_err(LLMError::from)?;
 
-        // Convert the stream to return just the response text
         use futures::StreamExt;
         let text_stream =
             stream.map(|result| result.map(|chunk| chunk.response).map_err(LLMError::from));
@@ -785,9 +784,11 @@ impl OllamaClient {
     /// Returns error if HTTP request fails or response is invalid
     pub async fn chat(
         &self,
-        messages: Vec<crate::llm::traits::ChatMessage>,
+        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
     ) -> Result<String, LLMError> {
-        use crate::llm::types::{OllamaChatMessage, OllamaChatRequest, OllamaChatResponse};
+        use crate::features::llm::engine::types::{
+            OllamaChatMessage, OllamaChatRequest, OllamaChatResponse,
+        };
         use crate::shared::utils::{retry_with_backoff, RetryConfig};
 
         debug!("Generating chat with model: {}", self.model_name);
@@ -796,7 +797,6 @@ impl OllamaClient {
             .await
             .map_err(LLMError::from)?;
 
-        // Convert ChatMessage to OllamaChatMessage
         let ollama_messages: Vec<OllamaChatMessage> = messages
             .into_iter()
             .map(|m| OllamaChatMessage {
@@ -817,7 +817,6 @@ impl OllamaClient {
             tools: None,
         };
 
-        // Apply generation config
         let mut options = std::collections::HashMap::new();
         options.insert(
             "temperature".to_string(),
@@ -897,13 +896,15 @@ impl OllamaClient {
 
         let chat_response = match result {
             Ok(response) => response,
-            Err(crate::llm::circuit_breaker::CircuitBreakerError::Open) => {
+            Err(crate::features::llm::engine::circuit_breaker::CircuitBreakerError::Open) => {
                 error!("Ollama API circuit breaker is open - service unavailable");
                 return Err(LLMError::Network(
                     "Ollama API unavailable (circuit breaker open)".to_string(),
                 ));
             }
-            Err(crate::llm::circuit_breaker::CircuitBreakerError::CallFailed(e)) => {
+            Err(
+                crate::features::llm::engine::circuit_breaker::CircuitBreakerError::CallFailed(e),
+            ) => {
                 return Err(e.into());
             }
         };
@@ -928,9 +929,11 @@ impl OllamaClient {
     /// Returns error if HTTP request fails or response is invalid
     pub async fn chat_stream(
         &self,
-        messages: Vec<crate::llm::traits::ChatMessage>,
+        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
-        use crate::llm::types::{OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse};
+        use crate::features::llm::engine::types::{
+            OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse,
+        };
 
         debug!("Starting streaming chat with model: {}", self.model_name);
         let request_permit = self
@@ -938,7 +941,6 @@ impl OllamaClient {
             .await
             .map_err(LLMError::from)?;
 
-        // Convert ChatMessage to OllamaChatMessage
         let ollama_messages: Vec<OllamaChatMessage> = messages
             .into_iter()
             .map(|m| OllamaChatMessage {
@@ -959,7 +961,6 @@ impl OllamaClient {
             tools: None,
         };
 
-        // Apply generation config
         let mut options = std::collections::HashMap::new();
         options.insert(
             "temperature".to_string(),
@@ -1016,13 +1017,15 @@ impl OllamaClient {
 
         let response = match result {
             Ok(resp) => resp,
-            Err(crate::llm::circuit_breaker::CircuitBreakerError::Open) => {
+            Err(crate::features::llm::engine::circuit_breaker::CircuitBreakerError::Open) => {
                 error!("Ollama API circuit breaker is open - service unavailable");
                 return Err(LLMError::Network(
                     "Ollama API unavailable (circuit breaker open)".to_string(),
                 ));
             }
-            Err(crate::llm::circuit_breaker::CircuitBreakerError::CallFailed(e)) => {
+            Err(
+                crate::features::llm::engine::circuit_breaker::CircuitBreakerError::CallFailed(e),
+            ) => {
                 return Err(e.into());
             }
         };
@@ -1175,14 +1178,14 @@ impl LLMClient for OllamaClient {
 
     async fn generate_chat(
         &self,
-        messages: Vec<crate::llm::traits::ChatMessage>,
+        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
     ) -> Result<String, LLMError> {
         self.chat(messages).await
     }
 
     async fn generate_chat_stream(
         &self,
-        messages: Vec<crate::llm::traits::ChatMessage>,
+        messages: Vec<crate::features::llm::engine::traits::ChatMessage>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         self.chat_stream(messages).await
     }
@@ -1191,10 +1194,6 @@ impl LLMClient for OllamaClient {
         true
     }
 }
-
-// ============================================================================
-// LLMPort Implementation (DDD Application Port)
-// ============================================================================
 
 use crate::application::ports::LLMPort;
 
@@ -1206,7 +1205,6 @@ impl LLMPort for OllamaClient {
         context: &[String],
         images: Option<Vec<String>>,
     ) -> crate::shared::result::Result<String> {
-        // Build system message from context
         let system = if context.is_empty() {
             None
         } else {
@@ -1234,7 +1232,7 @@ impl LLMPort for OllamaClient {
     > {
         fn parse_context_to_chat_message(
             context_entry: &str,
-        ) -> Option<crate::llm::traits::ChatMessage> {
+        ) -> Option<crate::features::llm::engine::traits::ChatMessage> {
             let trimmed = context_entry.trim();
             let prefixes = [
                 ("system:", "system"),
@@ -1252,7 +1250,7 @@ impl LLMPort for OllamaClient {
 
                     let content = tail.trim();
                     if !content.is_empty() {
-                        return Some(crate::llm::traits::ChatMessage {
+                        return Some(crate::features::llm::engine::traits::ChatMessage {
                             role: role.to_string(),
                             content: content.to_string(),
                         });
@@ -1263,14 +1261,14 @@ impl LLMPort for OllamaClient {
             None
         }
 
-        let parsed_messages: Vec<crate::llm::traits::ChatMessage> = context
+        let parsed_messages: Vec<crate::features::llm::engine::traits::ChatMessage> = context
             .iter()
             .filter_map(|entry| parse_context_to_chat_message(entry))
             .collect();
 
         let stream = if !parsed_messages.is_empty() {
             let mut messages = parsed_messages;
-            messages.push(crate::llm::traits::ChatMessage {
+            messages.push(crate::features::llm::engine::traits::ChatMessage {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             });
@@ -1298,7 +1296,6 @@ impl LLMPort for OllamaClient {
                 })?
         };
 
-        // Convert LLMError to AppError
         use futures::StreamExt;
         let mapped_stream = stream.map(|result| {
             result
@@ -1351,15 +1348,16 @@ impl LLMPort for OllamaClient {
         >,
     > {
         use crate::application::ports::{StreamChunk, ToolCall};
-        use crate::llm::types::{
+        use crate::features::llm::engine::types::{
             OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool,
         };
         let request_permit = self
             .acquire_request_permit("generate_streaming_with_tools")
             .await?;
 
-        // Parse context entries into chat messages
-        fn parse_context_to_chat_message(entry: &str) -> Option<crate::llm::traits::ChatMessage> {
+        fn parse_context_to_chat_message(
+            entry: &str,
+        ) -> Option<crate::features::llm::engine::traits::ChatMessage> {
             let trimmed = entry.trim();
             for (prefix, role) in [
                 ("system:", "system"),
@@ -1372,7 +1370,7 @@ impl LLMPort for OllamaClient {
                     if head.eq_ignore_ascii_case(prefix) {
                         let content = tail.trim();
                         if !content.is_empty() {
-                            return Some(crate::llm::traits::ChatMessage {
+                            return Some(crate::features::llm::engine::traits::ChatMessage {
                                 role: role.to_string(),
                                 content: content.to_string(),
                             });
@@ -1395,7 +1393,6 @@ impl LLMPort for OllamaClient {
             })
             .collect();
 
-        // Add the user prompt as the final message
         ollama_messages.push(OllamaChatMessage {
             role: "user".to_string(),
             content: prompt.to_string(),
@@ -1414,7 +1411,6 @@ impl LLMPort for OllamaClient {
         // Track whether we had tools for the diagnostic at end of stream
         let had_tools = tools.is_some();
 
-        // Apply generation config
         let mut options = std::collections::HashMap::new();
         options.insert(
             "temperature".to_string(),
@@ -1473,17 +1469,18 @@ impl LLMPort for OllamaClient {
 
         let response = match result {
             Ok(resp) => resp,
-            Err(crate::llm::circuit_breaker::CircuitBreakerError::Open) => {
+            Err(crate::features::llm::engine::circuit_breaker::CircuitBreakerError::Open) => {
                 return Err(crate::shared::error::AppError::Network(
                     "Ollama API unavailable (circuit breaker open)".to_string(),
                 ));
             }
-            Err(crate::llm::circuit_breaker::CircuitBreakerError::CallFailed(e)) => {
+            Err(
+                crate::features::llm::engine::circuit_breaker::CircuitBreakerError::CallFailed(e),
+            ) => {
                 return Err(e.into());
             }
         };
 
-        // Build the stream that yields StreamChunk items
         let chunk_timeout = self.stream_timeout;
         let stream = async_stream::stream! {
             let _request_permit = request_permit;
@@ -1531,10 +1528,10 @@ impl LLMPort for OllamaClient {
                                 Ok(chunk) => {
                                     let done = chunk.done;
 
-                                    // Check for tool calls
                                     if let Some(ref tc) = chunk.message.tool_calls {
                                         for call in tc {
                                             accumulated_tool_calls.push(ToolCall {
+                                                id: None,
                                                 name: call.function.name.clone(),
                                                 arguments: call.function.arguments.clone(),
                                             });
@@ -1578,7 +1575,6 @@ impl LLMPort for OllamaClient {
                 }
             }
 
-            // Handle any remaining buffer
             let remaining = buffer.trim();
             if !remaining.is_empty() {
                 let mut line = remaining.to_string();
@@ -1589,6 +1585,7 @@ impl LLMPort for OllamaClient {
                     if let Some(ref tc) = chunk.message.tool_calls {
                         for call in tc {
                             accumulated_tool_calls.push(ToolCall {
+                                                id: None,
                                 name: call.function.name.clone(),
                                 arguments: call.function.arguments.clone(),
                             });
@@ -1650,7 +1647,7 @@ mod tests {
     #[test]
     fn test_client_with_model() {
         let client = OllamaClient::with_model("http://localhost:11434", "mistral").unwrap();
-        use crate::infrastructure::llm::traits::LLMClient;
+        use crate::features::llm::engine::traits::LLMClient;
         assert_eq!(LLMClient::model_name(&client), "mistral");
     }
 
@@ -1658,7 +1655,6 @@ mod tests {
     fn test_generation_config() {
         let mut client = OllamaClient::with_model("http://localhost:11434", "llama3.1:8b").unwrap();
 
-        // Check defaults
         assert_eq!(client.generation_config().temperature, 0.7);
 
         // Modify config
@@ -1667,9 +1663,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Ollama running
+    #[ignore = "Requires Ollama running"]
     async fn test_trait_generate() {
-        use crate::llm::traits::LLMClient;
+        use crate::features::llm::engine::traits::LLMClient;
 
         let client = OllamaClient::with_model("http://localhost:11434", "llama3.1:8b").unwrap();
         let result = LLMClient::generate(
@@ -1687,9 +1683,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires Ollama running
+    #[ignore = "Requires Ollama running"]
     async fn test_trait_health_check() {
-        use crate::llm::traits::LLMClient;
+        use crate::features::llm::engine::traits::LLMClient;
 
         let client = OllamaClient::with_model("http://localhost:11434", "llama3.1:8b").unwrap();
         let is_healthy = client.health_check().await;

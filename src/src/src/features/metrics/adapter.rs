@@ -63,7 +63,6 @@ mod tests {
         let metrics = Metrics::new();
         let adapter = MetricsAdapter::new(metrics.clone());
 
-        // Simulate some activity
         metrics.record_search(100);
         metrics.record_cache_hit();
         metrics.record_file_indexed();

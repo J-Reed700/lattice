@@ -1,14 +1,8 @@
 //! Common test utilities for plugin smoke tests
 //!
-//! This module provides test harness infrastructure that matches the CURRENT
-//! production Container architecture (7 modular domains), not the legacy
+//! This module provides test harness infrastructure that matches the current
+//! production container architecture, not the legacy
 //! ServiceContainer (15 individual services).
-//!
-//! # Oracle Mandate
-//!
-//! "The architectural pivot to Domain-Driven Plugins requires a matching pivot
-//! in your testing infrastructure. Tests must use the actual Container::new
-//! logic to ensure production parity."
 //!
 //! # Usage
 //!
@@ -50,12 +44,10 @@ use std::sync::Arc;
 /// let container = setup_test_container().await.unwrap();
 /// ```
 pub async fn setup_test_container() -> Result<Container> {
-    // Create in-memory SQLite pool
     let db_pool = SqlitePool::connect(":memory:")
         .await
         .map_err(|e| crate::shared::error::AppError::Database(e.to_string()))?;
 
-    // Run migrations to initialize schema
     sqlx::migrate!("./migrations")
         .run(&db_pool)
         .await
@@ -63,8 +55,6 @@ pub async fn setup_test_container() -> Result<Container> {
             crate::shared::error::AppError::Database(format!("Migration failed: {}", e))
         })?;
 
-    // Create temporary database file for DatabaseConnection
-    // (DatabaseConnection needs a file path, not in-memory)
     let temp_dir = std::env::temp_dir().join(format!("recall_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).map_err(|e| crate::shared::error::AppError::Io {
         message: e.to_string(),
@@ -73,11 +63,8 @@ pub async fn setup_test_container() -> Result<Container> {
 
     let temp_db_path = temp_dir.join("test.db");
 
-    // Create DatabaseConnection using the temp file path
     let db_conn = Arc::new(DatabaseConnection::new(temp_db_path).await?);
 
-    // Initialize Container with test configuration
-    // No embedding model (None), minimal LLM config, temp data dir
     Container::new(
         db_pool,
         db_conn,

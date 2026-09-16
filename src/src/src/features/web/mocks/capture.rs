@@ -144,12 +144,10 @@ impl WebCaptureServiceTrait for MockWebCaptureService {
             .expect("Mock lock poisoned")
             .push(url.to_string());
 
-        // Mock URL validation - block obvious bad URLs
         if url.contains("localhost") || url.contains("127.0.0.1") {
             return Err(AppError::InvalidUrl("localhost not allowed".to_string()));
         }
 
-        // Return configured preview or default
         let previews = self.mock_previews.read().expect("Mock lock poisoned");
         if let Some(preview) = previews.get(url) {
             Ok(preview.clone())

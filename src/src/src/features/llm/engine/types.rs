@@ -255,10 +255,6 @@ impl From<anyhow::Error> for LLMError {
     }
 }
 
-// ============================================================================
-// Chat API Types
-// ============================================================================
-
 /// Chat message for Ollama Chat API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaChatMessage {
@@ -277,10 +273,6 @@ pub struct OllamaChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
 }
-
-// ============================================================================
-// Tool Calling Types (Ollama API)
-// ============================================================================
 
 /// Tool definition for Ollama's function calling API.
 ///

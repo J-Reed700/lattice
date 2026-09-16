@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::features::conversation::ConversationServiceTrait;
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{GetDocumentOutput, SemanticSearchOutput};
-use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
+use crate::features::search::dto::SearchResultDto;
 use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 
@@ -14,46 +14,15 @@ pub(super) async fn load_space_document_scope(
     container: &Container,
     conversation_id: &str,
 ) -> Option<super::SpaceDocumentScope> {
-    let pool = container.db_pool();
-    let space_id = match sqlx::query_scalar::<_, String>(
-        "SELECT space_id FROM conversations WHERE id = ? LIMIT 1",
-    )
-    .bind(conversation_id)
-    .fetch_optional(pool)
-    .await
+    let repository = crate::features::conversation::repository::ConversationRepository::new(
+        container.db_pool().clone(),
+    );
+    let (space_id, document_ids) = match repository.retrieval_document_scope(conversation_id).await
     {
-        Ok(Some(value)) if !value.trim().is_empty() => value,
-        Ok(_) => return None,
+        Ok(Some(scope)) => scope,
+        Ok(None) => return None,
         Err(error) => {
-            warn!(
-                error = %error,
-                conversation_id = conversation_id,
-                "Failed to load conversation space for hard scope"
-            );
-            return None;
-        }
-    };
-
-    let document_ids = match sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT DISTINCT dsm.document_id
-        FROM document_space_memberships dsm
-        WHERE dsm.space_id = ?
-          AND dsm.document_id IS NOT NULL
-          AND TRIM(dsm.document_id) <> ''
-        "#,
-    )
-    .bind(&space_id)
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows.into_iter().collect::<HashSet<_>>(),
-        Err(error) => {
-            warn!(
-                error = %error,
-                space_id = space_id.as_str(),
-                "Failed to load space document scope"
-            );
+            warn!(error = %error, conversation_id, "Failed to load conversation document scope");
             return None;
         }
     };
@@ -69,41 +38,6 @@ pub(super) async fn load_space_document_scope(
         space_id,
         document_ids,
     })
-}
-
-pub(super) fn apply_hard_space_scope_filter(
-    mut response: SearchResponseDto,
-    space_id: &str,
-    scoped_document_ids: &HashSet<String>,
-) -> SearchResponseDto {
-    let before = response.results.len();
-    response.results.retain(|result| {
-        result
-            .document_id
-            .as_ref()
-            .map(|document_id| scoped_document_ids.contains(document_id))
-            .unwrap_or(false)
-    });
-    response.total = response.results.len();
-
-    info!(
-        space_id = space_id,
-        before = before,
-        after = response.results.len(),
-        scoped_document_count = scoped_document_ids.len(),
-        "Applied hard space scope filter to KB results"
-    );
-
-    if before > 0 && response.results.is_empty() {
-        warn!(
-            space_id = space_id,
-            before = before,
-            scoped_document_count = scoped_document_ids.len(),
-            "Hard space scope filter removed all KB results"
-        );
-    }
-
-    response
 }
 
 pub(super) async fn build_hyde_context_window_for_conversation(

@@ -49,9 +49,6 @@ use tracing::{debug, info, warn};
 pub struct WebCaptureService {
     /// HTTP client with timeout
     client: Client,
-
-    /// Maximum content length to fetch (10MB for preview)
-    max_content_length: usize,
 }
 
 impl WebCaptureService {
@@ -62,10 +59,7 @@ impl WebCaptureService {
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self {
-            client,
-            max_content_length: 10 * 1024 * 1024, // 10MB
-        })
+        Ok(Self { client })
     }
 
     /// Create with custom timeout
@@ -75,10 +69,7 @@ impl WebCaptureService {
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self {
-            client,
-            max_content_length: 10 * 1024 * 1024,
-        })
+        Ok(Self { client })
     }
 
     /// Validate URL for security (SSRF prevention)
@@ -89,7 +80,6 @@ impl WebCaptureService {
     /// - Link-local addresses
     /// - Metadata endpoints (169.254.169.254)
     fn validate_url(&self, url: &str) -> Result<()> {
-        // Parse URL
         let parsed = url::Url::parse(url)
             .map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
 
@@ -104,7 +94,6 @@ impl WebCaptureService {
             }
         }
 
-        // Check host
         let host = parsed
             .host_str()
             .ok_or_else(|| AppError::InvalidUrl("URL must have a host".to_string()))?;
@@ -154,48 +143,38 @@ impl WebCaptureService {
     fn extract_metadata(&self, html: &str, final_url: &str) -> UrlPreview {
         let document = Html::parse_document(html);
 
-        // Extract title (priority: og:title > <title> > first <h1>)
         let title = self
             .extract_og_tag(&document, "og:title")
             .or_else(|| self.extract_title(&document))
             .or_else(|| self.extract_first_heading(&document))
             .unwrap_or_else(|| "Untitled".to_string());
 
-        // Extract description
         let description = self
             .extract_og_tag(&document, "og:description")
             .or_else(|| self.extract_meta_tag(&document, "description"))
             .or_else(|| self.extract_meta_tag(&document, "twitter:description"));
 
-        // Extract site name
         let site_name = self.extract_og_tag(&document, "og:site_name");
 
-        // Extract image
         let image = self
             .extract_og_tag(&document, "og:image")
             .or_else(|| self.extract_meta_tag(&document, "twitter:image"));
 
-        // Extract author
         let author = self
             .extract_meta_tag(&document, "author")
             .or_else(|| self.extract_schema_author(&document))
             .or_else(|| self.extract_meta_tag(&document, "article:author"));
 
-        // Extract published date
         let published_date = self
             .extract_schema_date(&document)
             .or_else(|| self.extract_meta_date(&document, "article:published_time"));
 
-        // Extract language
         let language = self.extract_language(&document);
 
-        // Extract content type
         let content_type = self.extract_og_tag(&document, "og:type");
 
-        // Extract keywords
         let keywords = self.extract_keywords(&document);
 
-        // Extract article text for word count
         let article_text = self.extract_article_text(&document);
         let word_count = article_text.split_whitespace().count();
         let reading_time_minutes = (word_count as f64 / 200.0).ceil() as i64; // 200 words per minute
@@ -394,7 +373,6 @@ impl WebCaptureServiceTrait for WebCaptureService {
         let profile = stealth::random_profile();
         let headers = stealth::browser_headers(profile, None);
 
-        // Fetch URL with stealth headers
         let response = self
             .client
             .get(url)
@@ -403,7 +381,6 @@ impl WebCaptureServiceTrait for WebCaptureService {
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
 
-        // Check status
         if !response.status().is_success() {
             let status = response.status();
             warn!(status = %status, url = %url, "URL fetch failed");
@@ -432,13 +409,11 @@ impl WebCaptureServiceTrait for WebCaptureService {
             self.validate_url(&final_url)?;
         }
 
-        // Read HTML body
         let html = response
             .text()
             .await
             .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
 
-        // Extract metadata
         let preview = self.extract_metadata(&html, &final_url);
 
         info!(

@@ -30,9 +30,14 @@ struct ArticleMetadata {
     title: String,
 
     /// Original URL
+    // reason: required key of the browser extension's metadata.json; keeping it
+    // preserves the parse-time check that the file actually carries a URL.
+    #[allow(dead_code)]
     url: String,
 
     /// Optional site name (e.g., "Wikipedia", "Medium")
+    // reason: part of the same metadata.json schema, kept alongside `url`.
+    #[allow(dead_code)]
     #[serde(default)]
     site_name: Option<String>,
 }
@@ -58,7 +63,7 @@ impl WebArticleDetector {
     ///
     /// ```rust
     /// use std::path::Path;
-    /// use lattice::infrastructure::web::WebArticleDetector;
+    /// use lattice::features::web::article_detector::WebArticleDetector;
     ///
     /// let article_path = Path::new("web-archives/my-article/article.md");
     /// if WebArticleDetector::is_web_article(article_path) {
@@ -88,7 +93,7 @@ impl WebArticleDetector {
     ///
     /// ```rust
     /// use std::path::Path;
-    /// use lattice::infrastructure::web::WebArticleDetector;
+    /// use lattice::features::web::article_detector::WebArticleDetector;
     ///
     /// let article_path = Path::new("web-archives/my-article/article.md");
     /// if let Some(html_path) = WebArticleDetector::get_html_path(article_path) {
@@ -121,7 +126,7 @@ impl WebArticleDetector {
     ///
     /// ```rust
     /// use std::path::Path;
-    /// use lattice::infrastructure::web::WebArticleDetector;
+    /// use lattice::features::web::article_detector::WebArticleDetector;
     ///
     /// # async fn example() -> Result<(), lattice::shared::error::error::AppError> {
     /// let article_path = Path::new("web-archives/my-article/article.md");

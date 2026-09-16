@@ -1,4 +1,4 @@
-//! QA Plugin (Phase 4: Consolidation)
+//! QA plugin.
 //!
 //! Thin plugin wrapper for question-answering commands with Retrieval-Augmented Generation (RAG).
 //! Delegates all business logic to `interfaces/commands/domains/qa_commands.rs`.
@@ -10,7 +10,7 @@ use crate::features::qa::dto::{QARequestDto, QAResponseDto};
 use crate::features::qa::starters_dto::ChatStartersDto;
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
-use tauri::{plugin::Builder, AppHandle, Manager, Runtime, State};
+use tauri::{plugin::Builder, AppHandle, Runtime, State};
 
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     Builder::new("qa")
@@ -26,7 +26,7 @@ pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 #[tauri::command]
 #[specta::specta]
-async fn ask_question_wrapper(
+pub async fn ask_question_wrapper(
     container: State<'_, Container>,
     request: QARequestDto,
 ) -> Result<QAResponseDto, ApiError> {
@@ -41,7 +41,7 @@ async fn ask_question_wrapper(
 
 #[tauri::command]
 #[specta::specta]
-async fn ask_question_stream_wrapper<R: Runtime>(
+pub async fn ask_question_stream_wrapper<R: Runtime>(
     app_handle: AppHandle<R>,
     container: State<'_, Container>,
     request: QARequestDto,
@@ -57,7 +57,7 @@ async fn ask_question_stream_wrapper<R: Runtime>(
 
 #[tauri::command]
 #[specta::specta]
-async fn get_qa_model_wrapper(container: State<'_, Container>) -> Result<String, ApiError> {
+pub async fn get_qa_model_wrapper(container: State<'_, Container>) -> Result<String, ApiError> {
     get_qa_model(container).await.map_err(|e| ApiError {
         code: crate::shared::api_result::ErrorCode::InternalError,
         message: e.to_string(),
@@ -67,9 +67,9 @@ async fn get_qa_model_wrapper(container: State<'_, Container>) -> Result<String,
 
 #[tauri::command]
 #[specta::specta]
-async fn check_llm_health_wrapper(
+pub async fn check_llm_health_wrapper(
     container: State<'_, Container>,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<super::dto::LLMHealthStatusDto, ApiError> {
     check_llm_health(container).await.map_err(|e| ApiError {
         code: crate::shared::api_result::ErrorCode::InternalError,
         message: e.to_string(),
@@ -78,10 +78,10 @@ async fn check_llm_health_wrapper(
 }
 
 /// Corpus-derived opening questions for the Chat empty state
-/// (BRIEF rank 11, contract §4.7).
+/// based on the current corpus.
 #[tauri::command]
 #[specta::specta]
-async fn generate_chat_starters_wrapper(
+pub async fn generate_chat_starters_wrapper(
     container: State<'_, Container>,
 ) -> Result<ChatStartersDto, ApiError> {
     crate::features::qa::starters::generate_chat_starters_impl(container.inner()).await

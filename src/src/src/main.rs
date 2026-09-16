@@ -3,8 +3,7 @@
 // Import from the library crate
 use lattice::infrastructure::setup;
 
-// Pure Plugin Architecture - All IPC commands are Tauri plugins.
-// Commands follow the Diamond Standard pattern with direct *_impl() calls.
+// IPC commands are exposed through domain-specific Tauri plugins.
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
@@ -12,29 +11,27 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // Initialize tracing FIRST - now we have Tokio runtime available for OTEL
+            // Tracing requires the Tokio runtime available inside this hook.
             setup::setup_tracing();
 
-            // Sprint 6 PR 6.1: register the sidecar registry BEFORE
-            // anything else that might spawn a sidecar. The DI
-            // Container's LLM factory looks this up via
+            // Register the sidecar registry before anything can spawn a
+            // sidecar. The LLM factory looks this up via
             // `app.try_state::<SidecarRegistry>()` when starting a
             // llama-server child process. Registering first guarantees
-            // every spawned sidecar enrolls for the shutdown sweep.
-            // Sprint 6 PR 6.1 also runs an orphan scan here to clean
-            // up any sidecars left behind by a previous crash.
-            app.manage(lattice::llm::sidecar_manager::SidecarRegistry::new());
-            lattice::llm::sidecar_manager::reap_orphan_sidecars();
+            // every spawned sidecar is included in the shutdown sweep. The
+            // orphan scan cleans up sidecars left by a previous crash.
+            app.manage(lattice::features::llm::engine::sidecar_manager::SidecarRegistry::new());
+            lattice::features::llm::engine::sidecar_manager::reap_orphan_sidecars();
 
-            // CRITICAL: Initialize app and manage Container FIRST
-            // This must happen before plugins try to access the Container
+            // Plugins require the managed container.
             setup::initialize_app(app)?;
 
-            // NOW initialize domain plugins - they can safely access Container
-            // Pure plugin architecture - no gateway, all commands are plugins
+            // The container is now available to each domain plugin.
             for plugin in lattice::plugins::init_plugins() {
                 app.handle().plugin(plugin)?;
             }
+
+            setup::renderer_shutdown::install(app.handle());
 
             Ok(())
         })
@@ -43,11 +40,22 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             match &event {
                 // Cmd-Q on macOS, system-shutdown on Windows/Linux,
                 // or anything that explicitly asks Tauri to exit.
-                tauri::RunEvent::ExitRequested { .. } => {
-                    setup::graceful_shutdown(app_handle);
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if setup::renderer_shutdown::defer(app_handle) {
+                        api.prevent_exit();
+                    } else {
+                        setup::graceful_shutdown(app_handle);
+                    }
                 }
-                // Sprint 6 PR 6.1: macOS window-close gap. Clicking
-                // the red X on macOS does NOT fire `ExitRequested`
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } if label == "main" && setup::renderer_shutdown::defer(app_handle) => {
+                    api.prevent_close();
+                }
+                // Clicking the red close button on macOS does not fire
+                // `ExitRequested`
                 // by default — Tauri keeps the app alive in the
                 // dock. Our users expect "close window = quit"
                 // (Lattice is not a menu-bar app). When the last

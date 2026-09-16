@@ -183,7 +183,6 @@ mod tests {
                 });
             }
 
-            // Generate a simple mock embedding based on text length
             let value = (text.len() as f32) / 100.0;
             Ok(vec![value; self.dimension])
         }
@@ -203,18 +202,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_single_embedding_success() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto {
                 text: "This is a test document for embedding".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.dimension, 384);
@@ -223,18 +219,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_with_different_dimension() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(DEFAULT_EMBEDDING_DIM));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto {
                 text: "Test text".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.dimension, DEFAULT_EMBEDDING_DIM);
@@ -243,18 +236,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_empty_text() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto {
                 text: "".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => assert!(msg.contains("empty")),
@@ -264,18 +254,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_whitespace_only() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto {
                 text: "   \n\t   ".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => assert!(msg.contains("empty")),
@@ -285,19 +272,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_text_too_long() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Create text that exceeds max length
         let long_text = "a".repeat(MAX_TEXT_LENGTH + 1);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto { text: long_text })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::InvalidInput(msg) => {
@@ -310,36 +293,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_at_max_length() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Create text exactly at max length
         let max_text = "a".repeat(MAX_TEXT_LENGTH);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto { text: max_text })
             .await;
 
-        // Assert
         assert!(result.is_ok()); // Should succeed at exactly max length
     }
 
     #[tokio::test]
     async fn test_generate_embedding_model_error() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::with_failure());
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Act
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto {
                 text: "Test text".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::EmbeddingFailed { reason } => assert_eq!(reason, "Model error"),
@@ -349,18 +325,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_embedding_text_normalization() {
-        // Arrange
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        // Act - text with leading/trailing whitespace should be trimmed
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto {
                 text: "  Test text with whitespace  \n".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.dimension, 384);

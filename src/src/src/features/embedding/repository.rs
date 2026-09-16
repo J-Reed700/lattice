@@ -16,7 +16,7 @@ use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapp
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 // Database row struct for embedding queries
 #[derive(Debug, sqlx::FromRow)]
@@ -51,12 +51,6 @@ impl EmbeddingRepository {
         Self { pool }
     }
 }
-
-// ============================================================================
-// Legacy Trait Implementation - COMMENTED OUT (migrated to DDD)
-// ============================================================================
-// The old EmbeddingRepositoryTrait implementation has been replaced with
-// EmbeddingRepositoryPort. See the implementation at the end of this file.
 
 /*
 #[async_trait]
@@ -198,10 +192,6 @@ impl EmbeddingRepositoryTrait for EmbeddingRepository {
 }
 */
 
-// ============================================================================
-// DDD Port Implementation
-// ============================================================================
-
 #[async_trait]
 impl EmbeddingRepositoryPort for EmbeddingRepository {
     async fn create(&self, chunk_id: &str, vector: &[f32], model: &str) -> Result<String> {
@@ -218,17 +208,14 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
     }
 
     async fn save(&self, entity: &DomainEmbedding, vector: Vec<f32>) -> Result<()> {
-        // Validate dimension
         EmbeddingMapper::validate_dimension(entity, &vector)?;
 
-        // Convert to DTO
         let dto = EmbeddingMapper::to_dto(entity, vector);
 
         // Serialize vector to bytes for SQLite BLOB storage
         let embedding_bytes =
             crate::features::embedding::encoding::encode_embedding(&dto.embedding);
 
-        // Generate a deterministic ID based on chunk_id for upserts
         let id = format!("emb_{}", dto.chunk_id);
 
         let dimension = dto.dimension as i32;
@@ -271,7 +258,6 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
             let embedding_bytes =
                 crate::features::embedding::encoding::encode_embedding(&dto.embedding);
 
-            // Generate a deterministic ID based on chunk_id for upserts
             let id = format!("emb_{}", dto.chunk_id);
 
             let dimension = dto.dimension as i32;

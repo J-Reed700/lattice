@@ -59,6 +59,5 @@ pub mod commands;
 pub mod di;
 pub mod dto;
 
-// Re-export for convenience
 pub use commands::*;
 pub use di::Container;

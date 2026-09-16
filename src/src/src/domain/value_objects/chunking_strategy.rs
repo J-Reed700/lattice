@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,no_run
 /// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
-/// use lattice::domain_types::DocumentId;
+/// use lattice::shared::domain_types::DocumentId;
 ///
 /// let strategy = ChunkingStrategy::FixedSize { size: 512 };
 /// let doc_id = DocumentId::new();
@@ -110,7 +110,7 @@ impl ChunkingStrategy {
     ///
     /// ```rust,no_run
     /// use lattice::domain::value_objects::chunking_strategy::ChunkingStrategy;
-    /// use lattice::domain_types::DocumentId;
+    /// use lattice::shared::domain_types::DocumentId;
     ///
     /// let strategy = ChunkingStrategy::FixedSize { size: 100 };
     /// let chunks = strategy.chunk("Document text here", &DocumentId::new())?;
@@ -160,7 +160,6 @@ impl ChunkingStrategy {
             ));
         }
 
-        // Convert to Chunk entities
         Ok(chunks
             .into_iter()
             .enumerate()
@@ -248,10 +247,6 @@ impl Default for ChunkingStrategy {
         ChunkingStrategy::Semantic { max_tokens: 512 }
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

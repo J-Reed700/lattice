@@ -24,7 +24,6 @@ pub mod get_recommended_models;
 pub mod get_system_capabilities;
 pub mod list_models;
 
-// Re-export use cases
 pub use check_model_downloaded::CheckModelDownloadedUseCase;
 pub use delete_model::DeleteModelUseCase;
 pub use download_model::DownloadModelUseCase;

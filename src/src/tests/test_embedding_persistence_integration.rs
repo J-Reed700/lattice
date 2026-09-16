@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Integration Tests: Embedding Persistence
 //!
@@ -43,10 +42,6 @@ impl TestContext {
         Ok(Self { pool, temp_dir })
     }
 }
-
-// ============================================================================
-// Test 1: Embeddings Persisted After Indexing
-// ============================================================================
 
 #[tokio::test]
 async fn test_embeddings_persisted_after_indexing() -> Result<()> {
@@ -131,10 +126,6 @@ Each type has different applications and use cases in industry.
     Ok(())
 }
 
-// ============================================================================
-// Test 2: Embedding Dimensions Are Correct
-// ============================================================================
-
 #[tokio::test]
 async fn test_embedding_dimensions_correct() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -214,10 +205,6 @@ async fn test_embedding_dimensions_correct() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Test 3: Vector Search Returns Results
-// ============================================================================
-
 #[tokio::test]
 async fn test_vector_search_returns_results() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -278,10 +265,6 @@ async fn test_vector_search_returns_results() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Test 4: Reindexing Updates Embeddings
-// ============================================================================
-
 #[tokio::test]
 async fn test_reindexing_updates_embeddings() -> Result<()> {
     let ctx = TestContext::new().await?;
@@ -339,10 +322,6 @@ async fn test_reindexing_updates_embeddings() -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Test 5: Embedding Deletion on Document Delete
-// ============================================================================
 
 #[tokio::test]
 async fn test_embedding_deletion_on_document_delete() -> Result<()> {
@@ -420,10 +399,6 @@ async fn test_embedding_deletion_on_document_delete() -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /// Index a test file and return document ID
 async fn index_test_file(pool: &SqlitePool, file_path: &PathBuf) -> Result<String> {

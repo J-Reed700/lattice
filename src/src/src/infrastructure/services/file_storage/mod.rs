@@ -10,7 +10,7 @@
 //!
 //! # Architecture
 //!
-//! The module is organized into focused submodules following the "bricks and studs" philosophy:
+//! The module is organized into focused submodules:
 //!
 //! - `models`: Data structures (FileRecord)
 //! - `hash`: SHA256 hashing and validation

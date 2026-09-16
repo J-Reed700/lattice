@@ -1,15 +1,15 @@
 //! Indexing feature dependency injection.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
     BatchJobRepositoryPort, ChunkRepositoryPort, ContentAddressedStoragePort,
     ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, EmbeddingPort,
     EmbeddingRepositoryPort, FileStoragePort, FileSystemPort, TranscriptionPort, VectorSearchPort,
 };
-use crate::domain::repositories::UnitOfWorkFactory;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
@@ -23,12 +23,13 @@ use crate::infrastructure::persistence::repositories::{
     BatchJobRepository, ChunkRepositoryImpl, DocumentRepositoryImpl, EmbeddingRepository,
 };
 use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
+use crate::interfaces::di::Container;
 use crate::shared::error::Result;
 
 #[derive(Clone)]
 pub struct IndexingDi {
     pub indexing_service: Arc<dyn IndexingServiceTrait>,
-    pub indexing_state: Arc<crate::infrastructure::indexing::IndexingState>,
+    pub indexing_state: Arc<crate::features::indexing::engine::IndexingState>,
 
     pub index_file_use_case: Arc<IndexFileUseCase>,
     pub index_directory_use_case: Arc<IndexDirectoryUseCase>,
@@ -51,7 +52,7 @@ pub struct IndexingDi {
 
 pub fn build(
     db_pool: SqlitePool,
-    embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+    model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn VectorSearchPort>,
 ) -> Result<IndexingDi> {
     use crate::infrastructure::setup::degraded_mocks;
@@ -70,6 +71,12 @@ pub fn build(
     let content_storage =
         Arc::new(ContentAddressedStorage::new()?) as Arc<dyn ContentAddressedStoragePort>;
     let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
+    // Learned sparse postings live beside the dense vectors. Wired
+    // unconditionally: `IndexFileUseCase` only reads a sparse head when the
+    // loaded model actually has one, so this is inert for a dense-only model.
+    let sparse_term_store = Arc::new(
+        crate::features::search::engine::sparse_search::SqliteSparseTermStore::new(db_pool.clone()),
+    ) as Arc<dyn crate::application::ports::SparseTermStorePort>;
     // Build the transcription port once and share the same Arc with the
     // extraction adapter (audio ingest) and IndexingDi (the transcribe command).
     let transcription = crate::features::transcription::di::build(db_pool).port;
@@ -79,38 +86,42 @@ pub fn build(
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
 
     let indexing_embedding =
-        Arc::new(DynamicEmbedding::new(embedding_cache)) as Arc<dyn EmbeddingPort>;
+        Arc::new(DynamicEmbedding::new(model_provider)) as Arc<dyn EmbeddingPort>;
 
     // Degraded by default — real implementation is swapped in once models load.
     let indexing_service = degraded_mocks::create_degraded_indexing();
-    let indexing_state = Arc::new(crate::infrastructure::indexing::IndexingState::new());
+    let indexing_state = Arc::new(crate::features::indexing::engine::IndexingState::new());
 
     let index_file_use_case = Arc::new(
         IndexFileUseCase::new(
             content_storage,
             file_storage.clone(),
-            content_extractor,
+            content_extractor.clone(),
             indexing_embedding.clone(),
             document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
             embedding_repo,
             uow_factory.clone(),
         )
-        .with_vector_search(vector_search.clone()),
+        .with_vector_search(vector_search.clone())
+        .with_sparse_term_store(Arc::clone(&sparse_term_store)),
     );
     let index_directory_use_case = Arc::new(IndexDirectoryUseCase::new(
         index_file_use_case.clone(),
         indexing_state.clone(),
     ));
-    let reindex_document_use_case = Arc::new(ReindexDocumentUseCase::new(
-        file_storage.clone(),
-        indexing_embedding,
-        document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-        uow_factory.clone(),
-        vector_search.clone(),
-    ));
+    let reindex_document_use_case = Arc::new(
+        ReindexDocumentUseCase::new(
+            file_storage.clone(),
+            indexing_embedding,
+            document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
+            uow_factory.clone(),
+            vector_search.clone(),
+        )
+        .with_content_extractor(content_extractor.clone())
+        .with_sparse_term_store(Arc::clone(&sparse_term_store)),
+    );
     let delete_document_use_case = Arc::new(DeleteDocumentUseCase::new(
         document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-        chunk_repo.clone(),
         vector_search,
         uow_factory.clone(),
         file_storage.clone(),
@@ -135,4 +146,37 @@ pub fn build(
         uow_factory,
         transcription,
     })
+}
+
+/// Indexing's registrar surface on `Container`.
+impl Container {
+    // Indexing (from IndexingModule)
+    pub fn index_file_use_case(&self) -> Arc<IndexFileUseCase> {
+        Arc::clone(self.indexing.index_file_use_case())
+    }
+
+    pub fn index_directory_use_case(&self) -> Arc<IndexDirectoryUseCase> {
+        Arc::clone(self.indexing.index_directory_use_case())
+    }
+
+    pub fn reindex_document_use_case(&self) -> Arc<ReindexDocumentUseCase> {
+        Arc::clone(self.indexing.reindex_document_use_case())
+    }
+
+    pub fn delete_document_use_case(&self) -> Arc<DeleteDocumentUseCase> {
+        Arc::clone(self.indexing.delete_document_use_case())
+    }
+
+    pub fn rename_document_use_case(&self) -> Arc<RenameDocumentUseCase> {
+        Arc::clone(self.indexing.rename_document_use_case())
+    }
+
+    pub fn indexing_service(&self) -> Arc<dyn IndexingServiceTrait> {
+        Arc::clone(self.indexing.indexing_service())
+    }
+
+    /// Chunk repository accessor (from IndexingModule)
+    pub fn chunk_repository(&self) -> Arc<dyn ChunkRepositoryPort> {
+        Arc::clone(self.indexing.chunk_repository())
+    }
 }

@@ -3,7 +3,7 @@
 //! This module provides mock implementations of service traits.
 
 #[cfg(test)]
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 #[cfg(test)]
 use crate::infrastructure::services::traits::*;
 #[cfg(test)]
@@ -11,9 +11,7 @@ use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[cfg(test)]
 /// Mock context manager for testing
@@ -53,30 +51,34 @@ impl ContextManagerTrait for MockContextManager {
         &self,
         conversation: &crate::domain::conversation::ConversationAggregate,
         search_results: Vec<SearchResult>,
-    ) -> Result<crate::services::context_manager::LLMContext> {
+    ) -> Result<crate::infrastructure::services::context_manager::LLMContext> {
         // Simple mock implementation
         let system_prompt = self.format_system_context(conversation.system_prompt());
         let messages = self.format_conversation_history(conversation.messages());
         let document_context = self.format_document_context(search_results, 2000)?;
 
         // Simplified token counting
-        let total_tokens = crate::infrastructure::qa::tokenizer::count_tokens(&system_prompt)
+        let total_tokens = crate::features::qa::engine::tokenizer::count_tokens(&system_prompt)
             + messages
                 .iter()
-                .map(|m| crate::infrastructure::qa::tokenizer::count_tokens(&m.content))
+                .map(|m| crate::features::qa::engine::tokenizer::count_tokens(&m.content))
                 .sum::<usize>()
-            + crate::infrastructure::qa::tokenizer::count_tokens(&document_context);
+            + crate::features::qa::engine::tokenizer::count_tokens(&document_context);
 
-        Ok(crate::services::context_manager::LLMContext {
-            system_prompt,
-            messages,
-            document_context,
-            total_tokens,
-        })
+        Ok(
+            crate::infrastructure::services::context_manager::LLMContext {
+                system_prompt,
+                messages,
+                document_context,
+                total_tokens,
+            },
+        )
     }
 
     fn format_system_context(&self, system_prompt: Option<&str>) -> String {
-        crate::services::context_manager::ContextManager::format_system_context(system_prompt)
+        crate::infrastructure::services::context_manager::ContextManager::format_system_context(
+            system_prompt,
+        )
     }
 
     fn format_document_context(
@@ -84,7 +86,7 @@ impl ContextManagerTrait for MockContextManager {
         search_results: Vec<SearchResult>,
         max_tokens: usize,
     ) -> Result<String> {
-        crate::services::context_manager::ContextManager::format_document_context(
+        crate::infrastructure::services::context_manager::ContextManager::format_document_context(
             search_results,
             max_tokens,
         )
@@ -94,7 +96,7 @@ impl ContextManagerTrait for MockContextManager {
         &self,
         messages: &[crate::domain::conversation::ConversationMessage],
     ) -> Vec<crate::domain::conversation::LLMMessage> {
-        crate::services::context_manager::ContextManager::format_conversation_history(messages)
+        crate::infrastructure::services::context_manager::ContextManager::format_conversation_history(messages)
     }
 
     fn max_context_tokens(&self) -> usize {
@@ -113,7 +115,7 @@ pub struct MockSearchEnrichmentService {
         RwLock<
             std::collections::HashMap<
                 String,
-                crate::services::search_enrichment_service::DocumentMetadata,
+                crate::features::search::enrichment_service::DocumentMetadata,
             >,
         >,
     >,
@@ -153,7 +155,7 @@ impl MockSearchEnrichmentService {
     pub fn set_metadata(
         &self,
         chunk_id: &str,
-        metadata: crate::services::search_enrichment_service::DocumentMetadata,
+        metadata: crate::features::search::enrichment_service::DocumentMetadata,
     ) {
         self.mock_metadata
             .write()
@@ -185,7 +187,7 @@ impl SearchEnrichmentServiceTrait for MockSearchEnrichmentService {
     ) -> Result<
         std::collections::HashMap<
             String,
-            crate::services::search_enrichment_service::DocumentMetadata,
+            crate::features::search::enrichment_service::DocumentMetadata,
         >,
     > {
         let metadata_map = self.mock_metadata.read().unwrap();
@@ -193,7 +195,6 @@ impl SearchEnrichmentServiceTrait for MockSearchEnrichmentService {
 
         for chunk_id in chunk_ids {
             if let Some(meta) = metadata_map.get(chunk_id) {
-                // Return configured metadata
                 result.insert(chunk_id.clone(), meta.clone());
             } else {
                 // Default metadata
@@ -221,7 +222,7 @@ impl SearchEnrichmentServiceTrait for MockSearchEnrichmentService {
 
                 result.insert(
                     chunk_id.clone(),
-                    crate::services::search_enrichment_service::DocumentMetadata {
+                    crate::features::search::enrichment_service::DocumentMetadata {
                         snippet: "Mock content snippet for testing...".to_string(),
                         document_id: chunk_id.clone(),
                         metadata: default_metadata,

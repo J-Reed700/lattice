@@ -16,10 +16,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// Ingest Web URL
-// =============================================================================
-
 /// Request to ingest content from a web URL.
 ///
 /// Fetches the URL, extracts article content, and indexes it into the lattice.
@@ -86,10 +82,6 @@ pub struct IngestWebUrlResponseDto {
     pub reading_time_minutes: Option<i64>,
 }
 
-// =============================================================================
-// Get URL Preview
-// =============================================================================
-
 /// Request to get URL metadata without indexing.
 ///
 /// Fetches metadata (title, description, image) without actually
@@ -144,10 +136,6 @@ pub struct UrlPreviewDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub site_name: Option<String>,
 }
-
-// =============================================================================
-// Clean Article Content
-// =============================================================================
 
 /// Request to clean HTML article content.
 ///

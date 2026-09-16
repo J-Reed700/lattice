@@ -1,22 +1,22 @@
 //! Web feature dependency injection.
 
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use crate::application::ports::EmbeddingPort;
 use crate::features::embedding::service::DynamicEmbeddingService;
 use crate::features::embedding::EmbeddingServiceTrait;
+use crate::features::indexing::engine::storage::IndexStorage;
 use crate::features::indexing::IndexStorageTrait;
 use crate::features::web::services::ingestion::WebIngestionService;
 use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
 use crate::features::web::{
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
 };
-use crate::infrastructure::indexing::storage::IndexStorage;
 use crate::infrastructure::services::traits::ArticleExtractorServiceTrait;
 use crate::infrastructure::services::{
     ArticleExtractorService, WebArchiveService, WebCaptureService,
 };
+use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use tokenizers::Tokenizer;
@@ -34,7 +34,7 @@ pub struct WebDi {
 pub fn build(
     db_pool: SqlitePool,
     model_dir: &Path,
-    embedding_cache: Arc<RwLock<Option<Arc<dyn EmbeddingPort>>>>,
+    model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
 ) -> Result<WebDi> {
     let web_capture_service =
         Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
@@ -51,7 +51,7 @@ pub fn build(
     };
 
     let embedding_service =
-        Arc::new(DynamicEmbeddingService::new(embedding_cache)) as Arc<dyn EmbeddingServiceTrait>;
+        Arc::new(DynamicEmbeddingService::new(model_provider)) as Arc<dyn EmbeddingServiceTrait>;
     let index_storage = Arc::new(IndexStorage::new(db_pool)) as Arc<dyn IndexStorageTrait>;
 
     let web_ingestion_service = Arc::new(
@@ -108,4 +108,24 @@ fn build_fallback_tokenizer() -> Result<Arc<Tokenizer>> {
     let mut tokenizer = Tokenizer::new(bpe);
     tokenizer.with_pre_tokenizer(Whitespace {});
     Ok(Arc::new(tokenizer))
+}
+
+/// Web's registrar surface on `Container`.
+impl Container {
+    pub fn ingest_web_url_use_case(&self) -> Arc<IngestWebUrlUseCase> {
+        Arc::clone(self.indexing.ingest_web_url_use_case())
+    }
+
+    pub fn get_url_preview_use_case(&self) -> Arc<GetUrlPreviewUseCase> {
+        Arc::clone(self.indexing.get_url_preview_use_case())
+    }
+
+    /// Get web archive service (from IndexingModule)
+    pub fn web_archive(&self) -> Arc<dyn WebArchiveServiceTrait> {
+        Arc::clone(self.indexing.web_archive())
+    }
+
+    pub fn article_extractor_service(&self) -> Arc<dyn ArticleExtractorServiceTrait> {
+        Arc::clone(self.indexing.article_extractor_service())
+    }
 }

@@ -1,11 +1,10 @@
+use crate::application::ports::unit_of_work::ModelFileRepositoryPort;
+use crate::application::ports::UnitOfWorkFactory;
 use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
-use crate::domain::events::model_download_events::*;
-use crate::domain::repositories::unit_of_work::ModelFileRepositoryPort;
-use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::model_status::FileStatus;
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+use crate::features::download::events::model_download_events::*;
 use crate::infrastructure::event_bus::EventBus;
-use crate::persistence::repositories::model_file::SqliteModelFileRepository;
 use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -204,7 +203,7 @@ impl DownloadSaga {
         }
         .await;
 
-        let should_complete_model = match tx_result {
+        let _should_complete_model = match tx_result {
             Ok(is_complete) => is_complete,
             Err(err) => {
                 if let Err(rollback_err) = uow.rollback().await {
@@ -252,7 +251,7 @@ impl DownloadSaga {
                 .find_by_model_id(&event.model_id)
                 .await?;
 
-            // Oracle: Sort files to ensure deterministic file path selection for multi-file models
+            // Sort files to select a deterministic path for multi-file models.
             files.sort_by(|a, b| a.file_path.cmp(&b.file_path));
 
             let total_size: u64 = files.iter().map(|f| f.size_bytes as u64).sum();

@@ -6,7 +6,6 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! SearchEnrichmentService Integration Tests
 //!
@@ -23,9 +22,7 @@
 //! - Edge cases (empty results, missing chunks)
 //! - Performance benchmarks
 use chrono::Utc;
-use lattice::infrastructure::services::search_enrichment_service::{
-    DocumentMetadata, SearchEnrichmentService,
-};
+use lattice::features::search::enrichment_service::{DocumentMetadata, SearchEnrichmentService};
 use sqlx::SqlitePool;
 use std::time::Instant;
 use uuid::Uuid;

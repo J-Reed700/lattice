@@ -2,11 +2,6 @@ use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, Au
 use crate::infrastructure::security::SecureStorage;
 use crate::interfaces::di::Container;
 use crate::shared::error::AppError;
-use tauri::State;
-
-// ============================================================================
-// Implementation Layer (Pure Rust - No Tauri)
-// ============================================================================
 
 /// Implementation of set_api_key that takes &Container
 pub async fn set_api_key_impl(
@@ -363,12 +358,7 @@ pub async fn get_custom_endpoint_impl(container: &Container) -> Result<Option<St
     result
 }
 
-// ============================================================================
-// Tauri Command Layer (Thin Wrappers) - DEPRECATED: Use plugins instead
-// ============================================================================
-
 // Wrappers removed - direct implementation functions above are now used by plugins/credentials/commands.rs
-//
 // - set_api_key -> set_api_key_impl
 // - get_api_key -> get_api_key_impl
 // - delete_api_key -> delete_api_key_impl

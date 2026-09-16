@@ -6,7 +6,7 @@
 //!
 //! # Architecture
 //!
-//! Following the "bricks and studs" philosophy:
+//! Shared repository contracts:
 //! - **Studs (Public Interface)**: The trait methods define clear contracts
 //! - **Bricks (Implementations)**: Concrete repositories and mocks implement these traits
 //! - **Regeneratable**: Can swap implementations without breaking dependents
@@ -28,10 +28,6 @@ use crate::shared::error::Result;
 // use crate::infrastructure::persistence::repositories::mention_repository::MentionRepository;
 // use crate::infrastructure::persistence::repositories::mention_repository::{Mention, MentionWithContext};
 use async_trait::async_trait;
-
-// ============================================================================
-// Document Repository Trait
-// ============================================================================
 
 /// Trait for document storage operations
 ///
@@ -133,56 +129,13 @@ pub trait DocumentRepositoryTrait: Send + Sync {
     }
 }
 
-// ============================================================================
 // Chunk Repository Trait - REMOVED (migrated to DDD)
-// ============================================================================
 // The old ChunkRepositoryTrait has been removed as part of the DDD migration.
 // Chunks now use:
 // - Domain entity: crate::domain::entities::chunk::Chunk
 // - Repository: ChunkRepository implements RepositoryPort<Chunk> + ChunkRepositoryPort
 // - Ports: crate::application::ports::{RepositoryPort, ChunkRepositoryPort}
-//
 // See chunk_repository.rs for the new implementation.
-
-// ============================================================================
-// Embedding Repository Trait - MIGRATED TO DDD
-// ============================================================================
-//
-// **MIGRATION NOTICE**: This trait has been migrated to DDD architecture.
-//
-// # OLD PATTERN (Deprecated):
-//
-// ```rust,ignore
-// use crate::infrastructure::persistence::repositories::traits::EmbeddingRepositoryTrait;
-//
-// let id = repo.create(chunk_id, &vector, "model").await?;
-// let emb = repo.find_by_chunk(chunk_id).await?;
-// ```
-//
-// # NEW PATTERN (DDD):
-//
-// ```rust,ignore
-// use crate::application::ports::EmbeddingRepositoryPort;
-// use crate::features::embedding::entity::Embedding;
-//
-// let entity = Embedding::new(chunk_id, "model".to_string(), 384);
-// repo.save(&entity, vector).await?;
-// let (entity, vector) = repo.find_by_chunk_id(&chunk_id_str).await?.unwrap();
-// ```
-//
-// # Migration Timeline:
-// - Phase 1 (d97ddb4): Tag migrated to DDD ports
-// - Phase 2 (0822a8c): Chunk migrated to DDD ports
-// - Phase 3 (44c1ebf): Document migrated to DDD ports
-// - Phase 4 (THIS COMMIT): Embedding migrated to DDD ports
-//
-// # Key Changes:
-// - Domain entity: `crate::features::embedding::entity::Embedding`
-// - Port trait: `crate::application::ports::EmbeddingRepositoryPort`
-// - Method name fix: `find_by_document()` → `find_by_document_id()`
-// - Dual-struct pattern: Entity (metadata) + Vector (data)
-//
-// ============================================================================
 
 /*
 /// Trait for embedding vector storage operations
@@ -241,29 +194,21 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 }
 */
 
-// ============================================================================
 // Tag Repository Trait - REMOVED (migrated to DDD)
-// ============================================================================
 // The old TagRepositoryTrait has been removed as part of the DDD migration.
 // Tags now use:
 // - Domain entity: crate::domain::entities::tag::Tag
 // - Repository: TagRepository implements RepositoryPort<TagEntity>
 // - Service trait: crate::infrastructure::services::traits::TagRepositoryTrait
-//
 // See tag_repository.rs for the new implementation.
 
-// ============================================================================
 // Mention Repository Trait - MIGRATED TO DDD
-// ============================================================================
-//
 // This trait has been DEPRECATED and replaced with MentionRepositoryPort.
 // See src/application/ports/mention_repository_port.rs for the new interface.
 // See src/infrastructure/services/traits/mention.rs for migration guide.
-//
 // Migration Path:
 // - OLD: Arc<dyn MentionRepositoryTrait>
 // - NEW: Arc<dyn MentionRepositoryPort>
-//
 // #[async_trait]
 // pub trait MentionRepositoryTrait: Send + Sync {
 //     /// Create a mention entity
@@ -280,20 +225,16 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 //         mention_type: &str,
 //         metadata: Option<&str>,
 //     ) -> Result<Mention>;
-//
 //     /// Find mention by name
 //     async fn find_mention_by_name(&self, name: &str) -> Result<Option<Mention>>;
-//
 //     /// Search mentions by partial name match
 //     ///
 //     /// # Arguments
 //     /// * `query` - Search query (partial match)
 //     /// * `limit` - Maximum number of results
 //     async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<Mention>>;
-//
 //     /// Get all mentions of a specific type
 //     async fn get_mentions_by_type(&self, mention_type: &str) -> Result<Vec<Mention>>;
-//
 //     /// Link a mention to a document with context
 //     ///
 //     /// # Arguments
@@ -308,22 +249,17 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 //         context: Option<&str>,
 //         position: Option<i64>,
 //     ) -> Result<crate::repositories::mention_repository::DocumentMention>;
-//
 //     /// Get all mentions in a document with their context
 //     ///
 //     /// Results ordered by position in document
 //     async fn get_mentions_for_document(&self, document_id: &str)
 //         -> Result<Vec<MentionWithContext>>;
-//
 //     /// Get all documents that contain a specific mention
 //     async fn get_documents_with_mention(&self, mention_id: &str) -> Result<Vec<String>>;
-//
 //     /// Remove all mention links for a document
 //     async fn clear_document_mentions(&self, document_id: &str) -> Result<()>;
-//
 //     /// Delete a mention and all its links
 //     async fn delete_mention(&self, id: &str) -> Result<()>;
-//
 //     /// Extract mentions from text using regex patterns
 //     ///
 //     /// Does not persist to database, only parses text.
@@ -331,7 +267,6 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 //     /// # Returns
 //     /// HashMap mapping mention_type to Vec of (name, position) pairs
 //     fn extract_mentions_from_text(&self, text: &str) -> HashMap<String, Vec<(String, usize)>>;
-//
 //     /// Extract mentions from text and store them with document links
 //     ///
 //     /// Combines extraction and persistence in one operation.
@@ -346,30 +281,18 @@ pub trait EmbeddingRepositoryTrait: Send + Sync {
 //     ) -> Result<Vec<MentionWithContext>>;
 // }
 
-// ============================================================================
-// Trait Implementations for Concrete Types
-// ============================================================================
-
 // Implement traits for production repositories
-use crate::infrastructure::persistence::repositories::DocumentRepository;
 
-// ============================================================================
 // Document Repository Trait Implementation - REMOVED
-// ============================================================================
-//
-// **ORACLE DIRECTIVE (Week 3 Day 1)**: Legacy DocumentRepositoryTrait implementation
+// Legacy DocumentRepositoryTrait implementation
 // has been permanently removed as part of DDD migration.
-//
 // **Root Cause of Stack Overflow**: The old impl called DocumentRepository::create()
 // as an associated function, but this method doesn't exist. The call resolved back to
 // the trait method, creating infinite recursion → stack overflow.
-//
 // **Migration Complete**: All document repository operations now use the modern
 // RepositoryPort<Document> pattern. See document_repository.rs for current implementation.
-//
 // **Test Infrastructure**: Test factories (tests/helpers/factories.rs) have been
 // updated to use domain entities and RepositoryPort directly.
-//
 // This legacy trait is kept only for interface definition (other code may still
 // reference the trait). The broken implementation has been completely removed.
 
@@ -385,7 +308,6 @@ use crate::infrastructure::persistence::repositories::DocumentRepository;
 // Old MentionRepositoryTrait implementation removed - migrated to DDD
 // See mention_repository.rs for new MentionRepositoryPort implementation
 // This delegating impl is no longer needed
-//
 // #[async_trait]
 // impl MentionRepositoryTrait for MentionRepository {
 //     async fn create_mention(
@@ -396,19 +318,15 @@ use crate::infrastructure::persistence::repositories::DocumentRepository;
 //     ) -> Result<Mention> {
 //         MentionRepository::create_mention(self, name, mention_type, metadata).await
 //     }
-//
 //     async fn find_mention_by_name(&self, name: &str) -> Result<Option<Mention>> {
 //         MentionRepository::find_mention_by_name(self, name).await
 //     }
-//
 //     async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<Mention>> {
 //         MentionRepository::search_mentions(self, query, limit).await
 //     }
-//
 //     async fn get_mentions_by_type(&self, mention_type: &str) -> Result<Vec<Mention>> {
 //         MentionRepository::get_mentions_by_type(self, mention_type).await
 //     }
-//
 //     async fn link_mention_to_document(
 //         &self,
 //         document_id: &str,
@@ -425,30 +343,24 @@ use crate::infrastructure::persistence::repositories::DocumentRepository;
 //         )
 //         .await
 //     }
-//
 //     async fn get_mentions_for_document(
 //         &self,
 //         document_id: &str,
 //     ) -> Result<Vec<MentionWithContext>> {
 //         MentionRepository::get_mentions_for_document(self, document_id).await
 //     }
-//
 //     async fn get_documents_with_mention(&self, mention_id: &str) -> Result<Vec<String>> {
 //         MentionRepository::get_documents_with_mention(self, mention_id).await
 //     }
-//
 //     async fn clear_document_mentions(&self, document_id: &str) -> Result<()> {
 //         MentionRepository::clear_document_mentions(self, document_id).await
 //     }
-//
 //     async fn delete_mention(&self, id: &str) -> Result<()> {
 //         MentionRepository::delete_mention(self, id).await
 //     }
-//
 //     fn extract_mentions_from_text(&self, text: &str) -> HashMap<String, Vec<(String, usize)>> {
 //         MentionRepository::extract_mentions_from_text(self, text)
 //     }
-//
 //     async fn extract_and_store_mentions(
 //         &self,
 //         document_id: &str,

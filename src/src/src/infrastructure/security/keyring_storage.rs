@@ -327,11 +327,10 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_store_and_retrieve() {
         let storage = SecureStorage::with_service("com.lattice.test".to_string());
 
-        // Store a test key
         storage
             .store_api_key("test_key", "test_value_12345")
             .unwrap();
@@ -340,29 +339,23 @@ mod tests {
         let retrieved = storage.get_api_key("test_key").unwrap();
         assert_eq!(retrieved, Some("test_value_12345".to_string()));
 
-        // Clean up
         storage.delete_api_key("test_key").unwrap();
 
-        // Verify deletion
         let after_delete = storage.get_api_key("test_key").unwrap();
         assert_eq!(after_delete, None);
     }
 
     #[test]
-    #[ignore] // Requires OS keyring access - may not be available in CI
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     fn test_has_api_key() {
         let storage = SecureStorage::with_service("com.lattice.test".to_string());
 
-        // Should not exist initially
         assert!(!storage.has_api_key("test_key2").unwrap());
 
-        // Store it
         storage.store_api_key("test_key2", "value").unwrap();
 
-        // Should exist now
         assert!(storage.has_api_key("test_key2").unwrap());
 
-        // Clean up
         storage.delete_api_key("test_key2").unwrap();
     }
 

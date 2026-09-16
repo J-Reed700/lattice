@@ -1,4 +1,4 @@
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 use std::collections::HashMap;
 
 pub trait FusionStrategy: Send + Sync {
@@ -23,7 +23,9 @@ impl RrfFusion {
 
 impl Default for RrfFusion {
     fn default() -> Self {
-        Self { k: 60.0 }
+        Self {
+            k: crate::shared::constants::DEFAULT_RRF_K,
+        }
     }
 }
 

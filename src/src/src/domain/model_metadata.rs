@@ -109,17 +109,22 @@ impl ModelType {
     }
 
     /// Parse from database string representation.
+    ///
+    /// `models.model_type` is constrained by a SQL CHECK to
+    /// (`chat`, `embedding`, `qa`, `multi_modal`, `custom`, `ocr`,
+    /// `unknown`), so stored rows carry those spellings rather than the
+    /// variant names `to_db_string` produces. Both sets are accepted.
     pub fn from_db_string(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "text_embeddings" => Ok(Self::TextEmbeddings),
             "vision" => Ok(Self::Vision),
             "reranker" => Ok(Self::Reranker),
             "language_model" => Ok(Self::LanguageModel),
-            // Legacy compatibility
+            // The spellings the `models` CHECK constraint actually stores.
             "embedding" => Ok(Self::TextEmbeddings),
             "chat" => Ok(Self::LanguageModel),
-            // See `to_db_string`: transcription models round-trip through the
-            // legacy `custom` slot until the `models` table is rebuilt.
+            // See `to_db_string`: the CHECK constraint has no `transcription`
+            // value, so transcription models round-trip through `custom`.
             "custom" | "transcription" => Ok(Self::Transcription),
             _ => Err(format!("Invalid model type: {}", s)),
         }
@@ -162,7 +167,6 @@ impl ModelMetadata {
     /// assert_eq!(metadata.model_name, "TinyLlama 1.1B Chat v1.0 (Q4_K_M)");
     /// ```
     pub fn from_filename(filename: &str) -> Self {
-        // Remove .gguf extension
         let base_name = filename.strip_suffix(".gguf").unwrap_or(filename);
 
         // Split into parts
@@ -184,10 +188,8 @@ impl ModelMetadata {
             (base_name.to_string(), None)
         };
 
-        // Generate model_id (lowercase base without quantization)
         let model_id = model_base.to_lowercase();
 
-        // Generate pretty model_name
         let model_name = Self::generate_pretty_name(&model_base, quantization);
 
         Self {
@@ -216,11 +218,9 @@ impl ModelMetadata {
         // Split on hyphens
         let parts: Vec<&str> = base.split('-').collect();
 
-        // Process each part
         let formatted_parts: Vec<String> = parts
             .iter()
             .map(|part| {
-                // Check if it's a size indicator (e.g., "1.1b", "7b", "13b")
                 if Self::is_size_indicator(part) {
                     Self::format_size(part)
                 } else {
@@ -232,7 +232,6 @@ impl ModelMetadata {
 
         let mut result = formatted_parts.join(" ");
 
-        // Add quantization suffix if present
         if let Some(quant) = quantization {
             result.push_str(&format!(" ({})", quant.to_uppercase()));
         }

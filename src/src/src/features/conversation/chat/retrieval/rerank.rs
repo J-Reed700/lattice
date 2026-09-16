@@ -1,36 +1,29 @@
-use once_cell::sync::Lazy;
 use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::features::search::dto::SearchResponseDto;
+use crate::features::search::engine::reranker::{blend_rerank_scores, RerankResult};
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
-use crate::infrastructure::search::reranker::{RerankResult, RerankerService};
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::safe_truncate;
 
-const RERANKER_INIT_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
-
-#[derive(Default)]
-struct RerankerState {
-    instance: Option<Arc<RerankerService>>,
-    last_init_failure: Option<Instant>,
-}
-
-static RERANKER_STATE: Lazy<tokio::sync::Mutex<RerankerState>> =
-    Lazy::new(|| tokio::sync::Mutex::new(RerankerState::default()));
-
+/// Rerank the shortlist, reporting whether cross-encoder scores were actually
+/// applied.
+///
+/// The caller needs that second value, not just the reordered list: a blended
+/// score can be thresholded, but the RRF weights left behind when the reranker
+/// is unavailable or fails are ranks, and thresholding ranks would invent
+/// confidence the pipeline does not have.
 pub(super) async fn apply_rerank_stage(
     container: &Container,
     validated_message: &str,
     interpretation: &crate::domain::qa::hyde::HyDEInterpretation,
-    search_response: SearchResponseDto,
+    mut search_response: SearchResponseDto,
     followup_anchor_terms: Option<&HashSet<String>>,
     tuning: &RetrievalTuningSettingsDto,
-) -> SearchResponseDto {
+) -> (SearchResponseDto, bool) {
     if search_response.results.len() <= 1 {
-        return search_response;
+        return (search_response, false);
     }
 
     let rerank_query = build_rerank_query(
@@ -40,7 +33,8 @@ pub(super) async fn apply_rerank_stage(
         tuning,
     );
 
-    if let Some(reranker) = get_or_init_reranker(container).await {
+    let reranker = container.reranker();
+    if reranker.is_available() {
         let rerank_count = search_response
             .results
             .len()
@@ -57,21 +51,28 @@ pub(super) async fn apply_rerank_stage(
             .await
         {
             Ok(reranked) if !reranked.is_empty() => {
-                info!(
-                    candidate_count = rerank_count,
-                    reranked_count = reranked.len(),
-                    "Applied cross-encoder reranking to KB results"
-                );
-                return apply_cross_encoder_rerank(search_response, &reranked, rerank_count);
+                match apply_cross_encoder_rerank(&mut search_response, &reranked, rerank_count) {
+                    Ok(()) => {
+                        info!(
+                            candidate_count = rerank_count,
+                            reranked_count = reranked.len(),
+                            "Applied shared cross-encoder reranking to KB results"
+                        );
+                        return (search_response, true);
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "Invalid cross-encoder output; keeping fused retrieval order");
+                    }
+                }
             }
             Ok(_) => {}
             Err(error) => {
-                warn!(error = %error, "Cross-encoder reranking failed; falling back to lexical rerank");
+                warn!(error = %error, "Cross-encoder reranking failed; keeping fused retrieval order");
             }
         }
     }
 
-    apply_overlap_rerank(search_response, &rerank_query)
+    (search_response, false)
 }
 
 fn build_rerank_query(
@@ -106,80 +107,30 @@ fn build_rerank_query(
     safe_truncate(&query, tuning.rerank_query_max_chars as usize)
 }
 
-async fn get_or_init_reranker(container: &Container) -> Option<Arc<RerankerService>> {
-    // Hold one async initialization lock for the complete load so concurrent
-    // searches await the same model instead of allocating it twice.
-    let mut state = RERANKER_STATE.lock().await;
-    if let Some(service) = state.instance.as_ref() {
-        return Some(Arc::clone(service));
-    }
-    if state
-        .last_init_failure
-        .is_some_and(|failed_at| failed_at.elapsed() < RERANKER_INIT_RETRY_DELAY)
-    {
-        return None;
-    }
-
-    let model_path = container
-        .models_path()
-        .join("reranker")
-        .join("model.safetensors");
-    if !model_path.exists() {
-        return None;
-    }
-
-    match RerankerService::new(&model_path).await {
-        Ok(service) => {
-            let service = Arc::new(service);
-            state.instance = Some(Arc::clone(&service));
-            state.last_init_failure = None;
-            Some(service)
-        }
-        Err(error) => {
-            state.last_init_failure = Some(Instant::now());
-            warn!(
-                error = %error,
-                model_path = %model_path.display(),
-                "Failed to initialize reranker model"
-            );
-            None
-        }
-    }
-}
-
 fn apply_cross_encoder_rerank(
-    mut search_response: SearchResponseDto,
+    search_response: &mut SearchResponseDto,
     reranked: &[RerankResult],
     rerank_count: usize,
-) -> SearchResponseDto {
+) -> crate::shared::error::Result<()> {
     if rerank_count == 0 || search_response.results.is_empty() {
-        return search_response;
+        return Ok(());
     }
 
-    let max_original = search_response
+    let original_scores: Vec<f32> = search_response
         .results
         .iter()
         .take(rerank_count)
         .map(|result| result.score)
-        .fold(0.0_f32, f32::max)
-        .max(f32::EPSILON);
+        .collect();
+    let scores = blend_rerank_scores(&original_scores, reranked)?;
 
-    let mut rerank_scores = vec![0.0_f32; rerank_count];
-    for entry in reranked {
-        if let Some(score) = rerank_scores.get_mut(entry.index) {
-            *score = entry.score.clamp(0.0, 1.0);
-        }
-    }
-
-    for (idx, result) in search_response
+    for (result, score) in search_response
         .results
         .iter_mut()
         .take(rerank_count)
-        .enumerate()
+        .zip(scores)
     {
-        let original = (result.score / max_original).clamp(0.0, 1.0);
-        let rerank_score = rerank_scores.get(idx).copied().unwrap_or_default();
-        result.score = (0.35 * original + 0.65 * rerank_score).clamp(0.0, 1.0);
+        result.score = score;
     }
 
     search_response.results.sort_by(|a, b| {
@@ -188,58 +139,5 @@ fn apply_cross_encoder_rerank(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     search_response.total = search_response.results.len();
-    search_response
-}
-
-fn apply_overlap_rerank(
-    mut search_response: SearchResponseDto,
-    rerank_query: &str,
-) -> SearchResponseDto {
-    let query_terms = super::extract_overlap_query_terms(rerank_query);
-    if query_terms.is_empty() || search_response.results.len() <= 1 {
-        return search_response;
-    }
-
-    let query_term_set: HashSet<String> = query_terms.into_iter().collect();
-    let max_original = search_response
-        .results
-        .iter()
-        .map(|result| result.score)
-        .fold(0.0_f32, f32::max)
-        .max(f32::EPSILON);
-
-    for result in &mut search_response.results {
-        let mut haystack = String::new();
-        haystack.push_str(&result.title);
-        haystack.push(' ');
-        haystack.push_str(&result.content);
-        if let Some(path) = &result.path {
-            haystack.push(' ');
-            haystack.push_str(path);
-        }
-        let haystack_terms = super::tokenize_overlap_terms(&haystack);
-        let hits = query_term_set
-            .iter()
-            .filter(|term| haystack_terms.contains(term.as_str()))
-            .count() as f32;
-        let overlap_score = if query_term_set.is_empty() {
-            0.0
-        } else {
-            (hits / query_term_set.len() as f32).clamp(0.0, 1.0)
-        };
-        let original_score = (result.score / max_original).clamp(0.0, 1.0);
-        result.score = (0.6 * original_score + 0.4 * overlap_score).clamp(0.0, 1.0);
-    }
-
-    search_response.results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    search_response.total = search_response.results.len();
-    debug!(
-        result_count = search_response.results.len(),
-        "Applied lexical fallback rerank to KB results"
-    );
-    search_response
+    Ok(())
 }

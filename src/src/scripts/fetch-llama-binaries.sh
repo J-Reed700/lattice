@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Download the llama-server sidecar binaries from a Lattice GitHub
-# Release into src/app/src/binaries/.
+# Release into src/src/binaries/.
 #
 # This script is for local dev and CI. The binaries are produced by
 # .github/workflows/llama-build.yml (separate, manual workflow) and

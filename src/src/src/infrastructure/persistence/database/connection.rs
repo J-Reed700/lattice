@@ -11,11 +11,7 @@ pub struct DatabaseConnection {
 
 impl DatabaseConnection {
     pub async fn new(db_path: PathBuf) -> Result<Self> {
-        // Issue #3: Add connection timeout (P0 - Prevents Hangs)
-        // Issue #2: Enable foreign key enforcement (P0 - Data Integrity)
-        // TITANIUM SHIELD: Corruption Recovery (Oracle-mandated)
-
-        // Attempt connection, with corruption detection and auto-recovery
+        // Connect with corruption detection and automatic recovery.
         let pool_result = Self::create_pool_with_corruption_recovery(&db_path).await;
 
         let pool = match pool_result {
@@ -26,7 +22,6 @@ impl DatabaseConnection {
             }
         };
 
-        // Verify foreign keys are actually enabled
         let fk_enabled: (i32,) = sqlx::query_as("PRAGMA foreign_keys")
             .fetch_one(&pool)
             .await
@@ -42,9 +37,6 @@ impl DatabaseConnection {
     }
 
     /// Create SQLite pool with automatic corruption recovery
-    ///
-    /// Oracle Mandate (Titanium Shield Audit):
-    /// "Catch SQLITE_CORRUPT and move bad DB to .bak instead of crash loop"
     ///
     /// Recovery Strategy:
     /// 1. Attempt to connect to database
@@ -91,7 +83,6 @@ impl DatabaseConnection {
                     tracing::error!("Database corruption detected: {}", error_msg);
                     tracing::warn!("Attempting automatic recovery...");
 
-                    // Generate backup filename with timestamp
                     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
                     let backup_path =
                         db_path.with_extension(format!("corrupted-{}.bak", timestamp));
@@ -184,7 +175,6 @@ impl DatabaseConnection {
         retry_with_backoff(
             RetryConfig::conservative(), // Less aggressive for maintenance tasks
             || async {
-                // Check database size
                 let size_result: (i64, i64) = sqlx::query_as(
                     "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",
                 )
@@ -193,7 +183,6 @@ impl DatabaseConnection {
 
                 let db_size = size_result.0 * size_result.1;
 
-                // Check free pages ratio
                 let freelist: (i64,) =
                     sqlx::query_as("SELECT freelist_count FROM pragma_freelist_count()")
                         .fetch_one(&pool)
@@ -232,7 +221,6 @@ impl DatabaseConnection {
         retry_with_backoff(
             RetryConfig::conservative(),
             || async {
-                // Run ANALYZE to update query planner statistics
                 sqlx::query("ANALYZE").execute(&pool).await?;
                 Ok(())
             },

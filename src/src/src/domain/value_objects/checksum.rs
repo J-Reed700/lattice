@@ -5,10 +5,10 @@
 //! ## Pure Domain Model
 //!
 //! This value object contains only the checksum value and validation logic.
-//! **The actual computation of checksums is handled by the infrastructure layer.**
+//! **The actual computation of checksums is handled by the application layer.**
 //!
 //! Domain Layer Principle: Zero file I/O, zero external cryptography dependencies.
-//! For checksum computation, use `ChecksumFactory` from the infrastructure layer.
+//! For checksum computation, use `ChecksumFactory` from the application layer.
 
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create from existing hash
-/// let checksum = Checksum::from_string("a".repeat(64))?;
+/// let checksum = Checksum::new("a".repeat(64))?;
 /// println!("Checksum: {}", checksum.as_str());
 /// # Ok(())
 /// # }
@@ -43,7 +43,7 @@ impl Checksum {
     /// Create checksum from existing hash string (pure domain constructor).
     ///
     /// This is the primary pure domain constructor. For computing checksums from
-    /// files or content, use `ChecksumFactory` from the infrastructure layer.
+    /// files or content, use `ChecksumFactory` from the application layer.
     ///
     /// # Errors
     ///
@@ -71,7 +71,6 @@ impl Checksum {
             )));
         }
 
-        // Validate hex characters
         if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(AppError::InvalidInput(
                 "Checksum must contain only hex characters".into(),
@@ -79,72 +78,6 @@ impl Checksum {
         }
 
         Ok(Self(hash))
-    }
-
-    /// Create checksum from existing hash string.
-    ///
-    /// # Deprecated
-    ///
-    /// Use `Checksum::new()` instead for clarity.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the hash string is empty or invalid format.
-    #[deprecated(since = "0.2.0", note = "Use Checksum::new() instead")]
-    pub fn from_string(hash: String) -> Result<Self> {
-        Self::new(hash)
-    }
-
-    /// Compute SHA-256 checksum from file path.
-    ///
-    /// # Deprecated
-    ///
-    /// This method violates domain purity by performing file I/O and using external
-    /// cryptography dependencies. Use `ChecksumFactory::from_path()` from the
-    /// infrastructure layer instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use ChecksumFactory::from_path() from infrastructure layer"
-    )]
-    pub fn compute(path: &std::path::Path) -> Result<Self> {
-        use sha2::{Digest, Sha256};
-
-        // Read file contents
-        let content = std::fs::read(path).map_err(|e| AppError::Io {
-            message: format!("Failed to read file for checksum: {}", e),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-        // Compute SHA-256 hash
-        let hash = Sha256::digest(&content);
-        let checksum_str = format!("{:x}", hash);
-
-        Ok(Self(checksum_str))
-    }
-
-    /// Create checksum from bytes (compute SHA-256).
-    ///
-    /// # Deprecated
-    ///
-    /// This method violates domain purity by using external cryptography dependencies (sha2).
-    /// Use `ChecksumFactory::from_bytes()` from the infrastructure layer instead.
-    ///
-    /// This method is kept for backward compatibility and will be removed in a future version.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use ChecksumFactory::from_bytes() from infrastructure layer"
-    )]
-    pub fn from_bytes(content: &[u8]) -> Self {
-        use sha2::{Digest, Sha256};
-
-        let hash = Sha256::digest(content);
-        let checksum_str = format!("{:x}", hash);
-
-        Self(checksum_str)
     }
 
     /// Get the checksum as a string slice.
@@ -158,38 +91,11 @@ impl Checksum {
     pub fn matches(&self, other: &Checksum) -> bool {
         self.0 == other.0
     }
-
-    /// Verify content matches this checksum.
-    ///
-    /// # Deprecated
-    ///
-    /// This method depends on `from_bytes()` which uses external cryptography.
-    /// Use `ChecksumFactory::verify()` from the infrastructure layer instead.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use lattice::domain::value_objects::checksum::Checksum;
-    ///
-    /// # #[allow(deprecated)]
-    /// let content = b"test content";
-    /// let checksum = Checksum::from_bytes(content);
-    /// assert!(checksum.verify(content));
-    /// ```
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use ChecksumFactory::verify() from infrastructure layer"
-    )]
-    pub fn verify(&self, content: &[u8]) -> bool {
-        #[allow(deprecated)]
-        let computed = Self::from_bytes(content);
-        self.matches(&computed)
-    }
 }
 
 impl From<String> for Checksum {
     fn from(s: String) -> Self {
-        // Note: This implementation doesn't validate. Use from_string() for validation.
+        // Note: This implementation doesn't validate. Use Checksum::new() for validation.
         Checksum(s)
     }
 }
@@ -200,141 +106,66 @@ impl std::fmt::Display for Checksum {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    // ========================================================================
-    // Unit Tests (13 tests - including deprecated)
-    // ========================================================================
 
     #[test]
-    #[allow(deprecated)]
-    fn test_checksum_from_bytes() {
-        let content = b"hello world";
-        let checksum = Checksum::from_bytes(content);
-
-        // Verify checksum format (64 hex characters)
-        assert_eq!(checksum.as_str().len(), 64);
-        assert!(checksum.as_str().chars().all(|c| c.is_ascii_hexdigit()));
-
-        // SHA-256 of "hello world"
-        let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
-        assert_eq!(checksum.as_str(), expected);
+    fn test_checksum_new_valid() {
+        let hash = "a".repeat(64);
+        let checksum = Checksum::new(hash.clone()).unwrap();
+        assert_eq!(checksum.as_str(), hash);
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_checksum_verify() {
-        let content = b"test content";
-        let checksum = Checksum::from_bytes(content);
-
-        assert!(checksum.verify(content));
-        assert!(!checksum.verify(b"different content"));
+    fn test_checksum_new_empty() {
+        let result = Checksum::new("".to_string());
+        assert!(result.is_err());
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_checksum_compute() {
-        // Create temporary file with known content
-        let mut temp_file = NamedTempFile::new().unwrap();
-        write!(temp_file, "hello world").unwrap();
-        temp_file.flush().unwrap();
-
-        let checksum = Checksum::compute(temp_file.path()).unwrap();
-
-        // Verify checksum format (64 hex characters)
-        assert_eq!(checksum.as_str().len(), 64);
-        assert!(checksum.as_str().chars().all(|c| c.is_ascii_hexdigit()));
-
-        // SHA-256 of "hello world"
-        let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
-        assert_eq!(checksum.as_str(), expected);
+    fn test_checksum_new_wrong_length() {
+        let result = Checksum::new("abc123".to_string());
+        assert!(result.is_err());
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_checksum_same_content_same_hash() {
-        let content1 = b"identical content";
-        let content2 = b"identical content";
+    fn test_checksum_new_invalid_chars() {
+        let invalid = "g".repeat(64); // 'g' is not a hex digit
+        let result = Checksum::new(invalid);
+        assert!(result.is_err());
+    }
 
-        let checksum1 = Checksum::from_bytes(content1);
-        let checksum2 = Checksum::from_bytes(content2);
+    #[test]
+    fn test_checksum_display() {
+        let hash = "abc".repeat(21) + "d"; // 64 chars
+        let checksum = Checksum::new(hash.clone()).unwrap();
+        assert_eq!(checksum.to_string(), hash);
+    }
+
+    #[test]
+    fn test_checksum_equality() {
+        let hash = "a".repeat(64);
+        let checksum1 = Checksum::new(hash.clone()).unwrap();
+        let checksum2 = Checksum::new(hash).unwrap();
 
         assert_eq!(checksum1, checksum2);
         assert!(checksum1.matches(&checksum2));
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_checksum_different_content_different_hash() {
-        let checksum1 = Checksum::from_bytes(b"content A");
-        let checksum2 = Checksum::from_bytes(b"content B");
+    fn test_checksum_matches_rejects_different_value() {
+        let checksum1 = Checksum::new("a".repeat(64)).unwrap();
+        let checksum2 = Checksum::new("b".repeat(64)).unwrap();
 
         assert_ne!(checksum1, checksum2);
         assert!(!checksum1.matches(&checksum2));
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_checksum_from_string_valid() {
-        let hash = "a".repeat(64);
-        let checksum = Checksum::from_string(hash.clone()).unwrap();
-        assert_eq!(checksum.as_str(), hash);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_checksum_from_string_empty() {
-        let result = Checksum::from_string("".to_string());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_checksum_from_string_wrong_length() {
-        let result = Checksum::from_string("abc123".to_string());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_checksum_from_string_invalid_chars() {
-        let invalid = "g".repeat(64); // 'g' is not a hex digit
-        let result = Checksum::from_string(invalid);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_checksum_display() {
-        let hash = "abc".repeat(21) + "d"; // 64 chars
-        let checksum = Checksum::from_string(hash.clone()).unwrap();
-        assert_eq!(checksum.to_string(), hash);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_checksum_equality() {
-        let hash = "a".repeat(64);
-        let checksum1 = Checksum::from_string(hash.clone()).unwrap();
-        let checksum2 = Checksum::from_string(hash).unwrap();
-
-        assert_eq!(checksum1, checksum2);
-        assert!(checksum1.matches(&checksum2));
-    }
-
-    #[test]
-    #[allow(deprecated)]
     fn test_checksum_serialization() {
         let hash = "b".repeat(64);
-        let checksum = Checksum::from_string(hash).unwrap();
+        let checksum = Checksum::new(hash).unwrap();
 
         // Serialize to JSON
         let json = serde_json::to_string(&checksum).unwrap();
@@ -345,23 +176,10 @@ mod tests {
         assert_eq!(checksum, deserialized);
     }
 
-    #[test]
-    fn test_checksum_new_valid() {
-        let hash = "a".repeat(64);
-        let checksum = Checksum::new(hash.clone()).unwrap();
-        assert_eq!(checksum.as_str(), hash);
-    }
-
-    // ========================================================================
-    // Property-Based Tests (12 tests)
-    // ========================================================================
-
     #[cfg(test)]
     mod property_tests {
         use super::*;
         use proptest::prelude::*;
-
-        // === Arbitrary Strategies ===
 
         fn valid_checksum_hex() -> impl Strategy<Value = String> {
             prop::string::string_regex("[a-f0-9]{64}").expect("valid regex")
@@ -382,25 +200,7 @@ mod tests {
             prop::string::string_regex("[g-z]{64}").expect("valid regex") // Invalid hex chars
         }
 
-        fn valid_file_content() -> impl Strategy<Value = Vec<u8>> {
-            prop::collection::vec(any::<u8>(), 0..1000) // 0-1KB for test speed
-        }
-
-        // === Valid Construction (4 tests) ===
-
         proptest! {
-            #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_from_bytes_creates_valid_hash(content in valid_file_content()) {
-                // GIVEN: File content
-                // WHEN: Creating checksum from bytes
-                let checksum = Checksum::from_bytes(&content);
-
-                // THEN: Should produce valid 64-char hex hash
-                prop_assert_eq!(checksum.as_str().len(), 64);
-                prop_assert!(checksum.as_str().chars().all(|c| c.is_ascii_hexdigit()));
-            }
-
             #[test]
             fn prop_checksum_from_hex_valid(hex in valid_checksum_hex()) {
                 // GIVEN: Valid 64-char hex string
@@ -415,27 +215,23 @@ mod tests {
             }
 
             #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_hex_only(content in valid_file_content()) {
-                // GIVEN: Checksum from content
-                let checksum = Checksum::from_bytes(&content);
+            fn prop_checksum_hex_only(hex in valid_checksum_hex()) {
+                // GIVEN: Checksum built from a valid hex string
+                let checksum = Checksum::new(hex).expect("valid hex checksum");
 
                 // THEN: All characters should be hex
                 prop_assert!(checksum.as_str().chars().all(|c| c.is_ascii_hexdigit()));
             }
 
             #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_length_64(content in valid_file_content()) {
-                // GIVEN: Checksum from any content
-                let checksum = Checksum::from_bytes(&content);
+            fn prop_checksum_length_64(hex in valid_checksum_hex()) {
+                // GIVEN: Checksum built from a valid hex string
+                let checksum = Checksum::new(hex).expect("valid hex checksum");
 
                 // THEN: Length must always be 64 (SHA-256)
                 prop_assert_eq!(checksum.as_str().len(), 64);
             }
         }
-
-        // === Validation (4 tests) ===
 
         proptest! {
             #[test]
@@ -488,25 +284,31 @@ mod tests {
             }
         }
 
-        // === Value Object Properties (4 tests) ===
-
         proptest! {
             #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_equality_by_value(content in valid_file_content()) {
-                // GIVEN: Same content hashed twice
-                let checksum1 = Checksum::from_bytes(&content);
-                let checksum2 = Checksum::from_bytes(&content);
+            fn prop_checksum_equality_by_value(hex in valid_checksum_hex()) {
+                // GIVEN: Same hex string used twice
+                let checksum1 = Checksum::new(hex.clone()).expect("valid hex checksum");
+                let checksum2 = Checksum::new(hex).expect("valid hex checksum");
 
                 // THEN: Checksums should be equal (value equality)
                 prop_assert_eq!(checksum1, checksum2);
             }
 
             #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_serde_roundtrip(content in valid_file_content()) {
+            fn prop_checksum_matches_reflexive(hex in valid_checksum_hex()) {
+                // GIVEN: Two checksums built from the same hex string
+                let checksum1 = Checksum::new(hex.clone()).expect("valid hex checksum");
+                let checksum2 = Checksum::new(hex).expect("valid hex checksum");
+
+                // THEN: Checksum should match the checksum from the same value
+                prop_assert!(checksum1.matches(&checksum2));
+            }
+
+            #[test]
+            fn prop_checksum_serde_roundtrip(hex in valid_checksum_hex()) {
                 // GIVEN: Checksum instance
-                let checksum = Checksum::from_bytes(&content);
+                let checksum = Checksum::new(hex).expect("valid hex checksum");
 
                 // WHEN: Serializing and deserializing
                 let json = serde_json::to_string(&checksum).unwrap();
@@ -514,30 +316,6 @@ mod tests {
 
                 // THEN: Should roundtrip successfully
                 prop_assert_eq!(checksum, deserialized);
-            }
-
-            #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_matches_reflexive(content in valid_file_content()) {
-                // GIVEN: Checksum from content
-                let checksum1 = Checksum::from_bytes(&content);
-                let checksum2 = Checksum::from_bytes(&content);
-
-                // THEN: Checksum should match the checksum from same content
-                prop_assert!(checksum1.matches(&checksum2));
-            }
-
-            #[test]
-            #[allow(deprecated)]
-            fn prop_checksum_verify_consistent(content in valid_file_content()) {
-                // GIVEN: Checksum from content
-                let checksum = Checksum::from_bytes(&content);
-
-                // WHEN: Verifying content
-                let result = checksum.verify(&content);
-
-                // THEN: Should verify successfully
-                prop_assert_eq!(result, true);
             }
         }
     }

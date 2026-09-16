@@ -7,10 +7,10 @@
 //! This repository implements the RecentDocumentsRepositoryPort trait,
 //! providing operations for tracking and retrieving recently accessed documents.
 
+use crate::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 use crate::application::ports::RecentDocumentsRepositoryPort;
-use crate::features::recent::dto::RecentDocumentDto;
 use crate::infrastructure::persistence::database::query_with_timeout;
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
@@ -46,31 +46,42 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
         let document_id = document_id.to_string();
         let now = Utc::now().to_rfc3339();
 
-        query_with_timeout(|| async {
-            // Upsert: Insert new or update existing
-            // If document_id exists, increment access_count and update last_accessed_at
-            sqlx::query!(
+        let tracked = query_with_timeout(|| async {
+            let mut tx = pool.begin().await?;
+            let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
+                .bind(&document_id).fetch_one(&mut *tx).await?;
+            if exists == 0 { return Ok(false); }
+            let id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
                 r#"
-                INSERT INTO recent_documents (document_id, last_accessed_at, access_count)
-                VALUES (?, ?, 1)
+                INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
+                VALUES (?, ?, ?, 1)
                 ON CONFLICT(document_id) DO UPDATE SET
                     last_accessed_at = excluded.last_accessed_at,
                     access_count = access_count + 1
-                "#,
-                document_id,
-                now
+                "#
             )
-            .execute(&pool)
+            .bind(id).bind(&document_id).bind(&now)
+            .execute(&mut *tx)
             .await?;
 
-            Ok(())
+            // Tracking and bounded-history eviction succeed or roll back together.
+            sqlx::query("DELETE FROM recent_documents WHERE document_id NOT IN (SELECT document_id FROM recent_documents ORDER BY last_accessed_at DESC, rowid DESC LIMIT 50)")
+                .execute(&mut *tx).await?;
+            tx.commit().await?;
+
+            Ok(true)
         })
-        .await
+        .await?;
+        if !tracked {
+            return Err(AppError::NotFound("Document not found".into()));
+        }
+        Ok(())
     }
 
     async fn get_recent_documents(&self, limit: usize) -> Result<Vec<RecentDocumentDto>> {
         let pool = self.pool.clone();
-        let limit = limit as i64;
+        let limit = limit.min(100) as i64;
 
         query_with_timeout(|| async {
             let results = sqlx::query(
@@ -79,14 +90,13 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
                     rd.document_id,
                     rd.last_accessed_at,
                     rd.access_count,
-                    d.id,
-                    COALESCE(files.name, d.title) as file_name,
-                    COALESCE(files.path, d.source_url, 'unknown') as file_path,
-                    COALESCE(files.mime_type, d.content_type) as file_type
+                    COALESCE(rd.id, rd.document_id) as id,
+                    d.file_name,
+                    d.file_path,
+                    d.mime_type as file_type
                 FROM recent_documents rd
                 INNER JOIN documents d ON rd.document_id = d.id
-                LEFT JOIN files ON d.file_id = files.id
-                ORDER BY rd.last_accessed_at DESC
+                ORDER BY rd.last_accessed_at DESC, rd.rowid DESC
                 LIMIT ?
                 "#,
             )
@@ -152,81 +162,19 @@ mod tests {
     }
 
     async fn setup_schema(pool: &SqlitePool) {
-        // Create files table
+        // Exercise the same schema as the application, including future migrations.
+        sqlx::migrate!("./migrations").run(pool).await.unwrap();
         sqlx::query(
             r#"
-            CREATE TABLE files (
-                id TEXT PRIMARY KEY NOT NULL,
-                path TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                mime_type TEXT,
-                size_bytes INTEGER NOT NULL DEFAULT 0,
-                checksum_sha256 TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            WITH seed(id, path, name, mime, size) AS (
+                VALUES ('doc1', '/test/doc1.pdf', 'doc1.pdf', 'application/pdf', 1024),
+                    ('doc2', '/test/doc2.txt', 'doc2.txt', 'text/plain', 2048)
             )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-
-        // Create documents table
-        sqlx::query(
-            r#"
-            CREATE TABLE documents (
-                id TEXT PRIMARY KEY NOT NULL,
-                file_id TEXT,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                source_url TEXT,
-                source_type TEXT NOT NULL CHECK (source_type IN ('web', 'file', 'manual', 'api')),
-                content_type TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'indexed', 'failed')) DEFAULT 'pending',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                indexed_at TEXT,
-                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-
-        // Create recent_documents table
-        sqlx::query(
-            r#"
-            CREATE TABLE recent_documents (
-                document_id TEXT PRIMARY KEY NOT NULL,
-                last_accessed_at TEXT NOT NULL,
-                access_count INTEGER NOT NULL DEFAULT 1,
-                FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-
-        // Insert test files
-        sqlx::query(
-            r#"
-            INSERT INTO files (id, path, name, mime_type, size_bytes, checksum_sha256) VALUES
-            ('file1', '/test/doc1.pdf', 'doc1.pdf', 'application/pdf', 1024, 'abc123'),
-            ('file2', '/test/doc2.txt', 'doc2.txt', 'text/plain', 2048, 'def456')
-            "#,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-
-        // Insert test documents (file-based)
-        sqlx::query(
-            r#"
-            INSERT INTO documents (id, file_id, title, content, source_type, content_type, status) VALUES
-            ('doc1', 'file1', 'Test Document 1', 'Content here', 'file', 'application/pdf', 'indexed'),
-            ('doc2', 'file2', 'Test Document 2', 'Content here', 'file', 'text/plain', 'indexed')
+            INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes,
+                modified_at, indexed_at, checksum, status)
+            SELECT id, path, name, mime, size, '2026-09-15T00:00:00Z',
+                '2026-09-15T00:00:00Z', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'indexed'
+            FROM seed
             "#,
         )
         .execute(pool)
@@ -243,11 +191,60 @@ mod tests {
         // Track access to a new document
         repo.track_access("doc1").await.unwrap();
 
-        // Verify it was added
         let recent = repo.get_recent_documents(10).await.unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].document_id, "doc1");
         assert_eq!(recent[0].access_count, 1);
+    }
+
+    #[tokio::test]
+    async fn tracking_and_eviction_roll_back_together() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        sqlx::raw_sql("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<51)
+            INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) SELECT 'old-'||x, '/test/old-'||x, 'old', 0, '2020-01-01T00:00:00Z', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' FROM n;
+            INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
+                SELECT id, id, '2020-01-01', 1 FROM documents WHERE id LIKE 'old-%';
+            CREATE TRIGGER reject_eviction BEFORE DELETE ON recent_documents BEGIN SELECT RAISE(ABORT, 'eviction failure'); END;")
+            .execute(&pool).await.unwrap();
+        let repo = RecentDocumentsRepository::new(pool.clone());
+        assert!(repo.track_access("doc1").await.is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recent_documents")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 51);
+        let tracked: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM recent_documents WHERE document_id='doc1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tracked, 0);
+        sqlx::query("DROP TRIGGER reject_eviction")
+            .execute(&pool)
+            .await
+            .unwrap();
+        repo.track_access("doc1").await.unwrap();
+        let records = repo.get_recent_documents(usize::MAX).await.unwrap();
+        assert_eq!(records.len(), 50);
+        assert_eq!(records[0].document_id, "doc1");
+        assert!(!records[0].id.is_empty());
+        repo.track_access("doc1").await.unwrap();
+        let tracked = repo.get_recent_documents(1).await.unwrap();
+        assert_eq!(tracked[0].id, records[0].id);
+        assert_eq!(tracked[0].access_count, 2);
+    }
+
+    #[tokio::test]
+    async fn unknown_document_is_not_tracked() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        let repo = RecentDocumentsRepository::new(pool);
+        assert!(matches!(
+            repo.track_access("missing").await,
+            Err(AppError::NotFound(_))
+        ));
+        assert!(repo.get_recent_documents(10).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -261,7 +258,6 @@ mod tests {
         repo.track_access("doc1").await.unwrap();
         repo.track_access("doc1").await.unwrap();
 
-        // Verify count was incremented
         let recent = repo.get_recent_documents(10).await.unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].document_id, "doc1");
@@ -303,7 +299,6 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         repo.track_access("doc2").await.unwrap();
 
-        // Should be ordered by most recent first
         let recent = repo.get_recent_documents(10).await.unwrap();
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].document_id, "doc2"); // Most recent
@@ -336,7 +331,6 @@ mod tests {
         repo.track_access("doc1").await.unwrap();
         repo.track_access("doc2").await.unwrap();
 
-        // Verify they exist
         let recent = repo.get_recent_documents(10).await.unwrap();
         assert_eq!(recent.len(), 2);
 
@@ -344,7 +338,6 @@ mod tests {
         let cleared = repo.clear_recent_history(None).await.unwrap();
         assert_eq!(cleared, 2);
 
-        // Verify all cleared
         let recent = repo.get_recent_documents(10).await.unwrap();
         assert_eq!(recent.len(), 0);
     }
@@ -359,7 +352,6 @@ mod tests {
         repo.track_access("doc1").await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        // Get the current time to use as cutoff
         let cutoff_time = Utc::now().to_rfc3339();
 
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -384,7 +376,6 @@ mod tests {
         // Track access
         repo.track_access("doc1").await.unwrap();
 
-        // Get recent and verify details
         let recent = repo.get_recent_documents(1).await.unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].document_id, "doc1");

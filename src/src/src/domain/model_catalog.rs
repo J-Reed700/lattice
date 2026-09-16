@@ -35,10 +35,6 @@
 use crate::domain::model_management::{ModelCategory, ModelMetadata};
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Value Objects - Search Filters
-// ============================================================================
-
 /// Search filters for model catalog queries.
 ///
 /// This value object encapsulates search criteria for finding models:
@@ -79,7 +75,6 @@ impl SearchFilters {
         required_capabilities: Vec<String>,
         query_text: Option<String>,
     ) -> Result<Self, String> {
-        // Validate max_size_gb
         if let Some(size) = max_size_gb {
             if size <= 0.0 {
                 return Err("max_size_gb must be positive".into());
@@ -108,7 +103,6 @@ impl SearchFilters {
     /// # Returns
     /// true if model passes all filter criteria.
     pub fn matches(&self, model: &ModelMetadata) -> bool {
-        // Category filter
         if let Some(category) = &self.category {
             if model.category != *category {
                 return false;
@@ -146,10 +140,6 @@ impl SearchFilters {
         true
     }
 }
-
-// ============================================================================
-// Aggregates - Model Search Result
-// ============================================================================
 
 /// Model search result with relevance score.
 ///
@@ -202,10 +192,6 @@ impl ModelSearchResult {
         });
     }
 }
-
-// ============================================================================
-// Domain Service - Model Catalog Service
-// ============================================================================
 
 /// Domain service for searching and ranking models.
 ///
@@ -296,7 +282,6 @@ impl ModelCatalogService {
             })
             .collect();
 
-        // Sort by relevance
         ModelSearchResult::sort_by_relevance(&mut results);
 
         results
@@ -337,7 +322,6 @@ impl ModelCatalogService {
             }
         }
 
-        // Category match bonus
         if let Some(category) = &filters.category {
             if model.category == *category {
                 score += 10.0;
@@ -408,7 +392,7 @@ mod tests {
             total_size_bytes: 0,
             embedding_dimensions: None,
             embedding_compatibility: None,
-            format: crate::llm::models::ModelFormat::Gguf,
+            format: crate::features::llm::engine::models::ModelFormat::Gguf,
         }
     }
 

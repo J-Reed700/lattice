@@ -20,7 +20,6 @@ describe('Download Event Flow Integration Tests', () => {
       const events: string[] = [];
       const downloadId = 'test-download-1';
 
-      // Setup listeners
       await emitter.listen<TauriEvents.Downloads.Started>(
         TauriEventNames.Downloads.Started,
         (event) => {
@@ -45,7 +44,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Emit download lifecycle
       await emitter.emit<TauriEvents.Downloads.Started>(
         TauriEventNames.Downloads.Started,
         {
@@ -88,7 +86,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Assert correct order
       expect(events).toEqual(['started', 'progress', 'progress', 'completed']);
     });
   });
@@ -98,7 +95,6 @@ describe('Download Event Flow Integration Tests', () => {
       const downloadId = 'test-download-2';
       let capturedError: string | undefined;
 
-      // Setup listener
       await emitter.listen<TauriEvents.Downloads.Failed>(
         TauriEventNames.Downloads.Failed,
         (event) => {
@@ -107,7 +103,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Emit failure
       await emitter.emit<TauriEvents.Downloads.Failed>(
         TauriEventNames.Downloads.Failed,
         {
@@ -116,7 +111,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Assert error captured
       expect(capturedError).toBe('Network error: Connection timeout');
     });
   });
@@ -128,7 +122,6 @@ describe('Download Event Flow Integration Tests', () => {
       const download1Events: string[] = [];
       const download2Events: string[] = [];
 
-      // Setup listeners
       await emitter.listen<TauriEvents.Downloads.Progress>(
         TauriEventNames.Downloads.Progress,
         (event) => {
@@ -140,7 +133,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Emit events for both downloads
       await emitter.emit<TauriEvents.Downloads.Progress>(
         TauriEventNames.Downloads.Progress,
         {
@@ -185,7 +177,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Assert correct routing
       expect(download1Events).toEqual(['progress-100', 'progress-500']);
       expect(download2Events).toEqual(['progress-200', 'progress-1000']);
     });
@@ -196,7 +187,6 @@ describe('Download Event Flow Integration Tests', () => {
       const downloadId = 'test-download-3';
       let eventReceived = false;
 
-      // Setup listener
       const unlisten = await emitter.listen<TauriEvents.Downloads.Completed>(
         TauriEventNames.Downloads.Completed,
         (event) => {
@@ -205,10 +195,8 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Simulate delayed event (DB commit happened earlier)
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Emit delayed event
       await emitter.emit<TauriEvents.Downloads.Completed>(
         TauriEventNames.Downloads.Completed,
         {
@@ -218,7 +206,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Assert event received
       expect(eventReceived).toBe(true);
 
       unlisten();
@@ -230,7 +217,6 @@ describe('Download Event Flow Integration Tests', () => {
       const downloadId = 'test-download-4';
       let callCount = 0;
 
-      // Setup listener
       const unlisten = await emitter.listen<TauriEvents.Downloads.Progress>(
         TauriEventNames.Downloads.Progress,
         () => {
@@ -238,7 +224,6 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Emit event (should be received)
       await emitter.emit<TauriEvents.Downloads.Progress>(
         TauriEventNames.Downloads.Progress,
         {
@@ -252,10 +237,8 @@ describe('Download Event Flow Integration Tests', () => {
 
       expect(callCount).toBe(1);
 
-      // Cleanup listener
       unlisten();
 
-      // Emit another event (should NOT be received)
       await emitter.emit<TauriEvents.Downloads.Progress>(
         TauriEventNames.Downloads.Progress,
         {
@@ -267,14 +250,12 @@ describe('Download Event Flow Integration Tests', () => {
         }
       );
 
-      // Assert handler only called once (before cleanup)
       expect(callCount).toBe(1);
     });
   });
 
   describe('Runtime validation (Zod)', () => {
     it('should accept valid event payloads', () => {
-      // Test the Zod schema directly since mocking Tauri's listen is complex
       const validPayload = {
         id: 'test-download-5',
         bytes_downloaded: 500,
@@ -304,7 +285,6 @@ describe('Download Event Flow Integration Tests', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        // Verify validation errors include missing fields
         expect(result.error.issues.length).toBeGreaterThan(0);
         expect(
           result.error.issues.some((issue) => issue.path.includes('bytes_downloaded'))

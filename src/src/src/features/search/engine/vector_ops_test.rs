@@ -5,12 +5,8 @@
 
 #[cfg(test)]
 mod property_tests {
-    use super::super::{vector_ops::*, *};
+    use super::super::vector_ops::*;
     use proptest::prelude::*;
-
-    // ============================================================================
-    // Test Strategies
-    // ============================================================================
 
     /// Strategy for generating valid f32 vectors (avoiding NaN/Inf)
     fn valid_f32_vector(size: usize) -> impl Strategy<Value = Vec<f32>> {
@@ -32,10 +28,6 @@ mod property_tests {
         })
     }
 
-    // ============================================================================
-    // Cosine Similarity Properties
-    // ============================================================================
-
     proptest! {
         /// Property: Cosine similarity must always return a value in [-1, 1]
         ///
@@ -53,7 +45,6 @@ mod property_tests {
             let sim_naive = cosine_similarity_naive(&a, &b);
             let sim_simd = cosine_similarity_simd(&a, &b);
 
-            // Check bounds for both implementations
             prop_assert!((-1.0 - 1e-5..=1.0 + 1e-5).contains(&sim_naive),
                 "Naive cosine similarity out of bounds: {}", sim_naive);
             prop_assert!((-1.0 - 1e-5..=1.0 + 1e-5).contains(&sim_simd),
@@ -145,7 +136,6 @@ mod property_tests {
                 return Ok(());
             }
 
-            // Create two orthogonal 2D vectors
             let a = vec![x, y];
             let b = vec![-y, x];  // Perpendicular to a
 
@@ -202,10 +192,6 @@ mod property_tests {
             }
         }
     }
-
-    // ============================================================================
-    // Vector Normalization Properties
-    // ============================================================================
 
     proptest! {
         /// Property: Normalized vectors have magnitude 1
@@ -320,10 +306,6 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
-    // Edge Cases and Boundary Conditions
-    // ============================================================================
-
     proptest! {
         /// Property: Works with various vector sizes
         #[test]
@@ -333,7 +315,6 @@ mod property_tests {
             let a: Vec<f32> = (0..size).map(|i| i as f32).collect();
             let b: Vec<f32> = (0..size).map(|i| (i * 2) as f32).collect();
 
-            // Should not panic
             let _sim = cosine_similarity_naive(&a, &b);
             let _sim = cosine_similarity_simd(&a, &b);
         }
@@ -385,18 +366,12 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
-    // SIMD Alignment and Remainder Handling
-    // ============================================================================
-
     proptest! {
         /// Property: SIMD works correctly with non-aligned sizes
         ///
         /// Tests that remainder handling in SIMD code is correct
         #[test]
         fn prop_simd_non_aligned_sizes(
-            // Test sizes that don't align perfectly with SIMD lanes
-            // x86_64 AVX2 uses 8-element chunks, ARM NEON uses 4-element chunks
             size in prop::sample::select(vec![
                 1, 3, 5, 7, 9, 13, 17, 31, 63, 127, 129, 255, 257, 383, 385, 511, 513
             ])
@@ -411,10 +386,6 @@ mod property_tests {
                 "SIMD should work correctly with size {} (remainder handling)", size);
         }
     }
-
-    // ============================================================================
-    // Unit Tests for Specific Edge Cases
-    // ============================================================================
 
     #[test]
     fn test_empty_vectors_return_zero() {
@@ -467,7 +438,6 @@ mod property_tests {
 
     #[test]
     fn test_exact_multiples_of_simd_width() {
-        // Test exact multiples of SIMD widths (8 for AVX2, 4 for NEON)
         for size in [4, 8, 16, 32, 64, 128, 256, 512] {
             let a: Vec<f32> = (0..size).map(|i| i as f32).collect();
             let b: Vec<f32> = (0..size).map(|i| (i * 2) as f32).collect();
@@ -484,10 +454,6 @@ mod property_tests {
             );
         }
     }
-
-    // ============================================================================
-    // Additional Edge Case Tests
-    // ============================================================================
 
     #[test]
     fn test_normalize_vector_infinity() {
@@ -509,7 +475,6 @@ mod property_tests {
 
         let sim = cosine_similarity_naive(&a, &b);
 
-        // Should be 1.0 regardless of magnitude difference
         assert!(
             (sim - 1.0).abs() < 1e-5,
             "Cosine similarity should be scale-invariant"
@@ -538,13 +503,11 @@ mod property_tests {
 
     #[test]
     fn test_cosine_similarity_numerical_precision() {
-        // Test with values that might cause precision issues
         let a = vec![1e-30_f32; 128];
         let b = vec![1e-30_f32; 128];
 
         let sim = cosine_similarity_naive(&a, &b);
 
-        // Should handle very small values without underflow
         assert!(
             !sim.is_nan(),
             "Should not produce NaN with very small values"

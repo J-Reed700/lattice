@@ -113,7 +113,6 @@ impl FileCleanupService {
             }
         }
 
-        // Handle the error from retry loop
         let error = last_error.ok_or_else(|| {
             FileCleanupError::InternalError(
                 "Retry loop completed without error (logic bug)".to_string(),

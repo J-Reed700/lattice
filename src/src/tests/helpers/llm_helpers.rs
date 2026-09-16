@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Test helpers for LLM integration tests.
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -28,13 +26,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lattice::infrastructure::llm::{
+use lattice::features::llm::engine::{
     GPUInfo, GPUVendor, LLMClient, OllamaClient, Platform, SystemCapabilities,
 };
-
-// ============================================================================
-// Mock System Capabilities
-// ============================================================================
 
 /// Create a mock system capabilities for testing.
 ///
@@ -107,10 +101,6 @@ pub fn create_apple_gpu() -> GPUInfo {
     }
 }
 
-// ============================================================================
-// Service Availability Checks
-// ============================================================================
-
 /// Check if Ollama is running on localhost.
 pub async fn is_ollama_available() -> bool {
     is_ollama_available_at("http://localhost:11434").await
@@ -139,13 +129,9 @@ pub async fn get_test_ollama_client() -> Option<Arc<dyn LLMClient>> {
 
 /// Check if GPU is available on the current system.
 pub async fn is_gpu_available() -> bool {
-    use lattice::infrastructure::llm::detect_capabilities;
+    use lattice::features::llm::engine::detect_capabilities;
     detect_capabilities().await.has_gpu()
 }
-
-// ============================================================================
-// Test Model Paths
-// ============================================================================
 
 /// Get the path to test models directory.
 ///
@@ -186,10 +172,6 @@ pub fn has_small_test_model() -> bool {
     get_test_model_path("tinyllama-1.1b").is_some() || get_test_model_path("tinyllama-1b").is_some()
 }
 
-// ============================================================================
-// Test Assertions
-// ============================================================================
-
 /// Assert that a system capabilities struct has valid values.
 pub fn assert_valid_capabilities(caps: &SystemCapabilities) {
     assert!(caps.total_ram_gb > 0.0, "Total RAM should be positive");
@@ -208,10 +190,6 @@ pub fn assert_valid_score(score: f64) {
         score
     );
 }
-
-// ============================================================================
-// Test Fixtures
-// ============================================================================
 
 /// Common test prompts
 pub mod prompts {
@@ -239,10 +217,6 @@ pub mod model_names {
     pub const MISTRAL: &str = "mistral";
 }
 
-// ============================================================================
-// Performance Helpers
-// ============================================================================
-
 /// Performance thresholds for tests
 pub mod thresholds {
     use std::time::Duration;
@@ -260,21 +234,12 @@ pub mod thresholds {
     pub const CAPABILITY_DETECTION_MAX: Duration = Duration::from_millis(500);
 }
 
-// ============================================================================
-// Test Cleanup
-// ============================================================================
-
 /// Clean up test artifacts
 pub fn cleanup_test_artifacts() {
-    // Clean up any temporary test files
     if let Some(test_dir) = get_test_models_dir() {
         let _ = std::fs::remove_dir_all(test_dir);
     }
 }
-
-// ============================================================================
-// Conditional Test Skipping
-// ============================================================================
 
 /// Skip test if Ollama is not available
 #[macro_export]

@@ -1,7 +1,7 @@
 //! Plain text and markdown file extraction.
 
 use super::types::{ContentMetadata, ExtractedContent};
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::Path;
 use tokio::io::{AsyncReadExt, BufReader};
 
@@ -59,6 +59,7 @@ pub async fn extract_text_file(path: &Path, max_file_size: u64) -> Result<Extrac
         mime_type,
         metadata,
         page_ranges: vec![],
+        needs_ocr: Vec::new(),
     })
 }
 

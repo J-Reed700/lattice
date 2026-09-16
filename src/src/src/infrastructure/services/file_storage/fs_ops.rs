@@ -25,7 +25,6 @@ use std::path::Path;
 ///
 /// Returns error if copy or rename operations fail.
 pub(crate) async fn copy_file_atomic(source: &Path, dest: &Path) -> Result<()> {
-    // Write to temp file first
     let temp_path = dest.with_extension("tmp");
 
     tokio::fs::copy(source, &temp_path).await.map_err(|e| {

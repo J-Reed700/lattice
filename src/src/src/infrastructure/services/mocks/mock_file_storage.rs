@@ -8,12 +8,6 @@ use crate::infrastructure::services::traits::*;
 use crate::shared::error::Result;
 #[cfg(test)]
 use async_trait::async_trait;
-#[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::{Arc, Mutex, RwLock};
 
 #[cfg(test)]
 /// Mock file storage service for testing
@@ -46,7 +40,6 @@ impl FileStorageServiceTrait for MockFileStorageService {
         mime_type: &str,
         metadata: Option<serde_json::Value>,
     ) -> Result<FileRecord> {
-        // Extract path for use in mock
         let path = source_path.as_path();
 
         let record = FileRecord {
@@ -80,12 +73,14 @@ impl FileStorageServiceTrait for MockFileStorageService {
             .read()
             .get(file_id)
             .map(|r| std::path::PathBuf::from(&r.storage_path))
-            .ok_or_else(|| crate::error::AppError::NotFound(format!("File not found: {}", file_id)))
+            .ok_or_else(|| {
+                crate::shared::error::AppError::NotFound(format!("File not found: {}", file_id))
+            })
     }
 
     async fn delete_file(&self, file_id: &str) -> Result<()> {
         self.files.write().remove(file_id).ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("File not found: {}", file_id))
+            crate::shared::error::AppError::NotFound(format!("File not found: {}", file_id))
         })?;
         Ok(())
     }

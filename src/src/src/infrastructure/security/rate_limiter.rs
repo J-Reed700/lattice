@@ -55,13 +55,10 @@ impl RateLimiter {
 
         let mut limits = self.limits.lock().await;
 
-        // Get or create the request history for this key
         let requests = limits.entry(key.to_string()).or_insert_with(Vec::new);
 
-        // Remove old requests outside the time window
         requests.retain(|&timestamp| now.duration_since(timestamp) < self.window);
 
-        // Check if we're at the limit
         if requests.len() >= self.max_requests {
             let oldest = requests.first().copied().unwrap_or(now);
             let reset_in = self.window.saturating_sub(now.duration_since(oldest));
@@ -71,7 +68,6 @@ impl RateLimiter {
             )));
         }
 
-        // Add the current request
         requests.push(now);
         Ok(())
     }
@@ -160,7 +156,6 @@ mod tests {
         // Wait for window to pass
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Should succeed again
         assert!(limiter.check_rate_limit(key).await.is_ok());
     }
 
@@ -168,14 +163,12 @@ mod tests {
     async fn test_cleanup() {
         let limiter = RateLimiter::new(10, 1);
 
-        // Add some requests
         limiter.check_rate_limit("user1").await.unwrap();
         limiter.check_rate_limit("user2").await.unwrap();
 
         // Wait for window to pass
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Cleanup should remove old entries
         limiter.cleanup().await;
 
         let limits = limiter.limits.lock().await;
@@ -186,7 +179,6 @@ mod tests {
     async fn test_automatic_cleanup() {
         let limiter = RateLimiter::new(200, 1); // High limit to avoid rate limiting
 
-        // Add requests for multiple users
         for i in 0..10 {
             limiter
                 .check_rate_limit(&format!("user{}", i))
@@ -194,7 +186,6 @@ mod tests {
                 .unwrap();
         }
 
-        // Verify entries exist
         {
             let limits = limiter.limits.lock().await;
             assert_eq!(limits.len(), 10);

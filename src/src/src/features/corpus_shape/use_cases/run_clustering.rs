@@ -1,5 +1,4 @@
-//! Run-clustering orchestration — the single use case that actually does
-//! the Phase 5.3 work.
+//! Run-clustering orchestration.
 //!
 //! 1. Load all documents + mean-pool their chunk embeddings.
 //! 2. HDBSCAN.
@@ -23,9 +22,7 @@ use crate::features::corpus_shape::clustering::{
     cluster as hdbscan_cluster, mean_pool, ClusteringInput, ClusteringParams, RawCluster,
     MAX_CLUSTERING_DOCS,
 };
-use crate::features::corpus_shape::entity::{
-    Cluster, ClusterMember, ClusterRun, LabelSource,
-};
+use crate::features::corpus_shape::entity::{Cluster, ClusterMember, ClusterRun, LabelSource};
 use crate::features::corpus_shape::fingerprint::{
     fingerprint, jaccard, JACCARD_INHERITANCE_THRESHOLD,
 };
@@ -64,7 +61,7 @@ pub struct RunClusteringOutcome {
     pub noise_doc_ids: Vec<String>,
 }
 
-/// Orchestrates the Phase 5.3 clustering pipeline end-to-end.
+/// Orchestrates the clustering pipeline end-to-end.
 pub struct RunClusteringUseCase {
     document_repo: Arc<dyn DocumentRepositoryPort>,
     embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
@@ -129,9 +126,7 @@ impl RunClusteringUseCase {
             .document_repo
             .find_all_paginated(MAX_CLUSTERING_DOCS)
             .await
-            .map_err(|e| {
-                AppError::Database(format!("corpus_shape: list documents: {}", e))
-            })?;
+            .map_err(|e| AppError::Database(format!("corpus_shape: list documents: {}", e)))?;
 
         self.emit("loading", 0, documents.len());
         let mut inputs: Vec<ClusteringInput> = Vec::new();
@@ -140,15 +135,11 @@ impl RunClusteringUseCase {
                 self.emit("loading", index, documents.len());
             }
             let doc_id = doc.id().as_str().to_string();
-            let chunk_pairs = self
-                .embedding_repo
-                .find_by_document_id(&doc_id)
-                .await?;
+            let chunk_pairs = self.embedding_repo.find_by_document_id(&doc_id).await?;
             if chunk_pairs.is_empty() {
                 continue;
             }
-            let vectors: Vec<Vec<f32>> =
-                chunk_pairs.into_iter().map(|(_, v)| v).collect();
+            let vectors: Vec<Vec<f32>> = chunk_pairs.into_iter().map(|(_, v)| v).collect();
             if let Some(pooled) = mean_pool(&vectors) {
                 inputs.push(ClusteringInput {
                     doc_id,
@@ -201,9 +192,15 @@ impl RunClusteringUseCase {
         for (index, raw) in clustering_output.clusters.iter().enumerate() {
             self.emit("labeling", index + 1, cluster_total);
             let fp = fingerprint(&raw.member_doc_ids, &raw.centroid);
-            let label_outcome =
-                self.resolve_label(raw, &fp, &prev_clusters, &prev_fingerprint_map, &mut claimed_prev)
-                    .await?;
+            let label_outcome = self
+                .resolve_label(
+                    raw,
+                    &fp,
+                    &prev_clusters,
+                    &prev_fingerprint_map,
+                    &mut claimed_prev,
+                )
+                .await?;
 
             if matches!(label_outcome.source, LabelSource::Llm) {
                 llm_call_count += 1;
@@ -257,8 +254,7 @@ impl RunClusteringUseCase {
         self.cluster_repo.save_run(&run, &new_clusters).await?;
 
         // 6. Return.
-        let clusters_out: Vec<Cluster> =
-            new_clusters.into_iter().map(|(c, _)| c).collect();
+        let clusters_out: Vec<Cluster> = new_clusters.into_iter().map(|(c, _)| c).collect();
 
         Ok(RunClusteringOutcome {
             run,

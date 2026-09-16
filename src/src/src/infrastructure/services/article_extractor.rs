@@ -228,8 +228,6 @@ impl ArticleExtractorService {
             )
             .and_then(|date| self.parse_date(&date));
 
-        // Build readable text from available metadata. This allows indexing video links
-        // even though full transcript extraction is not available from static HTML alone.
         let mut text_sections = vec![format!("Title: {}", title)];
         if let Some(author_value) = &author {
             text_sections.push(format!("Channel: {}", author_value));
@@ -363,7 +361,6 @@ impl ArticleExtractorService {
     /// - Link-local addresses
     /// - Metadata endpoints (169.254.169.254)
     fn validate_url(&self, url: &str) -> Result<()> {
-        // Parse URL
         let parsed = url::Url::parse(url)
             .map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
 
@@ -378,7 +375,6 @@ impl ArticleExtractorService {
             }
         }
 
-        // Check host
         let host = parsed
             .host_str()
             .ok_or_else(|| AppError::InvalidUrl("URL must have a host".to_string()))?;
@@ -497,7 +493,7 @@ impl ArticleExtractorService {
             text.to_string()
         } else {
             // Find last space before 200 chars
-            let truncated = &text[..200];
+            let truncated = &text[..crate::shared::text_utils::floor_char_boundary(text, 200)];
             if let Some(last_space) = truncated.rfind(' ') {
                 format!("{}...", &text[..last_space])
             } else {
@@ -522,7 +518,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
         // Validate URL for security (SSRF prevention)
         self.validate_url(&fetch_url)?;
 
-        // Handle YouTube separately: we can index metadata from static HTML.
         if self.is_youtube_url(&fetch_url) {
             return self.extract_youtube_article_from_url(&fetch_url).await;
         }
@@ -571,7 +566,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
         let profile = stealth::random_profile();
         let headers = stealth::browser_headers(profile, None);
 
-        // Fetch URL with stealth headers
         let response = self
             .client
             .get(&fetch_url)
@@ -580,7 +574,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             .await
             .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
 
-        // Check status
         if !response.status().is_success() {
             let status = response.status();
             warn!(status = %status, url = %fetch_url, "URL fetch failed");
@@ -609,20 +602,17 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             self.validate_url(&final_url)?;
         }
 
-        // Read HTML body
         let html = response
             .text()
             .await
             .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
 
-        // Extract article using the existing method
         self.extract_article(&html, &final_url).await
     }
 
     async fn extract_article(&self, html: &str, url: &str) -> Result<CleanArticle> {
         debug!("Extracting article from URL: {}", url);
 
-        // Validate input
         if html.trim().is_empty() {
             return Err(AppError::InvalidInput("HTML content is empty".to_string()));
         }
@@ -637,7 +627,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             }
         })?;
 
-        // Use Readability.js to extract article content
         let article = readability.parse_with_url(html, url).map_err(|e| {
             warn!("Readability.js extraction failed: {}", e);
             AppError::ContentExtraction {
@@ -646,7 +635,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             }
         })?;
 
-        // Extract metadata
         let title = article.title;
         debug!("Extracted title: {}", title);
 
@@ -655,7 +643,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             debug!("Extracted author: {}", a);
         }
 
-        // Parse publication date if available
         let published_date = article
             .published_time
             .as_ref()
@@ -665,13 +652,10 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             debug!("Extracted published date: {}", date);
         }
 
-        // Get the clean HTML content
         let clean_html = article.content;
 
-        // Extract plain text from HTML
         let text_content = self.extract_text(&clean_html);
 
-        // Validate we got meaningful content
         if text_content.trim().is_empty() {
             return Err(AppError::ContentExtraction {
                 path: url.to_string(),
@@ -679,7 +663,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             });
         }
 
-        // Calculate metrics
         let word_count = self.count_words(&text_content);
         let reading_time_minutes = self.calculate_reading_time(word_count);
 
@@ -724,7 +707,6 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             });
         }
 
-        // Generate excerpt
         let excerpt = self.generate_excerpt(&text_content);
 
         debug!(
@@ -873,7 +855,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have 100+ words from the paragraph
         assert!(result.word_count >= 100);
         // Reading time should be 1 minute (minimum)
         assert_eq!(result.reading_time_minutes, 1);

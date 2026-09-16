@@ -24,10 +24,9 @@
 use std::sync::Arc;
 
 use crate::application::factories::FileMetadataFactory;
+use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{EmbeddingPort, FileStoragePort, RepositoryPort, VectorSearchPort};
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_NAME;
 use crate::domain::entities::Document;
-use crate::domain::repositories::UnitOfWorkFactory;
 use crate::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::IndexFileResponseDto;
@@ -53,6 +52,7 @@ use crate::shared::error::{AppError, Result};
 /// - `EmbeddingRepositoryPort`: Persists chunk embeddings
 pub struct ReindexDocumentUseCase {
     file_storage: Arc<dyn FileStoragePort>,
+    content_extractor: Option<Arc<dyn crate::application::ports::ContentExtractionPort>>,
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
@@ -65,9 +65,44 @@ pub struct ReindexDocumentUseCase {
     /// A restart did not repair it either, because the persisted index is only
     /// rebuilt when it is *empty*.
     vector_search: Arc<dyn VectorSearchPort>,
+    /// Learned sparse postings. Reindexing replaces this document's chunk rows,
+    /// which cascades the old postings away; without rewriting them the
+    /// document would silently drop out of the sparse branch until it was
+    /// imported again.
+    sparse_term_store: Option<Arc<dyn crate::application::ports::SparseTermStorePort>>,
 }
 
 impl ReindexDocumentUseCase {
+    /// Persist learned sparse term weights alongside the rebuilt vectors.
+    #[must_use]
+    pub fn with_sparse_term_store(
+        mut self,
+        store: Arc<dyn crate::application::ports::SparseTermStorePort>,
+    ) -> Self {
+        self.sparse_term_store = Some(store);
+        self
+    }
+
+    pub fn with_content_extractor(
+        mut self,
+        extractor: Arc<dyn crate::application::ports::ContentExtractionPort>,
+    ) -> Self {
+        self.content_extractor = Some(extractor);
+        self
+    }
+    async fn extract(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<(String, Vec<(usize, usize, usize)>)> {
+        match &self.content_extractor {
+            Some(extractor) => {
+                let data = extractor.extract_content(path).await?;
+                Ok((data.text, data.page_ranges))
+            }
+            None => Ok((self.file_storage.read_file(path).await?, Vec::new())),
+        }
+    }
+
     /// Create a new reindex document use case.
     ///
     /// # Arguments
@@ -86,10 +121,12 @@ impl ReindexDocumentUseCase {
     ) -> Self {
         Self {
             file_storage,
+            content_extractor: None,
             embedding_service,
             document_repo,
             uow_factory,
             vector_search,
+            sparse_term_store: None,
         }
     }
 
@@ -112,6 +149,14 @@ impl ReindexDocumentUseCase {
     /// - Embedding generation fails
     /// - Update fails
     pub async fn execute(&self, document_id: String) -> Result<IndexFileResponseDto> {
+        self.execute_internal(document_id, None).await
+    }
+
+    async fn execute_internal(
+        &self,
+        document_id: String,
+        requested_strategy: Option<ChunkingStrategy>,
+    ) -> Result<IndexFileResponseDto> {
         // 1. Retrieve existing document
         let mut document = self
             .document_repo
@@ -129,22 +174,21 @@ impl ReindexDocumentUseCase {
             .collect();
 
         // 2. Read current file content (clone to avoid borrow conflict)
-        let file_path = document.document().file_path().to_path_buf();
-        let content = self.file_storage.read_file(&file_path).await?;
+        let file_path = document.file_path().to_path_buf();
+        let (content, pages) = self.extract(&file_path).await?;
 
         // 3. Reindex with an inferred strategy based on existing chunk sizes,
         // then adapt for new content length.
-        let strategy = ChunkingStrategy::infer_from_existing_chunks(document.chunks())
+        let strategy = requested_strategy
+            .unwrap_or_else(|| ChunkingStrategy::infer_from_existing_chunks(document.chunks()))
             .adapt_for_content(&content);
         document.reindex(content.clone(), strategy)?;
 
         // 3a. Extract and set metadata
         let metadata_extractor = MetadataExtractor::new();
 
-        // Get file extension
         let file_ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-        // Get file metadata for quality score calculation
         let file_metadata = FileMetadataFactory::from_path(&file_path)?;
 
         // Detect language
@@ -157,7 +201,6 @@ impl ReindexDocumentUseCase {
             file_metadata.mime_type(),
         );
 
-        // Calculate quality score
         let quality_score = metadata_extractor.calculate_quality_score(
             &content,
             file_metadata.size_bytes(),
@@ -167,13 +210,11 @@ impl ReindexDocumentUseCase {
         // Count words
         let word_count = metadata_extractor.count_words(&content);
 
-        // Set document metadata
         document.set_language(language.clone());
         document.set_category(category);
         document.set_quality_score(quality_score);
         document.set_word_count(word_count);
 
-        // Set chunk token counts
         let chunk_count = document.chunks().len();
         for index in 0..chunk_count {
             let chunk = document.chunks().get(index).ok_or_else(|| {
@@ -184,13 +225,65 @@ impl ReindexDocumentUseCase {
         }
 
         // 4. Generate new embeddings
-        let chunk_texts: Vec<String> = document
-            .chunks()
-            .iter()
-            .map(|c| c.content().to_string())
-            .collect();
+        //
+        // Span-grouped, like the import path: with late chunking each structure
+        // span is embedded once and pooled per chunk, and otherwise this is the
+        // same per-chunk batch as before. Embedding chunk-first here while the
+        // importer late-chunks would write two vector spaces into one
+        // generation — the stored chunk text and its offsets are identical
+        // either way, but the vectors are not comparable.
+        let (mut document, spans) = super::embedding_input::prepare_structured_with_spans(
+            document,
+            self.embedding_service.as_ref(),
+            &pages,
+        )?;
+        let model_identity = self.embedding_service.model_identity();
 
-        let embeddings = self.embedding_service.embed_batch(&chunk_texts).await?;
+        // Same bargain as the import path: with a sparse head and a store
+        // wired, one forward pass yields both representations over exactly the
+        // texts the chunk-first path would have embedded. Late chunking pools
+        // dense vectors across a span and has no equivalent for term weights,
+        // so there the sparse head is read from the chunk texts separately.
+        let sparse_wanted =
+            self.sparse_term_store.is_some() && self.embedding_service.supports_sparse();
+        let (embeddings, sparse_terms) =
+            if sparse_wanted && !self.embedding_service.uses_late_chunking() {
+                let chunk_texts: Vec<String> = document
+                    .chunks()
+                    .iter()
+                    .map(|chunk| chunk.embedding_text())
+                    .collect();
+                self.embedding_service
+                    .embed_batch_with_sparse(&chunk_texts)
+                    .await?
+            } else {
+                let dense = super::embedding_input::embed_prepared_chunks(
+                    &document,
+                    self.embedding_service.as_ref(),
+                    &spans,
+                )
+                .await?;
+                let sparse = if sparse_wanted {
+                    let chunk_texts: Vec<String> = document
+                        .chunks()
+                        .iter()
+                        .map(|chunk| chunk.embedding_text())
+                        .collect();
+                    self.embedding_service
+                        .embed_sparse_batch(&chunk_texts)
+                        .await?
+                } else {
+                    Vec::new()
+                };
+                (dense, sparse)
+            };
+        if self.embedding_service.model_identity() != model_identity
+            || embeddings.len() != document.chunks().len()
+        {
+            return Err(AppError::InvalidState(
+                "Embedding model changed or returned an incomplete batch; retry indexing".into(),
+            ));
+        }
 
         // 5. Create and persist new embeddings
         let embedding_entries: Vec<(Embedding, Vec<f32>)> = document
@@ -200,20 +293,21 @@ impl ReindexDocumentUseCase {
             .map(|(chunk, embedding_vec)| {
                 let embedding_metadata = Embedding::new(
                     chunk.id().clone(),
-                    DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
+                    model_identity.clone(),
                     embedding_vec.len(),
                 );
                 (embedding_metadata, embedding_vec.clone())
             })
             .collect();
 
+        document.mark_indexed();
         let mut uow = self.uow_factory.create().await?;
         let db_result = {
             let document_repo = uow.document_repository()?;
             let embedding_repo = uow.embedding_repository()?;
 
             embedding_repo
-                .delete_by_document_id(document.document().id().as_str())
+                .delete_by_document_id(document.id().as_str())
                 .await?;
             document_repo.save(&document).await?;
             embedding_repo.save_batch(embedding_entries).await?;
@@ -235,48 +329,76 @@ impl ReindexDocumentUseCase {
             }
         }
 
-        // 7a. Bring the live vector index in step with what we just wrote.
-        //
-        // Best-effort after the commit: the database is the source of truth,
-        // and a failure here must not roll back a successful reindex. It is
-        // logged loudly because the symptom — stale semantic search results —
-        // is otherwise indistinguishable from the index simply being wrong.
-        for chunk_id in &stale_chunk_ids {
-            let key = crate::features::embedding::encoding::vector_key(chunk_id);
-            if let Err(e) = self.vector_search.remove_embedding(&key) {
+        // After the commit: the postings reference chunk ids that only exist
+        // once `document_repo.save` has replaced this document's chunk rows.
+        if let Some(store) = self.sparse_term_store.as_ref() {
+            if sparse_terms.len() == document.chunks().len() {
+                let entries: Vec<crate::application::ports::ChunkSparseTerms> = document
+                    .chunks()
+                    .iter()
+                    .zip(sparse_terms.iter())
+                    .map(|(chunk, sparse)| (chunk.id().to_string(), sparse.clone()))
+                    .collect();
+                if let Err(error) = store.replace_chunk_terms(&model_identity, &entries).await {
+                    tracing::warn!(
+                        %error,
+                        "Could not persist learned sparse terms during reindex; this document will be found by the dense and BM25 branches only"
+                    );
+                }
+            } else if !sparse_terms.is_empty() {
                 tracing::warn!(
-                    document_id = %document_id,
-                    chunk_id = %chunk_id,
-                    error = %e,
-                    "reindex: failed to evict stale vector; search may return a deleted chunk"
+                    expected = document.chunks().len(),
+                    received = sparse_terms.len(),
+                    "Sparse head returned an incomplete batch; reindexing without sparse terms"
                 );
             }
         }
 
-        for (chunk, embedding_vec) in document.chunks().iter().zip(embeddings.iter()) {
-            let key = crate::features::embedding::encoding::vector_key(&chunk.id().to_string());
-            if let Err(e) = self.vector_search.add_embedding(key, embedding_vec.clone()) {
-                tracing::warn!(
-                    document_id = %document_id,
-                    chunk_id = %chunk.id(),
-                    error = %e,
-                    "reindex: failed to add new vector; new content will not be searchable"
-                );
-            }
-        }
+        // Publish complete source metadata in batches, away from the async runtime.
+        // SQLite has committed; report publication failures instead of claiming success.
+        let stale_keys: Vec<_> = stale_chunk_ids
+            .iter()
+            .map(|id| crate::features::embedding::encoding::vector_key(id))
+            .collect();
+        let entries = document
+            .chunks()
+            .iter()
+            .zip(embeddings)
+            .map(|(chunk, embedding)| {
+                crate::application::ports::vector_search_port::VectorIndexEntry {
+                    id: crate::features::embedding::encoding::vector_key(chunk.id().as_str()),
+                    embedding,
+                    content: chunk.content().to_owned(),
+                    chunk_id: chunk.id().to_string(),
+                    document_id: document_id.clone(),
+                }
+            })
+            .collect();
+        let search = Arc::clone(&self.vector_search);
+        let publication = tokio::task::spawn_blocking(move || {
+            search.remove_embeddings(&stale_keys)?;
+            search.publish_embeddings(entries)
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("Search indexing task failed: {e}")))?;
+        crate::features::cache::query_cache::invalidate_query_cache();
+        publication.map_err(|e| {
+            AppError::Other(format!(
+                "Document saved, but search indexing failed: {e}. Retry reindexing this document."
+            ))
+        })?;
 
         // The corpus changed; cached search results are stale.
         crate::features::cache::query_cache::invalidate_query_cache();
 
         // 8. Build response
         let file_path_str = document
-            .document()
             .file_path()
             .to_str()
             .ok_or_else(|| AppError::InvalidInput("Invalid file path encoding".to_string()))?;
 
         Ok(IndexFileResponseDto {
-            document_id: document.document().id().to_string(),
+            document_id: document.id().to_string(),
             chunks_created: document.chunks().len(),
             status: "reindexed".to_string(),
             error: None,
@@ -299,147 +421,21 @@ impl ReindexDocumentUseCase {
         document_id: String,
         strategy: ChunkingStrategy,
     ) -> Result<IndexFileResponseDto> {
-        let mut document = self
-            .document_repo
-            .find_by_id(&document_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Document not found: {}", document_id)))?;
-
-        let file_path = document.document().file_path().to_path_buf();
-        let content = self.file_storage.read_file(&file_path).await?;
-
-        let effective_strategy = strategy.adapt_for_content(&content);
-        document.reindex(content.clone(), effective_strategy)?;
-
-        // Extract and set metadata
-        let metadata_extractor = MetadataExtractor::new();
-
-        // Get file extension
-        let file_ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-        // Get file metadata for quality score calculation
-        let file_metadata = FileMetadataFactory::from_path(&file_path)?;
-
-        // Detect language
-        let language = metadata_extractor.detect_language(&content, file_ext);
-
-        // Categorize
-        let category = metadata_extractor.categorize(
-            &content,
-            file_metadata.file_name(),
-            file_metadata.mime_type(),
-        );
-
-        // Calculate quality score
-        let quality_score = metadata_extractor.calculate_quality_score(
-            &content,
-            file_metadata.size_bytes(),
-            file_metadata.modified_at(),
-        );
-
-        // Count words
-        let word_count = metadata_extractor.count_words(&content);
-
-        // Set document metadata
-        document.set_language(language.clone());
-        document.set_category(category);
-        document.set_quality_score(quality_score);
-        document.set_word_count(word_count);
-
-        // Set chunk token counts
-        let chunk_count = document.chunks().len();
-        for index in 0..chunk_count {
-            let chunk = document.chunks().get(index).ok_or_else(|| {
-                AppError::InvalidInput(format!(
-                    "Chunk index {} out of bounds in reindex no-persist",
-                    index
-                ))
-            })?;
-            let token_count = metadata_extractor.count_tokens(chunk.content());
-            document.set_chunk_token_count(index, token_count);
-        }
-
-        let chunk_texts: Vec<String> = document
-            .chunks()
-            .iter()
-            .map(|c| c.content().to_string())
-            .collect();
-
-        let embeddings = self.embedding_service.embed_batch(&chunk_texts).await?;
-
-        let embedding_entries: Vec<(Embedding, Vec<f32>)> = document
-            .chunks()
-            .iter()
-            .zip(embeddings.iter())
-            .map(|(chunk, embedding_vec)| {
-                let embedding_metadata = Embedding::new(
-                    chunk.id().clone(),
-                    DEFAULT_EMBEDDING_MODEL_NAME.to_string(),
-                    embedding_vec.len(),
-                );
-                (embedding_metadata, embedding_vec.clone())
-            })
-            .collect();
-
-        let mut uow = self.uow_factory.create().await?;
-        let db_result = {
-            let document_repo = uow.document_repository()?;
-            let embedding_repo = uow.embedding_repository()?;
-
-            embedding_repo
-                .delete_by_document_id(document.document().id().as_str())
-                .await?;
-            document_repo.save(&document).await?;
-            embedding_repo.save_batch(embedding_entries).await?;
-            Ok(())
-        };
-
-        match db_result {
-            Ok(()) => {
-                uow.commit().await?;
-            }
-            Err(err) => {
-                if let Err(rollback_err) = uow.rollback().await {
-                    return Err(AppError::Database(format!(
-                        "Reindex failed: {}; rollback failed: {}",
-                        err, rollback_err
-                    )));
-                }
-                return Err(err);
-            }
-        }
-
-        let file_path_str = document
-            .document()
-            .file_path()
-            .to_str()
-            .ok_or_else(|| AppError::InvalidInput("Invalid file path encoding".to_string()))?;
-
-        Ok(IndexFileResponseDto {
-            document_id: document.document().id().to_string(),
-            chunks_created: document.chunks().len(),
-            status: "reindexed".to_string(),
-            error: None,
-            file_path: file_path_str.to_string(),
-        })
+        self.execute_internal(document_id, Some(strategy)).await
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::UnitOfWorkFactory;
     use crate::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
     use crate::domain::entities::Document;
-    use crate::domain::repositories::UnitOfWorkFactory;
     use crate::features::embedding::entity::Embedding;
     use crate::shared::domain_types::ValidatedFilePath;
     use async_trait::async_trait;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::Mutex;
     use tempfile::TempDir;
 
@@ -450,6 +446,8 @@ mod tests {
     struct MockVectorSearch {
         added: Mutex<Vec<String>>,
         removed: Mutex<Vec<String>>,
+        batches: Mutex<(usize, usize)>,
+        published: Mutex<Vec<(String, String)>>,
     }
 
     impl VectorSearchPort for MockVectorSearch {
@@ -462,6 +460,21 @@ mod tests {
             Ok(Vec::new())
         }
 
+        fn search_scoped(
+            &self,
+            query_embedding: &[f32],
+            top_k: usize,
+            threshold: f32,
+            allowed_document_ids: Option<&std::collections::HashSet<String>>,
+        ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+            let mut results = self.search(query_embedding, top_k, threshold)?;
+            if let Some(scope) = allowed_document_ids {
+                results.retain(|result| scope.contains(&result.doc_id));
+                results.truncate(top_k);
+            }
+            Ok(results)
+        }
+
         fn add_embedding(&self, id: String, _embedding: Vec<f32>) -> Result<()> {
             self.added.lock().unwrap().push(id);
             Ok(())
@@ -469,6 +482,27 @@ mod tests {
 
         fn remove_embedding(&self, id: &str) -> Result<()> {
             self.removed.lock().unwrap().push(id.to_string());
+            Ok(())
+        }
+
+        fn remove_embeddings(&self, ids: &[String]) -> Result<()> {
+            self.batches.lock().unwrap().0 += 1;
+            self.removed.lock().unwrap().extend_from_slice(ids);
+            Ok(())
+        }
+
+        fn publish_embeddings(
+            &self,
+            entries: Vec<crate::application::ports::vector_search_port::VectorIndexEntry>,
+        ) -> Result<()> {
+            self.batches.lock().unwrap().1 += 1;
+            for entry in entries {
+                self.added.lock().unwrap().push(entry.id);
+                self.published
+                    .lock()
+                    .unwrap()
+                    .push((entry.document_id, entry.content));
+            }
             Ok(())
         }
 
@@ -485,13 +519,11 @@ mod tests {
         }
     }
 
-    // Mock file storage
     struct MockFileStorage;
 
     #[async_trait]
     impl FileStoragePort for MockFileStorage {
         async fn read_file(&self, _path: &Path) -> Result<String> {
-            // Return content long enough to create chunks with default strategy (size=512)
             Ok("Updated content for reindexing. This is a longer text that will be chunked properly with the default chunking strategy. \
             We need to ensure this content is long enough to create at least one chunk when using the default FixedSize strategy with size 512. \
             This text is being extended to reach that minimum length requirement so that the reindexing tests can verify that chunks are created successfully. \
@@ -533,7 +565,6 @@ mod tests {
         }
     }
 
-    // Mock embedder
     struct MockEmbedder;
 
     #[async_trait]
@@ -685,7 +716,7 @@ mod tests {
     struct MockUnitOfWork;
 
     #[async_trait]
-    impl crate::domain::repositories::UnitOfWork for MockUnitOfWork {
+    impl crate::application::ports::UnitOfWork for MockUnitOfWork {
         fn chunk_repository(
             &self,
         ) -> Result<Box<dyn crate::application::ports::ChunkRepositoryPort + Send + '_>> {
@@ -732,7 +763,7 @@ mod tests {
 
         fn model_repository(
             &self,
-        ) -> Result<Box<dyn crate::domain::repositories::unit_of_work::ModelRepositoryPort + '_>>
+        ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelRepositoryPort + '_>>
         {
             Err(AppError::InvalidState(
                 "Model repository not used in test".to_string(),
@@ -741,7 +772,7 @@ mod tests {
 
         fn model_file_repository(
             &self,
-        ) -> Result<Box<dyn crate::domain::repositories::unit_of_work::ModelFileRepositoryPort + '_>>
+        ) -> Result<Box<dyn crate::application::ports::unit_of_work::ModelFileRepositoryPort + '_>>
         {
             Err(AppError::InvalidState(
                 "Model file repository not used in test".to_string(),
@@ -761,12 +792,11 @@ mod tests {
 
     #[async_trait]
     impl UnitOfWorkFactory for MockUnitOfWorkFactory {
-        async fn create(&self) -> Result<Box<dyn crate::domain::repositories::UnitOfWork + Send>> {
+        async fn create(&self) -> Result<Box<dyn crate::application::ports::UnitOfWork + Send>> {
             Ok(Box::new(MockUnitOfWork))
         }
     }
 
-    // Mock repository that stores a single document
     struct MockDocumentRepo {
         document: Mutex<Option<Document>>,
     }
@@ -860,7 +890,7 @@ mod tests {
         let repo = Arc::new(MockDocumentRepo::new());
         let (aggregate, _temp_dir) = create_test_aggregate();
         let doc_id = aggregate.id().to_string();
-        let original_chunks = aggregate.chunks().len();
+        let _original_chunks = aggregate.chunks().len();
 
         repo.set_document(aggregate);
 
@@ -922,6 +952,13 @@ mod tests {
             );
         }
 
+        assert_eq!(*vector_search.batches.lock().unwrap(), (1, 1));
+        assert!(vector_search
+            .published
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(id, text)| !id.is_empty() && !text.is_empty()));
         let added = vector_search.added.lock().unwrap().clone();
         assert_eq!(
             added.len(),
@@ -963,12 +1000,13 @@ mod tests {
 
         repo.set_document(aggregate);
 
+        let vector_search = Arc::new(MockVectorSearch::default());
         let use_case = ReindexDocumentUseCase::new(
             Arc::new(MockFileStorage),
             Arc::new(MockEmbedder),
             repo,
             Arc::new(MockUnitOfWorkFactory),
-            Arc::new(MockVectorSearch::default()),
+            vector_search.clone(),
         );
 
         // Reindex with different chunk size
@@ -978,8 +1016,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have more chunks with smaller size
         assert!(response.chunks_created > 0);
         assert_eq!(response.status, "reindexed");
+        assert_eq!(*vector_search.batches.lock().unwrap(), (1, 1));
+        assert_eq!(
+            vector_search.published.lock().unwrap().len(),
+            response.chunks_created
+        );
     }
 }

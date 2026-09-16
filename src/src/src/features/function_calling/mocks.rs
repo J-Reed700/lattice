@@ -56,7 +56,7 @@ impl FunctionRegistryTrait for MockFunctionRegistry {
     fn register(&self, tool: ToolDefinition) -> Result<()> {
         let mut tools = self.tools.write().unwrap();
         if tools.contains_key(&tool.name) {
-            return Err(crate::error::AppError::InvalidData(format!(
+            return Err(crate::shared::error::AppError::InvalidData(format!(
                 "Tool '{}' already registered",
                 tool.name
             )));

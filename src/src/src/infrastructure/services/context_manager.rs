@@ -36,18 +36,14 @@
 //! ```
 
 use crate::domain::conversation::{ConversationAggregate, ConversationMessage, LLMMessage};
-use crate::infrastructure::qa::tokenizer::{count_tokens, truncate_to_tokens};
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::qa::engine::tokenizer::{count_tokens, truncate_to_tokens};
+use crate::features::search::engine::service::SearchResult;
 use crate::shared::error::{AppError, Result};
 
 // Default token budget allocation percentages
 const SYSTEM_PROMPT_BUDGET_PCT: f32 = 0.20; // 20% for system prompt
 const DOCUMENT_CONTEXT_BUDGET_PCT: f32 = 0.50; // 50% for document context
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful AI assistant with access to relevant documents. Answer the user's question based on the provided context when available.";
-
-// ============================================================================
-// LLM Context Output
-// ============================================================================
 
 /// Complete context package for LLM API calls
 ///
@@ -67,10 +63,6 @@ pub struct LLMContext {
     /// Total estimated token count across all context types
     pub total_tokens: usize,
 }
-
-// ============================================================================
-// Context Manager Service
-// ============================================================================
 
 /// Service for managing LLM context in conversational RAG
 ///
@@ -178,8 +170,7 @@ impl ContextManager {
         conversation: &ConversationAggregate,
         search_results: Vec<SearchResult>,
     ) -> Result<LLMContext> {
-        // Calculate token budgets for each section
-        let system_budget = (self.max_context_tokens as f32 * SYSTEM_PROMPT_BUDGET_PCT) as usize;
+        let _system_budget = (self.max_context_tokens as f32 * SYSTEM_PROMPT_BUDGET_PCT) as usize;
         let document_budget =
             (self.max_context_tokens as f32 * DOCUMENT_CONTEXT_BUDGET_PCT) as usize;
 
@@ -191,7 +182,6 @@ impl ContextManager {
         let document_context = Self::format_document_context(search_results, document_budget)?;
         let document_tokens = count_tokens(&document_context);
 
-        // Calculate remaining budget for conversation history
         let used_tokens = system_tokens + document_tokens;
         let conversation_budget = self.max_context_tokens.saturating_sub(used_tokens);
 
@@ -443,10 +433,6 @@ impl Default for ContextManager {
     }
 }
 
-// ============================================================================
-// Trait Implementation
-// ============================================================================
-
 use crate::infrastructure::services::traits::ContextManagerTrait;
 
 impl ContextManagerTrait for ContextManager {
@@ -481,10 +467,6 @@ impl ContextManagerTrait for ContextManager {
         self.max_context_tokens()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -667,7 +649,6 @@ mod tests {
         // Small budget should keep only recent messages
         let truncated = ContextManager::truncate_messages(messages, 10);
         assert!(truncated.len() < 3);
-        // Should keep at least the last message
         assert!(!truncated.is_empty());
         assert_eq!(truncated.last().unwrap().content, "Third message");
     }
@@ -734,7 +715,6 @@ mod tests {
 
         let context = manager.build_context_for_llm(&conv, results).unwrap();
 
-        // Should still work but with truncation
         assert!(!context.system_prompt.is_empty());
         assert!(!context.messages.is_empty());
         // Total should respect budget (with some margin for approximation)
@@ -751,7 +731,7 @@ mod tests {
     fn test_format_conversation_history_system_role() {
         let conv_messages = vec![ConversationMessage {
             id: "1".to_string(),
-            conversation_id: crate::domain_types::ConversationId::new(),
+            conversation_id: crate::shared::domain_types::ConversationId::new(),
             role: MessageRole::System,
             content: "System message".to_string(),
             tokens: 10,
@@ -767,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_token_budget_allocation() {
-        let manager = ContextManager::new(1000);
+        let _manager = ContextManager::new(1000);
 
         // System budget should be ~20% = 200 tokens
         let system_budget = (1000.0 * SYSTEM_PROMPT_BUDGET_PCT) as usize;

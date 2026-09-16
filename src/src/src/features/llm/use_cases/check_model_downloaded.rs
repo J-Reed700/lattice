@@ -78,7 +78,6 @@ impl CheckModelDownloadedUseCase {
             ));
         }
 
-        // Check for invalid characters
         if !model_id
             .chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
@@ -89,7 +88,6 @@ impl CheckModelDownloadedUseCase {
             ));
         }
 
-        // Check for leading/trailing special characters
         let first_char = match model_id.chars().next() {
             Some(c) => c,
             None => {
@@ -155,21 +153,18 @@ mod tests {
         let storage = Arc::new(MockModelStoragePort::with_models());
         let use_case = CheckModelDownloadedUseCase::new(storage);
 
-        // Check phi-3-mini
         let request1 = CheckModelDownloadedRequestDto {
             model_id: "phi-3-mini".to_string(),
         };
         let result1 = use_case.execute(request1).await.unwrap();
         assert!(result1.is_downloaded);
 
-        // Check mistral-7b
         let request2 = CheckModelDownloadedRequestDto {
             model_id: "mistral-7b".to_string(),
         };
         let result2 = use_case.execute(request2).await.unwrap();
         assert!(result2.is_downloaded);
 
-        // Check nonexistent
         let request3 = CheckModelDownloadedRequestDto {
             model_id: "nonexistent".to_string(),
         };

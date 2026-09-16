@@ -6,14 +6,13 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Comprehensive rate limiting integration tests
 //!
 //! These tests verify that rate limiting actually prevents abuse
 //! and enforces the configured limits across different operations.
-use lattice::error::AppError;
 use lattice::security::rate_limiter::{RateLimiter, RateLimiters};
+use lattice::shared::error::AppError;
 use std::time::Duration;
 use tokio::time::sleep;
 

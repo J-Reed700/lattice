@@ -1,6 +1,6 @@
 //! Storage statistics queries.
 
-use crate::infrastructure::indexing::error::Result;
+use crate::features::indexing::engine::error::Result;
 use sqlx::SqlitePool;
 
 /// Get count of indexed documents.

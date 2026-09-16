@@ -90,12 +90,9 @@ pub fn decode_to_mono_16k(path: &Path, max_secs: u64) -> Result<DecodedAudio, Ap
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
 
-    let source_sample_rate =
-        codec_params
-            .sample_rate
-            .ok_or_else(|| AppError::InvalidData(format!(
-                "audio track has no sample rate ({display})"
-            )))?;
+    let source_sample_rate = codec_params.sample_rate.ok_or_else(|| {
+        AppError::InvalidData(format!("audio track has no sample rate ({display})"))
+    })?;
     let channels = codec_params
         .channels
         .map(|value| value.count())

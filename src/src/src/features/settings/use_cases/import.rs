@@ -76,10 +76,9 @@ impl ImportSettingsUseCase {
         // Perform import through repository
         let settings = self.repository.import(&request.path, request.merge).await?;
 
-        // Validate imported settings
         let validation = self.repository.validate(&settings);
         if !validation.valid {
-            return Err(crate::error::AppError::InvalidInput(format!(
+            return Err(crate::shared::error::AppError::InvalidInput(format!(
                 "Imported settings validation failed: {:?}",
                 validation.errors
             )));
@@ -111,7 +110,7 @@ impl ImportSettingsUseCase {
     /// Returns error if path is empty or file doesn't exist
     fn validate_import_path(&self, path: &str) -> Result<()> {
         if path.is_empty() {
-            return Err(crate::error::AppError::InvalidInput(
+            return Err(crate::shared::error::AppError::InvalidInput(
                 "Import path cannot be empty".to_string(),
             ));
         }
@@ -120,7 +119,7 @@ impl ImportSettingsUseCase {
 
         // repository-barrier-allow: import consumes the user-selected file itself.
         if !path_buf.exists() {
-            return Err(crate::error::AppError::InvalidInput(format!(
+            return Err(crate::shared::error::AppError::InvalidInput(format!(
                 "Import file does not exist: {}",
                 path
             )));
@@ -128,7 +127,7 @@ impl ImportSettingsUseCase {
 
         // repository-barrier-allow: import requires that selected resource to be a regular file.
         if !path_buf.is_file() {
-            return Err(crate::error::AppError::InvalidInput(format!(
+            return Err(crate::shared::error::AppError::InvalidInput(format!(
                 "Import path is not a file: {}",
                 path
             )));
@@ -137,10 +136,6 @@ impl ImportSettingsUseCase {
         Ok(())
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -159,7 +154,6 @@ mod tests {
         let repository = Arc::new(MockSettingsRepository::new());
         let use_case = ImportSettingsUseCase::new(repository);
 
-        // Mock repository will return current settings on import
         let request = ImportSettingsRequestDto {
             path: temp_path("test-settings.json"),
             merge: false,
@@ -210,10 +204,6 @@ mod tests {
     #[tokio::test]
     async fn test_import_validation_failure() {
         let repository = Arc::new(MockSettingsRepository::new());
-        let use_case = ImportSettingsUseCase::new(repository);
-
-        // Test that validation errors are caught
-        // (Mock implementation doesn't actually read files, so we can't test
-        // invalid JSON content directly, but the validation logic is tested)
+        let _use_case = ImportSettingsUseCase::new(repository);
     }
 }

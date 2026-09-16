@@ -10,9 +10,6 @@
 mod di_integration_tests {
     use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
     use crate::features::embedding::EmbeddingServiceTrait;
-    use crate::features::search::SearchServiceTrait;
-    use crate::infrastructure::persistence::repositories::traits::*;
-    use crate::infrastructure::services::traits::*;
     use crate::interfaces::di::MockAppContainer;
 
     /// Test complete document indexing workflow using mocks
@@ -23,7 +20,6 @@ mod di_integration_tests {
     {
         let container = MockAppContainer::new();
 
-        // Step 1: Create document
         let doc = container
             .documents()
             .create(
@@ -41,7 +37,6 @@ mod di_integration_tests {
         use crate::domain::entities::document::DocumentStatus;
         assert_eq!(doc.status(), DocumentStatus::Indexed);
 
-        // Step 2: Create chunks for the document
         use crate::domain::entities::chunk::Chunk;
         let chunks_data = vec![
             Chunk::new(doc.id().clone(), "First paragraph content".to_string(), 0),
@@ -57,7 +52,6 @@ mod di_integration_tests {
 
         assert_eq!(chunk_ids.len(), 3);
 
-        // Step 3: Generate embeddings for chunks
         let chunk_texts = vec![
             "First paragraph content".to_string(),
             "Second paragraph content".to_string(),
@@ -72,7 +66,6 @@ mod di_integration_tests {
         assert_eq!(embeddings.len(), 3);
         assert_eq!(embeddings[0].len(), DEFAULT_EMBEDDING_DIM);
 
-        // Step 4: Store embeddings
         use crate::features::embedding::entity::Embedding as EmbeddingEntity;
         let chunk_embeddings: Vec<(EmbeddingEntity, Vec<f32>)> = chunk_ids
             .iter()
@@ -92,7 +85,6 @@ mod di_integration_tests {
 
         assert_eq!(embedding_ids.len(), 3);
 
-        // Step 5: Verify retrieval
         let stored_chunks = container
             .chunks()
             .find_by_document(doc.id().as_str())
@@ -102,7 +94,6 @@ mod di_integration_tests {
         assert_eq!(stored_chunks.len(), 3);
         assert_eq!(stored_chunks[0].content(), "First paragraph content");
 
-        // Verify embeddings were stored
         for chunk in &chunk_ids {
             let stored_emb = container
                 .embeddings()
@@ -126,7 +117,6 @@ mod di_integration_tests {
         // Since MockSearchService is wrapped in Arc, we need to test differently
         // This demonstrates the limitation and workaround
 
-        // Generate some test embeddings
         let texts = vec![
             "machine learning algorithms".to_string(),
             "deep neural networks".to_string(),
@@ -134,7 +124,7 @@ mod di_integration_tests {
             "computer vision systems".to_string(),
         ];
 
-        let embeddings = container.embedding_service().embed_batch(&texts).await?;
+        let _embeddings = container.embedding_service().embed_batch(&texts).await?;
 
         // In a real scenario, these would be added to the search index
         // For now, we verify the embeddings are deterministic
@@ -163,7 +153,6 @@ mod di_integration_tests {
     async fn test_tag_workflow_with_di() {
         let container = MockAppContainer::new();
 
-        // Create multiple documents
         let doc1 = container
             .documents()
             .create(
@@ -203,7 +192,6 @@ mod di_integration_tests {
             .await
             .unwrap();
 
-        // Create tags
         let tag_ml = container
             .tags()
             .as_ref()
@@ -309,7 +297,6 @@ mod di_integration_tests {
     async fn test_mention_workflow_with_di() {
         let container = MockAppContainer::new();
 
-        // Create documents
         let doc1 = container
             .documents()
             .create(
@@ -336,7 +323,6 @@ mod di_integration_tests {
             .await
             .unwrap();
 
-        // Extract and store mentions
         let text1 = "Meeting with @[Alice Johnson] to discuss [[Project Alpha]] and [[Q1 Goals]].";
         let mentions1 = container
             .mentions()
@@ -369,7 +355,6 @@ mod di_integration_tests {
             .unwrap();
         assert_eq!(doc1_mentions.len(), 3);
 
-        // Verify context was captured
         for mention in &doc1_mentions {
             assert!(mention.context.is_some());
             assert!(mention.position.is_some());
@@ -402,54 +387,6 @@ mod di_integration_tests {
         assert_eq!(search_results[0].name, "Project Alpha");
     }
 
-    /// Test repository polymorphism with trait objects
-    ///
-    /// Demonstrates: Writing generic functions that accept any implementation
-    // TODO: Rewrite for DDD ports - legacy test needs Document entity creation
-    // Disabled due to trait incompatibility between DocumentRepositoryTrait and DocumentRepositoryPort
-    // #[ignore]
-    // #[tokio::test]
-    // async fn test_repository_polymorphism() {
-    //     use crate::application::ports::{RepositoryPort, DocumentRepositoryPort};
-    //     use crate::domain::entities::Document;
-    //
-    //     // Generic function that works with any RepositoryPort<Document> implementation
-    //     async fn count_documents<R: RepositoryPort<Document> + DocumentRepositoryPort>(repo: &R) -> usize {
-    //         repo.count().await.unwrap_or(0)
-    //     }
-    //
-    //     async fn create_test_doc<R: RepositoryPort<Document> + DocumentRepositoryPort>(repo: &R) -> String {
-    //         let doc = repo
-    //             .create(
-    //                 "/test.txt",
-    //                 "test.txt",
-    //                 "text/plain",
-    //                 100,
-    //                 "2024-01-01T00:00:00Z",
-    //                 "hash",
-    //             )
-    //             .await
-    //             .expect("Failed to create document");
-    //         doc.id()
-    //     }
-    //
-    //     let container = MockAppContainer::new();
-    //
-    //     // Use generic functions with mock repository
-    //     let initial_count = count_documents(container.documents().as_ref()).await;
-    //     assert_eq!(initial_count, 0);
-    //
-    //     let doc_id = create_test_doc(container.documents().as_ref()).await;
-    //     assert!(!doc_id.is_empty());
-    //
-    //     let final_count = count_documents(container.documents().as_ref()).await;
-    //     assert_eq!(final_count, 1);
-    //
-    //     // Verify document was created
-    //     let doc = container.documents().find_by_id(&doc_id).await.unwrap();
-    //     assert!(doc.is_some());
-    //     assert_eq!(doc.unwrap().file_name(), "test.txt");
-    // }
     /// Test service polymorphism with trait objects
     ///
     /// Demonstrates: Generic embedding pipeline that works with any service
@@ -480,7 +417,6 @@ mod di_integration_tests {
             assert_eq!(embedding.len(), DEFAULT_EMBEDDING_DIM);
         }
 
-        // Verify determinism
         let embeddings2 = embed_documents(container.embedding_service().as_ref(), &docs).await;
         assert_eq!(
             embeddings, embeddings2,
@@ -496,14 +432,13 @@ mod di_integration_tests {
     async fn test_full_rag_pipeline_with_di() -> Result<(), Box<dyn std::error::Error>> {
         let container = MockAppContainer::new();
 
-        // Setup: Create knowledge base
         let knowledge_base = [("What is machine learning?", "Machine learning is a subset of AI that enables systems to learn from data."),
             ("What is deep learning?", "Deep learning uses neural networks with multiple layers to learn complex patterns."),
             ("What is NLP?", "Natural Language Processing enables computers to understand human language.")];
 
         // Index documents
         let mut doc_ids = Vec::new();
-        for (i, (title, content)) in knowledge_base.iter().enumerate() {
+        for (i, (_title, content)) in knowledge_base.iter().enumerate() {
             let doc = container
                 .documents()
                 .create(
@@ -519,14 +454,12 @@ mod di_integration_tests {
 
             doc_ids.push(doc.id().clone());
 
-            // Create chunk with content
             let chunk = container
                 .chunks()
                 .create(doc.id().as_str(), content, None, None, 0, None, None)
                 .await
                 .unwrap();
 
-            // Generate and store embedding
             let embedding = container.embedding_service().embed_single(content).await?;
 
             container
@@ -548,11 +481,9 @@ mod di_integration_tests {
         // For this test, verify the pipeline components work
         assert_eq!(query_embedding.len(), DEFAULT_EMBEDDING_DIM);
 
-        // Verify all documents were indexed
         let all_docs = container.documents().list_all().await.unwrap();
         assert_eq!(all_docs.len(), 3);
 
-        // Verify all chunks were created
         let doc0_chunks = container
             .chunks()
             .find_by_document(doc_ids[0].as_str())
@@ -570,7 +501,6 @@ mod di_integration_tests {
     async fn test_container_cleanup_and_isolation() {
         let container = MockAppContainer::new();
 
-        // Add some data
         container
             .documents()
             .create(
@@ -611,7 +541,6 @@ mod di_integration_tests {
             .await
             .unwrap();
 
-        // Verify data exists
         assert_eq!(container.documents().count().await.unwrap(), 2);
         assert_eq!(container.tags().get_all().await.unwrap().len(), 1);
         assert_eq!(container.embeddings().count().await.unwrap(), 0);
@@ -619,7 +548,6 @@ mod di_integration_tests {
         // Clear all
         container.clear_all();
 
-        // Verify data is cleared
         assert_eq!(container.documents().count().await.unwrap(), 0);
         assert_eq!(container.tags().get_all().await.unwrap().len(), 0);
         assert_eq!(container.embeddings().count().await.unwrap(), 0);
@@ -632,7 +560,6 @@ mod di_integration_tests {
     async fn test_batch_operations_with_di() -> Result<(), Box<dyn std::error::Error>> {
         let container = MockAppContainer::new();
 
-        // Create document
         let doc = container
             .documents()
             .create(
@@ -646,7 +573,6 @@ mod di_integration_tests {
             .await
             .unwrap();
 
-        // Create 100 chunks in batch
         use crate::domain::entities::chunk::Chunk;
         let chunks_data: Vec<_> = (0..100)
             .map(|i| Chunk::new(doc.id().clone(), format!("Chunk {} content", i), i))
@@ -656,14 +582,12 @@ mod di_integration_tests {
 
         assert_eq!(chunk_ids.len(), 100);
 
-        // Generate embeddings in batch
         let texts: Vec<String> = (0..100).map(|i| format!("Chunk {} content", i)).collect();
 
         let embeddings = container.embedding_service().embed_batch(&texts).await?;
 
         assert_eq!(embeddings.len(), 100);
 
-        // Store embeddings in batch
         use crate::features::embedding::entity::Embedding as EmbeddingEntity;
         let chunk_embeddings: Vec<(EmbeddingEntity, Vec<f32>)> = chunk_ids
             .iter()
@@ -683,7 +607,6 @@ mod di_integration_tests {
 
         assert_eq!(embedding_ids.len(), 100);
 
-        // Verify chunk count
         let chunk_count = container
             .chunks()
             .count_by_document(doc.id().as_str())

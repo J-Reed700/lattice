@@ -71,10 +71,6 @@ impl GetSettingsUseCase {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,7 +101,6 @@ mod tests {
 
         assert!(result.is_object());
         assert_eq!(result["maxResults"], 10);
-        // Use approximate comparison for floating-point due to JSON serialization precision loss
         let threshold = result["similarityThreshold"].as_f64().unwrap();
         assert!(
             (threshold - 0.7).abs() < 0.01,
@@ -139,7 +134,6 @@ mod tests {
 
         assert!(result.is_object());
         assert_eq!(result["model"], "llama3.2:latest");
-        // Use approximate comparison for floating-point due to JSON serialization precision loss
         let temperature = result["temperature"].as_f64().unwrap();
         assert!(
             (temperature - 0.7).abs() < 0.01,

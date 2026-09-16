@@ -36,13 +36,12 @@
 //! Commands delegate directly to SQLite with internal helper functions for
 //! idempotent operations and data enrichment via document JOIN queries.
 
+use crate::application::ports::FavoritesRepositoryPort;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::Container;
-use crate::shared::error::{AppError, Result, ResultExt};
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use tauri::State;
-use uuid::Uuid;
 
 /// Favorite document with metadata
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -148,22 +147,22 @@ pub async fn favorite_operation(
     operation: FavoriteOperation,
     container: State<'_, Container>,
 ) -> Result<FavoriteResponse, AppError> {
-    let pool = container.db_pool();
+    let repository = container.favorites_repository();
     match operation {
         FavoriteOperation::Add { document_id } => {
-            add_favorite_internal(&document_id, pool).await?;
+            add_favorite_internal(&document_id, repository.as_ref()).await?;
             Ok(FavoriteResponse::Modified)
         }
         FavoriteOperation::Remove { document_id } => {
-            remove_favorite_internal(&document_id, pool).await?;
+            remove_favorite_internal(&document_id, repository.as_ref()).await?;
             Ok(FavoriteResponse::Modified)
         }
         FavoriteOperation::GetAll => {
-            let favorites = get_favorites_internal(pool).await?;
+            let favorites = get_favorites_internal(repository.as_ref()).await?;
             Ok(FavoriteResponse::Favorites(favorites))
         }
         FavoriteOperation::Check { document_id } => {
-            let is_fav = is_favorite_internal(&document_id, pool).await?;
+            let is_fav = is_favorite_internal(&document_id, repository.as_ref()).await?;
             Ok(FavoriteResponse::Status(is_fav))
         }
     }
@@ -268,8 +267,8 @@ pub async fn add_favorite(
 
 /// Implementation layer (Pure Rust - No Tauri)
 pub async fn add_favorite_impl(container: &Container, document_id: String) -> Result<(), AppError> {
-    let pool = container.db_pool();
-    let result = add_favorite_internal(&document_id, pool).await;
+    let repository = container.favorites_repository();
+    let result = add_favorite_internal(&document_id, repository.as_ref()).await;
 
     // Audit logging (CWE-778 mitigation)
     let audit_logger = get_audit_logger();
@@ -303,49 +302,11 @@ pub async fn add_favorite_impl(container: &Container, document_id: String) -> Re
     result.map_err(|e| AppError::Other(format!("Failed to add favorite: {}", e)))
 }
 
-/// Internal implementation for adding favorites
-async fn add_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<()> {
-    // Check if document exists
-    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
-    let doc_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = ?")
-        .bind(document_id)
-        .fetch_one(pool)
-        .await
-        .context("Failed to check if document exists")?;
-
-    if doc_exists == 0 {
-        return Err(AppError::NotFound("Document not found".to_string()));
-    }
-
-    // Check if already favorited
-    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
-    let already_favorited =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM favorites WHERE document_id = ?")
-            .bind(document_id)
-            .fetch_one(pool)
-            .await
-            .context("Failed to check favorite status")?;
-
-    if already_favorited > 0 {
-        // Already favorited, no-op (idempotent)
-        return Ok(());
-    }
-
-    // Insert favorite
-    let favorite_id = Uuid::new_v4().to_string();
-    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
-    sqlx::query(
-        r#"
-        INSERT INTO favorites (id, document_id, added_at)
-        VALUES (?, ?, datetime('now'))
-        "#,
-    )
-    .bind(&favorite_id)
-    .bind(document_id)
-    .execute(pool)
-    .await
-    .context("Failed to insert favorite")?;
-
+async fn add_favorite_internal(
+    document_id: &str,
+    repository: &dyn FavoritesRepositoryPort,
+) -> Result<()> {
+    repository.add_favorite(document_id).await?;
     Ok(())
 }
 
@@ -464,8 +425,8 @@ pub async fn remove_favorite_impl(
     container: &Container,
     document_id: String,
 ) -> Result<(), AppError> {
-    let pool = container.db_pool();
-    let result = remove_favorite_internal(&document_id, pool).await;
+    let repository = container.favorites_repository();
+    let result = remove_favorite_internal(&document_id, repository.as_ref()).await;
 
     // Audit logging (CWE-778 mitigation)
     let audit_logger = get_audit_logger();
@@ -499,22 +460,14 @@ pub async fn remove_favorite_impl(
     result.map_err(|e| AppError::Other(format!("Failed to remove favorite: {}", e)))
 }
 
-/// Internal implementation for removing favorites
-async fn remove_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<()> {
-    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
-    let rows_affected = sqlx::query("DELETE FROM favorites WHERE document_id = ?")
-        .bind(document_id)
-        .execute(pool)
-        .await
-        .context("Failed to delete favorite")?
-        .rows_affected();
-
-    if rows_affected == 0 {
-        // Not favorited, no-op (idempotent)
-        return Ok(());
+async fn remove_favorite_internal(
+    document_id: &str,
+    repository: &dyn FavoritesRepositoryPort,
+) -> Result<()> {
+    match repository.remove_favorite(document_id).await {
+        Err(AppError::NotFound(_)) => Ok(()), // Commands preserve idempotent removal.
+        result => result,
     }
-
-    Ok(())
 }
 
 /// Get all favorite documents with enriched metadata via JOIN query
@@ -637,46 +590,28 @@ pub async fn get_favorites(
 
 /// Implementation layer (Pure Rust - No Tauri)
 pub async fn get_favorites_impl(container: &Container) -> Result<Vec<FavoriteDocument>, AppError> {
-    let pool = container.db_pool();
-    get_favorites_internal(pool)
+    let repository = container.favorites_repository();
+    get_favorites_internal(repository.as_ref())
         .await
         .map_err(|e| AppError::Other(format!("Failed to get favorites: {}", e)))
 }
 
-/// Internal implementation for getting favorites
-async fn get_favorites_internal(pool: &SqlitePool) -> Result<Vec<FavoriteDocument>> {
-    // repository-barrier-allow: legacy read model pending consolidation into FavoritesRepository.
-    let favorites = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
-        r#"
-        SELECT
-            f.id,
-            f.document_id,
-            d.file_name,
-            d.file_path,
-            d.file_type,
-            f.added_at
-        FROM favorites f
-        INNER JOIN documents d ON f.document_id = d.id
-        ORDER BY f.added_at DESC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to query favorites")?
-    .into_iter()
-    .map(
-        |(id, document_id, document_name, document_path, file_type, added_at)| FavoriteDocument {
-            id,
-            document_id,
-            document_name,
-            document_path,
-            file_type,
-            added_at,
-        },
-    )
-    .collect();
-
-    Ok(favorites)
+async fn get_favorites_internal(
+    repository: &dyn FavoritesRepositoryPort,
+) -> Result<Vec<FavoriteDocument>> {
+    Ok(repository
+        .list_favorites()
+        .await?
+        .into_iter()
+        .map(|record| FavoriteDocument {
+            id: record.id,
+            document_id: record.document_id,
+            document_name: record.document_name,
+            document_path: record.document_path,
+            file_type: record.file_type,
+            added_at: record.added_at,
+        })
+        .collect())
 }
 
 /// Check if a document is favorited with fast boolean status query
@@ -788,28 +723,22 @@ pub async fn is_favorite_impl(
     container: &Container,
     document_id: String,
 ) -> Result<bool, AppError> {
-    let pool = container.db_pool();
-    is_favorite_internal(&document_id, pool)
+    let repository = container.favorites_repository();
+    is_favorite_internal(&document_id, repository.as_ref())
         .await
         .map_err(|e| AppError::Other(format!("Failed to check favorite status: {}", e)))
 }
 
 /// Internal implementation for checking favorite status
-async fn is_favorite_internal(document_id: &str, pool: &SqlitePool) -> Result<bool> {
-    // repository-barrier-allow: legacy command helper pending consolidation into FavoritesRepository.
-    let count =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM favorites WHERE document_id = ?")
-            .bind(document_id)
-            .fetch_one(pool)
-            .await
-            .context("Failed to check favorite status")?;
-
-    Ok(count > 0)
+async fn is_favorite_internal(
+    document_id: &str,
+    repository: &dyn FavoritesRepositoryPort,
+) -> Result<bool> {
+    repository.is_favorite(document_id).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Tests would go here - integration tests with test database
 }

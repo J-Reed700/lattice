@@ -32,10 +32,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Query Classification
-// ============================================================================
-
 /// Type of user query for appropriate handling.
 ///
 /// Different query types require different search strategies:
@@ -66,10 +62,6 @@ impl std::fmt::Display for QueryType {
     }
 }
 
-// ============================================================================
-// Search Strategy
-// ============================================================================
-
 /// Strategy for document search based on query type.
 ///
 /// Different strategies optimize for different query patterns:
@@ -95,10 +87,6 @@ impl std::fmt::Display for SearchStrategy {
         }
     }
 }
-
-// ============================================================================
-// Tool Intent
-// ============================================================================
 
 /// Intended retrieval scope for answering a query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,10 +124,6 @@ impl std::fmt::Display for ToolIntent {
         }
     }
 }
-
-// ============================================================================
-// HyDE Interpretation
-// ============================================================================
 
 /// Interpreted query with HyDE enrichment.
 ///
@@ -276,10 +260,6 @@ impl HyDEInterpretation {
     }
 }
 
-// ============================================================================
-// Enriched Context
-// ============================================================================
-
 /// Context enriched with retrieved documents for answering.
 ///
 /// Contains the original query interpretation plus documents retrieved
@@ -376,10 +356,6 @@ impl EnrichedContext {
     }
 }
 
-// ============================================================================
-// Document Chunk
-// ============================================================================
-
 /// Retrieved document chunk with relevance score.
 ///
 /// Represents a chunk of a document retrieved from the knowledge base
@@ -431,10 +407,6 @@ impl DocumentChunk {
     }
 }
 
-// ============================================================================
-// Chunk Metadata
-// ============================================================================
-
 /// Optional metadata about a document chunk.
 ///
 /// Contains additional information about the chunk such as
@@ -472,10 +444,6 @@ impl ChunkMetadata {
         }
     }
 }
-
-// ============================================================================
-// Chat Response
-// ============================================================================
 
 /// Response from the chat/Q&A system.
 ///
@@ -526,10 +494,6 @@ impl ChatResponse {
     }
 }
 
-// ============================================================================
-// Source
-// ============================================================================
-
 /// Source document used to generate an answer.
 ///
 /// References a document chunk that contributed to the answer,
@@ -563,10 +527,6 @@ impl Source {
         self
     }
 }
-
-// ============================================================================
-// Response Metadata
-// ============================================================================
 
 /// Metadata about response generation.
 ///
@@ -619,10 +579,6 @@ impl ResponseMetadata {
         self
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

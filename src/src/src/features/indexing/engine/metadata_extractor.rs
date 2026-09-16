@@ -1,4 +1,4 @@
-use crate::infrastructure::indexing::error::Result;
+use crate::features::indexing::engine::error::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -35,7 +35,7 @@ impl DocumentMetadata {
 pub fn extract_metadata(
     file_path: &Path,
     content: &str,
-    chunk_index: usize,
+    _chunk_index: usize,
 ) -> Result<DocumentMetadata> {
     let title = file_path
         .file_name()

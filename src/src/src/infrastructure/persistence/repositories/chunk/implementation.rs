@@ -4,7 +4,6 @@
 
 use crate::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
 use crate::domain::entities::chunk::Chunk as ChunkEntity;
-use crate::infrastructure::persistence::mappers::ChunkMapper;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use sqlx::SqlitePool;

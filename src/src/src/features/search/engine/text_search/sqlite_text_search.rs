@@ -12,9 +12,50 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use tracing::warn;
 
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn selected_document_filter_runs_before_limit() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql("CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+            CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+            INSERT INTO text_chunks VALUES ('a','other','patent'), ('b','selected','patent manual introduction');
+            INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
+            INSERT INTO document_space_memberships VALUES ('other','space'),('selected','space');")
+            .execute(&pool).await.unwrap();
+        let search = SqliteTextSearch::new(pool);
+        let allowed = HashSet::from(["selected".into()]);
+        for space in [None, Some("space")] {
+            let hits = search
+                .search_scoped("patent", 1, space, Some(&allowed))
+                .await
+                .unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].doc_id, "selected");
+        }
+        assert!(search
+            .search_scoped("patent", 1, Some("other_space"), Some(&allowed))
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(search
+            .search_scoped("patent", 1, None, Some(&HashSet::new()))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
 /// SQLite-based text search implementation using FTS5
 ///
-/// Uses the documents_fts virtual table which is automatically synced
+/// Uses the chunks_fts virtual table which is automatically synced
 /// with the chunks table via triggers (see schema migration).
 pub struct SqliteTextSearch {
     pool: SqlitePool,
@@ -48,18 +89,17 @@ impl TextSearchPort for SqliteTextSearch {
             return Ok(Vec::new());
         }
 
-        let rows_result = match space_id {
-            Some(scope_space_id) => {
-                Self::execute_fts_query_in_space(
-                    &self.pool,
-                    &normalized_query,
-                    top_k,
-                    scope_space_id,
-                )
-                .await
-            }
-            None => Self::execute_fts_query(&self.pool, &normalized_query, top_k).await,
-        };
+        if allowed_document_ids.is_some_and(HashSet::is_empty) || top_k == 0 {
+            return Ok(Vec::new());
+        }
+        let rows_result = Self::execute_fts_query_scoped(
+            &self.pool,
+            &normalized_query,
+            top_k,
+            space_id,
+            allowed_document_ids,
+        )
+        .await;
 
         let rows = match rows_result {
             Ok(rows) => rows,
@@ -77,18 +117,14 @@ impl TextSearchPort for SqliteTextSearch {
                     "SQLite text search FTS query failed with syntax error, retrying with strict tokenized fallback"
                 );
 
-                match space_id {
-                    Some(scope_space_id) => {
-                        Self::execute_fts_query_in_space(
-                            &self.pool,
-                            &fallback_query,
-                            top_k,
-                            scope_space_id,
-                        )
-                        .await?
-                    }
-                    None => Self::execute_fts_query(&self.pool, &fallback_query, top_k).await?,
-                }
+                Self::execute_fts_query_scoped(
+                    &self.pool,
+                    &fallback_query,
+                    top_k,
+                    space_id,
+                    allowed_document_ids,
+                )
+                .await?
             }
             Err(error) => return Err(error.into()),
         };
@@ -106,7 +142,7 @@ impl TextSearchPort for SqliteTextSearch {
     async fn index_document(&self, _id: &str, _content: &str) -> Result<()> {
         // No-op: FTS5 table is automatically synced via triggers
         // When chunks are inserted, the chunks_fts_insert trigger
-        // adds content to documents_fts automatically
+        // adds content to chunks_fts automatically
         Ok(())
     }
 
@@ -118,7 +154,7 @@ impl TextSearchPort for SqliteTextSearch {
     async fn remove_document(&self, _id: &str) -> Result<()> {
         // No-op: FTS5 table is automatically synced via triggers
         // When chunks are deleted, the chunks_fts_delete trigger
-        // removes content from documents_fts automatically
+        // removes content from chunks_fts automatically
         Ok(())
     }
 
@@ -141,58 +177,36 @@ impl TextSearchPort for SqliteTextSearch {
 }
 
 impl SqliteTextSearch {
-    async fn execute_fts_query(
+    async fn execute_fts_query_scoped(
         pool: &SqlitePool,
         query: &str,
         top_k: usize,
+        space_id: Option<&str>,
+        allowed_document_ids: Option<&HashSet<String>>,
     ) -> std::result::Result<Vec<sqlx::sqlite::SqliteRow>, sqlx::Error> {
-        sqlx::query(
-            r#"
-            SELECT
-                c.id as chunk_id,
-                c.document_id,
-                c.content,
-                bm25(chunks_fts) as score
-            FROM chunks_fts
-            JOIN text_chunks c ON chunks_fts.chunk_id = c.id
-            WHERE chunks_fts MATCH ?
-            ORDER BY bm25(chunks_fts)
-            LIMIT ?
-            "#,
-        )
-        .bind(query)
-        .bind(top_k as i64)
-        .fetch_all(pool)
-        .await
-    }
-
-    async fn execute_fts_query_in_space(
-        pool: &SqlitePool,
-        query: &str,
-        top_k: usize,
-        space_id: &str,
-    ) -> std::result::Result<Vec<sqlx::sqlite::SqliteRow>, sqlx::Error> {
-        sqlx::query(
-            r#"
-            SELECT
-                c.id as chunk_id,
-                c.document_id,
-                c.content,
-                bm25(chunks_fts) as score
-            FROM chunks_fts
-            JOIN text_chunks c ON chunks_fts.chunk_id = c.id
-            JOIN document_space_memberships dsm ON dsm.document_id = c.document_id
-            WHERE dsm.space_id = ?
-              AND chunks_fts MATCH ?
-            ORDER BY bm25(chunks_fts)
-            LIMIT ?
-            "#,
-        )
-        .bind(space_id)
-        .bind(query)
-        .bind(top_k as i64)
-        .fetch_all(pool)
-        .await
+        // Apply ALL scope restrictions before ranking/LIMIT. Filtering the top
+        // global hits afterwards can hide every hit from a selected chapter.
+        let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT c.id as chunk_id, c.document_id, c.content, bm25(chunks_fts) as score FROM chunks_fts JOIN text_chunks c ON chunks_fts.chunk_id = c.id WHERE chunks_fts MATCH ",
+        );
+        sql.push_bind(query);
+        if let Some(space) = space_id {
+            sql.push(" AND EXISTS (SELECT 1 FROM document_space_memberships m WHERE m.document_id = c.document_id AND m.space_id = ");
+            sql.push_bind(space).push(")");
+        }
+        if let Some(ids) = allowed_document_ids {
+            sql.push(" AND c.document_id IN (");
+            let mut sorted: Vec<_> = ids.iter().collect();
+            sorted.sort();
+            let mut values = sql.separated(", ");
+            for id in sorted {
+                values.push_bind(id);
+            }
+            sql.push(")");
+        }
+        sql.push(" ORDER BY bm25(chunks_fts), c.id LIMIT ")
+            .push_bind(top_k as i64);
+        sql.build().fetch_all(pool).await
     }
 
     fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultPortDto> {

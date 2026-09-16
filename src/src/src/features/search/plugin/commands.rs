@@ -8,7 +8,6 @@ pub use crate::features::search::commands::{
     semantic_search,
 };
 
-// Re-export cache command used alongside search operations.
 pub use crate::features::cache::commands::clear_search_cache;
 
 // Compatibility aliases for older frontend call sites.

@@ -34,13 +34,10 @@ pub mod mappers;
 pub mod ports;
 pub mod services;
 
-// Re-export commonly used items
 pub use error::ApplicationError;
 pub use factories::{ChecksumFactory, FileMetadataFactory};
-pub use mappers::*;
 pub use services::FileType;
 
-// Re-export port traits for convenience
 pub use ports::{
     EmbeddingPort, FavoritesRepositoryPort, FileStoragePort, LLMPort, NotificationPort,
     RecentDocumentsRepositoryPort, RepositoryPort, TextSearchPort, VectorSearchPort,

@@ -166,7 +166,7 @@ impl Logger {
 
     pub fn log_error_with_context(
         &self,
-        error: &crate::error::AppError,
+        error: &crate::shared::error::AppError,
         operation: &str,
         file_path: Option<&str>,
     ) {

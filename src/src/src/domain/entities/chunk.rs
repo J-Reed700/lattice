@@ -39,7 +39,7 @@ pub struct ChunkParams {
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::chunk::Chunk;
-/// use lattice::domain_types::DocumentId;
+/// use lattice::shared::domain_types::DocumentId;
 ///
 /// let doc_id = DocumentId::new();
 /// let chunk = Chunk::new(doc_id, "This is chunk content".to_string(), 0);
@@ -54,16 +54,54 @@ pub struct Chunk {
     document_id: DocumentId,
     content: String,
     index: usize,
-    // Rich metadata fields (Phase 2)
+    // Extended metadata
     language: Language,
     token_count: i32,
-    // NEW: Phase 1 metadata
     word_count: usize,
     has_code: bool,
     section: Option<String>,
+    #[serde(default)]
+    context_prefix: Option<String>,
+    #[serde(default)]
+    start_char: Option<usize>,
+    #[serde(default)]
+    end_char: Option<usize>,
+    #[serde(default)]
+    page_number: Option<u32>,
 }
 
 impl Chunk {
+    pub fn context_prefix(&self) -> Option<&str> {
+        self.context_prefix.as_deref()
+    }
+    pub fn start_char(&self) -> Option<usize> {
+        self.start_char
+    }
+    pub fn end_char(&self) -> Option<usize> {
+        self.end_char
+    }
+    pub fn page_number(&self) -> Option<u32> {
+        self.page_number
+    }
+    pub fn set_provenance(
+        &mut self,
+        prefix: Option<String>,
+        start: Option<usize>,
+        end: Option<usize>,
+        page: Option<u32>,
+    ) {
+        self.context_prefix = prefix;
+        self.start_char = start;
+        self.end_char = end;
+        self.page_number = page;
+    }
+    pub fn embedding_text(&self) -> String {
+        match self.context_prefix() {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}{}", self.content()),
+            _ => self.content().to_owned(),
+        }
+    }
+
     /// Create new chunk.
     ///
     /// # Arguments
@@ -76,7 +114,7 @@ impl Chunk {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::chunk::Chunk;
-    /// use lattice::domain_types::DocumentId;
+    /// use lattice::shared::domain_types::DocumentId;
     ///
     /// let doc_id = DocumentId::new();
     /// let chunk = Chunk::new(doc_id.clone(), "Content here".to_string(), 0);
@@ -93,6 +131,10 @@ impl Chunk {
             word_count: 0,
             has_code: false,
             section: None,
+            context_prefix: None,
+            start_char: None,
+            end_char: None,
+            page_number: None,
         }
     }
 
@@ -110,6 +152,10 @@ impl Chunk {
             word_count: params.word_count,
             has_code: params.has_code,
             section: params.section,
+            context_prefix: None,
+            start_char: None,
+            end_char: None,
+            page_number: None,
         }
     }
 
@@ -162,10 +208,6 @@ impl Chunk {
     pub fn contains_ignore_case(&self, query: &str) -> bool {
         self.content.to_lowercase().contains(&query.to_lowercase())
     }
-
-    // ========================================================================
-    // Rich Metadata Methods (Phase 2)
-    // ========================================================================
 
     /// Get chunk language.
     pub fn language(&self) -> &Language {
@@ -222,10 +264,6 @@ impl Chunk {
         self.id.as_str()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -345,18 +383,10 @@ mod tests {
     }
 }
 
-// ============================================================================
-// Property Tests
-// ============================================================================
-
 #[cfg(test)]
 mod property_tests {
     use super::*;
     use proptest::prelude::*;
-
-    // ========================================================================
-    // Strategy Helpers
-    // ========================================================================
 
     /// Strategy: Valid chunk content (10-1000 characters)
     fn valid_chunk_content() -> impl Strategy<Value = String> {
@@ -400,10 +430,6 @@ mod property_tests {
             )
     }
 
-    // ========================================================================
-    // Category A: Creation & Identity (4 tests)
-    // ========================================================================
-
     proptest! {
         #[test]
         fn prop_chunk_has_unique_id(_dummy in 0..10u32) {
@@ -444,10 +470,6 @@ mod property_tests {
         }
     }
 
-    // ========================================================================
-    // Category B: Content Operations (4 tests)
-    // ========================================================================
-
     proptest! {
         #[test]
         fn prop_chunk_content_non_empty(chunk in arbitrary_chunk()) {
@@ -479,7 +501,6 @@ mod property_tests {
         fn prop_chunk_contains_substring(content in valid_chunk_content()) {
             let chunk = Chunk::new(DocumentId::new(), content.clone(), 0);
 
-            // Extract a substring from the content
             if content.len() >= 3 {
                 let start = content.len() / 2;
                 let end = start + 3.min(content.len() - start);
@@ -488,10 +509,6 @@ mod property_tests {
             }
         }
     }
-
-    // ========================================================================
-    // Category C: Rich Metadata (5 tests)
-    // ========================================================================
 
     proptest! {
         #[test]
@@ -524,10 +541,6 @@ mod property_tests {
             prop_assert_eq!(chunk.section(), section.as_deref());
         }
     }
-
-    // ========================================================================
-    // Category D: Serialization & Equality (2 tests)
-    // ========================================================================
 
     proptest! {
         #[test]

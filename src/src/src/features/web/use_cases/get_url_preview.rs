@@ -226,7 +226,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_url_with_open_graph() {
-        // Arrange
         let mock_service = Arc::new(MockWebCaptureService::new());
         let expected = UrlPreview {
             url: "https://example.com/article".to_string(),
@@ -246,14 +245,12 @@ mod tests {
 
         let use_case = GetUrlPreviewUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(GetUrlPreviewRequestDto {
                 url: "https://example.com/article".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let preview = result.unwrap();
         assert_eq!(preview.url, "https://example.com/article");
@@ -268,7 +265,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_url_without_metadata() {
-        // Arrange
         let mock_service = Arc::new(MockWebCaptureService::new());
         let minimal = UrlPreview {
             url: "https://minimal.com".to_string(),
@@ -288,14 +284,12 @@ mod tests {
 
         let use_case = GetUrlPreviewUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(GetUrlPreviewRequestDto {
                 url: "https://minimal.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_ok());
         let preview = result.unwrap();
         assert_eq!(preview.title, "Minimal Page");
@@ -306,18 +300,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_invalid_url_no_protocol() {
-        // Arrange
         let mock_service = Arc::new(MockWebCaptureService::new());
         let use_case = GetUrlPreviewUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(GetUrlPreviewRequestDto {
                 url: "example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         assert_eq!(mock_service.get_call_count(), 0); // Should not call service
         match result.unwrap_err() {
@@ -330,43 +321,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_invalid_url_wrong_protocol() {
-        // Arrange
         let mock_service = Arc::new(MockWebCaptureService::new());
         let use_case = GetUrlPreviewUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(GetUrlPreviewRequestDto {
                 url: "ftp://example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         assert_eq!(mock_service.get_call_count(), 0);
     }
 
     #[tokio::test]
     async fn test_preview_empty_url() {
-        // Arrange
         let mock_service = Arc::new(MockWebCaptureService::new());
         let use_case = GetUrlPreviewUseCase::new(mock_service.clone());
 
-        // Act
         let result = use_case
             .execute(GetUrlPreviewRequestDto {
                 url: "".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         assert_eq!(mock_service.get_call_count(), 0);
     }
 
     #[tokio::test]
     async fn test_preview_network_error_propagates() {
-        // Arrange
         struct FailingService;
 
         #[async_trait]
@@ -378,14 +362,12 @@ mod tests {
 
         let use_case = GetUrlPreviewUseCase::new(Arc::new(FailingService));
 
-        // Act
         let result = use_case
             .execute(GetUrlPreviewRequestDto {
                 url: "https://example.com".to_string(),
             })
             .await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Network(msg) => assert_eq!(msg, "Connection refused"),

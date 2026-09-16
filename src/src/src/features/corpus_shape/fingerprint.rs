@@ -108,7 +108,10 @@ mod tests {
         let ids_a = vec!["a".to_string(), "b".to_string()];
         let ids_b = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let centroid = vec![1.0, 2.0, 3.0];
-        assert_ne!(fingerprint(&ids_a, &centroid), fingerprint(&ids_b, &centroid));
+        assert_ne!(
+            fingerprint(&ids_a, &centroid),
+            fingerprint(&ids_b, &centroid)
+        );
     }
 
     #[test]

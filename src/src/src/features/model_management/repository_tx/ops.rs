@@ -1,9 +1,9 @@
 use crate::domain::entities::model::Model;
 use crate::domain::entities::model_file::ModelFile;
-use crate::domain::value_objects::model_status::{FileStatus, ModelStatus, ModelType};
+use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 use std::str::FromStr;
 use tracing::{debug, error, info};
 
@@ -554,9 +554,6 @@ impl TryFrom<ModelRow> for Model {
         let status_enum = ModelStatus::from_str(&row.status)
             .map_err(|e| AppError::InvalidData(format!("Invalid model status: {}", e)))?;
 
-        let model_type_enum = ModelType::from_str(&row.model_type)
-            .map_err(|e| AppError::InvalidData(format!("Invalid model type: {}", e)))?;
-
         let downloaded_at_dt = parse_optional_db_timestamp(row.downloaded_at.as_deref())?;
         let last_used_at_dt = parse_optional_db_timestamp(row.last_used_at.as_deref())?;
         let created_at_dt = parse_required_db_timestamp(&row.created_at, "created_at")?;
@@ -578,7 +575,7 @@ impl TryFrom<ModelRow> for Model {
             base_path: row.base_path,
             total_size_bytes: row.total_size_bytes,
             architecture: "unknown".to_string(),
-            model_type: model_type_enum.to_string(),
+            model_type: row.model_type,
             status: status_enum,
             files: vec![],
             is_active_for_chat: row.is_active_for_chat != 0,

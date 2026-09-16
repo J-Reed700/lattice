@@ -8,6 +8,7 @@ use crate::features::credentials::adapter::CredentialsAdapter;
 use crate::features::credentials::use_cases::{
     DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
 };
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct CredentialsDi {
@@ -28,5 +29,13 @@ pub fn build(credentials_path: PathBuf) -> CredentialsDi {
         delete_api_key_use_case: Arc::new(DeleteApiKeyUseCase::new(credentials.clone())),
         set_custom_endpoint_use_case: Arc::new(SetCustomEndpointUseCase::new(credentials.clone())),
         credentials,
+    }
+}
+
+/// Credentials' registrar surface on `Container`.
+impl Container {
+    // Credentials (from CoreModule)
+    pub fn set_api_key_use_case(&self) -> Arc<SetApiKeyUseCase> {
+        Arc::clone(self.core.set_api_key_use_case())
     }
 }

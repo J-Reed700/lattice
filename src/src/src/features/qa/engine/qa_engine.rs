@@ -1,14 +1,14 @@
+use crate::features::llm::engine::traits::{ChatMessage, LLMClient};
+use crate::features::qa::engine::prompts::{build_user_prompt, SYSTEM_PROMPT};
+use crate::features::qa::engine::tokenizer::{count_tokens, truncate_to_tokens};
+use crate::features::qa::engine::types::{QAError, SourceReference, StreamChunk};
 /// Q&A Engine with RAG Pipeline
 ///
 /// A complete RAG (Retrieval-Augmented Generation) implementation that combines
 /// semantic search with LLM generation to answer questions using your knowledge base.
 use crate::features::qa::QAEngineTrait;
-use crate::infrastructure::qa::prompts::{build_user_prompt, SYSTEM_PROMPT};
-use crate::infrastructure::qa::tokenizer::{count_tokens, truncate_to_tokens};
-use crate::infrastructure::qa::types::{QAError, SourceReference, StreamChunk};
-use crate::infrastructure::search::service::SearchResult;
+use crate::features::search::engine::service::SearchResult;
 use crate::infrastructure::services::context_manager::LLMContext;
-use crate::llm::traits::{ChatMessage, LLMClient};
 use async_trait::async_trait;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -75,7 +75,7 @@ impl QAEngine {
     /// # Examples
     /// ```no_run
     /// use lattice::qa::QAEngine;
-    /// use lattice::llm::{OllamaClient, LLMClient};
+    /// use lattice::features::llm::engine::{OllamaClient, LLMClient};
     /// use std::sync::Arc;
     ///
     /// let client = Arc::new(OllamaClient::new("http://localhost:11434", "llama3.1:8b".to_string()));
@@ -105,7 +105,6 @@ impl QAEngine {
         max_context_tokens: usize,
         llm_context: Option<LLMContext>,
     ) -> Result<String, QAError> {
-        // Validate inputs
         if question.trim().is_empty() {
             return Err(QAError::InvalidInput(
                 "Question cannot be empty".to_string(),
@@ -124,7 +123,6 @@ impl QAEngine {
             "Processing Q&A request"
         );
 
-        // Check if conversational mode with LLM context
         if let Some(ctx) = llm_context {
             info!(
                 num_messages = ctx.messages.len(),
@@ -132,14 +130,11 @@ impl QAEngine {
                 "Using conversational mode with history"
             );
 
-            // Check if LLM supports chat API
             if self.llm_client.supports_chat() {
                 info!("Using Chat API for conversational mode");
 
-                // Build messages array from context
                 let messages = build_chat_messages(&ctx, question)?;
 
-                // Use Chat API
                 let answer = self.llm_client.generate_chat(messages).await?;
                 return Ok(answer);
             } else {
@@ -180,7 +175,6 @@ impl QAEngine {
             );
         }
 
-        // Build context from search results
         let (context, _sources) = self.build_context(&search_results, max_context_tokens)?;
 
         debug!(
@@ -189,7 +183,6 @@ impl QAEngine {
             "Built context from search results"
         );
 
-        // Build prompt
         let prompt = build_user_prompt(&context, question);
 
         let prompt_tokens = count_tokens(SYSTEM_PROMPT) + count_tokens(&prompt);
@@ -199,7 +192,6 @@ impl QAEngine {
             "Sending prompt to LLM"
         );
 
-        // Generate answer
         let answer = self
             .llm_client
             .generate(&prompt, Some(SYSTEM_PROMPT), None)
@@ -228,7 +220,6 @@ impl QAEngine {
         max_context_tokens: usize,
         llm_context: Option<LLMContext>,
     ) -> Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send + '_>>, QAError> {
-        // Validate inputs
         if question.trim().is_empty() {
             return Err(QAError::InvalidInput(
                 "Question cannot be empty".to_string(),
@@ -247,7 +238,6 @@ impl QAEngine {
             "Processing streaming Q&A request"
         );
 
-        // Check if conversational mode with LLM context
         if let Some(ctx) = llm_context {
             info!(
                 num_messages = ctx.messages.len(),
@@ -255,14 +245,11 @@ impl QAEngine {
                 "Using conversational streaming mode with history"
             );
 
-            // Check if LLM supports chat API
             if self.llm_client.supports_chat() {
                 info!("Using Chat API for conversational streaming mode");
 
-                // Build messages array from context
                 let messages = build_chat_messages(&ctx, question)?;
 
-                // Use Chat API streaming
                 let stream = self.llm_client.generate_chat_stream(messages).await?;
 
                 // Transform stream to include done marker at the end
@@ -330,7 +317,6 @@ impl QAEngine {
             return Ok(error_stream);
         }
 
-        // Build context from search results
         let (context, sources) = self.build_context(&search_results, max_context_tokens)?;
 
         debug!(
@@ -339,7 +325,6 @@ impl QAEngine {
             "Built context from search results"
         );
 
-        // Build prompt
         let prompt = build_user_prompt(&context, question);
 
         let prompt_tokens = count_tokens(SYSTEM_PROMPT) + count_tokens(&prompt);
@@ -349,7 +334,6 @@ impl QAEngine {
             "Starting streaming generation"
         );
 
-        // Get streaming response
         let stream = self
             .llm_client
             .generate_stream(&prompt, Some(SYSTEM_PROMPT), None)
@@ -442,7 +426,6 @@ impl QAEngine {
 
             let doc_tokens = count_tokens(&doc_text);
 
-            // Check if adding this document would exceed the budget
             if current_tokens + doc_tokens > max_tokens {
                 let remaining_tokens =
                     max_tokens.saturating_sub(current_tokens + count_tokens(&doc_header));
@@ -454,7 +437,6 @@ impl QAEngine {
                     let doc_text = format!("{}{}\n", doc_header, truncated_content);
                     context_parts.push(doc_text);
 
-                    // Add truncated snippet for source reference
                     let snippet = truncate_to_tokens(&content, 50, Some("..."))?;
                     sources.push(SourceReference {
                         file_path: file_path.clone(),
@@ -473,7 +455,6 @@ impl QAEngine {
                 context_parts.push(doc_text);
                 current_tokens += doc_tokens;
 
-                // Create snippet for source reference
                 let snippet = truncate_to_tokens(&content, 50, Some("..."))?;
                 sources.push(SourceReference {
                     file_path: file_path.clone(),
@@ -499,10 +480,6 @@ impl QAEngine {
     }
 }
 
-// ============================================================================
-// Trait Implementation
-// ============================================================================
-
 #[async_trait]
 impl QAEngineTrait for QAEngine {
     async fn answer(
@@ -525,7 +502,6 @@ impl QAEngineTrait for QAEngine {
         llm_context: Option<LLMContext>,
     ) -> Result<std::pin::Pin<Box<dyn tokio_stream::Stream<Item = StreamChunk> + Send + '_>>, QAError>
     {
-        // Get the stream from the existing implementation
         let stream = self
             .answer_stream(question, search_results, max_context_tokens, llm_context)
             .await?;

@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[test]
 fn clarify_response_without_recent_document_is_generic() {
@@ -89,365 +89,6 @@ fn question_with_forced_web_keeps_web_enabled() {
 }
 
 #[test]
-fn kb_plan_runs_parallel_when_hyde_differs_without_forced_kb() {
-    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
-        "What's new with NASA?",
-        "NASA announced new mission timelines and propulsion tests.",
-    );
-    let flags = SearchFlags {
-        force_kb_search: false,
-        force_web_search: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-    };
-
-    let plan =
-        KbSearchPlan::from_interpretation("What's new with NASA?", &interpretation, flags, 0.4);
-
-    assert!(plan.run_parallel_keyword_branch);
-    assert!(matches!(plan.mode, SearchModeDto::Vector));
-    assert_eq!(plan.threshold, Some(0.05));
-}
-
-#[test]
-fn kb_plan_prefers_hybrid_for_forced_kb_without_distinct_hyde() {
-    let interpretation =
-        crate::domain::qa::hyde::HyDEInterpretation::raw_only("policy update", QueryType::Question);
-    let flags = SearchFlags {
-        force_kb_search: true,
-        force_web_search: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-    };
-
-    let plan = KbSearchPlan::from_interpretation("policy update", &interpretation, flags, 0.4);
-
-    assert!(!plan.run_parallel_keyword_branch);
-    assert_eq!(plan.threshold, Some(0.4));
-    match plan.mode {
-        SearchModeDto::Hybrid {
-            vector_weight,
-            bm25_weight,
-        } => {
-            assert!((vector_weight - 0.7).abs() < f32::EPSILON);
-            assert!((bm25_weight - 0.3).abs() < f32::EPSILON);
-        }
-        mode => panic!("expected hybrid mode, got {:?}", mode),
-    }
-}
-
-fn make_result(id: &str, doc_id: &str, title: &str, content: &str, score: f32) -> SearchResultDto {
-    SearchResultDto {
-        id: id.to_string(),
-        title: title.to_string(),
-        content: content.to_string(),
-        score,
-        path: None,
-        document_id: Some(doc_id.to_string()),
-        position: None,
-        vector_score: None,
-        bm25_score: None,
-        vector_rank: None,
-        bm25_rank: None,
-        metadata: HashMap::new(),
-    }
-}
-
-#[test]
-fn keyword_plan_retains_informative_terms_and_structural_guards() {
-    let plan = build_keyword_query_plan("what is the correlation in studies", None);
-    assert!(plan.terms.iter().all(|term| term.len() >= 3));
-    assert!(plan
-        .terms
-        .iter()
-        .all(|term| term.chars().any(|c| c.is_ascii_alphabetic())));
-    assert!(plan.terms.iter().any(|term| term.contains("correlation")));
-    assert!(plan
-        .terms
-        .iter()
-        .any(|term| term.contains("study") || term.contains("studi")));
-}
-
-#[test]
-fn keyword_plan_prioritizes_hyde_lexical_signal_when_present() {
-    let query = "what can i do about my employee contract at bigtime";
-    let hyde = Some(
-            "Search BigTime employee contract terms focusing on noncompete non-disclosure and IP assignment restrictions.",
-        );
-
-    let with_hyde = build_keyword_query_plan(query, hyde);
-    let without_hyde = build_keyword_query_plan(query, None);
-
-    let hyde_alignment_with = with_hyde
-        .terms
-        .iter()
-        .filter(|term| {
-            term.contains("noncompete")
-                || term.contains("disclosure")
-                || term.contains("assign")
-                || term.contains("restrict")
-        })
-        .count();
-    let hyde_alignment_without = without_hyde
-        .terms
-        .iter()
-        .filter(|term| {
-            term.contains("noncompete")
-                || term.contains("disclosure")
-                || term.contains("assign")
-                || term.contains("restrict")
-        })
-        .count();
-
-    assert!(hyde_alignment_with >= hyde_alignment_without);
-}
-
-#[test]
-fn keyword_plan_with_hyde_suppresses_short_singletons() {
-    let query = "what can i do and what can we do from this and that contract at bigtime";
-    let hyde = Some(
-            "Review employment agreement clauses including confidentiality, assignment, and restrictive covenants.",
-        );
-
-    let plan = build_keyword_query_plan(query, hyde);
-    let has_short_singleton = plan.terms.iter().any(|term| {
-        let tokens = tokenize_keyword_terms(term);
-        tokens.len() == 1 && tokens[0].len() < 5
-    });
-
-    assert!(!has_short_singleton);
-}
-
-#[test]
-fn overlap_filter_requires_two_hits_for_two_term_query() {
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "single match",
-            "this text mentions studies only",
-            0.9,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "double match",
-            "this discusses correlations between studies in detail",
-            0.8,
-        ),
-    ];
-
-    let filtered =
-        filter_results_by_query_overlap(results, "any correlations between studies?", None, None);
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].id, "r2");
-}
-
-#[test]
-fn overlap_term_selection_downweights_interrogative_lead_token() {
-    let query = "What is the capital of France?";
-    let terms = extract_overlap_query_terms(query);
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "Capital of France",
-            "The capital city of France is discussed in geography references.",
-            1.0,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "French administrative center",
-            "France has a capital and major administrative center.",
-            0.8,
-        ),
-        make_result(
-            "r3",
-            "d3",
-            "Interview transcript",
-            "What people ask in interviews varies by topic.",
-            0.45,
-        ),
-    ];
-
-    let selected = select_informative_overlap_terms(
-        terms,
-        query,
-        Some("capital city france administrative center"),
-        &results,
-    );
-    assert!(selected.iter().any(|term| term == "capital"));
-    assert!(selected.iter().any(|term| term == "france"));
-    assert!(!selected.iter().any(|term| term == "what"));
-}
-
-#[test]
-fn informative_overlap_terms_drop_ubiquitous_low_signal_term() {
-    let terms = vec![
-        "there".to_string(),
-        "blueberries".to_string(),
-        "anthocyanin".to_string(),
-    ];
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "there blueberries anthocyanin",
-            "there blueberries anthocyanin profile",
-            1.0,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "there blueberries",
-            "there blueberries yield",
-            0.85,
-        ),
-        make_result("r3", "d3", "there studies", "there studies stress", 0.6),
-        make_result("r4", "d4", "there report", "there report methods", 0.55),
-    ];
-
-    let selected =
-        select_informative_overlap_terms(terms, "there blueberries anthocyanin", None, &results);
-    assert!(!selected.iter().any(|term| term == "there"));
-    assert!(selected
-        .iter()
-        .any(|term| term == "blueberries" || term == "anthocyanin"));
-}
-
-#[test]
-fn overlap_filter_followup_requires_previous_turn_anchor_overlap() {
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "blueberry health profile",
-            "blueberries provide antioxidant health benefits in multiple studies",
-            0.91,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "arugula glucosinolate effects",
-            "arugula glucosinolate compounds have health benefits through isothiocyanates",
-            0.76,
-        ),
-    ];
-    let anchors: HashSet<String> = ["arugula".to_string(), "glucosinolate".to_string()]
-        .into_iter()
-        .collect();
-    let filtered = filter_results_by_query_overlap(
-        results,
-        "What health benefits do those compounds provide?",
-        Some(
-            "What health benefits are linked to glucosinolate-derived isothiocyanates in arugula?",
-        ),
-        Some(&anchors),
-    );
-
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].id, "r2");
-}
-
-#[test]
-fn overlap_filter_short_followup_rescues_context_anchored_candidates() {
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "employment agreement restrictions",
-            "company contract noncompete confidentiality obligations",
-            0.91,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "unrelated benefits guide",
-            "medical dental vision enrollment details",
-            0.77,
-        ),
-    ];
-    let anchors: HashSet<String> = ["contract".to_string(), "noncompete".to_string()]
-        .into_iter()
-        .collect();
-
-    let filtered = filter_results_by_query_overlap(
-        results,
-        "Right, scenario with my company",
-        Some("Review contract and noncompete restrictions for follow-up scenario"),
-        Some(&anchors),
-    );
-
-    assert!(!filtered.is_empty());
-    assert!(filtered.iter().any(|result| result.id == "r1"));
-}
-
-#[test]
-fn overlap_filter_question_does_not_require_followup_anchors() {
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "nitric oxide signaling pathways",
-            "nitric oxide pathways from vascular signaling studies",
-            0.88,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "completely unrelated",
-            "blueberry anthocyanin profile and health outcomes",
-            0.77,
-        ),
-    ];
-
-    let filtered = filter_results_by_query_overlap(
-            results,
-            "is the bitterness in arugula from nitric oxide?",
-            Some(
-                "Investigate glucosinolate metabolites in arugula and how nitric oxide influences flavor pathways.",
-            ),
-            None,
-        );
-
-    assert!(filtered.iter().any(|result| result.id == "r1"));
-    assert!(!filtered.iter().any(|result| result.id == "r2"));
-}
-
-#[test]
-fn overlap_filter_requires_hyde_anchor_for_broad_question_queries() {
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "general policy",
-            "bigtime contract clauses and employment policy text",
-            0.9,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "confidentiality section",
-            "bigtime contract clauses confidentiality assignment restrictions",
-            0.85,
-        ),
-    ];
-
-    let filtered = filter_results_by_query_overlap(
-        results,
-        "bigtime employee contract clauses legally startup ideas compete",
-        Some("Review confidentiality and assignment restrictions in employment agreement clauses."),
-        None,
-    );
-
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].id, "r2");
-}
-
-#[test]
 fn web_query_prefers_raw_user_text_for_followups_when_specific() {
     let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(
         "What health benefits do those compounds provide?",
@@ -504,82 +145,6 @@ fn web_query_falls_back_to_terms_for_generic_search_command() {
 }
 
 #[test]
-fn hard_space_scope_filter_is_strict() {
-    let response = SearchResponseDto {
-        total: 2,
-        query_time_ms: 5,
-        results: vec![
-            make_result("r1", "doc-a", "A", "alpha", 0.9),
-            make_result("r2", "doc-b", "B", "beta", 0.8),
-        ],
-    };
-    let scoped_ids: HashSet<String> = ["doc-b".to_string()].into_iter().collect();
-
-    let filtered = apply_hard_space_scope_filter(response, "space_general", &scoped_ids);
-
-    assert_eq!(filtered.total, 1);
-    assert_eq!(filtered.results.len(), 1);
-    assert_eq!(filtered.results[0].document_id.as_deref(), Some("doc-b"));
-}
-
-#[test]
-fn hard_space_scope_filter_with_empty_scope_removes_all_results() {
-    let response = SearchResponseDto {
-        total: 2,
-        query_time_ms: 5,
-        results: vec![
-            make_result("r1", "doc-a", "A", "alpha", 0.9),
-            make_result("r2", "doc-b", "B", "beta", 0.8),
-        ],
-    };
-    let scoped_ids: HashSet<String> = HashSet::new();
-
-    let filtered = apply_hard_space_scope_filter(response, "space_general", &scoped_ids);
-
-    assert_eq!(filtered.total, 0);
-    assert!(filtered.results.is_empty());
-}
-
-#[test]
-fn low_confidence_detection_flags_empty_or_weak_results() {
-    let empty = SearchResponseDto {
-        results: vec![],
-        total: 0,
-        query_time_ms: 0,
-    };
-    assert!(is_low_confidence_kb_response(&empty));
-
-    let weak_single = SearchResponseDto {
-        total: 1,
-        query_time_ms: 5,
-        results: vec![make_result("r1", "doc-1", "Title", "Snippet", 0.18)],
-    };
-    assert!(is_low_confidence_kb_response(&weak_single));
-}
-
-#[test]
-fn low_confidence_detection_keeps_strong_results() {
-    let strong = SearchResponseDto {
-        total: 3,
-        query_time_ms: 5,
-        results: vec![
-            make_result("r1", "doc-1", "Title", "Snippet", 0.61),
-            make_result("r2", "doc-2", "Title", "Snippet", 0.39),
-            make_result("r3", "doc-3", "Title", "Snippet", 0.21),
-        ],
-    };
-    assert!(!is_low_confidence_kb_response(&strong));
-}
-
-#[test]
-fn query_anchor_terms_favor_specific_entities() {
-    let anchors = extract_query_anchor_terms("is the bitterness in arugula from nitric oxide?");
-    assert!(anchors.contains("arugula"));
-    assert!(anchors.contains("bitterness"));
-    assert!(!anchors.contains("nitric"));
-}
-
-#[test]
 fn turn_anchor_terms_capture_shared_topical_entities() {
     let user = "is the bitterness in arugula from nitric oxide?";
     let assistant = "Arugula bitterness comes from glucosinolates, not nitric oxide.";
@@ -608,200 +173,121 @@ fn turn_anchor_terms_drop_generic_shared_words() {
     assert!(!anchors.is_empty());
 }
 
+fn skip_catalog() -> Vec<crate::application::contracts::search::CorpusDocument> {
+    vec![crate::application::contracts::search::CorpusDocument {
+        sections: Vec::new(),
+        source_context: None,
+        id: "handbook".into(),
+        name: "Employment handbook".into(),
+        opening: "Introduction".into(),
+        chapter_number: None,
+    }]
+}
+
+fn anchors(terms: &[&str]) -> HashSet<String> {
+    terms.iter().map(|t| (*t).to_string()).collect()
+}
+
 #[test]
-fn followup_anchor_coverage_filter_drops_ubiquitous_anchor() {
-    let anchors: HashSet<String> = ["company".to_string(), "noncompete".to_string()]
-        .into_iter()
-        .collect();
-    let results = vec![
-        make_result(
-            "r1",
-            "d1",
-            "Employment contract company",
-            "company noncompete clause summary",
+fn a_short_message_on_the_previous_turn_topic_skips_the_planner() {
+    let previous = anchors(&["noncompete", "clauses", "severance"]);
+
+    let shared = corpus_plan::planner_skip_anchors(
+        "and the noncompete clauses after termination?",
+        &previous,
+    )
+    .expect("two shared anchors in a short message is a continuation");
+
+    assert_eq!(shared, ["clauses", "noncompete"]);
+}
+
+#[test]
+fn one_shared_word_is_a_coincidence_not_a_continuation() {
+    let previous = anchors(&["noncompete", "severance"]);
+
+    assert!(
+        corpus_plan::planner_skip_anchors("what about noncompete?", &previous).is_none(),
+        "a single shared term must still reach the planner"
+    );
+    assert!(corpus_plan::planner_skip_anchors("what about holidays?", &previous).is_none());
+    assert!(corpus_plan::planner_skip_anchors("what about holidays?", &HashSet::new()).is_none());
+}
+
+#[test]
+fn a_long_message_reaches_the_planner_even_on_the_same_topic() {
+    let previous = anchors(&["noncompete", "clauses"]);
+    let long = "compare the noncompete clauses against the severance provisions, \
+        the intellectual property assignment, the arbitration requirement, the \
+        relocation allowance, and the equity vesting acceleration schedule";
+
+    assert!(!corpus_plan::is_short_followup_message(long));
+    assert!(corpus_plan::planner_skip_anchors(long, &previous).is_none());
+}
+
+#[test]
+fn a_skipped_planner_carries_the_previous_topic_and_the_new_message() {
+    let previous = anchors(&["noncompete", "clauses"]);
+
+    let (plan, shared) = corpus_plan::followup_plan(
+        "and the exceptions to those noncompete clauses?",
+        &previous,
+        &skip_catalog(),
+    )
+    .expect("short on-topic follow-up plans without the planner");
+
+    assert_eq!(shared, ["clauses", "noncompete"]);
+    assert_eq!(
+        plan.queries[0],
+        "and the exceptions to those noncompete clauses?"
+    );
+    let carried = &plan.queries[1];
+    assert!(carried.contains("noncompete"), "{carried}");
+    assert!(carried.contains("exceptions"), "{carried}");
+    // A reused plan is a focused search, never an ordered read.
+    assert!(plan.opening_document_ids.is_empty());
+    assert!(!plan.start_at_beginning);
+}
+
+fn sufficiency_result(score: f32, content: &str) -> SearchResultDto {
+    SearchResultDto {
+        id: "chunk".to_string(),
+        title: "Guide".to_string(),
+        content: content.to_string(),
+        score,
+        path: None,
+        document_id: Some("doc".to_string()),
+        position: None,
+        vector_score: None,
+        bm25_score: None,
+        vector_rank: None,
+        bm25_rank: None,
+        metadata: HashMap::new(),
+    }
+}
+
+#[test]
+fn public_sufficiency_facade_reports_the_pipelines_own_verdict() {
+    let tuning = RetrievalTuningSettingsDto::default();
+    let queries = vec!["workspace snapshot retention window".to_string()];
+
+    // Passages that never mention what was asked about: the coverage signal is
+    // the one that catches this, and it must reach the caller as a reason code.
+    let missed = assess_retrieval_sufficiency(
+        &[sufficiency_result(
             0.9,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "Benefits company guide",
-            "company medical benefits overview",
-            0.8,
-        ),
-        make_result(
-            "r3",
-            "d3",
-            "Company policy handbook",
-            "company values and handbook sections",
-            0.7,
-        ),
-        make_result(
-            "r4",
-            "d4",
-            "Restrictive covenants",
-            "noncompete obligations and contract terms",
-            0.6,
-        ),
-    ];
+            "The cafeteria menu rotates weekly.",
+        )],
+        &queries,
+        &tuning,
+        true,
+    );
+    assert!(!missed.sufficient);
+    assert!(missed.reasons.contains(&"low_term_coverage"), "{missed:?}");
+    assert_eq!(missed.top_score, 0.9);
+    assert_eq!(missed.term_coverage, 0.0);
 
-    let filtered = filter_followup_anchor_terms_by_candidate_coverage(anchors, &results);
-    assert!(!filtered.contains("company"));
-    assert!(filtered.contains("noncompete"));
-}
-
-#[test]
-fn document_support_filter_drops_weak_multi_hit_document() {
-    let results = vec![
-        make_result("r1", "strong", "strong-1", "high-signal chunk", 1.0),
-        make_result("r2", "strong", "strong-2", "high-signal chunk", 0.9),
-        make_result("r3", "weak", "weak-1", "low-signal chunk", 0.08),
-        make_result("r4", "weak", "weak-2", "low-signal chunk", 0.07),
-    ];
-
-    let filtered = filter_results_by_document_support(results);
-    assert!(filtered
-        .iter()
-        .all(|result| result.document_id.as_deref() == Some("strong")));
-    assert_eq!(filtered.len(), 2);
-}
-
-#[test]
-fn document_support_filter_keeps_strong_single_hit_document() {
-    let results = vec![
-        make_result("r1", "strong", "strong-1", "high-signal chunk", 1.0),
-        make_result("r2", "strong", "strong-2", "high-signal chunk", 0.92),
-        make_result(
-            "r3",
-            "single-strong",
-            "single-strong-1",
-            "targeted legal clause chunk",
-            0.88,
-        ),
-        make_result(
-            "r4",
-            "single-weak",
-            "single-weak-1",
-            "low-signal chunk",
-            0.10,
-        ),
-    ];
-
-    let filtered = filter_results_by_document_support(results);
-    assert!(filtered
-        .iter()
-        .any(|result| result.document_id.as_deref() == Some("single-strong")));
-    assert!(!filtered
-        .iter()
-        .any(|result| result.document_id.as_deref() == Some("single-weak")));
-}
-
-#[test]
-fn rm3_feedback_rejects_unanchored_single_doc_terms() {
-    let base = build_keyword_query_plan("correlations between studies", None);
-    let feedback = vec![
-        make_result(
-            "r1",
-            "d1",
-            "plant study",
-            "this discusses correlations in studies",
-            1.0,
-        ),
-        make_result(
-            "r2",
-            "d2",
-            "unrelated",
-            "election integrity ballot audit procedures",
-            0.9,
-        ),
-    ];
-
-    let expanded =
-        expand_keyword_plan_with_rm3(base, &feedback, "correlations between studies", None);
-    assert!(!expanded.terms.iter().any(|term| term.contains("election")));
-    assert!(expanded
-        .terms
-        .iter()
-        .any(|term| term.contains("correlation") || term.contains("study")));
-}
-
-#[test]
-fn rm3_feedback_uses_distinct_documents_for_df() {
-    let base = build_keyword_query_plan("correlations between studies", None);
-    let feedback = vec![
-        make_result(
-            "r1",
-            "doc-unrelated",
-            "unrelated chunk 1",
-            "election integrity ballot audit procedures",
-            1.0,
-        ),
-        make_result(
-            "r2",
-            "doc-unrelated",
-            "unrelated chunk 2",
-            "election recount integrity ballot process",
-            0.95,
-        ),
-        make_result(
-            "r3",
-            "doc-query",
-            "query aligned",
-            "this discusses correlations between studies",
-            0.8,
-        ),
-    ];
-
-    let expanded =
-        expand_keyword_plan_with_rm3(base, &feedback, "correlations between studies", None);
-    assert!(!expanded.terms.iter().any(|term| term.contains("election")));
-    assert!(expanded
-        .terms
-        .iter()
-        .any(|term| term.contains("correlation") || term.contains("study")));
-}
-
-#[test]
-fn shortlist_gate_skips_when_confidence_is_low() {
-    let shortlist_response = SearchResponseDto {
-        results: vec![
-            make_result("r1", "doc-a", "a", "alpha", 1.0),
-            make_result("r2", "doc-b", "b", "beta", 0.9),
-        ],
-        total: 2,
-        query_time_ms: 1,
-    };
-    let shortlist: std::collections::HashSet<String> = ["doc-a".to_string(), "doc-b".to_string()]
-        .into_iter()
-        .collect();
-    assert!(!should_apply_document_shortlist(
-        &shortlist_response,
-        &shortlist
-    ));
-}
-
-#[test]
-fn shortlist_filter_fails_open_on_over_prune() {
-    let response = SearchResponseDto {
-        results: vec![
-            make_result("r1", "doc-a", "a", "alpha", 1.0),
-            make_result("r2", "doc-c", "c", "charlie", 0.95),
-            make_result("r3", "doc-d", "d", "delta", 0.9),
-            make_result("r4", "doc-e", "e", "echo", 0.85),
-            make_result("r5", "doc-f", "f", "foxtrot", 0.8),
-            make_result("r6", "doc-g", "g", "golf", 0.75),
-            make_result("r7", "doc-h", "h", "hotel", 0.7),
-            make_result("r8", "doc-i", "i", "india", 0.65),
-            make_result("r9", "doc-j", "j", "juliet", 0.6),
-            make_result("r10", "doc-k", "k", "kilo", 0.55),
-        ],
-        total: 10,
-        query_time_ms: 1,
-    };
-    let shortlist: std::collections::HashSet<String> = ["doc-a".to_string(), "doc-b".to_string()]
-        .into_iter()
-        .collect();
-
-    let filtered = filter_results_by_document_shortlist(response.clone(), &shortlist);
-    assert_eq!(filtered.results.len(), response.results.len());
-    assert_eq!(filtered.total, response.total);
+    // An empty ranking is the one failure retrieval always noticed.
+    let empty = assess_retrieval_sufficiency(&[], &queries, &tuning, true);
+    assert!(!empty.sufficient);
+    assert_eq!(empty.reasons, ["no_results"]);
 }

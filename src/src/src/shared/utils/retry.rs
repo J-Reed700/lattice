@@ -301,7 +301,6 @@ where
                     return Err(e);
                 }
 
-                // Add jitter: ±20% of delay
                 let jitter = rng.gen_range(-0.2..=0.2);
                 let jittered_delay =
                     Duration::from_millis(((delay.as_millis() as f64) * (1.0 + jitter)) as u64);
@@ -460,7 +459,6 @@ mod tests {
         .await;
 
         let elapsed = start.elapsed();
-        // Should take at least: 50ms + 100ms = 150ms (two delays)
         assert!(elapsed.as_millis() >= 150);
     }
 

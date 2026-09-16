@@ -2,8 +2,53 @@ use crate::application::ports::batch_job_repository_port::{
     BatchJobItem, BatchJobItemStatus, BatchJobStatus, BatchJobSummary,
 };
 use crate::shared::error::AppError;
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 use uuid::Uuid;
+
+pub async fn get_job_options(
+    conn: &mut SqliteConnection,
+    job_id: &str,
+) -> Result<Option<String>, AppError> {
+    Ok(
+        sqlx::query_scalar("SELECT options FROM batch_jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(conn)
+            .await?,
+    )
+}
+
+/// Caller owns a transaction; every validation failure rolls the claim back.
+pub async fn requeue_failed_files(
+    conn: &mut SqliteConnection,
+    job_id: &str,
+    item_id: Option<&str>,
+    replacement_path: Option<&str>,
+) -> Result<usize, AppError> {
+    if replacement_path.is_some() && item_id.is_none() {
+        return Err(AppError::InvalidInput(
+            "Choose one failed file to replace".into(),
+        ));
+    }
+    let claimed = sqlx::query("UPDATE batch_jobs SET status = 'pending', completed_at = NULL, error_message = NULL WHERE id = ? AND job_type = 'file_import' AND status IN ('completed', 'failed', 'cancelled')")
+        .bind(job_id).execute(&mut *conn).await?.rows_affected();
+    if claimed != 1 {
+        return Err(AppError::InvalidInput(
+            "This import is already running or is unavailable. Refresh its status before retrying."
+                .into(),
+        ));
+    }
+    let count = sqlx::query("UPDATE batch_job_items SET status = 'pending', item_url = COALESCE(?, item_url), error_message = NULL, processed_at = NULL WHERE job_id = ? AND status = 'failed' AND (? IS NULL OR id = ?)")
+        .bind(replacement_path).bind(job_id).bind(item_id).bind(item_id)
+        .execute(&mut *conn).await?.rows_affected();
+    if count == 0 {
+        return Err(AppError::InvalidInput(
+            "No failed files to retry in this import".into(),
+        ));
+    }
+    sqlx::query("UPDATE batch_jobs SET failed_items = (SELECT count(*) FROM batch_job_items WHERE job_id = ? AND status = 'failed'), completed_items = (SELECT count(*) FROM batch_job_items WHERE job_id = ? AND status = 'completed'), progress = (SELECT CAST(count(*) AS REAL) FROM batch_job_items WHERE job_id = ? AND status IN ('completed', 'failed')) / MAX(total_items, 1) WHERE id = ?")
+        .bind(job_id).bind(job_id).bind(job_id).bind(job_id).execute(conn).await?;
+    Ok(count as usize)
+}
 
 // Database row DTOs
 #[derive(Debug, sqlx::FromRow)]
@@ -40,7 +85,6 @@ struct BatchJobSummaryRow {
     failed_items: i64,
     progress: f64,
     created_at: String,
-    started_at: Option<String>,
     completed_at: Option<String>,
 }
 
@@ -204,7 +248,7 @@ pub async fn get_batch_job(
         SELECT id, item_url, document_id, status, error_message
         FROM batch_job_items
         WHERE job_id = ?
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, rowid ASC
         "#,
     )
     .bind(job_id)
@@ -241,22 +285,14 @@ pub async fn get_pending_items(
     conn: &mut SqliteConnection,
     job_id: &str,
 ) -> Result<Vec<BatchJobItem>, AppError> {
-    let items = sqlx::query!(
-        r#"
-        SELECT id, item_url
-        FROM batch_job_items
-        WHERE job_id = ?1 AND status = 'pending'
-        ORDER BY created_at ASC
-        "#,
-        job_id
-    )
+    let items = sqlx::query_as::<_, (String, String)>("SELECT id, item_url FROM batch_job_items WHERE job_id = ? AND status = 'pending' ORDER BY created_at ASC, rowid ASC").bind(job_id)
     .fetch_all(conn)
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch pending items: {}", e)))?
     .into_iter()
     .map(|row| BatchJobItem {
-        id: row.id,
-        url: row.item_url,
+        id: row.0,
+        url: row.1,
     })
     .collect();
 

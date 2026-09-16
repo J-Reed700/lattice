@@ -1,4 +1,4 @@
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 

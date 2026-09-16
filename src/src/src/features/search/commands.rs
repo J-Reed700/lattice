@@ -26,8 +26,8 @@ use crate::features::search::dto::{
     CacheStatsDto, EnhancedSearchResponse, RecencySearchOptions, SearchOptions, SearchRequestDto,
     SearchResponseDto, SearchResultDto,
 };
+use crate::features::search::engine::SearchMode;
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
-use crate::infrastructure::search::SearchMode;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::container::Container;
 use crate::shared::error::AppError;
@@ -36,9 +36,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::State;
 
-// Helper functions
 async fn enrich_vector_results(
-    results: Vec<crate::infrastructure::search::service::SearchResult>,
+    results: Vec<crate::features::search::engine::service::SearchResult>,
     enrichment_service: std::sync::Arc<dyn SearchEnrichmentServiceTrait>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
     let chunk_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
@@ -84,7 +83,7 @@ async fn enrich_vector_results(
 }
 
 async fn enrich_hybrid_results(
-    results: Vec<crate::search::hybrid::HybridSearchResult>,
+    results: Vec<crate::features::search::engine::hybrid::HybridSearchResult>,
     enrichment_service: std::sync::Arc<dyn SearchEnrichmentServiceTrait>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
     let chunk_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
@@ -245,8 +244,6 @@ pub async fn search_documents(
     container: State<'_, Container>,
     options: SearchOptions,
 ) -> Result<serde_json::Value, String> {
-    use crate::interfaces::commands::api_boundary::TauriResultBoundary;
-
     let result = search_documents_impl(&container, options)
         .await
         .map_err(|e| e.to_string());
@@ -257,134 +254,6 @@ pub async fn search_documents(
             serde_json::json!({ "ok": false, "error": { "code": "SEARCH_ERROR", "message": e } }),
         ),
     }
-}
-
-/// Implementation: Advanced document search with intelligent caching
-#[tracing::instrument(skip(container), fields(query = %options.query, limit = ?options.limit))]
-async fn search_documents_original_impl(
-    container: &Container,
-    options: SearchOptions,
-) -> Result<EnhancedSearchResponse, AppError> {
-    let start_time = std::time::Instant::now();
-
-    container
-        .security_context()
-        .rate_limiters()
-        .search
-        .check_rate_limit("search")
-        .await?;
-
-    container
-        .security_context()
-        .input_validator()
-        .validate_search_query(&options.query)?;
-
-    let limit = options.limit.unwrap_or(10);
-    let search_mode = match options.search_mode.as_deref() {
-        Some("semantic") => SearchMode::Vector,
-        Some("keyword") => SearchMode::Keyword,
-        Some("hybrid") => SearchMode::Hybrid,
-        _ => SearchMode::Vector,
-    };
-
-    let cache_key = QueryCacheKey::new(
-        options.query.clone(),
-        options.filter.as_ref().map(|f| {
-            f.iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect()
-        }),
-        limit,
-        format!("{:?}", search_mode),
-    );
-
-    if let Some(cached) = QUERY_CACHE.get(&cache_key) {
-        container.metrics().record_cache_hit();
-        let stats = QUERY_CACHE.stats();
-
-        let response = EnhancedSearchResponse {
-            results: cached.results,
-            from_cache: true,
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
-            cache_stats: Some(CacheStatsDto {
-                size: stats.size,
-                capacity: stats.capacity,
-                hits: stats.hits,
-                misses: stats.misses,
-                total_time_saved_ms: stats.total_time_saved_ms,
-                hit_rate: stats.hit_rate,
-            }),
-        };
-
-        audit_search(&options.query, response.results.len(), true).await?;
-
-        // Track document access (async, non-blocking)
-        track_document_access(&response.results, container.document_repository()).await?;
-
-        return Ok(response);
-    }
-
-    container.metrics().record_cache_miss();
-
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
-    let query_embedding = embedding_service.embed_single(&options.query).await?;
-
-    let enrichment_service = container.search_enrichment_service();
-
-    let search_results: Vec<SearchResultDto> = match search_mode {
-        SearchMode::Vector => {
-            let search_service = container.search_service();
-            let results = search_service.search_with_threshold(
-                &query_embedding,
-                limit,
-                crate::shared::constants::MIN_SIMILARITY_SCORE,
-            )?;
-            enrich_vector_results(results, enrichment_service).await?
-        }
-        SearchMode::Keyword | SearchMode::Hybrid => {
-            let hybrid_service = container.hybrid_search();
-            let results = hybrid_service
-                .search(&options.query, &query_embedding, limit, search_mode)
-                .await?;
-            enrich_hybrid_results(results, enrichment_service).await?
-        }
-    };
-
-    let execution_time_ms = start_time.elapsed().as_millis() as u64;
-    container.metrics().record_search(execution_time_ms);
-
-    let cached_result = CachedSearchResult {
-        results: search_results.clone(),
-        cached_at: chrono::Utc::now().timestamp(),
-        execution_time_ms,
-    };
-    QUERY_CACHE.put(cache_key, cached_result);
-
-    let stats = QUERY_CACHE.stats();
-    let response = EnhancedSearchResponse {
-        results: search_results,
-        from_cache: false,
-        execution_time_ms,
-        cache_stats: Some(CacheStatsDto {
-            size: stats.size,
-            capacity: stats.capacity,
-            hits: stats.hits,
-            misses: stats.misses,
-            total_time_saved_ms: stats.total_time_saved_ms,
-            hit_rate: stats.hit_rate,
-        }),
-    };
-
-    audit_search(&options.query, response.results.len(), false).await?;
-
-    // Track document access (async, non-blocking)
-    track_document_access(&response.results, container.document_repository()).await?;
-
-    Ok(response)
 }
 
 /// Implementation: Fast lightweight search returning minimal data (IDs and scores only).
@@ -426,7 +295,6 @@ async fn search_fast_impl(
         return ApiResult::error(ErrorCode::InvalidInput, e.to_string());
     }
 
-    // Load embedding service
     let embedding_service = match container.get_or_load_embedding().await {
         Ok(service) => service,
         Err(e) => {
@@ -441,8 +309,7 @@ async fn search_fast_impl(
         }
     };
 
-    // Generate query embedding
-    let query_embedding = match embedding_service.embed_single(&query).await {
+    let query_embedding = match embedding_service.embed_query(&query).await {
         Ok(embedding) => embedding,
         Err(e) => {
             return ApiResult::error(ErrorCode::EmbeddingError, e.to_string());
@@ -640,7 +507,6 @@ pub async fn semantic_search_impl(
         return ApiResult::error(ErrorCode::InvalidInput, e.to_string());
     }
 
-    // Execute use case
     let use_case = container.semantic_search_use_case();
     let response = match use_case.execute(request).await {
         Ok(response) => response,
@@ -734,8 +600,8 @@ pub async fn semantic_search(
 ///
 /// **Reciprocal Rank Fusion (RRF)**:
 /// - Combines rankings from vector and BM25 searches
-/// - Score = 1/(k + vector_rank) + 1/(k + bm25_rank)
-/// - k = 60 (standard RRF constant)
+/// - Score = vector_weight/(k + vector_rank) + keyword_weight/(k + bm25_rank)
+/// - k = 10, with 0.7 vector / 0.3 keyword weights
 /// - Normalizes final scores to [0, 1]
 ///
 /// # Performance
@@ -784,7 +650,6 @@ pub async fn hybrid_search_impl(
         return ApiResult::error(ErrorCode::InvalidInput, e.to_string());
     }
 
-    // Load embedding service
     let embedding_service = match container.get_or_load_embedding().await {
         Ok(service) => service,
         Err(e) => {
@@ -799,8 +664,7 @@ pub async fn hybrid_search_impl(
         }
     };
 
-    // Generate query embedding
-    let query_embedding = match embedding_service.embed_single(&query).await {
+    let query_embedding = match embedding_service.embed_query(&query).await {
         Ok(embedding) => embedding,
         Err(e) => {
             return ApiResult::error(ErrorCode::EmbeddingError, e.to_string());
@@ -1119,7 +983,7 @@ pub async fn search_with_recency(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
-    let query_embedding = embedding_service.embed_single(&options.query).await?;
+    let query_embedding = embedding_service.embed_query(&options.query).await?;
 
     let hybrid_service = container.hybrid_search();
     let results = hybrid_service
@@ -1156,7 +1020,6 @@ async fn track_document_access(
     results: &[SearchResultDto],
     document_repo: Arc<dyn RepositoryPort<Document>>,
 ) -> Result<(), AppError> {
-    // Extract unique document IDs from results
     let document_ids: HashSet<String> = results
         .iter()
         .filter_map(|r| r.document_id.clone())
@@ -1170,10 +1033,6 @@ async fn track_document_access(
     }
     Ok(())
 }
-
-// =============================================================================
-// GATEWAY IMPL FUNCTIONS - Async implementations for gateway dispatch
-// =============================================================================
 
 /// Search documents implementation for gateway pattern
 ///
@@ -1248,7 +1107,7 @@ pub async fn search_documents_impl(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
-    let query_embedding = embedding_service.embed_single(&options.query).await?;
+    let query_embedding = embedding_service.embed_query(&options.query).await?;
 
     let enrichment_service = container.search_enrichment_service();
 
@@ -1366,12 +1225,14 @@ pub async fn find_similar_documents(
 
     let mut results: Vec<SimilarDocumentDto> = best
         .into_iter()
-        .map(|(document_id, (score, title, file_path))| SimilarDocumentDto {
-            document_id,
-            title,
-            file_path,
-            score,
-        })
+        .map(
+            |(document_id, (score, title, file_path))| SimilarDocumentDto {
+                document_id,
+                title,
+                file_path,
+                score,
+            },
+        )
         .collect();
     results.sort_by(|a, b| {
         b.score
@@ -1470,7 +1331,7 @@ pub async fn search_with_recency_impl(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
-    let query_embedding = embedding_service.embed_single(&options.query).await?;
+    let query_embedding = embedding_service.embed_query(&options.query).await?;
 
     let hybrid_service = container.hybrid_search();
     let results = hybrid_service
@@ -1543,7 +1404,6 @@ pub async fn batch_search(
         .check_rate_limit("batch_search")
         .await?;
 
-    // Validate all queries
     for query in &queries {
         container
             .security_context()
@@ -1559,21 +1419,18 @@ pub async fn batch_search(
         _ => SearchMode::Hybrid,
     };
 
-    // Get embedding service
     let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
         AppError::AiModelsNotInstalled(
             format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
         )
     })?;
 
-    // Generate embeddings for all queries
     let mut query_embeddings = Vec::new();
     for query in &queries {
-        let embedding = embedding_service.embed_single(query).await?;
+        let embedding = embedding_service.embed_query(query).await?;
         query_embeddings.push((query.clone(), embedding));
     }
 
-    // Execute batch search
     let hybrid_service = container.hybrid_search();
     let batch_results = hybrid_service
         .batch_search(query_embeddings, limit, mode)

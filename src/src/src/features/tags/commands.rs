@@ -10,10 +10,6 @@ use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 use tauri::State;
 
-// ============================================================================
-// Tag CRUD Operations
-// ============================================================================
-
 /// Creates a new tag with name, color, and description
 ///
 /// Creates a new tag that can be applied to documents for organization and categorization.
@@ -143,7 +139,6 @@ pub async fn create_tag_ddd(
         ));
     }
 
-    // Execute use case
     let use_case = container.create_tag_use_case();
     let response = use_case.execute(request).await?;
 
@@ -252,7 +247,6 @@ pub async fn update_tag_ddd(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Execute use case
     let use_case = container.update_tag_use_case();
     let response = use_case.execute(request.clone()).await?;
 
@@ -346,7 +340,6 @@ pub async fn delete_tag_ddd(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Execute use case
     let use_case = container.delete_tag_use_case();
     use_case.execute(request.clone()).await?;
 
@@ -362,10 +355,6 @@ pub async fn delete_tag_ddd(
 
     Ok(())
 }
-
-// ============================================================================
-// Tag Query Operations
-// ============================================================================
 
 /// Retrieves all tags in the system
 ///
@@ -546,10 +535,6 @@ pub async fn search_by_tag_ddd(
     Ok(response)
 }
 
-// ============================================================================
-// Tag Assignment Operations
-// ============================================================================
-
 /// Applies multiple tags to a document with automatic tag creation
 ///
 /// Assigns multiple tags to a document in a single operation. If any tag names don't
@@ -673,7 +658,6 @@ pub async fn apply_tags_impl(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Validate tag names
     for name in &request.tag_names {
         if name.is_empty() || name.len() > 100 {
             return Err(AppError::InvalidInput(
@@ -682,7 +666,6 @@ pub async fn apply_tags_impl(
         }
     }
 
-    // Execute use case
     let use_case = container.apply_tags_use_case();
     let response = use_case.execute(request.clone()).await?;
 
@@ -800,7 +783,6 @@ pub async fn remove_tag_from_document_impl(
         .await
         .map_err(|e| AppError::RateLimitExceeded(e.to_string()))?;
 
-    // Execute use case
     let use_case = container.remove_tag_from_document_use_case();
     use_case.execute(request.clone()).await?;
 
@@ -827,10 +809,6 @@ pub async fn remove_tag_from_document_ddd(
 ) -> Result<()> {
     remove_tag_from_document_impl(container.inner(), request).await
 }
-
-// ============================================================================
-// LLM-Based Tag Generation
-// ============================================================================
 
 /// Generates tags for a document using LLM analysis
 ///
@@ -1215,10 +1193,6 @@ pub async fn auto_tag_all_documents_ddd(
 
     Ok(response)
 }
-
-// ============================================================================
-// Legacy Compatibility Wrappers
-// ============================================================================
 
 /// Legacy: Apply tags to a document (compatibility wrapper)
 pub async fn apply_tags(

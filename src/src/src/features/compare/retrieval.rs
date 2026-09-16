@@ -108,7 +108,6 @@ pub async fn retrieve_for_document(
     }
     chunks.truncate(MAX_CHUNKS_PER_DOCUMENT);
 
-    // Drop from the tail until the whole context fits.
     while chunks.len() > 1 {
         let total: usize = chunks.iter().map(|c| c.content.chars().count()).sum();
         if total <= MAX_CONTEXT_CHARS {

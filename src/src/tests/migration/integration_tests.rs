@@ -6,10 +6,8 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Migration Integration Tests
-// Test code - allow common test patterns
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -42,13 +40,9 @@
 use crate::migration::container_helpers::*;
 use lattice::commands::health::*;
 use lattice::commands::tags::*;
-use lattice::error::Result;
+use lattice::shared::error::Result;
 use lattice::infrastructure::persistence::repositories::TagRepository;
 use tauri::State;
-
-// ============================================================================
-// Container Initialization Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_container_initialization_succeeds() {
@@ -87,21 +81,15 @@ async fn test_container_with_different_configs() {
     assert_container_initialized(&minimal).await;
     assert_container_initialized(&full).await;
 
-    // Verify optional services
     assert!(minimal.indexing_service().is_none());
     assert!(full.indexing_service().is_none() || full.indexing_service().is_some());
 }
-
-// ============================================================================
-// Service Compatibility Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_embedding_service_compatibility() {
     let container = create_test_container().await.unwrap();
     let embedding_service = container.embedding_service();
 
-    // Test that embedding service works as expected
     let result = embedding_service.embed_single("test query").await;
     assert!(result.is_ok());
 
@@ -114,11 +102,9 @@ async fn test_search_service_compatibility() {
     let container = create_test_container().await.unwrap();
     let search_service = container.search_service();
 
-    // Test search with mock service
     let query_vector = vec![0.1; 384];
     let results = search_service.search(&query_vector, 10);
 
-    // Mock returns empty results
     assert_eq!(results.len(), 0);
 }
 
@@ -127,7 +113,6 @@ async fn test_tag_service_compatibility() {
     let container = create_test_container().await.unwrap();
     let tag_service = container.tag_service();
 
-    // Test tag creation through service
     let result = tag_service.get_or_create("rust", "#ff5733").await;
     assert!(result.is_ok());
 
@@ -140,7 +125,6 @@ async fn test_database_pool_compatibility() {
     let container = create_test_container().await.unwrap();
     let pool = container.db_pool();
 
-    // Test database query
     let result = sqlx::query("SELECT 1 as test")
         .fetch_optional(pool)
         .await;
@@ -148,10 +132,6 @@ async fn test_database_pool_compatibility() {
     assert!(result.is_ok());
     assert!(result.unwrap().is_some());
 }
-
-// ============================================================================
-// Command Execution Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_health_command_with_container() {
@@ -169,7 +149,6 @@ async fn test_health_command_with_container() {
 async fn test_tag_commands_with_container() {
     let container = create_test_container().await.unwrap();
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -182,13 +161,11 @@ async fn test_tag_commands_with_container() {
 
     let state = State::from(&container);
 
-    // Test tag creation
     let tag = create_tag("rust".to_string(), None, state.clone())
         .await
         .unwrap();
     assert!(!tag.id.is_empty());
 
-    // Test tag application
     let tags = apply_tags(
         "doc-1".to_string(),
         vec!["rust".to_string()],
@@ -198,30 +175,22 @@ async fn test_tag_commands_with_container() {
     .unwrap();
     assert!(tags.len() > 0);
 
-    // Test tag retrieval
     let all_tags = get_all_tags(state.clone()).await.unwrap();
     assert!(all_tags.len() > 0);
 
-    // Test tag search
     let docs = search_by_tag("rust".to_string(), state.clone())
         .await
         .unwrap();
     assert!(docs.len() > 0);
 }
 
-// ============================================================================
-// Data Consistency Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_tag_operations_maintain_consistency() {
     let container = create_test_container().await.unwrap();
     let tag_repo = TagRepository::new(container.db_pool().clone());
 
-    // Create tag through repository
     let tag1 = tag_repo.create("rust", Some("#ff5733")).await.unwrap();
 
-    // Create tag through command
     let state = State::from(&container);
     let tag2 = create_tag("python".to_string(), None, state.clone())
         .await
@@ -238,7 +207,6 @@ async fn test_document_tag_associations_consistent() {
     let container = create_test_container().await.unwrap();
     let tag_repo = TagRepository::new(container.db_pool().clone());
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)
@@ -251,7 +219,6 @@ async fn test_document_tag_associations_consistent() {
 
     let state = State::from(&container);
 
-    // Apply tags through command
     let _ = apply_tags(
         "doc-1".to_string(),
         vec!["rust".to_string()],
@@ -260,33 +227,24 @@ async fn test_document_tag_associations_consistent() {
     .await
     .unwrap();
 
-    // Verify through repository
     let tags = tag_repo.get_tags_for_document("doc-1").await.unwrap();
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].name().as_str(), "rust");
 
-    // Verify through command
     let cmd_tags = get_document_tags("doc-1".to_string(), state).await.unwrap();
     assert_eq!(cmd_tags.len(), 1);
     assert_eq!(cmd_tags[0].name().as_str(), "rust");
 }
 
-// ============================================================================
-// Migration Path Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_container_supports_incremental_migration() {
-    // Phase 1: Create container with minimal services
     let container = create_minimal_container().await.unwrap();
     assert!(container.indexing_service().is_none());
 
-    // Phase 2: Container should still work without optional services
     let state = State::from(&container);
     let health = health_check(state).await.unwrap();
     assert!(!health.status.is_empty());
 
-    // Phase 3: Can create full container later
     let full_container = create_full_container().await.unwrap();
     assert_container_initialized(&full_container).await;
 }
@@ -331,10 +289,6 @@ async fn test_existing_data_compatible() {
     assert!(result.is_ok());
 }
 
-// ============================================================================
-// Performance Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_container_initialization_performance() {
     let start = std::time::Instant::now();
@@ -367,10 +321,6 @@ async fn test_service_access_performance() {
     );
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_container_handles_database_errors_gracefully() {
     let container = create_test_container().await.unwrap();
@@ -380,7 +330,6 @@ async fn test_container_handles_database_errors_gracefully() {
         .fetch_optional(container.db_pool())
         .await;
 
-    // Should return error, not panic
     assert!(result.is_err());
 }
 
@@ -392,13 +341,8 @@ async fn test_container_handles_service_errors_gracefully() {
     // Try operations on non-existent resources
     let result = get_document_tags("nonexistent".to_string(), state).await;
 
-    // Should handle gracefully
     assert!(result.is_ok() || result.is_err());
 }
-
-// ============================================================================
-// Regression Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_no_regression_in_tag_creation() {
@@ -422,7 +366,6 @@ async fn test_no_regression_in_tag_normalization() {
 
     let tag = create_tag("  RUST  ".to_string(), None, state).await.unwrap();
 
-    // Should still normalize to lowercase
     assert_eq!(tag.name().as_str(), "rust");
 }
 
@@ -435,21 +378,15 @@ async fn test_no_regression_in_tag_merging() {
 
     let merged = TagService::merge_tags(existing, generated);
 
-    // Should still deduplicate case-insensitively
     assert_eq!(merged.len(), 2);
     assert!(merged.contains(&"rust".to_string()));
     assert!(merged.contains(&"python".to_string()));
 }
 
-// ============================================================================
-// Concurrent Operations Tests
-// ============================================================================
-
 #[tokio::test]
 async fn test_container_supports_concurrent_operations() {
     let container = std::sync::Arc::new(create_test_container().await.unwrap());
 
-    // Create document
     sqlx::query(
         r#"
         INSERT INTO documents (id, file_name, file_path, content, created_at, updated_at)

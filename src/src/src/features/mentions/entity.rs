@@ -72,7 +72,7 @@ impl std::str::FromStr for MentionType {
 ///
 /// ```rust,no_run
 /// use lattice::domain::entities::mention::{Mention, MentionType};
-/// use lattice::domain_types::{DocumentId, ChunkId};
+/// use lattice::shared::domain_types::{DocumentId, ChunkId};
 ///
 /// let doc_id = DocumentId::new();
 /// let chunk_id = ChunkId::new();
@@ -117,7 +117,7 @@ impl Mention {
     ///
     /// ```rust,no_run
     /// use lattice::domain::entities::mention::{Mention, MentionType};
-    /// use lattice::domain_types::{DocumentId, ChunkId};
+    /// use lattice::shared::domain_types::{DocumentId, ChunkId};
     ///
     /// let mention = Mention::new(
     ///     DocumentId::new(),
@@ -250,10 +250,6 @@ impl Mention {
         self.text.trim().to_lowercase()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -473,36 +469,6 @@ mod property_tests {
         prop::string::string_regex("[a-zA-Z0-9 \\-_.'@]{1,100}").unwrap()
     }
 
-    // Strategy: Person names
-    fn person_name() -> impl Strategy<Value = String> {
-        prop::sample::select(vec![
-            "John Doe".to_string(),
-            "Jane Smith".to_string(),
-            "Dr. Alice Brown".to_string(),
-            "Prof. Bob Wilson".to_string(),
-        ])
-    }
-
-    // Strategy: Organization names
-    fn organization_name() -> impl Strategy<Value = String> {
-        prop::sample::select(vec![
-            "Company Inc".to_string(),
-            "Tech Corp".to_string(),
-            "Global Industries".to_string(),
-            "Research Labs".to_string(),
-        ])
-    }
-
-    // Strategy: Location names
-    fn location_name() -> impl Strategy<Value = String> {
-        prop::sample::select(vec![
-            "New York".to_string(),
-            "San Francisco".to_string(),
-            "London".to_string(),
-            "Tokyo".to_string(),
-        ])
-    }
-
     // Strategy: Valid position range
     fn valid_position_range() -> impl Strategy<Value = (usize, usize)> {
         (0usize..1000usize)
@@ -528,7 +494,6 @@ mod property_tests {
             })
     }
 
-    // Category A: Creation & Identity (4 tests)
     proptest! {
         #[test]
         fn prop_mention_has_unique_id(_dummy in 0..10u32) {
@@ -585,7 +550,6 @@ mod property_tests {
             prop_assert!(mention.created_at() <= &after);
         }
 
-        // Category B: Type Checks (4 tests)
         #[test]
         fn prop_is_person_true_only_for_person_type(mention_type in arbitrary_mention_type()) {
             let mention = Mention::new(
@@ -649,7 +613,6 @@ mod property_tests {
             prop_assert_eq!(mention.mention_type(), new_type);
         }
 
-        // Category C: Text Operations (3 tests)
         #[test]
         fn prop_mention_text_non_empty(mention in arbitrary_mention()) {
             prop_assert!(!mention.text().is_empty());
@@ -694,7 +657,6 @@ mod property_tests {
             prop_assert!(mention.matches_query(&upper));
         }
 
-        // Category D: Serialization (2 tests)
         #[test]
         fn prop_mention_serialization_roundtrip(mention in arbitrary_mention()) {
             let json = serde_json::to_string(&mention).unwrap();

@@ -135,21 +135,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_backup_success_with_path() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         let use_case = CreateBackupUseCase::new(mock_backup.clone());
         let backup_path = PathBuf::from("/custom/backup/path/backup.db");
 
-        // Act
         let result = use_case.execute(Some(backup_path.clone())).await;
 
-        // Assert
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.backup_path, "/custom/backup/path/backup.db");
         assert_eq!(result.size, 0);
 
-        // Verify backup was created
         let created = mock_backup.get_created_backups();
         assert_eq!(created.len(), 1);
         assert!(created.contains(&"/custom/backup/path/backup.db".to_string()));
@@ -157,34 +153,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_backup_success_with_default_path() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         let use_case = CreateBackupUseCase::new(mock_backup.clone());
 
-        // Act
         let result = use_case.execute(None).await;
 
-        // Assert
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.backup_path, "/default/backup/path/backup.db");
 
-        // Verify backup was created
         let created = mock_backup.get_created_backups();
         assert_eq!(created.len(), 1);
     }
 
     #[tokio::test]
     async fn test_create_backup_handles_permission_error() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::with_permission_error());
         let use_case = CreateBackupUseCase::new(mock_backup);
         let backup_path = PathBuf::from("/restricted/backup.db");
 
-        // Act
         let result = use_case.execute(Some(backup_path)).await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::PermissionDenied(msg) => {
@@ -196,15 +185,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_backup_handles_creation_failure() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::with_create_failure());
         let use_case = CreateBackupUseCase::new(mock_backup);
         let backup_path = PathBuf::from("/backup/path/backup.db");
 
-        // Act
         let result = use_case.execute(Some(backup_path)).await;
 
-        // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::BackupCreationFailed(msg) => {
@@ -216,15 +202,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_backup_returns_timestamp() {
-        // Arrange
         let mock_backup = Arc::new(MockBackupPort::new());
         let use_case = CreateBackupUseCase::new(mock_backup);
         let before = chrono::Utc::now();
 
-        // Act
         let result = use_case.execute(None).await.unwrap();
 
-        // Assert
         let after = chrono::Utc::now();
         let created_at = chrono::DateTime::parse_from_rfc3339(&result.created_at)
             .unwrap()

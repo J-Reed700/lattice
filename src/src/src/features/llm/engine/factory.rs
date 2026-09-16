@@ -19,14 +19,14 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::infrastructure::llm::factory::{LLMConfig, create_llm};
+//! use crate::features::llm::engine::factory::{LLMConfig, create_llm};
 //! use std::path::PathBuf;
 //!
 //! // Try to create local LLM, fallback to mock if unavailable
 //! let config = LLMConfig::Local {
 //!     model_path: PathBuf::from("models/mistral-7b.gguf"),
 //!     n_gpu_layers: 0,  // CPU only (safe default)
-//!     generation_config: crate::llm::GenerationConfig::default(),
+//!     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 //! };
 //!
 //! let llm = create_llm(config).await?;
@@ -39,24 +39,23 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::application::ports::LLMPort;
-use crate::llm::models::{ModelFamily, ModelFormat, Quantization};
-use crate::llm::traits::LLMClient;
-use crate::llm::types::LLMError;
-use crate::llm::{GenerationConfig, ModelInfo, OllamaClient};
+use crate::features::llm::engine::models::ModelFormat;
+#[cfg(test)]
+use crate::features::llm::engine::models::{ModelFamily, Quantization};
+use crate::features::llm::engine::traits::LLMClient;
+use crate::features::llm::engine::types::LLMError;
+#[cfg(test)]
+use crate::features::llm::engine::ModelInfo;
+use crate::features::llm::engine::{GenerationConfig, OllamaClient};
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
-
-// ============================================================================
-// LLM Configuration
-// ============================================================================
 
 /// Configuration for LLM client creation.
 ///
 /// Supports multiple backend types with specific configuration for each.
 #[derive(Debug, Clone)]
 pub enum LLMConfig {
-    /// Local LLM. Routes through the bundled `llama-server` sidecar
-    /// (Sprint 2 migration from in-process mistralrs). Requires
+    /// Local LLM routed through the bundled `llama-server` sidecar. Requires
     /// `app_handle` to be supplied so `tauri-plugin-shell` can spawn
     /// the child process.
     Local {
@@ -86,10 +85,6 @@ pub enum LLMConfig {
     },
 }
 
-// ============================================================================
-// Factory Function
-// ============================================================================
-
 /// Create an LLM client from configuration.
 ///
 /// This factory function attempts to create the requested LLM client,
@@ -115,7 +110,7 @@ pub enum LLMConfig {
 /// let config = LLMConfig::Local {
 ///     model_path: PathBuf::from("models/mistral-7b.gguf"),
 ///     n_gpu_layers: 0,  // CPU only
-///     generation_config: crate::llm::GenerationConfig::default(),
+///     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 /// };
 ///
 /// match create_llm(config).await {
@@ -131,9 +126,8 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
             generation_config,
             app_handle,
         } => {
-            // Local LLM is the bundled `llama-server` sidecar
-            // (Sprint 2 migration). Requires the Tauri AppHandle —
-            // populated through Container::with_app_handle.
+            // The Tauri AppHandle is populated through
+            // Container::with_app_handle.
             let app = app_handle.ok_or_else(|| {
                 LLMError::InvalidConfig(
                     "LLMConfig::Local.app_handle is None — Container must be constructed with \
@@ -172,7 +166,7 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
 /// let config = LLMConfig::Local {
 ///     model_path: PathBuf::from("models/mistral-7b.gguf"),
 ///     n_gpu_layers: 0,  // CPU only
-///     generation_config: crate::llm::GenerationConfig::default(),
+///     generation_config: crate::features::llm::engine::GenerationConfig::default(),
 /// };
 ///
 /// // Always succeeds, even if model doesn't exist
@@ -191,28 +185,22 @@ pub async fn create_llm_with_fallback(config: LLMConfig) -> Arc<dyn LLMPort> {
     }
 }
 
-// ============================================================================
-// Backend-Specific Creation Functions
-// ============================================================================
-
 /// Create a local-LLM client backed by the bundled `llama-server`
 /// sidecar. Spawns the child process (Metal on macOS, Vulkan on
 /// Windows/Linux, CPU on hardware that can't accelerate), waits for
 /// HTTP readiness, wraps the resulting `SidecarHandle` in a
 /// `SidecarLLMClient` and a `SidecarPortAdapter`.
 ///
-/// Replaces the in-process `mistralrs` path that was deleted in
-/// Sprint 2 PR 2.3. Sidecar is now the canonical local-inference path
-/// on all platforms; see audit response-sidecar-game-plan.md.
+/// The sidecar is the canonical local-inference path on all platforms.
 async fn create_local_llm_sidecar(
     app: &tauri::AppHandle,
     model_path: &Path,
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
-    use crate::llm::sidecar_client::SidecarLLMClient;
-    use crate::llm::sidecar_manager::{SidecarConfig, SidecarManager};
-    use crate::llm::system::detect_capabilities;
+    use crate::features::llm::engine::sidecar_client::SidecarLLMClient;
+    use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
+    use crate::features::llm::engine::system::detect_capabilities;
 
     info!(
         "Creating local LLM (sidecar) from: {}",
@@ -273,7 +261,7 @@ async fn create_local_llm_sidecar(
 /// is simple — context strings get formatted as a single system
 /// message rather than parsed into role-tagged history.
 struct SidecarPortAdapter {
-    client: crate::llm::sidecar_client::SidecarLLMClient,
+    client: crate::features::llm::engine::sidecar_client::SidecarLLMClient,
 }
 
 #[async_trait]
@@ -293,11 +281,14 @@ impl LLMPort for SidecarPortAdapter {
             ))
         };
 
-        crate::llm::traits::LLMClient::generate(&self.client, prompt, system.as_deref(), images)
-            .await
-            .map_err(|e| {
-                crate::shared::error::AppError::Other(format!("LLM generation failed: {e}"))
-            })
+        crate::features::llm::engine::traits::LLMClient::generate(
+            &self.client,
+            prompt,
+            system.as_deref(),
+            images,
+        )
+        .await
+        .map_err(|e| crate::shared::error::AppError::Other(format!("LLM generation failed: {e}")))
     }
 
     async fn generate_streaming(
@@ -315,7 +306,7 @@ impl LLMPort for SidecarPortAdapter {
             ))
         };
 
-        let stream = crate::llm::traits::LLMClient::generate_stream(
+        let stream = crate::features::llm::engine::traits::LLMClient::generate_stream(
             &self.client,
             prompt,
             system.as_deref(),
@@ -335,7 +326,7 @@ impl LLMPort for SidecarPortAdapter {
     }
 
     fn model_name(&self) -> &str {
-        crate::llm::traits::LLMClient::model_name(&self.client)
+        crate::features::llm::engine::traits::LLMClient::model_name(&self.client)
     }
 
     fn max_context_tokens(&self) -> usize {
@@ -355,12 +346,12 @@ impl LLMPort for SidecarPortAdapter {
     }
 
     async fn is_ready(&self) -> Result<bool> {
-        Ok(crate::llm::traits::LLMClient::health_check(&self.client).await)
+        Ok(crate::features::llm::engine::traits::LLMClient::health_check(&self.client).await)
     }
 
     fn supports_tool_calling(&self) -> bool {
-        // keep off until Sprint 4 model catalog cleanup verifies which
-        // shipped GGUFs actually support it.
+        // Keep disabled until the catalog records tool support for shipped
+        // GGUF models.
         false
     }
 
@@ -378,7 +369,6 @@ pub async fn create_ollama_llm(
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     info!("Creating Ollama LLM client: {} @ {}", model, endpoint);
 
-    // Create Ollama client
     let mut client = OllamaClient::with_model_and_timeouts_and_header(
         endpoint,
         model,
@@ -397,7 +387,6 @@ pub async fn create_ollama_llm(
 
     *client.generation_config_mut() = generation_config;
 
-    // Verify Ollama is reachable
     if !client.health_check().await {
         error!("Ollama health check failed: {}", endpoint);
         return Err(LLMError::ClientUnavailable(format!(
@@ -410,14 +399,11 @@ pub async fn create_ollama_llm(
     Ok(Arc::new(client) as Arc<dyn LLMPort>)
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Infer model information from file path.
 ///
 /// This is a simple heuristic that extracts model metadata from the filename.
 /// For production use, consider storing model metadata separately.
+#[cfg(test)]
 fn infer_model_info(path: &Path) -> ModelInfo {
     let filename = path
         .file_name()
@@ -431,7 +417,6 @@ fn infer_model_info(path: &Path) -> ModelInfo {
             .any(|token| token == needle)
     };
 
-    // Extract model family from filename
     let family = if has_token("llama") {
         ModelFamily::Llama
     } else if has_token("mistral") || has_token("mixtral") {
@@ -444,7 +429,6 @@ fn infer_model_info(path: &Path) -> ModelInfo {
         ModelFamily::Other
     };
 
-    // Extract quantization from filename
     let quantization = if filename.contains("Q4") || filename.contains("q4") {
         Some(Quantization::Q4)
     } else if filename.contains("Q5") || filename.contains("q5") {
@@ -537,6 +521,7 @@ pub fn detect_model_format(path: &Path) -> ModelFormat {
 /// Returns size in MiB. Used for the memory pre-flight check before
 /// loading. Errors during traversal collapse to `None` so the caller
 /// can fall back to a conservative default.
+#[cfg(test)]
 fn sum_safetensors_dir_size_mb(dir: &Path) -> Option<u64> {
     let entries = std::fs::read_dir(dir).ok()?;
     let mut total: u64 = 0;
@@ -560,6 +545,7 @@ fn sum_safetensors_dir_size_mb(dir: &Path) -> Option<u64> {
 }
 
 /// Map low-level model load failures to user-friendly compatibility messages.
+#[cfg(test)]
 fn map_local_model_load_error(error: LLMError, model_path: &Path) -> LLMError {
     let error_message = error.to_string();
 
@@ -580,10 +566,6 @@ fn map_local_model_load_error(error: LLMError, model_path: &Path) -> LLMError {
 
     error
 }
-
-// ============================================================================
-// Mock LLM Port Implementation
-// ============================================================================
 
 /// Mock LLM port for testing and fallback.
 ///
@@ -616,7 +598,6 @@ impl LLMPort for MockLLMPort {
     ) -> Result<String> {
         warn!("Using mock LLM - returning intelligent response");
 
-        // Generate an intelligent mock response based on the prompt
         let response = if !context.is_empty() {
             // If context is provided, acknowledge it
             format!(
@@ -677,7 +658,6 @@ impl LLMPort for MockLLMPort {
     ) -> Result<Box<dyn futures::stream::Stream<Item = Result<String>> + Send + Unpin + '_>> {
         warn!("Using mock LLM streaming - returning single chunk");
 
-        // Return a simple stream with one chunk
         let response = self.generate(prompt, context, None).await?;
         let stream = futures::stream::once(async move { Ok(response) });
 
@@ -706,10 +686,6 @@ impl LLMPort for MockLLMPort {
     }
 }
 
-// ============================================================================
-// Auto-Detection Helpers
-// ============================================================================
-
 /// Find a local model in common locations.
 ///
 /// Searches for GGUF model files in standard directories.
@@ -720,17 +696,11 @@ impl LLMPort for MockLLMPort {
 pub fn find_local_model() -> Option<PathBuf> {
     let mut search_paths = vec![PathBuf::from("models"), PathBuf::from("../models")];
 
-    // Add data directory if available
     if let Some(data_dir) = std::env::var_os("XDG_DATA_HOME")
         .or_else(|| std::env::var_os("APPDATA"))
         .map(PathBuf::from)
     {
         search_paths.push(data_dir.join("lattice/models"));
-    }
-
-    // Add home directory if available
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        search_paths.push(home.join(".lattice/models"));
     }
 
     for search_path in search_paths {
@@ -792,8 +762,6 @@ mod tests {
         assert!(matches!(info.family, ModelFamily::Mistral));
         assert_eq!(info.quantization, None);
     }
-
-    // === ModelFormat detection ===
 
     #[test]
     fn test_detect_format_gguf_file_extension() {
@@ -891,10 +859,8 @@ mod tests {
         let mock = MockLLMPort::new();
 
         let response = mock.generate("test prompt", &[], None).await.unwrap();
-        // Mock now returns intelligent responses, check for key phrases
         assert!(response.contains("mock mode") || response.contains("asking about"));
 
-        // Test with context
         let response_with_context = mock
             .generate("test", &["doc1".to_string()], None)
             .await

@@ -1,6 +1,6 @@
 //! # Retry Failed Items Use Case
 //!
-//! Creates a new batch job to retry all failed items from a previous job.
+//! Retries failed files in their original job, or creates a new URL retry job.
 //!
 //! This use case:
 //! 1. Fetches original job with failed items
@@ -17,6 +17,7 @@
 //! # async fn example(use_case: RetryFailedItemsUseCase) -> Result<(), Box<dyn std::error::Error>> {
 //! let request = RetryFailedItemsRequestDto {
 //!     job_id: "batch-job-123".to_string(),
+//!     item_id: None, replacement_path: None,
 //! };
 //!
 //! let response = use_case.execute(request).await?;
@@ -31,12 +32,13 @@ use crate::application::ports::BatchJobRepositoryPort;
 use crate::features::batch::dto::{
     RetryFailedItemsRequestDto, RetryFailedItemsResponseDto, StartBatchUrlImportRequestDto,
 };
-use crate::features::batch::use_cases::StartBatchUrlImportUseCase;
+use crate::features::batch::use_cases::{StartBatchFileImportUseCase, StartBatchUrlImportUseCase};
 use crate::shared::error::{AppError, Result};
 
 /// Retry failed items use case.
 ///
-/// Creates a new batch job with items that failed in a previous job.
+/// Routes recovery to the matching importer. File retries preserve the job and
+/// successful items so unresolved failures disappear only after recovery.
 ///
 /// ## Dependencies
 ///
@@ -45,6 +47,7 @@ use crate::shared::error::{AppError, Result};
 pub struct RetryFailedItemsUseCase {
     batch_repo: Arc<dyn BatchJobRepositoryPort>,
     start_batch_url_import: Arc<StartBatchUrlImportUseCase>,
+    start_batch_file_import: Arc<StartBatchFileImportUseCase>,
 }
 
 impl RetryFailedItemsUseCase {
@@ -57,10 +60,12 @@ impl RetryFailedItemsUseCase {
     pub fn new(
         batch_repo: Arc<dyn BatchJobRepositoryPort>,
         start_batch_url_import: Arc<StartBatchUrlImportUseCase>,
+        start_batch_file_import: Arc<StartBatchFileImportUseCase>,
     ) -> Self {
         Self {
             batch_repo,
             start_batch_url_import,
+            start_batch_file_import,
         }
     }
 
@@ -90,6 +95,7 @@ impl RetryFailedItemsUseCase {
     /// # async fn example(use_case: RetryFailedItemsUseCase) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = RetryFailedItemsRequestDto {
     ///     job_id: "batch-job-123".to_string(),
+    ///     item_id: None, replacement_path: None,
     /// };
     ///
     /// match use_case.execute(request).await {
@@ -113,6 +119,33 @@ impl RetryFailedItemsUseCase {
 
         // 2. Fetch original job with all items
         let job_status = self.batch_repo.get_batch_job(&request.job_id).await?;
+        if job_status.job_type == "file_import" {
+            let retried_count = self
+                .start_batch_file_import
+                .retry_failed(
+                    &request.job_id,
+                    request.item_id.as_deref(),
+                    request.replacement_path.as_deref(),
+                )
+                .await?;
+            return Ok(RetryFailedItemsResponseDto {
+                new_job_id: request.job_id,
+                retried_count,
+            });
+        }
+        if job_status.job_type != "url_import"
+            || request.item_id.is_some()
+            || request.replacement_path.is_some()
+        {
+            return Err(AppError::InvalidInput(
+                "This import does not support file recovery".into(),
+            ));
+        }
+        if matches!(job_status.status.as_str(), "pending" | "running") {
+            return Err(AppError::InvalidInput(
+                "This import is still running".into(),
+            ));
+        }
 
         // 3. Filter failed items
         let failed_urls: Vec<String> = job_status
@@ -153,9 +186,7 @@ mod tests {
     use crate::application::ports::batch_job_repository_port::{
         BatchJobItem, BatchJobItemStatus, BatchJobStatus, BatchJobSummary,
     };
-    use crate::features::batch::dto::StartBatchUrlImportResponseDto;
     use async_trait::async_trait;
-    use uuid::Uuid;
 
     struct MockBatchJobRepository {
         job_status: Option<BatchJobStatus>,
@@ -240,32 +271,6 @@ mod tests {
         }
     }
 
-    // Mock StartBatchUrlImportUseCase for testing
-    struct MockStartBatchUrlImportUseCase {
-        should_succeed: bool,
-    }
-
-    impl MockStartBatchUrlImportUseCase {
-        fn new(should_succeed: bool) -> Self {
-            Self { should_succeed }
-        }
-
-        async fn execute(
-            &self,
-            _request: StartBatchUrlImportRequestDto,
-        ) -> Result<StartBatchUrlImportResponseDto> {
-            if !self.should_succeed {
-                return Err(AppError::InternalError(
-                    "Failed to create batch".to_string(),
-                ));
-            }
-
-            Ok(StartBatchUrlImportResponseDto {
-                job_id: Uuid::new_v4().to_string(),
-            })
-        }
-    }
-
     fn create_job_with_failures() -> BatchJobStatus {
         BatchJobStatus {
             id: "original-job".to_string(),
@@ -327,11 +332,12 @@ mod tests {
         // Note: This test demonstrates the pattern but won't compile without full mocks
         // In a real implementation, you'd properly mock StartBatchUrlImportUseCase
 
-        let request = RetryFailedItemsRequestDto {
+        let _request = RetryFailedItemsRequestDto {
             job_id: "original-job".to_string(),
+            item_id: None,
+            replacement_path: None,
         };
 
-        // Verify the business logic by checking what gets filtered
         let job = repo.get_batch_job("original-job").await.unwrap();
         let failed_urls: Vec<String> = job
             .items
@@ -379,7 +385,6 @@ mod tests {
 
         let job = Arc::new(MockBatchJobRepository::new(Some(job_status)));
 
-        // Verify that no failed items are found
         let status = job.get_batch_job("all-success-job").await.unwrap();
         let failed_count = status.items.iter().filter(|i| i.status == "failed").count();
 

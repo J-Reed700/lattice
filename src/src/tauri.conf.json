@@ -73,11 +73,6 @@
       }
     },
     "linux": {
-      "deb": {
-        "depends": [
-          "python3"
-        ]
-      },
       "appimage": {
         "bundleMediaFramework": true
       }

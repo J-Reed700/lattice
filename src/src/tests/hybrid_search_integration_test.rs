@@ -6,16 +6,15 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-#![allow(deprecated)]
 
 //! Hybrid Search Integration Tests
 //!
 //! Tests the HybridSearchService combining vector and BM25 search.
+use lattice::features::search::engine::bm25::BM25Search;
+use lattice::features::search::engine::hybrid::{HybridSearchService, SearchMode};
+use lattice::features::search::engine::vector_search::USearchVectorIndex;
+use lattice::features::search::enrichment_service::SearchEnrichmentService;
 use lattice::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
-use lattice::infrastructure::search::bm25::BM25Search;
-use lattice::infrastructure::search::hybrid::{HybridSearchService, SearchMode};
-use lattice::infrastructure::search::vector_search::USearchVectorIndex;
-use lattice::infrastructure::services::search_enrichment_service::SearchEnrichmentService;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -127,7 +126,7 @@ async fn create_hybrid_search_service(
         bm25_search,
         pool.clone(),
         enrichment,
-        lattice::infrastructure::search::hybrid::SearchConfig::default(),
+        lattice::features::search::engine::hybrid::SearchConfig::default(),
     );
 
     Ok(service)

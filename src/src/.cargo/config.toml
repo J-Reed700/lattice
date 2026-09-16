@@ -18,10 +18,9 @@ snap-check = "insta test --check"
 # to avoid applying -stack_size to library dependencies
 
 [env]
-RUST_MIN_STACK = "33554432"  # 32MB (Oracle Phase 5 fix - increased from 16MB for window creation)
+RUST_MIN_STACK = "33554432"
 # Enable SQLx offline mode - use pre-generated query metadata from .sqlx/ directory
 # This allows compilation without a database connection
-# RESTORED: Oracle Phase 4 - Safety Net established
 SQLX_OFFLINE = "true"
 
 [target.'cfg(test)']
@@ -31,7 +30,7 @@ rustflags = [
     "-A", "clippy::expect_used",
 ]
 
-# Oracle Phase 5 Fix: Increase stack size for all threads (including tokio workers)
+# Increase stack size for all threads, including Tokio workers.
 # RUST_MIN_STACK only affects main thread - must use BOTH approaches:
 # 1. RUST_MIN_STACK for main thread (already set above)
 # 2. Tokio thread pool config in code (see setup/app.rs)

@@ -9,10 +9,8 @@ use serde_json::Value as JsonValue;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::domain::model_metadata::ModelType;
 use crate::domain::model_type_classifier::ModelTypeClassifier;
-
-// Re-export ModelType from model_metadata for backward compatibility
-pub use crate::domain::model_metadata::ModelType;
 
 ///
 /// This is orthogonal to role flags (chat/utility/embedding) and to the

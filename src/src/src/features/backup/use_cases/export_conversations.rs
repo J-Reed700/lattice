@@ -37,7 +37,9 @@ pub enum ExportFormat {
     Markdown,
     /// `pretty` is the caller's `plugin_export_json` flag. It has to reach the
     /// serialiser or the argument is a control that changes nothing.
-    Json { pretty: bool },
+    Json {
+        pretty: bool,
+    },
 }
 
 #[derive(Serialize)]
@@ -110,7 +112,11 @@ fn sanitize_title(title: &str) -> String {
 }
 
 fn short_id(id: &str) -> String {
-    let short: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
+    let short: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect();
     if short.is_empty() {
         "00000000".to_string()
     } else {
@@ -176,7 +182,14 @@ impl ExportConversationsUseCase {
                 write_markdown(&output_dir, &conversations, &by_conversation, &notes).await?;
             }
             ExportFormat::Json { pretty } => {
-                write_json(&output_dir, &conversations, &by_conversation, &notes, pretty).await?;
+                write_json(
+                    &output_dir,
+                    &conversations,
+                    &by_conversation,
+                    &notes,
+                    pretty,
+                )
+                .await?;
             }
         }
 
@@ -481,7 +494,10 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let summary = use_case(true)
             .await
-            .execute(dir.path().to_path_buf(), ExportFormat::Json { pretty: true })
+            .execute(
+                dir.path().to_path_buf(),
+                ExportFormat::Json { pretty: true },
+            )
             .await
             .expect("export");
 

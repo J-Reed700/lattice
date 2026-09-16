@@ -43,7 +43,6 @@ mod tests {
 
     #[test]
     fn test_env_filter_creation() {
-        // Verify we can create an EnvFilter without panicking
         let _filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("lattice_desktop=info,lattice=info"));
     }

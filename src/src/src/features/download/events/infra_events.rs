@@ -44,7 +44,6 @@ impl DownloadEventEmitter {
     }
 
     pub async fn emit(&self, event: DownloadEvent) -> Result<(), String> {
-        // Emit snapshot events to frontend
         self.app_handle
             .emit("download:progress", event)
             .map_err(|e| format!("Failed to emit event: {}", e))
@@ -71,13 +70,16 @@ pub struct DownloadEventBridge {
     event_rx_arc: Arc<
         RwLock<Option<mpsc::UnboundedReceiver<crate::features::download::manager::DownloadEvent>>>,
     >,
+    // reason: holds the repository handle supplied by DI wiring in
+    // infrastructure/setup/app.rs; dropping it would change the public `new` signature.
+    #[allow(dead_code)]
     downloaded_model_repository: Option<
         Arc<crate::features::download::downloaded_model_repository::DownloadedModelRepository>,
     >,
     event_bus: Option<
         Arc<
             crate::infrastructure::event_bus::EventBus<
-                crate::domain::events::model_download_events::ModelDownloadEvent,
+                crate::features::download::events::model_download_events::ModelDownloadEvent,
             >,
         >,
     >,
@@ -99,7 +101,7 @@ impl DownloadEventBridge {
         event_bus: Option<
             Arc<
                 crate::infrastructure::event_bus::EventBus<
-                    crate::domain::events::model_download_events::ModelDownloadEvent,
+                    crate::features::download::events::model_download_events::ModelDownloadEvent,
                 >,
             >,
         >,
@@ -116,7 +118,7 @@ impl DownloadEventBridge {
         }
     }
 
-    pub async fn start(self) {
+    pub async fn start(self, cancel: tokio_util::sync::CancellationToken) {
         // Take ownership of the receiver from the Arc<RwLock<Option<...>>>
         let mut event_rx = {
             let mut rx_opt = self.event_rx_arc.write().await;
@@ -135,12 +137,9 @@ impl DownloadEventBridge {
         // Run two concurrent event loops:
         // STREAM A: Infrastructure events from DownloadManager (mpsc).
         // STREAM B: Domain events from EventBus (broadcast).
-        //
         // Why this is structured carefully:
-        //
         // The previous version used `Some(Ok(domain_event)) = async { ... }`
         // as the select! pattern. That had two latent bugs:
-        //
         //  1. If `domain_subscriber` was None (no event_bus configured),
         //     the async block resolved to None, the pattern failed, the
         //     `else` arm fired and silently killed the entire bridge —
@@ -150,13 +149,15 @@ impl DownloadEventBridge {
         //     hitting the else arm and killing the bridge forever. UI
         //     would stop receiving download updates after the first
         //     burst that overflowed the broadcast channel.
-        //
         // Fix: STREAM B's async block always yields a `Result<T, RecvError>`
         // (or pends forever when there's no subscriber). The arm body
         // matches the Result explicitly. The select! pattern itself
         // cannot fail-and-break-the-bridge.
         loop {
             tokio::select! {
+                biased;
+                // Finish any in-flight handler before observing shutdown here.
+                _ = cancel.cancelled() => break,
                 // STREAM A: file-level mpsc events from DownloadManager.
                 maybe_event = event_rx.recv() => {
                     match maybe_event {
@@ -263,7 +264,6 @@ impl DownloadEventBridge {
             }
         }
 
-        // Convert manager event to snapshot
         match self.convert_event(manager_event).await {
             Ok(snapshot_event) => {
                 if let Err(e) = self.emitter.emit(snapshot_event).await {
@@ -289,7 +289,7 @@ impl DownloadEventBridge {
         &self,
         manager_event: &crate::features::download::manager::DownloadEvent,
     ) -> Result<(), String> {
-        use crate::domain::events::model_download_events::{
+        use crate::features::download::events::model_download_events::{
             FileDownloadCompletedEvent, FileDownloadFailedEvent, FileDownloadStartedEvent,
             ModelDownloadEvent,
         };
@@ -304,12 +304,10 @@ impl DownloadEventBridge {
         // state transitions (Started / Completed / Failed) so a slow
         // subscriber cannot evict a critical state event from the
         // 1000-cap broadcast channel.
-        //
         // Progress is still surfaced to the UI — `handle_infrastructure_event`
         // converts manager events directly into snapshots and emits
         // them on the `download:progress` Tauri channel without going
         // through the bus.
-        //
         // Paused/Resumed are also bus-irrelevant; the saga doesn't act
         // on them and the UI is driven by snapshots.
         let session_id = match manager_event {
@@ -401,9 +399,9 @@ impl DownloadEventBridge {
     /// Handle domain events from EventBus (model-level aggregated events from DownloadSaga)
     async fn handle_domain_event(
         &self,
-        domain_event: crate::domain::events::model_download_events::ModelDownloadEvent,
+        domain_event: crate::features::download::events::model_download_events::ModelDownloadEvent,
     ) {
-        use crate::domain::events::model_download_events::ModelDownloadEvent;
+        use crate::features::download::events::model_download_events::ModelDownloadEvent;
 
         // Only forward ModelDownloadCompleted to frontend
         match domain_event {
@@ -435,7 +433,6 @@ impl DownloadEventBridge {
             .map_err(|e| format!("Failed to fetch session: {}", e))?
             .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-        // Check if session has model metadata
         if let Some(model_id) = session.model_id() {
             // Query repository for all sessions with this model_id
             let all_sessions = self
@@ -467,7 +464,6 @@ impl DownloadEventBridge {
             BatchSnapshot, DownloadStatus, FileSnapshot, FileStatus,
         };
 
-        // Get all sessions for this model
         let all_sessions = self
             .repository
             .list()
@@ -591,7 +587,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));
@@ -625,7 +620,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));
@@ -672,7 +666,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));
@@ -714,7 +707,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));
@@ -756,7 +748,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));
@@ -793,7 +784,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));
@@ -835,7 +825,6 @@ impl DownloadEventBridge {
                     .map_err(|e| format!("Failed to fetch session: {}", e))?
                     .ok_or_else(|| format!("Session {} not found", id))?;
 
-                // Check if this is a batch download
                 if let Some(model_id) = self.is_batch_download(&id).await? {
                     let batch = self.create_batch_snapshot(&model_id).await?;
                     return Ok(DownloadEvent::from_batch(batch));

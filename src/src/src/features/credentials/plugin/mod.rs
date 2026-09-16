@@ -11,7 +11,6 @@ pub mod commands;
 pub mod types;
 
 pub use commands::*;
-pub use types::*;
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("credentials")

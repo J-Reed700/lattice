@@ -18,6 +18,23 @@ impl SqliteBatchJobRepository {
 
 #[async_trait]
 impl BatchJobRepositoryPort for SqliteBatchJobRepository {
+    async fn requeue_failed_files(
+        &self,
+        job_id: &str,
+        item_id: Option<&str>,
+        replacement_path: Option<&str>,
+    ) -> Result<usize, AppError> {
+        let mut tx = self.pool.begin().await?;
+        let count = ops::requeue_failed_files(&mut tx, job_id, item_id, replacement_path).await?;
+        tx.commit().await?;
+        Ok(count)
+    }
+
+    async fn get_job_options(&self, job_id: &str) -> Result<Option<String>, AppError> {
+        let mut conn = self.pool.acquire().await?;
+        ops::get_job_options(&mut conn, job_id).await
+    }
+
     async fn create_batch_job(
         &self,
         job_id: &str,
@@ -68,8 +85,10 @@ impl BatchJobRepositoryPort for SqliteBatchJobRepository {
     }
 
     async fn get_batch_job(&self, job_id: &str) -> Result<BatchJobStatus, AppError> {
-        let mut conn = self.pool.acquire().await?;
-        ops::get_batch_job(&mut conn, job_id).await
+        let mut tx = self.pool.begin().await?;
+        let job = ops::get_batch_job(&mut tx, job_id).await?;
+        tx.commit().await?;
+        Ok(job)
     }
 
     async fn get_pending_items(&self, job_id: &str) -> Result<Vec<BatchJobItem>, AppError> {

@@ -1,8 +1,8 @@
 //! Conversation Plugin - Thin Tauri wrappers over conversation command implementations.
 
 use crate::features::conversation::branching_dto::{
-    ForkConversationRequestDto, ForkConversationResponseDto,
-    TruncateConversationAfterRequestDto, TruncateConversationAfterResponseDto,
+    ForkConversationRequestDto, ForkConversationResponseDto, TruncateConversationAfterRequestDto,
+    TruncateConversationAfterResponseDto,
 };
 use crate::features::conversation::chat::{ChatResponse, ToolPreferences};
 use crate::features::conversation::dto::{
@@ -488,7 +488,7 @@ pub async fn synthesize_journal_entries(
 }
 
 /// Delete every message after `message_id` (and it too when `inclusive`),
-/// returning what remains (BRIEF rank 4, contract §4.2).
+/// returning what remains.
 #[tauri::command]
 #[specta::specta]
 pub async fn truncate_conversation_after(
@@ -512,10 +512,9 @@ pub async fn fork_conversation(
 /// normal send. The user message is not duplicated.
 ///
 /// Flat args, mirroring `chat_with_conversation`, because this re-enters the
-/// same streaming flow and needs the same `window`. No `#[specta::specta]`:
-/// `ChatResponse` does not derive `specta::Type`, and `export_bindings.rs`
-/// deliberately excludes the chat commands from the collector.
+/// same streaming flow and needs the same `window`.
 #[tauri::command]
+#[specta::specta]
 pub async fn regenerate_response(
     container: State<'_, Container>,
     conversation_id: String,

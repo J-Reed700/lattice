@@ -38,10 +38,6 @@ use crate::shared::result::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-// =============================================================================
-// DTOs
-// =============================================================================
-
 /// Request to execute a function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteFunctionRequestDto {
@@ -105,10 +101,6 @@ impl FunctionResultDto {
         }
     }
 }
-
-// =============================================================================
-// Use Case
-// =============================================================================
 
 /// Execute function use case.
 ///
@@ -196,23 +188,16 @@ impl ExecuteFunctionUseCase {
             Ok(result) => Ok(ExecuteFunctionResponseDto {
                 result: FunctionResultDto::from_domain(result),
             }),
-            Err(e) => {
-                // Convert execution error to error result
-                Ok(ExecuteFunctionResponseDto {
-                    result: FunctionResultDto {
-                        success: false,
-                        data: None,
-                        error_message: Some(format!("Execution failed: {}", e)),
-                    },
-                })
-            }
+            Err(e) => Ok(ExecuteFunctionResponseDto {
+                result: FunctionResultDto {
+                    success: false,
+                    data: None,
+                    error_message: Some(format!("Execution failed: {}", e)),
+                },
+            }),
         }
     }
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -224,7 +209,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_function_success() {
-        // Arrange
         let registry = FunctionRegistry::new();
         let tool = ToolDefinition::new(
             "test_function",
@@ -250,10 +234,8 @@ mod tests {
             },
         };
 
-        // Act
         let response = use_case.execute(request).await.unwrap();
 
-        // Assert
         assert!(response.result.success);
         assert!(response.result.data.is_some());
         assert_eq!(response.result.data.unwrap()["result"], "success");
@@ -261,7 +243,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_function_unknown_function() {
-        // Arrange
         let registry = FunctionRegistry::new();
         let executor = MockFunctionExecutor::new();
         let use_case = ExecuteFunctionUseCase::new(Arc::new(registry), Arc::new(executor));
@@ -274,10 +255,8 @@ mod tests {
             },
         };
 
-        // Act
         let response = use_case.execute(request).await.unwrap();
 
-        // Assert
         assert!(!response.result.success);
         assert!(response.result.error_message.is_some());
         assert!(response
@@ -289,7 +268,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_function_invalid_arguments() {
-        // Arrange
         let registry = FunctionRegistry::new();
         let tool = ToolDefinition::new(
             "test_function",
@@ -300,7 +278,6 @@ mod tests {
         registry.register(tool).unwrap();
 
         let executor = MockFunctionExecutor::new();
-        // Set validation to fail
         executor.set_validation_error(
             "test_function",
             "Missing required parameter: required_param",
@@ -316,10 +293,8 @@ mod tests {
             },
         };
 
-        // Act
         let response = use_case.execute(request).await.unwrap();
 
-        // Assert
         assert!(!response.result.success);
         assert!(response.result.error_message.is_some());
         assert!(response
@@ -331,7 +306,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_function_execution_error() {
-        // Arrange
         let registry = FunctionRegistry::new();
         let tool = ToolDefinition::new(
             "test_function",
@@ -357,10 +331,8 @@ mod tests {
             },
         };
 
-        // Act
         let response = use_case.execute(request).await.unwrap();
 
-        // Assert
         assert!(!response.result.success);
         assert!(response.result.error_message.is_some());
     }

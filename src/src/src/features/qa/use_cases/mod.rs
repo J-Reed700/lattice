@@ -7,5 +7,4 @@
 
 pub mod ask_question;
 
-// Re-export use case for convenience
 pub use ask_question::AskQuestionUseCase;

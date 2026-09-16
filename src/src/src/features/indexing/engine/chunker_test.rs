@@ -10,19 +10,12 @@ mod property_tests {
     use std::sync::Arc;
     use tokenizers::Tokenizer;
 
-    // ============================================================================
-    // Test Utilities
-    // ============================================================================
-
     fn create_test_tokenizer() -> Arc<Tokenizer> {
         use std::collections::HashMap;
         use tokenizers::models::bpe::BPE;
         use tokenizers::pre_tokenizers::whitespace::Whitespace;
 
-        // Create a BPE tokenizer with a basic vocabulary
-        // This allows the tokenizer to handle test text properly
         let mut vocab = HashMap::new();
-        // Add common English characters and tokens
         for c in b'a'..=b'z' {
             vocab.insert(String::from_utf8(vec![c]).unwrap(), c as u32);
         }
@@ -64,10 +57,6 @@ mod property_tests {
         .expect("Test chunker config should be valid")
     }
 
-    // ============================================================================
-    // Test Strategies
-    // ============================================================================
-
     /// Generate reasonable ASCII text for testing
     fn ascii_text() -> impl Strategy<Value = String> {
         prop::string::string_regex("[a-zA-Z0-9 .,!?'\"-]{0,1000}").expect("Valid regex")
@@ -85,9 +74,7 @@ mod property_tests {
             .prop_map(|paragraphs| paragraphs.join("\n\n"))
     }
 
-    // ============================================================================
     // Coverage Properties
-    // ============================================================================
 
     proptest! {
         /// Property: All chunks contain text that appears in the original
@@ -217,10 +204,6 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
-    // Overlap Properties
-    // ============================================================================
-
     proptest! {
         /// Property: Overlap is approximately as configured
         ///
@@ -273,9 +256,7 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
     // Coverage Completeness Properties
-    // ============================================================================
 
     proptest! {
         /// Property: First chunk starts at beginning
@@ -369,10 +350,6 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
-    // Token Count Properties
-    // ============================================================================
-
     proptest! {
         /// Property: Token count is positive for non-empty chunks
         #[test]
@@ -414,10 +391,6 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
-    // Sentence Boundary Properties
-    // ============================================================================
-
     proptest! {
         /// Property: Sentence boundary preference creates valid chunks
         ///
@@ -450,10 +423,6 @@ mod property_tests {
             }
         }
     }
-
-    // ============================================================================
-    // Metadata Properties
-    // ============================================================================
 
     proptest! {
         /// Property: Chunk indices in metadata match chunk count
@@ -498,10 +467,6 @@ mod property_tests {
         }
     }
 
-    // ============================================================================
-    // Idempotency Properties
-    // ============================================================================
-
     proptest! {
         /// Property: Chunking is deterministic
         ///
@@ -526,10 +491,6 @@ mod property_tests {
             }
         }
     }
-
-    // ============================================================================
-    // Edge Cases
-    // ============================================================================
 
     #[test]
     fn test_whitespace_only() {
@@ -558,10 +519,8 @@ mod property_tests {
         let text = "Hello! How are you? I'm fine. Really.";
         let chunks = chunker.chunk_text(text).unwrap();
 
-        // Should successfully chunk text with punctuation
         assert!(!chunks.is_empty());
 
-        // Verify all chunks are valid substrings
         for chunk in &chunks {
             assert!(text.contains(&chunk.text));
         }
@@ -573,7 +532,6 @@ mod property_tests {
         let text = "Hello 世界! Привет мир! مرحبا العالم!";
         let chunks = chunker.chunk_text(text).unwrap();
 
-        // Should handle Unicode without panicking
         assert!(!chunks.is_empty());
     }
 
@@ -583,7 +541,6 @@ mod property_tests {
         let text = "word ".repeat(1000); // 5000 characters
         let chunks = chunker.chunk_text(&text).unwrap();
 
-        // Should produce multiple chunks
         assert!(chunks.len() > 1);
 
         // All chunks should respect max tokens
@@ -627,10 +584,9 @@ mod property_tests {
         let text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
         let chunks = chunker.chunk_text(text).unwrap();
 
-        // Should preserve newlines in chunks
         assert!(!chunks.is_empty());
 
-        let full_text: String = chunks.iter().map(|c| c.text.as_str()).collect();
+        let _full_text: String = chunks.iter().map(|c| c.text.as_str()).collect();
         // The full reconstructed text should contain the paragraph structure
         // (though exact matching may vary due to overlap)
     }
@@ -641,7 +597,6 @@ mod property_tests {
         let text = "This is a test.";
         let chunks = chunker.chunk_text(text).unwrap();
 
-        // Should handle very small max_tokens
         assert!(!chunks.is_empty());
         for chunk in &chunks {
             assert!(chunk.token_count <= 5);

@@ -14,6 +14,12 @@ pub struct ExtractedContent {
     pub metadata: ContentMetadata,
     /// Page ranges: (page_num, start_pos, end_pos) in the text
     pub page_ranges: Vec<(usize, usize, usize)>,
+    /// One-based pages that carry an image but no selectable text, and that no
+    /// OCR provider recognized. The document is still indexed; these pages are
+    /// simply not represented in `text`, so a caller can offer to re-run them
+    /// once a vision model is installed. Empty for every non-paged format.
+    #[serde(default)]
+    pub needs_ocr: Vec<u32>,
 }
 
 /// Metadata about extracted content.

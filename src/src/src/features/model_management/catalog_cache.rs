@@ -1,7 +1,7 @@
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME;
 use crate::domain::model_metadata::ModelType;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 /// Thread-safe, lazily-initialized cache of known models and their types.
 ///
@@ -52,7 +52,6 @@ impl ModelCatalogCache {
         catalog.insert("bge-small-en-v1.5".to_string(), ModelType::TextEmbeddings);
         catalog.insert("bge-base-en-v1.5".to_string(), ModelType::TextEmbeddings);
         catalog.insert("bge-large-en-v1.5".to_string(), ModelType::TextEmbeddings);
-        catalog.insert("bge-m3".to_string(), ModelType::TextEmbeddings);
 
         // Text Embeddings - E5 models
         catalog.insert("e5-small-v2".to_string(), ModelType::TextEmbeddings);
@@ -214,7 +213,6 @@ mod tests {
     fn test_catalog_contains_popular_embeddings() {
         let cache = ModelCatalogCache::instance();
 
-        // Verify popular embedding models are present
         let embeddings = vec![
             "all-minilm-l6-v2",
             "bge-large-en-v1.5",
@@ -237,7 +235,6 @@ mod tests {
     fn test_catalog_contains_popular_language_models() {
         let cache = ModelCatalogCache::instance();
 
-        // Verify popular language models are present
         let llms = vec![
             "llama-2-7b-chat",
             "mistral-7b-instruct-v0.2",
@@ -281,7 +278,6 @@ mod tests {
             handle.join().unwrap();
         }
 
-        // Verify cache still works
         assert_eq!(
             cache.lookup("all-minilm-l6-v2"),
             Some(ModelType::TextEmbeddings)

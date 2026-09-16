@@ -1,8 +1,8 @@
 //! # Download Test Helpers
 //!
-//! Oracle-approved async test infrastructure for download operations.
+//! Async test infrastructure for download operations.
 //!
-//! ## Oracle Patterns Used
+//! ## Synchronization patterns
 //!
 //! 1. **mpsc channels** for deterministic event coordination
 //! 2. **timeout()** for bounded waits (no unbounded sleep!)
@@ -33,7 +33,7 @@ use tokio::time::{timeout, Duration};
 
 /// Collect download events until terminal state
 ///
-/// Oracle Pattern: Uses mpsc channel to deterministically capture async events.
+/// Uses an mpsc channel to capture async events deterministically.
 /// No sleep() - uses timeout() for bounded waiting.
 ///
 /// # Arguments
@@ -46,7 +46,7 @@ use tokio::time::{timeout, Duration};
 /// Vector of all events received until terminal state (Completed/Failed/Cancelled)
 /// or until channel closes.
 ///
-/// # Oracle Compliance
+/// # Synchronization
 ///
 /// ✅ Uses mpsc channels for coordination
 /// ✅ Uses timeout() not sleep()
@@ -84,7 +84,7 @@ pub async fn collect_download_events(
 
 /// Poll database until condition met or timeout
 ///
-/// Oracle Pattern: Database polling with timeout (NOT sleep-based coordination).
+/// Polls the database with a timeout rather than coordinating with sleeps.
 /// This is the ONLY acceptable use of sleep() in async tests - for polling intervals.
 ///
 /// # Arguments
@@ -107,7 +107,7 @@ pub async fn collect_download_events(
 /// ).await?;
 /// ```
 ///
-/// # Oracle Compliance
+/// # Synchronization
 ///
 /// ✅ Timeout-based polling (deterministic)
 /// ✅ sleep() only for poll interval (acceptable here)
@@ -133,7 +133,7 @@ where
 
 /// Verify progress sequence matches expected pattern
 ///
-/// Oracle Pattern: Uses channels to deterministically verify progress events.
+/// Uses channels to verify progress events deterministically.
 ///
 /// # Arguments
 ///
@@ -145,7 +145,7 @@ where
 ///
 /// Ok(()) if sequence matches, Err with details if mismatch
 ///
-/// # Oracle Compliance
+/// # Synchronization
 ///
 /// ✅ Channel-based coordination
 /// ✅ Timeout-bounded waiting

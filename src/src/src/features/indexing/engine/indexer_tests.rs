@@ -23,10 +23,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    // ============================================================================
-    // Helper Functions
-    // ============================================================================
-
     async fn setup_test_db() -> (SqlitePool, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -87,10 +83,6 @@ mod tests {
             .await
             .unwrap()
     }
-
-    // ============================================================================
-    // Transaction Rollback Tests
-    // ============================================================================
 
     #[tokio::test]
     async fn test_indexing_transaction_rollback_on_error() {
@@ -231,10 +223,6 @@ mod tests {
         );
     }
 
-    // ============================================================================
-    // Concurrent Indexing Tests
-    // ============================================================================
-
     #[tokio::test]
     async fn test_concurrent_file_indexing() {
         let (pool, temp_dir) = setup_test_db().await;
@@ -293,10 +281,6 @@ mod tests {
             "file_path is UNIQUE; a second row for the same path must be refused"
         );
     }
-
-    // ============================================================================
-    // Status and Metadata Tests
-    // ============================================================================
 
     #[tokio::test]
     async fn test_update_existing_file_index_status() {

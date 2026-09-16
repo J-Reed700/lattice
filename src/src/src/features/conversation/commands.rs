@@ -39,14 +39,9 @@ use crate::features::conversation::space_dto::{
 use crate::infrastructure::audit::{get_audit_logger, AuditAction, AuditEvent, AuditResult};
 use crate::interfaces::di::container::Container;
 use crate::shared::error::{AppError, Result};
-use chrono::Utc;
 use serde_json::Value;
 use tauri::State;
 use tracing::warn;
-
-// ============================================================================
-// Conversation CRUD Commands
-// ============================================================================
 
 /// Creates a new conversation for multi-turn Q&A with context
 ///

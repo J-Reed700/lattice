@@ -32,7 +32,6 @@ pub const DEFAULT_BATCH_SIZE: usize = 100;
 /// Maximum batch size for processing operations
 pub const MAX_BATCH_SIZE: usize = 1000;
 
-// Re-export embedding defaults from domain layer.
 pub use crate::domain::embedding_constants::{
     DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, DEFAULT_EMBEDDING_MODEL_NAME,
 };
@@ -51,6 +50,24 @@ pub const DEFAULT_SEARCH_LIMIT: usize = 10;
 
 /// Maximum number of search results to return
 pub const MAX_SEARCH_LIMIT: usize = 100;
+
+/// Reciprocal-rank-fusion constant used by every production retrieval path.
+///
+/// The synthetic multilingual corpus showed that the literature-default value
+/// of 60 flattened the head of each ranking enough to bury strong vector-only
+/// matches under weak cross-branch agreement. A value of 10 retained the
+/// lexical benefit while recovering multilingual recall.
+pub const DEFAULT_RRF_K: f32 = 10.0;
+
+/// Production branch weights for vector and lexical retrieval.
+pub const DEFAULT_VECTOR_FUSION_WEIGHT: f32 = 0.7;
+pub const DEFAULT_KEYWORD_FUSION_WEIGHT: f32 = 0.3;
+
+/// Marker file in the app data directory meaning "derived vectors are missing
+/// and must be rebuilt". Written by a backup restore (archives omit
+/// embeddings); cleared by search startup once the vector generation is
+/// complete again.
+pub const REEMBED_MARKER_FILE: &str = ".reembed-required";
 
 #[cfg(test)]
 mod tests {

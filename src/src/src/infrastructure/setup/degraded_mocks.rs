@@ -1,9 +1,9 @@
 use crate::application::ports::batch_job_repository_port::BatchJobStatus;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
+use crate::features::indexing::engine::progress::IndexProgress;
 use crate::features::indexing::IndexingServiceTrait;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
-use crate::infrastructure::indexing::progress::IndexProgress;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
@@ -47,7 +47,7 @@ impl IndexingServiceTrait for DegradedIndexingService {
     async fn index_file(
         &self,
         _path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         Err(AppError::AiModelsNotInstalled(
             AI_MODELS_NOT_INSTALLED_MSG.to_string(),
         ))
@@ -57,7 +57,7 @@ impl IndexingServiceTrait for DegradedIndexingService {
         &self,
         _path: std::path::PathBuf,
         _recursive: bool,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         Err(AppError::AiModelsNotInstalled(
             AI_MODELS_NOT_INSTALLED_MSG.to_string(),
         ))
@@ -66,7 +66,7 @@ impl IndexingServiceTrait for DegradedIndexingService {
     async fn reindex_file(
         &self,
         _path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         Err(AppError::AiModelsNotInstalled(
             AI_MODELS_NOT_INSTALLED_MSG.to_string(),
         ))
@@ -75,13 +75,13 @@ impl IndexingServiceTrait for DegradedIndexingService {
     async fn remove_file(
         &self,
         _path: std::path::PathBuf,
-    ) -> crate::infrastructure::indexing::error::Result<()> {
+    ) -> crate::features::indexing::engine::error::Result<()> {
         Err(AppError::AiModelsNotInstalled(
             AI_MODELS_NOT_INSTALLED_MSG.to_string(),
         ))
     }
 
-    async fn cancel_all(&self) -> crate::infrastructure::indexing::error::Result<()> {
+    async fn cancel_all(&self) -> crate::features::indexing::engine::error::Result<()> {
         Ok(())
     }
 
@@ -95,11 +95,11 @@ impl IndexingServiceTrait for DegradedIndexingService {
         rx
     }
 
-    async fn pause_indexing(&self) -> crate::infrastructure::indexing::error::Result<()> {
+    async fn pause_indexing(&self) -> crate::features::indexing::engine::error::Result<()> {
         Ok(())
     }
 
-    async fn resume_indexing(&self) -> crate::infrastructure::indexing::error::Result<()> {
+    async fn resume_indexing(&self) -> crate::features::indexing::engine::error::Result<()> {
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 //! Streaming text extraction for large files.
 
-use crate::infrastructure::indexing::error::{IndexingError, Result};
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 /// Extract text from a stream line by line.

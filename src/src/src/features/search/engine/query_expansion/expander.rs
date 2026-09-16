@@ -115,10 +115,8 @@ impl QueryExpander {
                 continue;
             }
 
-            // Add original term
             expanded_terms.push(term.to_string());
 
-            // Find synonyms (user synonyms take priority)
             let mut synonyms = Vec::new();
 
             if let Some(user_syns) = self.user_synonyms.get(&term_lower) {
@@ -141,7 +139,6 @@ impl QueryExpander {
                 }
             }
 
-            // Add synonyms, avoiding duplicates
             for syn in &synonyms {
                 if !seen.contains(syn) {
                     seen.insert(syn.clone());

@@ -139,7 +139,6 @@ mod tests {
         assert!(dto.message.is_some());
         assert!(dto.message.unwrap().contains("anthropic"));
 
-        // Verify the key was actually stored
         let stored = mock_port.get_api_key("anthropic").await.unwrap();
         assert_eq!(stored, Some("sk-test-key".to_string()));
     }
@@ -149,7 +148,6 @@ mod tests {
         let mock_port = Arc::new(MockCredentialsPort::new());
         let use_case = SetApiKeyUseCase::new(mock_port.clone());
 
-        // Set first key
         use_case
             .execute("openai".to_string(), "first-key".to_string())
             .await
@@ -216,7 +214,6 @@ mod tests {
         let mock_port = Arc::new(MockCredentialsPort::new());
         let use_case = SetApiKeyUseCase::new(mock_port.clone());
 
-        // Test with special characters in key
         let special_key = "sk-test_key.with/special+chars=123";
         let result = use_case
             .execute("service".to_string(), special_key.to_string())
@@ -233,7 +230,6 @@ mod tests {
         let mock_port = Arc::new(MockCredentialsPort::new());
         let use_case = SetApiKeyUseCase::new(mock_port.clone());
 
-        // Test with unicode in service name
         let result = use_case
             .execute("服务名称".to_string(), "key".to_string())
             .await;

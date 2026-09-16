@@ -19,7 +19,7 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use crate::infrastructure::indexing::extraction::ContentExtractor;
+//! use crate::features::indexing::engine::extraction::ContentExtractor;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let extractor = ContentExtractor::new();
@@ -35,6 +35,7 @@ mod html;
 mod mime;
 mod odt;
 mod pdf;
+mod pdf_layout;
 mod pptx;
 mod rtf;
 mod streaming;
@@ -42,14 +43,14 @@ mod text;
 mod types;
 mod xlsx;
 
-// Re-export public types
 pub use types::{ContentMetadata, ExtractedContent};
 
-// Re-export streaming function
 pub use streaming::extract_text_streaming;
 
-use crate::infrastructure::indexing::error::Result;
+use crate::application::ports::OcrPort;
+use crate::features::indexing::engine::error::Result;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::io::AsyncRead;
 
 /// Default maximum file size: 50 MB
@@ -61,6 +62,9 @@ const DEFAULT_MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024;
 /// appropriate extraction module.
 pub struct ContentExtractor {
     max_file_size: u64,
+    /// Consulted for scanned PDF pages. `None` leaves those pages in
+    /// `ExtractedContent::needs_ocr` and indexes the rest of the document.
+    ocr: Option<Arc<dyn OcrPort>>,
 }
 
 impl ContentExtractor {
@@ -71,7 +75,19 @@ impl ContentExtractor {
 
     /// Create an extractor with a custom maximum file size.
     pub fn with_max_size(max_file_size: u64) -> Self {
-        Self { max_file_size }
+        Self {
+            max_file_size,
+            ocr: None,
+        }
+    }
+
+    /// Enable OCR for scanned PDF pages.
+    ///
+    /// Without this the extractor still succeeds on a partly scanned PDF; the
+    /// scanned pages are simply reported in `ExtractedContent::needs_ocr`.
+    pub fn with_ocr(mut self, ocr: Arc<dyn OcrPort>) -> Self {
+        self.ocr = Some(ocr);
+        self
     }
 
     /// Extract content from a file, automatically detecting the type.
@@ -89,7 +105,7 @@ impl ContentExtractor {
     ///
     /// ```no_run
     /// # use std::path::Path;
-    /// # use crate::infrastructure::indexing::extraction::ContentExtractor;
+    /// # use crate::features::indexing::engine::extraction::ContentExtractor;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let extractor = ContentExtractor::new();
     /// let content = extractor.extract_from_file(Path::new("doc.pdf")).await?;
@@ -106,7 +122,9 @@ impl ContentExtractor {
             }
 
             // Documents
-            "application/pdf" => pdf::extract_pdf(path, self.max_file_size).await,
+            "application/pdf" => {
+                pdf::extract_pdf(path, self.max_file_size, self.ocr.as_ref()).await
+            }
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
                 docx::extract_docx(path, self.max_file_size).await
             }
@@ -136,7 +154,7 @@ impl ContentExtractor {
             }
 
             _ => Err(
-                crate::infrastructure::indexing::error::IndexingError::UnsupportedFileType {
+                crate::features::indexing::engine::error::IndexingError::UnsupportedFileType {
                     path: path.display().to_string(),
                     detected_type: mime_type,
                 },

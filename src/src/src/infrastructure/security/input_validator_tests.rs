@@ -13,10 +13,6 @@ mod tests {
     use super::super::*;
     use crate::shared::error::AppError;
 
-    // ============================================================================
-    // Search Query Validation Tests
-    // ============================================================================
-
     #[test]
     fn test_validate_search_query_valid() {
         let validator = InputValidator::new();
@@ -65,8 +61,6 @@ mod tests {
     fn test_validate_search_query_preserves_legitimate_characters() {
         let validator = InputValidator::new();
 
-        // Test cases for legitimate queries that contain characters
-        // that might look like SQL injection but are valid search terms
         let legitimate_queries = vec![
             ("O'Brien", "O'Brien"),                                    // Apostrophe in name
             ("don't forget", "don't forget"),                          // Apostrophe in contraction
@@ -146,10 +140,6 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // JSON Validation Tests
-    // ============================================================================
-
     #[test]
     fn test_validate_json_valid() {
         let json_str = r#"{"name": "test", "value": 42}"#;
@@ -172,7 +162,6 @@ mod tests {
 
     #[test]
     fn test_validate_json_too_deep() {
-        // Create deeply nested JSON
         let mut json = String::from("{");
         for _ in 0..100 {
             json.push_str("\"a\":{");
@@ -214,10 +203,6 @@ mod tests {
         let result = InputValidator::validate_json(json, 10);
         assert!(result.is_ok());
     }
-
-    // ============================================================================
-    // File Upload Validation Tests
-    // ============================================================================
 
     #[test]
     fn test_validate_file_upload_valid() {
@@ -330,7 +315,6 @@ mod tests {
                 max_size,
             );
 
-            // Should either reject or sanitize the filename
             assert!(
                 result.is_err()
                     || !result.as_ref().unwrap().to_string().contains(".."),
@@ -339,10 +323,6 @@ mod tests {
             );
         }
     }
-
-    // ============================================================================
-    // Edge Cases and Special Characters
-    // ============================================================================
 
     #[test]
     fn test_validate_search_query_unicode() {
@@ -402,10 +382,6 @@ mod tests {
         assert_eq!(value["number"], 0);
         assert_eq!(value["empty"], "");
     }
-
-    // ============================================================================
-    // Depth Calculation Tests
-    // ============================================================================
 
     #[test]
     fn test_json_depth_flat_object() {

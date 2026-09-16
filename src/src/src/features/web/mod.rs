@@ -16,12 +16,8 @@
 //! - `crate::features::web::{WebServiceTrait, WebIngestionServiceTrait,
 //!   WebArchiveServiceTrait, WebCaptureServiceTrait}` — service traits
 //!
-//! ## Kept as shared
-//!
-//! - `crate::infrastructure::web` (entry point + article_detector/
-//!   content_extractor/metadata/web_fetcher stubs) — registered via
-//!   `infrastructure/mod.rs` #[path] redirect so consumers can still
-//!   use `crate::infrastructure::web::article_detector::*` etc.
+//! - `crate::features::web::article_detector` — article/page heuristics
+//!   shared with the file feature
 //!
 //! No application-level `WebPort` — web operations flow through
 //! the service traits.
@@ -42,3 +38,4 @@ pub use traits::{
     WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionResult, WebIngestionServiceTrait,
     WebServiceTrait,
 };
+pub mod article_detector;

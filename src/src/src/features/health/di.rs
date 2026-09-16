@@ -6,7 +6,8 @@ use sqlx::SqlitePool;
 
 use crate::application::ports::{EmbeddingPort, LLMPort, MockEmbeddingPort};
 use crate::features::health::use_cases::HealthCheckUseCase;
-use crate::infrastructure::llm::factory::MockLLMPort;
+use crate::features::llm::engine::factory::MockLLMPort;
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct HealthDi {
@@ -20,5 +21,13 @@ pub fn build(db_pool: SqlitePool) -> HealthDi {
 
     HealthDi {
         health_check_use_case: Arc::new(HealthCheckUseCase::new(db_pool, embedding, llm)),
+    }
+}
+
+/// Health's registrar surface on `Container`.
+impl Container {
+    // Health (from SystemModule)
+    pub fn health_check_use_case(&self) -> Arc<HealthCheckUseCase> {
+        Arc::clone(self.system.health_check_use_case())
     }
 }

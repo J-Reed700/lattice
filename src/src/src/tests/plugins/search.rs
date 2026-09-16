@@ -3,9 +3,7 @@
 //! These are integration smoke tests that verify each search command can run
 //! without panicking. They test the HAPPY PATH and ONE ERROR PATH per command.
 //!
-//! # Oracle Mandate
-//!
-//! "100% smoke test coverage - every command runs once without exploding."
+//! Each command runs at least once without panicking.
 //! Pattern: command_handler(mock_state, payload).await.is_ok()
 //!
 //! # Test Strategy
@@ -40,8 +38,6 @@ async fn smoke_test_semantic_search_happy_path() {
 
     let result = semantic_search_impl(&container, request).await;
 
-    // Assert: Command completes without panic
-    // May return Err (no embedding model loaded), but should not panic
     match result {
         ApiResult::Success { .. } => {
             // Success path - command worked
@@ -81,7 +77,6 @@ async fn smoke_test_semantic_search_empty_query() {
 
     let result = semantic_search_impl(&container, request).await;
 
-    // Assert: Command handles empty query without panic
     match result {
         ApiResult::Success { data: response, .. } => {
             // Empty results is acceptable
@@ -91,7 +86,6 @@ async fn smoke_test_semantic_search_empty_query() {
             );
         }
         ApiResult::Error { error, .. } => {
-            // Validation error is acceptable
             println!(
                 "✅ semantic_search_impl rejected empty query gracefully: {:?}",
                 error
@@ -120,7 +114,6 @@ async fn smoke_test_hybrid_search_happy_path() {
     )
     .await;
 
-    // Assert: Command completes without panic
     match result {
         ApiResult::Success { .. } => {
             println!("✅ hybrid_search_impl returned results");
@@ -181,7 +174,6 @@ async fn smoke_test_keyword_search_happy_path() {
     )
     .await;
 
-    // Assert: Command completes without panic
     match result {
         ApiResult::Success { .. } => {
             println!("✅ keyword_search (via hybrid_search_impl) returned results");

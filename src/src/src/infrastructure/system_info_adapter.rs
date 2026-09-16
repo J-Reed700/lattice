@@ -39,7 +39,7 @@ use crate::application::ports::{ComputeType, GpuInfo, SystemInfo, SystemInfoPort
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use std::process::Command;
-use sysinfo::{Disks, System};
+use sysinfo::System;
 
 /// Infrastructure adapter for system information detection.
 ///
@@ -83,7 +83,6 @@ impl SystemInfoAdapter {
     /// Detect GPU on macOS using system_profiler.
     #[cfg(target_os = "macos")]
     fn detect_gpu_macos(&self) -> Option<GpuInfo> {
-        // Run: system_profiler SPDisplaysDataType
         let output = Command::new("system_profiler")
             .arg("SPDisplaysDataType")
             .output()
@@ -91,10 +90,6 @@ impl SystemInfoAdapter {
 
         let output_str = String::from_utf8_lossy(&output.stdout);
 
-        // Parse output for GPU name and VRAM
-        // Example output:
-        //   Chipset Model: Apple M3 Pro
-        //   Metal Support: Metal 3
         if output_str.contains("Apple M") || output_str.contains("Metal") {
             // Apple Silicon
             let name = output_str
@@ -124,7 +119,6 @@ impl SystemInfoAdapter {
                 .find(|line| line.contains("VRAM"))
                 .and_then(|line| line.split(':').nth(1))
                 .and_then(|s| {
-                    // Parse "4096 MB" or "4 GB"
                     let parts: Vec<&str> = s.split_whitespace().collect();
                     if parts.len() >= 2 {
                         let value: f64 = parts.first()?.parse().ok()?;
@@ -168,7 +162,6 @@ impl SystemInfoAdapter {
     /// Detect NVIDIA GPU on Linux.
     #[cfg(target_os = "linux")]
     fn detect_nvidia_gpu_linux(&self) -> Option<GpuInfo> {
-        // Check for NVIDIA driver
         if !std::path::Path::new("/proc/driver/nvidia/version").exists() {
             return None;
         }
@@ -291,10 +284,8 @@ impl SystemInfoPort for SystemInfoAdapter {
 
         let sys = self.system.lock();
 
-        // Get RAM information (convert bytes to GB)
         let total_ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
 
-        // Get CPU information
         let cpu_cores = sys.cpus().len() as u32;
         let cpu_model = sys
             .cpus()
@@ -304,7 +295,6 @@ impl SystemInfoPort for SystemInfoAdapter {
 
         drop(sys); // Release lock before GPU detection
 
-        // Get GPU information (platform-specific)
         let gpu_info = self.detect_gpu_info();
 
         Ok(SystemInfo {

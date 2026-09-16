@@ -12,7 +12,7 @@
 //!
 //! # Architecture
 //!
-//! This service follows the "bricks and studs" philosophy:
+//! This service composes focused enrichment steps:
 //! - **Self-contained**: All enrichment logic in one place
 //! - **Performant**: Parallel batch processing with concurrency=4
 //! - **Scalable**: Handles thousands of chunk IDs safely
@@ -121,7 +121,6 @@ impl SearchEnrichmentService {
             "Split chunk IDs into batches"
         );
 
-        // Process batches in parallel with concurrency=4
         let results = stream::iter(batches)
             .map(|batch| {
                 let pool = self.db_pool.clone();
@@ -160,7 +159,6 @@ impl SearchEnrichmentService {
         pool: &SqlitePool,
         batch: Vec<String>,
     ) -> Result<HashMap<String, DocumentMetadata>, AppError> {
-        // Build query with placeholders
         let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 
         let query = format!(
@@ -185,17 +183,14 @@ impl SearchEnrichmentService {
             placeholders
         );
 
-        // Build query with bound parameters
         let mut query_builder = sqlx::query(&query);
         for id in &batch {
             query_builder = query_builder.bind(id);
         }
 
-        // Execute with timeout
         let rows: Vec<sqlx::sqlite::SqliteRow> =
             query_with_timeout(|| async { query_builder.fetch_all(pool).await }).await?;
 
-        // Parse results
         let mut batch_data = HashMap::new();
         for row in rows {
             let chunk_id: String = row.get("chunk_id");
@@ -205,14 +200,8 @@ impl SearchEnrichmentService {
             let start_char: Option<i64> = row.try_get("start_char").ok();
             let end_char: Option<i64> = row.try_get("end_char").ok();
 
-            // Create snippet (max 200 chars)
-            let snippet = if content.len() > 200 {
-                format!("{}...", &content[..200])
-            } else {
-                content.clone()
-            };
+            let snippet = snippet_of(&content);
 
-            // Build metadata
             let mut metadata = HashMap::new();
             metadata.insert(
                 "filename".to_string(),
@@ -282,14 +271,26 @@ impl SearchEnrichmentServiceTrait for SearchEnrichmentService {
         &self,
         chunk_ids: &[String],
     ) -> Result<
-        HashMap<
-            String,
-            crate::infrastructure::services::search_enrichment_service::DocumentMetadata,
-        >,
+        HashMap<String, crate::features::search::enrichment_service::DocumentMetadata>,
         AppError,
     > {
         // The trait uses the same DocumentMetadata type we define
         SearchEnrichmentService::enrich_results(self, chunk_ids).await
+    }
+}
+
+/// Leading portion of a chunk shown in search results, cut on a character
+/// boundary. Byte-indexed slicing panics when the cut lands inside a
+/// multibyte character, which any non-ASCII document will eventually do.
+fn snippet_of(content: &str) -> String {
+    const SNIPPET_CHARS: usize = 200;
+    if content.chars().count() > SNIPPET_CHARS {
+        format!(
+            "{}...",
+            crate::shared::text_utils::safe_truncate(content, SNIPPET_CHARS)
+        )
+    } else {
+        content.to_string()
     }
 }
 
@@ -311,14 +312,26 @@ mod tests {
     #[test]
     fn test_snippet_truncation() {
         let long_text = "a".repeat(300);
-        let snippet = if long_text.len() > 200 {
-            format!("{}...", &long_text[..200])
-        } else {
-            long_text.clone()
-        };
-
+        let snippet = snippet_of(&long_text);
         assert_eq!(snippet.len(), 203); // 200 chars + "..."
         assert!(snippet.ends_with("..."));
+
+        assert_eq!(snippet_of("short"), "short");
+    }
+
+    /// A multibyte character straddling the cut must not panic; the snippet
+    /// is measured in characters, never bytes.
+    #[test]
+    fn test_snippet_truncation_is_char_safe() {
+        let japanese = "時".repeat(150); // 450 bytes, 150 chars
+        let snippet = snippet_of(&japanese);
+        assert_eq!(snippet, japanese);
+
+        let long_japanese = "時".repeat(250);
+        let snippet = snippet_of(&long_japanese);
+        assert!(snippet.ends_with("..."));
+        assert_eq!(snippet.chars().count(), 203);
+        assert!(snippet.starts_with(&"時".repeat(200)));
     }
 
     /// Test batch size calculation

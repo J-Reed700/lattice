@@ -81,10 +81,6 @@ pub trait WebIngestionServiceTrait: Send + Sync {
     async fn ingest_url(&self, url: &str) -> Result<WebIngestionResult>;
 }
 
-// ============================================================================
-// Conversation Service Trait
-// ============================================================================
-
 /// Trait for conversation management operations
 ///
 /// Provides complete conversation lifecycle management including creating conversations,

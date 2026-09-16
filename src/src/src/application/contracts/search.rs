@@ -3,6 +3,49 @@
 use crate::domain::entities::search_result::SearchResult;
 use serde::{Deserialize, Serialize};
 
+/// Bounded catalog evidence for planning document retrieval. The preview is
+/// actual opening text, never a generated summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusDocument {
+    pub id: String,
+    pub name: String,
+    pub opening: String,
+    /// Number read from an explicit opening heading (e.g. "Chapter 100").
+    /// Never inferred from vector similarity or upload order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_context: Option<crate::domain::value_objects::source_context::SourceContext>,
+    #[serde(default)]
+    pub sections: Vec<String>,
+}
+
+impl CorpusDocument {
+    pub fn opening_chapter_number(opening: &str) -> Option<u32> {
+        let mut words = opening.split_whitespace();
+        let heading = words.next()?;
+        if !["chapter", "part", "volume", "book"]
+            .iter()
+            .any(|label| heading.eq_ignore_ascii_case(label))
+        {
+            return None;
+        }
+        words.next()?.trim_end_matches(['.', ':']).parse().ok()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CorpusPassage {
+    pub id: String,
+    pub document_id: String,
+    pub name: String,
+    pub path: String,
+    pub content: String,
+    pub chunk_index: usize,
+    pub section: Option<String>,
+    pub page_number: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResultRecord {
     pub doc_id: String,

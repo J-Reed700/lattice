@@ -1,4 +1,4 @@
-//! Wire types for passage references. Contract: GROUND-RULES §4.3.
+//! Wire types for passage references.
 
 use serde::{Deserialize, Serialize};
 

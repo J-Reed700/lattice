@@ -11,6 +11,7 @@ use crate::features::extraction::use_cases::{
     ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
     ResolveWikilinkUseCase,
 };
+use crate::interfaces::di::Container;
 
 #[derive(Clone)]
 pub struct ExtractionDi {
@@ -34,5 +35,25 @@ pub fn build(document_repo: Arc<dyn RepositoryPort<Document>>) -> ExtractionDi {
         extract_document_title_use_case: Arc::new(ExtractDocumentTitleUseCase::new()),
         resolve_wikilink_use_case,
         extract_and_resolve_links_use_case,
+    }
+}
+
+/// Extraction's registrar surface on `Container`.
+impl Container {
+    // Extraction (from FileOpsModule)
+    pub fn parse_wikilinks_use_case(&self) -> Arc<ParseWikilinksUseCase> {
+        Arc::clone(self.file_ops.parse_wikilinks_use_case())
+    }
+
+    pub fn extract_document_title_use_case(&self) -> Arc<ExtractDocumentTitleUseCase> {
+        Arc::clone(self.file_ops.extract_document_title_use_case())
+    }
+
+    pub fn resolve_wikilink_use_case(&self) -> Arc<ResolveWikilinkUseCase> {
+        Arc::clone(self.file_ops.resolve_wikilink_use_case())
+    }
+
+    pub fn extract_and_resolve_links_use_case(&self) -> Arc<ExtractAndResolveLinksUseCase> {
+        Arc::clone(self.file_ops.extract_and_resolve_links_use_case())
     }
 }

@@ -7,7 +7,7 @@ use crate::features::embedding::entity::Embedding as DomainEmbedding;
 use crate::features::embedding::persistence_mapper::{EmbeddingDTO, EmbeddingMapper};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
 // Database row struct for embedding queries
 #[derive(Debug, sqlx::FromRow)]

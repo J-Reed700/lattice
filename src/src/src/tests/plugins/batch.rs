@@ -3,9 +3,7 @@
 //! These are integration smoke tests that verify each batch command can run
 //! without panicking.
 //!
-//! # Oracle Mandate
-//!
-//! "100% smoke test coverage - every command runs once without exploding."
+//! Each command runs at least once without panicking.
 //! Pattern: command_handler(mock_state, payload).await.is_ok()
 //!
 //! # Test Strategy
@@ -32,7 +30,10 @@ use crate::features::batch::dto::{
 #[test]
 fn smoke_test_start_batch_file_import_dto() {
     let dto = StartBatchFileImportRequestDto {
+        indexing: None,
         file_paths: vec!["test.txt".to_string()],
+
+        space_id: None,
     };
 
     assert_eq!(dto.file_paths.len(), 1);
@@ -42,7 +43,11 @@ fn smoke_test_start_batch_file_import_dto() {
 /// Test that StartBatchFileImportRequestDto handles empty batch
 #[test]
 fn smoke_test_start_batch_file_import_dto_empty() {
-    let dto = StartBatchFileImportRequestDto { file_paths: vec![] };
+    let dto = StartBatchFileImportRequestDto {
+        indexing: None,
+        file_paths: vec![],
+        space_id: None,
+    };
 
     assert_eq!(dto.file_paths.len(), 0);
     println!("✅ StartBatchFileImportRequestDto handles empty batch");
@@ -54,7 +59,10 @@ fn smoke_test_start_batch_file_import_dto_large() {
     let large_batch: Vec<String> = (0..150).map(|i| format!("file{}.txt", i)).collect();
 
     let dto = StartBatchFileImportRequestDto {
+        indexing: None,
         file_paths: large_batch.clone(),
+
+        space_id: None,
     };
 
     assert_eq!(dto.file_paths.len(), 150);

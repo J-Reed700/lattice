@@ -52,7 +52,7 @@ impl Default for CircuitBreakerConfig {
 /// # Example
 ///
 /// ```no_run
-/// use lattice::llm::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+/// use lattice::features::llm::engine::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
@@ -119,7 +119,6 @@ impl CircuitBreaker {
             let mut state = self.state.write();
 
             if state.current_state == CircuitState::Open {
-                // Check if timeout has passed (still under write lock for atomicity)
                 if let Some(last_failure) = state.last_failure_time {
                     if last_failure.elapsed() >= self.config.timeout {
                         // Transition to HalfOpen (atomic with check)
@@ -143,7 +142,6 @@ impl CircuitBreaker {
             // If Closed or HalfOpen, allow the call to proceed
         }
 
-        // Execute the call
         match f.await {
             Ok(result) => {
                 self.record_success();
@@ -179,7 +177,6 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::Closed => {
-                // Reset failure count on successful call
                 state.failure_count = 0;
             }
             CircuitState::Open => {
@@ -427,7 +424,6 @@ mod tests {
         let _ = cb.call(async { Err::<String, _>("error") }).await;
         assert_eq!(cb.state(), CircuitState::Open);
 
-        // Reset should close it
         cb.reset();
         assert_eq!(cb.state(), CircuitState::Closed);
         assert_eq!(cb.failure_count(), 0);

@@ -275,7 +275,6 @@ pub enum ErrorCode {
     /// Security violation detected
     SecurityViolation,
 
-    // Validation Errors
     /// Input validation failed
     ValidationError,
     /// Invalid input format
@@ -366,10 +365,6 @@ pub enum ErrorCode {
     Unknown,
 }
 
-// ============================================================================
-// From Trait Implementations
-// ============================================================================
-
 /// Convert ApplicationError (application layer) to ApiError
 impl From<ApplicationError> for ApiError {
     fn from(err: ApplicationError) -> Self {
@@ -442,7 +437,6 @@ impl From<ApplicationError> for ApiError {
                 details: Some(reason.clone()),
             },
 
-            // Use case errors
             ApplicationError::UseCaseFailed {
                 ref use_case,
                 ref reason,
@@ -496,7 +490,6 @@ impl From<AppError> for ApiError {
                 details: None,
             },
 
-            // Validation errors
             AppError::InvalidInput(ref msg) => ApiError {
                 code: ErrorCode::InvalidInput,
                 message: format!("Invalid input: {}", msg),
@@ -831,10 +824,6 @@ impl From<serde_json::Error> for ApiError {
     }
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Sanitizes database error messages to avoid leaking sensitive information.
 ///
 /// Removes:
@@ -857,7 +846,6 @@ pub(crate) fn sanitize_database_error(msg: &str) -> String {
     let msg = msg.split("SQL:").next().unwrap_or(msg);
     let msg = msg.split("Query:").next().unwrap_or(msg);
 
-    // Remove connection strings
     let msg = if msg.contains("://") {
         "Database connection error"
     } else {
@@ -866,7 +854,10 @@ pub(crate) fn sanitize_database_error(msg: &str) -> String {
 
     // Truncate long messages
     if msg.len() > 200 {
-        format!("{}...", &msg[..200])
+        format!(
+            "{}...",
+            &msg[..crate::shared::text_utils::floor_char_boundary(msg, 200)]
+        )
     } else {
         msg.to_string()
     }
@@ -991,13 +982,11 @@ mod tests {
 
 #[test]
 fn test_json_format_specification() {
-    // Test success format
     let success = ApiResult::success(vec![1, 2, 3]);
     let json = serde_json::to_string(&success).unwrap();
     assert!(json.contains(r#""ok":true"#));
     assert!(json.contains(r#""data""#));
 
-    // Test error format
     let error = ApiResult::<()>::error(ErrorCode::NotFound, "Not found");
     let json = serde_json::to_string(&error).unwrap();
     assert!(json.contains(r#""ok":false"#));
@@ -1005,7 +994,6 @@ fn test_json_format_specification() {
     assert!(json.contains(r#""code":"NOT_FOUND""#));
     assert!(json.contains(r#""message""#));
 
-    // Test error with details format
     let error = ApiResult::<()>::error_with_details(
         ErrorCode::ValidationError,
         "Invalid input",
@@ -1019,7 +1007,6 @@ fn test_json_format_specification() {
 
 #[test]
 fn test_comprehensive_error_conversions() {
-    // Test ApplicationError conversion
     let app_err = ApplicationError::ServiceNotAvailable {
         service: "TestService".to_string(),
         reason: "Initializing".to_string(),
@@ -1028,7 +1015,6 @@ fn test_comprehensive_error_conversions() {
     assert_eq!(api_err.code, ErrorCode::ServiceNotAvailable);
     assert!(api_err.details.is_some());
 
-    // Test DomainError conversion
     let domain_err = DomainError::ValidationFailed {
         field: "email".to_string(),
         reason: "Invalid format".to_string(),
@@ -1037,7 +1023,6 @@ fn test_comprehensive_error_conversions() {
     assert_eq!(api_err.code, ErrorCode::ValidationError);
     assert!(api_err.message.contains("email"));
 
-    // Test AppError conversion with nested errors
     let app_error = AppError::Domain(Box::new(DomainError::EntityNotFound {
         entity_type: "Document".to_string(),
         identifier: "doc-123".to_string(),

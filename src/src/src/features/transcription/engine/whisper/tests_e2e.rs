@@ -4,7 +4,7 @@
 //! Point it at a model directory and an audio file and run it by hand:
 //!
 //! ```text
-//! cd src/app/src
+//! cd src/src
 //! LATTICE_WHISPER_E2E_DIR=/path/to/{model.gguf,config.json,tokenizer.json,melfilters.bytes} \
 //! LATTICE_WHISPER_E2E_AUDIO=/path/to/speech.wav \
 //!   cargo test features::transcription -- --ignored --nocapture
@@ -29,8 +29,8 @@ use crate::features::transcription::engine::transcript::{
 };
 
 fn env_path(key: &str) -> PathBuf {
-    let raw = std::env::var(key)
-        .unwrap_or_else(|_| panic!("{key} must be set for the whisper e2e test"));
+    let raw =
+        std::env::var(key).unwrap_or_else(|_| panic!("{key} must be set for the whisper e2e test"));
     PathBuf::from(raw)
 }
 
@@ -135,7 +135,10 @@ fn transcribes_a_real_recording() {
         .map(|segment| segment.end_ms as f64)
         .unwrap_or(0.0);
     let drift = (covered_ms - real_ms).abs() / real_ms;
-    println!("coverage: {covered_ms} ms of {real_ms} ms ({:.1} % drift)", drift * 100.0);
+    println!(
+        "coverage: {covered_ms} ms of {real_ms} ms ({:.1} % drift)",
+        drift * 100.0
+    );
     assert!(
         drift <= 0.20,
         "transcript covers {covered_ms} ms but the file is {real_ms} ms ({:.1} % drift)",
@@ -205,9 +208,10 @@ fn ingest_path_produces_timestamped_sections() {
         extracted.mime_type
     );
 
-    // The document text carries the window markers Track A's citation labels
+    // The document text carries the window markers used by citation labels
     // and the AudioViewer seek both read.
-    let marker = lazy_regex::regex!(r"\[\d{1,2}:\d{2}(?::\d{2})?\u{2013}\d{1,2}:\d{2}(?::\d{2})?\]");
+    let marker =
+        lazy_regex::regex!(r"\[\d{1,2}:\d{2}(?::\d{2})?\u{2013}\d{1,2}:\d{2}(?::\d{2})?\]");
     assert!(
         marker.is_match(&extracted.text),
         "no [m:ss–m:ss] marker in the extracted text: {}",

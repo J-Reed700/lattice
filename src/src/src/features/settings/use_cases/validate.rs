@@ -62,7 +62,7 @@ impl ValidateSettingsUseCase {
     /// # Errors
     ///
     /// Returns error if settings cannot be loaded from repository
-    pub async fn validate_current(&self) -> crate::error::Result<ValidationResult> {
+    pub async fn validate_current(&self) -> crate::shared::error::Result<ValidationResult> {
         let settings = self.repository.get_all().await?;
         Ok(self.execute(&settings))
     }
@@ -89,10 +89,6 @@ impl ValidateSettingsUseCase {
         self.repository.validate_folder_path(path)
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -182,7 +178,6 @@ mod tests {
 
         let result = use_case.execute(&settings);
 
-        // Should still be valid but have warnings
         assert!(result.valid);
         assert!(result.has_warnings());
         assert!(result.warnings.contains_key("indexing"));

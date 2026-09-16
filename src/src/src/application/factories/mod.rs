@@ -40,6 +40,5 @@
 pub mod checksum_factory;
 pub mod file_metadata_factory;
 
-// Re-export public types
 pub use checksum_factory::ChecksumFactory;
 pub use file_metadata_factory::FileMetadataFactory;

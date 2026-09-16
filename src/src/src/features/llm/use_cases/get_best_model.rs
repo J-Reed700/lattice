@@ -35,11 +35,9 @@ impl GetBestModelUseCase {
     }
 
     pub async fn execute(&self) -> Result<BestModelDto, AppError> {
-        // Get recommendations (auto-detect tier)
         let request = GetRecommendationsRequestDto { tier: None };
         let recommendations = self.get_recommendations.execute(request).await?;
 
-        // Return first recommendation (highest ranked)
         recommendations
             .recommendations
             .into_iter()
@@ -103,7 +101,6 @@ mod tests {
 
         let result = use_case.execute().await.unwrap();
 
-        // Should recommend a small model for low-end system
         assert!(result.model.minimum_ram_gb <= 4.0);
         assert!(result.model.size_gb < 3.0);
     }
@@ -179,7 +176,6 @@ mod tests {
 
         let result = use_case.execute().await.unwrap();
 
-        // Verify model has complete metadata
         assert!(!result.model.id.is_empty());
         assert!(!result.model.name.is_empty());
         assert!(result.model.size_gb > 0.0);
