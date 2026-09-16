@@ -7,7 +7,7 @@ use crate::sync::types::{
     ChangeSummary, ConflictInfo, ConflictResolution, PushChange, SyncStatusResponse,
 };
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct DeviceRecord {
     pub id: i64,
     pub user_id: i64,

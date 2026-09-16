@@ -17,6 +17,20 @@ pub struct PgSyncRepository {
     pool: PgPool,
 }
 
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DeviceRecord {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(Self {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            device_uuid: row.try_get("device_uuid")?,
+            device_name: row.try_get("device_name")?,
+            last_seen_at: row.try_get("last_seen_at")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+}
+
 impl PgSyncRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -271,6 +285,16 @@ impl SyncRepository for PgSyncRepository {
         changes: Vec<PushChange>,
     ) -> AppResult<PushBatchResult> {
         let mut tx = self.pool.begin().await?;
+        // Serialize a user's pushes before reading heads or allocating operation
+        // sequences. FOR UPDATE cannot lock absent heads; this also prevents a
+        // later sequence committing before an earlier push from the same user.
+        // Different users remain independent. The transaction owns lock release.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('lattice-sync-push:' || $1::text, 0))",
+        )
+        .bind(user_id.to_string())
+        .execute(tx.as_mut())
+        .await?;
         let device = Self::get_device_tx(&mut tx, user_id, device_id).await?;
 
         let mut accepted_paths = Vec::new();
