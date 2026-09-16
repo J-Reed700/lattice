@@ -10,6 +10,10 @@ use tracing::{error, info};
 
 const HF_TOKEN_KEY: &str = "huggingface_token";
 
+fn has_valid_token_format(token: &str) -> bool {
+    token.starts_with("hf_") && token.len() >= 35
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 // The wire said `is_set`; every consumer (and `types/api/credentials.ts`) reads
 // `isSet`, so the status always deserialised as "not set".
@@ -25,7 +29,7 @@ pub struct HfTokenStatus {
 pub async fn set_huggingface_token(token: String) -> Result<(), String> {
     let logger = crate::audit::get_audit_logger();
 
-    if !token.starts_with("hf_") || token.len() < 35 {
+    if !has_valid_token_format(&token) {
         error!("Invalid HuggingFace token format");
 
         crate::audit_failure!(
@@ -133,21 +137,19 @@ pub async fn get_huggingface_token() -> Result<Option<String>, String> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_token_validation() {
+    #[test]
+    fn test_token_validation() {
         // Valid token
         let valid_token = "hf_".to_string() + &"x".repeat(33);
-        assert!(set_huggingface_token(valid_token).await.is_ok());
+        assert!(has_valid_token_format(&valid_token));
 
         // Invalid: too short
         let short_token = "hf_short".to_string();
-        assert!(set_huggingface_token(short_token).await.is_err());
+        assert!(!has_valid_token_format(&short_token));
 
         // Invalid: wrong prefix
         let wrong_prefix = "sk_".to_string() + &"x".repeat(33);
-        assert!(set_huggingface_token(wrong_prefix).await.is_err());
-
-        delete_huggingface_token().await.ok();
+        assert!(!has_valid_token_format(&wrong_prefix));
     }
 
     #[tokio::test]
