@@ -55,6 +55,15 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.os }}-
 
+      - name: Create sidecar placeholder for source checks
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux) touch src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu ;;
+            macOS) touch src-tauri/binaries/llama-server-aarch64-apple-darwin ;;
+            Windows) touch src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe ;;
+          esac
+
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --all-targets
