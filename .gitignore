@@ -7,12 +7,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-downloads/
+/downloads/
 eggs/
 .eggs/
 lib/
 lib64/
-!src/websrc/lib/
+!src/lib/
 parts/
 sdist/
 var/
@@ -83,19 +83,19 @@ models/
 /lattice/
 /artifacts/
 /crashes/
-/src/archive/crashes/
+/archive/crashes/
 /docs/*_20??-??-??.md
-/src/scratchpad/
-/src/build-logs/
-/src/e2e-results/
+/scratchpad/
+/build-logs/
+/e2e-results/
 /playwright-report/
 /blob-report/
-/src/src/docs/audit/
+/src-tauri/docs/audit/
 
 # Compiled test binaries
 test_context_manager
 mock_http
-src/src/test_web_archive_security
+src-tauri/test_web_archive_security
 
 # Database files
 *.db
@@ -103,16 +103,16 @@ src/src/test_web_archive_security
 *.db-wal
 
 # Rust temporary schema artifacts
-src/src/src/crates/recall/infrastructure/persistence/database/schema.rs.tmp*
+src-tauri/src/crates/recall/infrastructure/persistence/database/schema.rs.tmp*
 
 # Runtime artifacts
-src/src/crashes/
-src/src/test_output.txt
-src/src/build_output.txt
-src/src/build_error.txt
-src/build_output.txt
-src/CHAT_QA_TEST_REPORT.md
-src/SEARCH_E2E_TEST_REPORT.md
+src-tauri/crashes/
+src-tauri/test_output.txt
+src-tauri/build_output.txt
+src-tauri/build_error.txt
+/build_output.txt
+/CHAT_QA_TEST_REPORT.md
+/SEARCH_E2E_TEST_REPORT.md
 test_list_all_documents.html
 
 # Generated audit reports

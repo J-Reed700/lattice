@@ -19,9 +19,10 @@ the first stable release.
 
 ```text
 .
-├── src/           # Tauri desktop app (Rust, React, TypeScript)
+├── src/           # React and TypeScript frontend
+├── src-tauri/     # Rust backend and Tauri configuration
 ├── api-rust/      # Experimental Rust sync service
-├── src/docs/user/ # User documentation
+├── docs/user/     # User documentation
 ├── docs/          # Architecture and API documentation
 └── scripts/       # Repository checks and developer utilities
 ```
@@ -33,7 +34,6 @@ You will need Node.js 20 or newer, a current Rust toolchain, and the
 platform.
 
 ```bash
-cd src
 npm ci
 npm run tauri:dev
 ```
@@ -46,17 +46,17 @@ the Rust backend require the Tauri development process.
 Frontend:
 
 ```bash
-npm run -C src type-check
-npm run -C src lint
-npm run -C src test -- --run
+npm run type-check
+npm run lint
+npm test -- --run
 ```
 
 Desktop backend:
 
 ```bash
-cargo fmt --manifest-path src/src/Cargo.toml --all -- --check
-cargo clippy --manifest-path src/src/Cargo.toml --all-targets
-cargo test --manifest-path src/src/Cargo.toml --lib
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
 Architecture and contract checks:

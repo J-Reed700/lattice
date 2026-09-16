@@ -9,7 +9,6 @@ Install Node.js 20 or newer, a current Rust toolchain, and the platform
 prerequisites listed by Tauri. Then run:
 
 ```bash
-cd src
 npm ci
 npm run tauri:dev
 ```
@@ -35,8 +34,8 @@ When adding a Tauri command, update all four integration points:
 
 1. The `#[tauri::command]` implementation.
 2. The feature's `tauri::generate_handler!` registration.
-3. The command list in `src/src/build.rs`.
-4. The permission entry in `src/src/capabilities/main.json`.
+3. The command list in `src-tauri/build.rs`.
+4. The permission entry in `src-tauri/capabilities/main.json`.
 
 ## Before opening a pull request
 
@@ -44,12 +43,12 @@ Run the checks relevant to your change. The CI workflow is the authoritative
 list; the common local checks are:
 
 ```bash
-npm run -C src type-check
-npm run -C src lint
-npm run -C src test -- --run
-cargo fmt --manifest-path src/src/Cargo.toml --all -- --check
-cargo clippy --manifest-path src/src/Cargo.toml --all-targets
-cargo test --manifest-path src/src/Cargo.toml --lib
+npm run type-check
+npm run lint
+npm test -- --run
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 python3 scripts/check-sql-contracts.py
@@ -58,8 +57,8 @@ python3 scripts/check-sql-contracts.py
 If an IPC contract changes, also run:
 
 ```bash
-npm run -C src bindings:generate
-npm run -C src contracts:check
+npm run bindings:generate
+npm run contracts:check
 ```
 
 ## Repository hygiene
