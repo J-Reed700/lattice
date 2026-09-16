@@ -665,7 +665,7 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   await page.getByRole('radio').nth(4).check();
   await page.getByRole('button', { name: 'Check answer' }).click();
   await expect(page.getByText('Review this answer')).toBeVisible();
-  await page.getByText('Source · biology.md', { exact: true }).click();
+  await page.getByText('Citation · biology.md', { exact: true }).click();
   await page.getByRole('button', { name: 'Open source' }).click();
   const viewer = page.getByRole('dialog', { name: 'biology.md' });
   await expect(viewer.getByRole('heading', { name: 'Photosynthesis notes' })).toBeVisible();
