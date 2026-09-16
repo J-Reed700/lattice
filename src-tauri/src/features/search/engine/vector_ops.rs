@@ -103,10 +103,15 @@ unsafe fn cosine_similarity_avx2_impl(a: &[f32], b: &[f32]) -> f32 {
 
     if remainder > 0 {
         let offset = chunks * 8;
-        for i in 0..remainder {
-            dot += a[offset + i] * b[offset + i];
-            a_norm += a[offset + i] * a[offset + i];
-            b_norm += b[offset + i] * b[offset + i];
+        for (&a_value, &b_value) in a
+            .iter()
+            .skip(offset)
+            .zip(b.iter().skip(offset))
+            .take(remainder)
+        {
+            dot += a_value * b_value;
+            a_norm += a_value * a_value;
+            b_norm += b_value * b_value;
         }
     }
 
