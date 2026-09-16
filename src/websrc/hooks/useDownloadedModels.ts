@@ -86,9 +86,9 @@ export const useDownloadedModels = () => {
       if (!result.ok) {
         await invoke<void>('plugin:model|delete_model', {
           modelId: id,
-          model_id: id,
+
           deleteFile,
-          delete_file: deleteFile,
+
         });
       }
     },
@@ -101,7 +101,7 @@ export const useDownloadedModels = () => {
     try {
       return await invoke<boolean>('plugin:model|is_model_already_downloaded', {
         modelId,
-        model_id: modelId,
+
       });
     } catch {
       return downloadedModels.some((model) => model.model_id === modelId);
@@ -153,8 +153,8 @@ export const useDownloadedModelsListener = () => {
     void (async () => {
       try {
         const listener = await listenValidated(
-          TauriEventNames.Models.DownloadCompleted,
-          EventSchemas.Models.DownloadCompleted,
+          TauriEventNames.Downloads.Completed,
+          EventSchemas.Downloads.Completed,
           async (event) => {
             const { modelName } = event.payload;
             try {

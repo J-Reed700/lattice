@@ -3,7 +3,6 @@
  *
  * Paste many URLs, import them in one job. Reading-column surface: a
  * textarea, one primary action, and hairline rows for per-URL state.
- * See `.design/UX-OVERHAUL-BRIEF.md` §2A.
  */
 
 import { useState, useCallback, useMemo, useRef } from 'react';
@@ -139,7 +138,6 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
   const [, setLastRunResult] = useState<{ successful: number; failed: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Parse URLs from textarea
   const handleUrlTextChange = (text: string) => {
     setUrlText(text);
     debouncedParseUrls(text);
@@ -156,7 +154,6 @@ export const BatchUrlImport: React.FC<BatchUrlImportProps> = ({ onImportComplete
 
     setItems(newItems);
 
-    // Fetch previews for all URLs
     newItems.forEach((item) => {
       fetchPreview(item.id, item.url);
     });

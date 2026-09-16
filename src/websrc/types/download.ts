@@ -10,10 +10,7 @@ export type DownloadOperationState =
   | { type: 'NetworkError'; data: { error_message: string } }
   | { type: 'OperationFailed'; data: { error_message: string } };
 
-export interface DownloadModelResponse {
-  state: DownloadOperationState;
-  path: string | null;
-}
+export type DownloadModelResponse = import('../lib/bindings').DownloadModelResponse;
 
 /**
  * Type guard to check if operation was successful

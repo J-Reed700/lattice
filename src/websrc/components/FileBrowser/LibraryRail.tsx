@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { Plus, RefreshCw } from 'lucide-react';
+import { MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
 
 import { pathBasename } from './docMeta';
 import { useIndexedFoldersQuery } from '../../hooks/queries/useIndexedFoldersQuery';
@@ -12,12 +12,16 @@ import {
   type SourceConnection,
 } from '../../types/fileBrowser';
 import { IconButton } from '../ui/IconButton';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface LibraryRailProps {
   scope: LibraryScope;
   onScopeChange: (_scope: LibraryScope) => void;
   collections: CustomCollection[];
   onCreateCollection: (_name: string) => void;
+  onRenameCollection?: (_collection: CustomCollection) => void;
+  onDeleteCollection?: (_collection: CustomCollection) => void;
+  collectionCounts?: Map<string, number>;
   savedSearches: SavedSearchPreset[];
   activeSavedSearchId: string | null;
   onApplySavedSearch: (_searchId: string) => void;
@@ -68,6 +72,9 @@ export function LibraryRail({
   onScopeChange,
   collections,
   onCreateCollection,
+  onRenameCollection,
+  onDeleteCollection,
+  collectionCounts,
   savedSearches,
   activeSavedSearchId,
   onApplySavedSearch,
@@ -99,6 +106,27 @@ export function LibraryRail({
             trailing={folder.documentCount.toLocaleString()}
             isActive={scope.kind === 'folder' && scope.path === folder.path}
             onClick={() => onScopeChange({ kind: 'folder', path: folder.path })}
+          />
+        ))}
+      </RailSection>
+
+      <RailSection
+        heading="Collections"
+        onCreate={onCreateCollection}
+        createLabel="New collection"
+        placeholder="Collection name"
+        empty="Create a collection to organize your documents."
+        isEmpty={collections.length === 0}
+      >
+        {collections.map((collection) => (
+          <CollectionRow
+            key={collection.id}
+            collection={collection}
+            count={collectionCounts?.get(collection.id) ?? collection.documentIds.length}
+            isActive={scope.kind === 'collection' && scope.id === collection.id}
+            onClick={() => onScopeChange({ kind: 'collection', id: collection.id })}
+            onRename={onRenameCollection ? () => onRenameCollection(collection) : undefined}
+            onDelete={onDeleteCollection ? () => onDeleteCollection(collection) : undefined}
           />
         ))}
       </RailSection>
@@ -137,25 +165,6 @@ export function LibraryRail({
       ) : null}
 
       <RailSection
-        heading="Collections"
-        onCreate={onCreateCollection}
-        createLabel="New collection"
-        placeholder="Collection name"
-        empty="No collections."
-        isEmpty={collections.length === 0}
-      >
-        {collections.map((collection) => (
-          <RailRow
-            key={collection.id}
-            label={collection.name}
-            trailing={collection.kind === 'snapshot' ? 'snapshot' : undefined}
-            isActive={scope.kind === 'collection' && scope.id === collection.id}
-            onClick={() => onScopeChange({ kind: 'collection', id: collection.id })}
-          />
-        ))}
-      </RailSection>
-
-      <RailSection
         heading="Saved searches"
         onCreate={onCreateSavedSearch}
         createLabel="Save current search"
@@ -180,6 +189,40 @@ export function LibraryRail({
         ))}
       </RailSection>
     </aside>
+  );
+}
+
+function CollectionRow({ collection, count, isActive, onClick, onRename, onDelete }: {
+  collection: CustomCollection;
+  count: number;
+  isActive: boolean;
+  onClick: () => void;
+  onRename?: () => void;
+  onDelete?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`group relative flex items-center rounded-sm ${isActive ? 'bg-surface-raised' : 'hover:bg-surface'}`}>
+      {isActive ? <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" /> : null}
+      <button type="button" onClick={onClick} aria-current={isActive ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary">
+        <span className="min-w-0 flex-1 truncate" title={collection.name}>{collection.name}</span>
+        {collection.kind === 'snapshot' ? <span className="text-xs text-text-muted">snapshot</span> : null}
+        <span className="shrink-0 text-xs tabular-nums text-text-muted">{count.toLocaleString()}</span>
+      </button>
+      {onRename || onDelete ? (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button type="button" aria-label={`Actions for ${collection.name}`} className="mr-1 rounded-sm p-1.5 text-text-muted hover:bg-surface hover:text-text-primary">
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" side="right" className="w-44 p-1">
+            {onRename ? <button type="button" className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-surface" onClick={() => { setOpen(false); onRename(); }}>Rename collection</button> : null}
+            {onDelete ? <button type="button" className="w-full rounded-sm px-3 py-2 text-left text-sm text-danger hover:bg-surface" onClick={() => { setOpen(false); onDelete(); }}>Delete collection</button> : null}
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </div>
   );
 }
 

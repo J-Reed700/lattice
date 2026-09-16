@@ -21,6 +21,7 @@ import {
   weekPageTitle,
 } from './synthesisTargets';
 import { useJournalEntries } from './useJournalEntries';
+import { useJournalNavigationGuard } from './useJournalNavigationGuard';
 import { useJournalNote } from './useJournalNote';
 import { useJournalSources } from './useJournalSources';
 
@@ -29,7 +30,7 @@ import type { SynthesisScope } from './SynthesizePopover';
 const LAST_JOURNAL_SPACE_KEY = 'journal.lastSpaceId';
 const SIDEBAR_COLLAPSED_KEY = 'journal.sidebar.collapsed';
 const DEFAULT_JOURNAL_ICON = '📓';
-const DEFAULT_JOURNAL_ACCENT = '#8b72ff'; // matches --accent (dark)
+const DEFAULT_JOURNAL_ACCENT = '#aa503d'; // Default notebook cover accent; saved custom colors are preserved.
 const SYNTHESIS_ENTRY_LIMIT = 12;
 
 type ActionTone = 'info' | 'success' | 'error';
@@ -138,6 +139,7 @@ export function JournalWorkspace() {
   const [allJournals, setAllJournals] = useState<ConversationJournalDto[]>([]);
   const [journalSpace, setJournalSpace] = useState<ConversationJournalDto | null>(null);
   const [topLevelError, setTopLevelError] = useState<string | null>(null);
+  const [journalLoadAttempt, setJournalLoadAttempt] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pinnedNoteHighlightIds, setPinnedNoteHighlightIds] = useState<Set<string>>(
@@ -180,6 +182,8 @@ export function JournalWorkspace() {
     createPage,
     refreshPages,
   } = noteState;
+
+  useJournalNavigationGuard(hasPendingChanges, saveNow);
 
   const sourcesState = useJournalSources({
     entries,
@@ -228,6 +232,7 @@ export function JournalWorkspace() {
     let cancelled = false;
 
     const ensureJournal = async () => {
+      setTopLevelError(null);
       const journalsResult = await VaultAPI.listJournals();
       if (cancelled) return;
       if (!journalsResult.ok) {
@@ -313,9 +318,8 @@ export function JournalWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [requestedJournalSpaceId, navigate, searchParams]);
+  }, [requestedJournalSpaceId, navigate, searchParams, journalLoadAttempt]);
 
-  // Action handlers
   const notify = useCallback(
     (tone: ActionTone, message: string, action?: Notice['action']) => {
       setNotice({ tone, message, action });
@@ -373,7 +377,6 @@ export function JournalWorkspace() {
       );
       notify('success', `Renamed journal to "${result.data.name}".`);
 
-      // Update the notebook title if it was the default
       if (activeNote) {
         const oldDefault = defaultJournalTitle(journalSpace.name);
         if (activeNote.title.trim() === oldDefault) {
@@ -810,9 +813,16 @@ export function JournalWorkspace() {
   if (topLevelError) {
     return (
       <div className="flex h-full items-center justify-center bg-[hsl(var(--bg))] p-6">
-        <p className="max-w-md text-center text-sm text-[hsl(var(--danger-fg))]">
-          {topLevelError}
-        </p>
+        <div className="max-w-sm text-center">
+          <NotebookPen className="mx-auto mb-5 h-8 w-8 text-text-tertiary" strokeWidth={1.5} />
+          <h1 className="font-serif text-2xl text-text-primary">Your journal couldn’t load</h1>
+          <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Try connecting again to return to your pages.</p>
+          <button type="button" onClick={() => { appliedInitialJournalRef.current = false; setJournalLoadAttempt((attempt) => attempt + 1); }} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
+          <details className="mt-5 text-xs text-text-tertiary">
+            <summary className="cursor-pointer">Error details</summary>
+            <p className="mt-2 break-words text-left">{topLevelError}</p>
+          </details>
+        </div>
       </div>
     );
   }

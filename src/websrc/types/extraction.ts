@@ -6,7 +6,6 @@
  * - Tag Generator: Generate tags with Anthropic Claude (with prompt caching)
  */
 
-// ==================== LINK PARSING ====================
 
 /**
  * A parsed [[wikilink]] from markdown.
@@ -70,7 +69,6 @@ export interface ResolvedLink {
   resolvedPath?: string;
 }
 
-// ==================== TAG GENERATION ====================
 
 /**
  * Document metadata for tag generation.
@@ -124,7 +122,6 @@ export interface CacheStats {
   hitRatePercent: number;
 }
 
-// ==================== COMMAND PARAMETERS ====================
 
 /**
  * Parameters for parse_wikilinks command.

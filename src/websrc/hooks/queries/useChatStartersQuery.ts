@@ -13,7 +13,7 @@ const EMPTY: ChatStarters = {
 };
 
 /**
- * Corpus-derived opening questions for the Chat empty state (contract §4.7).
+ * Corpus-derived opening questions for the empty chat state.
  *
  * A failure degrades to an empty payload rather than an error state: the empty
  * state's job is to be quiet and honest, and "we couldn't generate questions"

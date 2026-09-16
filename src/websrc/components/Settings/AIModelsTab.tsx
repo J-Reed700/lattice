@@ -12,12 +12,12 @@
 
 import { useMemo, useState } from 'react';
 
+import { PageHeader, SidebarSearch, TooltipProvider } from '../ui';
 import { LocalModelRow } from './modelRoles/LocalModelRow';
 import { LocalModelRowSkeleton } from './modelRoles/LocalModelRowSkeleton';
 import { ModelRolesProvider, useModelRoles } from './modelRoles/ModelRolesContext';
 import { OllamaMetaRow } from './modelRoles/OllamaMetaRow';
 import { EmptyState } from '../EmptyState/EmptyState';
-import { PageHeader, SidebarSearch, TooltipProvider } from '../ui';
 
 function AIModelsTabContent() {
   const { localModels, isLoading } = useModelRoles();

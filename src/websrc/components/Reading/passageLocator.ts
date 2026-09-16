@@ -1,5 +1,5 @@
 /**
- * Locating a cited passage inside the file it came from (BRIEF rank 1).
+ * Locates a cited passage inside its source file.
  *
  * Chunk boundaries are byte offsets from an indexing run that may predate the
  * file's current contents, so nothing here pretends to be exact. It matches
@@ -59,14 +59,17 @@ export function locatorFromSource(
     ? source.chunkExcerpts?.find((chunk) => chunk.chunkId === chunkId)
     : undefined;
 
-  const text = matchedExcerpt?.excerpt ?? source.excerpt ?? source.content ?? '';
+  const text = (!chunkId || chunkId === source.chunkId)
+    ? source.content?.trim() || source.excerpt || ''
+    : matchedExcerpt?.excerpt ?? '';
   const section = matchedExcerpt?.section ?? source.section;
 
   return {
     text,
     chunkIndex: matchedExcerpt?.chunkIndex ?? source.chunkIndex,
+    page: matchedExcerpt?.pageNumber ?? source.pageNumber,
     highlights: matchedExcerpt?.highlights ?? source.highlights,
-    label: formatSourceLocation({ section, chunkId: chunkId ?? source.chunkId }) ?? undefined,
+    label: formatSourceLocation({ section, chunkId: chunkId ?? source.chunkId, pageNumber: matchedExcerpt?.pageNumber ?? source.pageNumber }) ?? undefined,
     chunkId: chunkId ?? source.chunkId,
   };
 }
@@ -104,13 +107,14 @@ export function timestampSectionStartSeconds(section?: string): number | null {
  * null rather than "Chunk 7".
  */
 export function formatSourceLocation(
-  source: Pick<SourceWithMetadata, 'section' | 'chunkId'>,
+  source: Pick<SourceWithMetadata, 'section' | 'chunkId' | 'pageNumber'>,
   resolvedPage?: number
 ): string | null {
   if (typeof resolvedPage === 'number' && Number.isFinite(resolvedPage) && resolvedPage > 0) {
     return `p. ${resolvedPage}`;
   }
 
+  if (source.pageNumber && Number.isInteger(source.pageNumber) && source.pageNumber > 0) return `PDF p. ${source.pageNumber}`;
   const section = source.section?.trim();
   if (section) {
     if (isTimestampSection(section)) return section;

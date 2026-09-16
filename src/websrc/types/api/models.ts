@@ -4,24 +4,8 @@
  * Type definitions for model management, downloads, and catalog operations.
  */
 
-import type { CpuArchitecture, GpuType, GpuAcceleration } from '../modelCatalogPrimitives';
 
-export interface SystemCapabilities {
-  /** Total system RAM in gigabytes */
-  total_ram_gb: number;
-  /** Number of CPU cores */
-  cpu_cores: number;
-  /** CPU architecture (ARM64, x86_64) */
-  cpu_architecture: CpuArchitecture;
-  /** GPU type if present */
-  gpu_type: GpuType;
-  /** GPU acceleration framework available */
-  gpu_acceleration: GpuAcceleration;
-  /** VRAM in gigabytes (if detectable) */
-  vram_gb: number | null;
-  /** Available disk space in gigabytes */
-  available_disk_gb: number;
-}
+export type SystemCapabilities = import('../../lib/bindings').SystemCapabilitiesResponse;
 
 export interface ModelInfo {
   /** Unique model identifier (e.g., "phi-3-mini") */

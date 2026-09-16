@@ -117,8 +117,8 @@ export function EntryEditor({
   );
 
   return (
-    <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
-      <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,900px)] flex-1 flex-col px-6 pt-10 pb-6">
+    <main className="journal-desk relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+      <div className="journal-paper mx-auto flex w-full max-w-[860px] flex-1 flex-col px-8 pb-10 pt-10 lg:px-14 lg:pt-12">
         {loadError ? (
           <p className="text-sm text-[hsl(var(--danger-fg))]">{loadError}</p>
         ) : isLoadingNote || !activeNote ? (
@@ -138,12 +138,12 @@ export function EntryEditor({
             />
             <div
               ref={editorContainerRef}
-              className="min-h-[60vh] font-serif text-base leading-[1.65] text-[hsl(var(--text-primary))]"
+              className="journal-writing-surface min-h-[52vh] font-serif text-[17px] leading-[1.85] text-[hsl(var(--text-primary))]"
             >
               <TiptapEditor
                 value={activeNote.content ?? ''}
                 onChange={onUpdateNoteContent}
-                placeholder="Start writing — just yourself, today."
+                placeholder="A thought, a question, a place to begin…"
                 selectionActions={selectionActions}
               />
             </div>

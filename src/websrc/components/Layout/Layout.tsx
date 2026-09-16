@@ -4,7 +4,9 @@ import { AnimatePresence } from 'framer-motion';
 import {
   Bookmark,
   FolderOpen,
+  GraduationCap,
   Home,
+  Layers3,
   MessageCircle,
   NotebookPen,
   Plus,
@@ -22,14 +24,14 @@ import { IndexingStatusRail } from '../IndexingStatus/IndexingStatusRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 /**
- * Layout — the persistent left rail plus the routed content area.
+ * Layout — labeled navigation on wide windows, compact rail on smaller ones.
  *
  * The rail lists the app's surfaces in the same order as their ⌘-number
  * shortcuts so the two never disagree. Desktop only: the Tauri window has an
  * 800px minimum width, so there is no mobile breakpoint to serve.
  */
 
-type View = 'home' | 'search' | 'files' | 'journals' | 'chat' | 'references' | 'ingest' | 'settings';
+type View = 'home' | 'search' | 'files' | 'journals' | 'chat' | 'references' | 'study' | 'ingest' | 'settings';
 
 interface NavItem {
   view: View;
@@ -47,6 +49,7 @@ const PRIMARY_NAV: NavItem[] = [
   { view: 'journals', label: 'Journal', shortcut: '⌘3', icon: <NotebookPen className={ICON_CLASS} strokeWidth={1.75} /> },
   { view: 'chat', label: 'Chat', shortcut: '⌘4', icon: <MessageCircle className={ICON_CLASS} strokeWidth={1.75} /> },
   { view: 'references', label: 'References', shortcut: '⌘5', icon: <Bookmark className={ICON_CLASS} strokeWidth={1.75} /> },
+  { view: 'study', label: 'Study', shortcut: '⌘6', icon: <GraduationCap className={ICON_CLASS} strokeWidth={1.75} /> },
 ];
 
 const IMPORT_NAV: NavItem = {
@@ -85,20 +88,22 @@ function NavButton({ item, isActive, onClick }: NavButtonProps) {
           aria-label={item.label}
           aria-current={isActive ? 'page' : undefined}
           className={cn(
-            'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors duration-fast',
+            'group relative flex h-10 w-full items-center justify-center gap-3 rounded-lg px-3 transition-colors duration-fast xl:justify-start',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
             isActive
-              ? 'bg-accent-muted text-accent'
+              ? 'bg-accent-muted font-medium text-accent'
               : 'text-text-muted hover:bg-surface-raised hover:text-text-primary',
           )}
         >
           {isActive ? (
             <span
               aria-hidden="true"
-              className="absolute -left-[14px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-accent"
+              className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-r-full bg-accent"
             />
           ) : null}
           {item.icon}
+          <span className="hidden text-[13px] xl:block">{item.label}</span>
+          <kbd aria-hidden="true" className="ml-auto hidden font-sans text-[10px] text-text-tertiary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 xl:block">{item.shortcut}</kbd>
         </button>
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={10}>
@@ -122,28 +127,33 @@ export function Layout() {
     <div className="flex h-screen bg-bg">
       <nav
         aria-label="Main navigation"
-        className="flex w-[60px] shrink-0 flex-col items-center border-r border-border-subtle bg-surface pb-3 pt-4"
+        className="lattice-navigation flex w-[68px] shrink-0 flex-col items-center border-r border-border-subtle bg-bg px-2 pb-4 pt-6 xl:w-[196px] xl:items-stretch xl:px-3"
       >
-        <div className="flex flex-col items-center gap-1">
+        <div className="mb-8 flex h-8 items-center justify-center gap-2.5 text-text-primary xl:justify-start xl:px-3" aria-label="Lattice">
+          <Layers3 className="h-6 w-6 text-accent" strokeWidth={1.5} />
+          <span className="hidden font-serif text-[22px] tracking-tight xl:block">Lattice</span>
+        </div>
+        <div className="mb-3 hidden px-3 text-[10px] font-medium uppercase tracking-[0.16em] text-text-tertiary xl:block">Workspace</div>
+        <div className="flex w-full flex-col gap-1">
           {PRIMARY_NAV.map((item) => (
             <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={() => go(item.view)} />
           ))}
         </div>
 
-        <div className="my-3 h-px w-6 bg-border-subtle" aria-hidden="true" />
+        <div className="my-4 h-px w-full bg-border-subtle" aria-hidden="true" />
 
         <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={() => go(IMPORT_NAV.view)} />
 
         <div className="flex-1" />
 
-        <div className="flex flex-col items-center gap-1">
+        <div className="flex w-full flex-col items-center gap-1">
           <IndexingStatusRail />
           <HeaderDownloadsIndicator />
           <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={() => go(SETTINGS_NAV.view)} />
         </div>
       </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
         <AnimatePresence mode="wait">
           <Outlet key={location.pathname} />
         </AnimatePresence>

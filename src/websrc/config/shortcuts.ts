@@ -62,13 +62,11 @@ export function matchesShortcut(event: KeyboardEvent, shortcut: string): boolean
   if (event.shiftKey) eventModifiers.add('shift');
   if (event.altKey) eventModifiers.add('alt');
 
-  // Check if key matches
   const keyMatches = eventKey === key ||
     event.code.toLowerCase() === key.toLowerCase() ||
     (key === 'escape' && eventKey === 'escape') ||
     (key === 'enter' && eventKey === 'enter');
 
-  // Check if modifiers match exactly
   if (modifiers.size !== eventModifiers.size) return false;
 
   for (const mod of modifiers) {

@@ -48,14 +48,6 @@ function MyComponent() {
 - Dark mode support
 - Smooth animations
 
-## Documentation
-
-- **Full Documentation**: `docs/TOAST_SYSTEM.md`
-- **Quick Reference**: `docs/TOAST_QUICK_REFERENCE.md`
-- **Examples**: `src/examples/ToastIntegrationExamples.tsx`
-- **Demo Component**: `src/components/Toast/ToastDemo.tsx`
-- **Tests**: `src/components/Toast/__tests__/ToastSystem.test.tsx`
-
 ## File Structure
 
 ```

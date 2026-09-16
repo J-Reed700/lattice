@@ -17,7 +17,6 @@ export function toError(error: unknown): Error {
   }
 
   if (typeof error === 'object' && error !== null) {
-    // Handle error-like objects with message property
     if ('message' in error && typeof error.message === 'string') {
       const err = new Error(error.message);
       // Preserve stack if available

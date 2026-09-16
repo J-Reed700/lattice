@@ -1,11 +1,9 @@
 /**
  * Shared LLM settings context for AI sub-tabs.
  *
- * The settings repository is the single source of truth (CLAUDE.md Repository
- * Barrier rule 3): reads go through `useSettingsQuery`, writes through
- * `useUpdateSettingsMutation`, and the mutation invalidates the cache so the
- * next render shows what the backend actually stored. There is no local mirror
- * to drift, no optimistic copy to roll back, and no manual reload token.
+ * Reads go through `useSettingsQuery`; writes go through
+ * `useUpdateSettingsMutation`, which invalidates the cache after a successful
+ * update. The frontend does not maintain a second copy of backend settings.
  *
  * The provider still exists so the sub-tabs share one context value; the query
  * cache is what makes it a single fetch.

@@ -78,12 +78,10 @@ export const useToastStore = create<ToastStore>((set, get) => ({
     };
 
     set((state) => {
-      // Add to beginning (newest first)
       let updatedToasts = [newToast, ...state.toasts];
 
       // Enforce max toasts limit
       if (updatedToasts.length > config.maxToasts) {
-        // Remove oldest toasts and clear their timers
         const removed = updatedToasts.slice(config.maxToasts);
         removed.forEach((t) => {
           const timer = dismissTimers.get(t.id);
@@ -161,7 +159,6 @@ export const toast = {
   },
 };
 
-// Export legacy names for compatibility
 export const toastStore = {
   dismissAll: () => useToastStore.getState().dismissAll(),
   showToast: (toast: Omit<Toast, 'id' | 'createdAt'>) => useToastStore.getState().addToast(toast),

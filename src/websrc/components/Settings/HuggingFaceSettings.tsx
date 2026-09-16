@@ -58,7 +58,6 @@ export function HuggingFaceSettings() {
         setLast4(trimmed.slice(-4));
         setToken('');
         setShowToken(false);
-        // Drop the mutation variables so the plaintext is not retained.
         saveToken.reset();
         toast.success('Token saved');
       },
@@ -87,7 +86,7 @@ export function HuggingFaceSettings() {
       ? last4
         ? `Token set · ends in …${last4}`
         : 'Token set.'
-      : 'Needed for gated models like Gemma and Mistral.';
+      : 'Optional. Public models can be browsed and downloaded without a token. Gated downloads require one.';
 
   return (
     <SettingsSection

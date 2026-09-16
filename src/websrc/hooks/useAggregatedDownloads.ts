@@ -23,7 +23,6 @@ export function useAggregatedDownloads(downloads: DownloadStatus[]): AggregatedD
       }
     });
 
-    // Create aggregated downloads
     const aggregated: AggregatedDownload[] = [];
 
     grouped.forEach((modelDownloads, modelId) => {

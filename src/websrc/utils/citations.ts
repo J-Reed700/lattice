@@ -41,7 +41,6 @@ const MAX_CITATION_NUMBER = 99_999;
  * // ]
  */
 export function parseCitations(text: string, sourceCount?: number): ParsedCitation[] {
-  // Validate input length FIRST (DoS prevention)
   if (text.length > MAX_TEXT_LENGTH) {
     console.warn('[Citations] Text too long for parsing:', text.length, 'chars (max:', MAX_TEXT_LENGTH, ')');
     return [{
@@ -60,7 +59,6 @@ export function parseCitations(text: string, sourceCount?: number): ParsedCitati
 
   // Use bounded quantifiers to prevent ReDoS
   // OLD: /\[(\d+)\]|\((\d+)\)|[¹²³⁴⁵⁶⁷⁸⁹⁰]+/g ← VULNERABLE
-  // NEW: Limit digit sequences to max 5 digits
   const citationRegex = /\[(\d{1,5})\]|\((\d{1,5})\)|\[\^(\d{1,5})\]|\[#\]|\(#\)|[¹²³⁴⁵⁶⁷⁸⁹⁰]{1,5}/g;
 
   let lastIndex = 0;
@@ -72,7 +70,6 @@ export function parseCitations(text: string, sourceCount?: number): ParsedCitati
     // Timeout protection (prevent infinite loop)
     if (Date.now() - startTime > CITATION_TIMEOUT_MS) {
       console.warn('[Citations] Parsing timeout after', CITATION_TIMEOUT_MS, 'ms');
-      // Return what we have so far + remaining text
       if (lastIndex < normalizedText.length) {
         segments.push({
           text: normalizedText.substring(lastIndex),
@@ -90,7 +87,6 @@ export function parseCitations(text: string, sourceCount?: number): ParsedCitati
       });
     }
 
-    // Extract citation number (from whichever group matched)
     let number: number | undefined;
     const isPlaceholder = match[0] === '[#]' || match[0] === '(#)';
 
@@ -109,7 +105,6 @@ export function parseCitations(text: string, sourceCount?: number): ParsedCitati
       }
     }
 
-    // Validate number is reasonable (1-99999)
     if (
       number !== undefined
       && number > 0
@@ -133,7 +128,6 @@ export function parseCitations(text: string, sourceCount?: number): ParsedCitati
     lastIndex = match.index + match[0].length;
   }
 
-  // Add remaining text
   if (lastIndex < normalizedText.length) {
     segments.push({
       text: normalizedText.slice(lastIndex),
@@ -195,7 +189,6 @@ function normalizeCitationArtifacts(text: string): string {
     .replace(/\[\^(\d{1,5})\]/g, '[$1]')
     .replace(/\[\^#\]/g, '[#]');
 
-  // Drop malformed footnote-like blocks that are not numeric references.
   normalized = normalized.replace(/\[\^[^\]]+\](?:\{[^}]*\})*/g, '');
 
   return normalized;

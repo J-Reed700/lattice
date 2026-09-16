@@ -26,6 +26,8 @@ import {
   EyeOff,
   MessageSquare,
   RefreshCw,
+  FolderPlus,
+  FolderMinus,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
@@ -45,6 +47,8 @@ interface ContextMenuProps {
   onDelete?: (doc: DocumentMetadata) => void;
   /** Called after the document leaves the index, so the list can refetch. */
   onIndexChanged?: () => void;
+  onAddToCollection?: (_doc: DocumentMetadata) => void;
+  onRemoveFromCollection?: (_doc: DocumentMetadata) => void;
 }
 
 export function ContextMenu({
@@ -55,6 +59,8 @@ export function ContextMenu({
   onRename,
   onDelete,
   onIndexChanged,
+  onAddToCollection,
+  onRemoveFromCollection,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -144,17 +150,17 @@ export function ContextMenu({
       let adjustedY = position.y;
 
       if (position.x + rect.width > viewportWidth) {
-        adjustedX = viewportWidth - rect.width - 8;
+        adjustedX = Math.max(8, viewportWidth - rect.width - 8);
       }
 
       if (position.y + rect.height > viewportHeight) {
-        adjustedY = viewportHeight - rect.height - 8;
+        adjustedY = Math.max(8, viewportHeight - rect.height - 8);
       }
 
       menuRef.current.style.left = `${adjustedX}px`;
       menuRef.current.style.top = `${adjustedY}px`;
     }
-  }, [position]);
+  }, [position, spaces.length, isLoadingSpaces]);
 
   const toggleSpaceAssignment = async (spaceId: string) => {
     const currentlyAssigned = assignedSpaceIds.has(spaceId);
@@ -190,6 +196,20 @@ export function ContextMenu({
   };
 
   const actions = [
+    ...(onAddToCollection ? [{
+      id: 'add-to-collection',
+      label: 'Add to collection…',
+      icon: <FolderPlus className="w-4 h-4" />,
+      action: () => { onClose(); onAddToCollection(doc); },
+      disabled: false,
+    }] : []),
+    ...(onRemoveFromCollection ? [{
+      id: 'remove-from-collection',
+      label: 'Remove from collection',
+      icon: <FolderMinus className="w-4 h-4" />,
+      action: () => { onClose(); onRemoveFromCollection(doc); },
+      disabled: false,
+    }] : []),
     ...(canPreview && onViewInRecall ? [{
       id: 'view-in-lattice',
       label: 'View in Lattice',
@@ -353,7 +373,7 @@ export function ContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[200px] rounded-md border border-border-subtle bg-surface-raised py-1 shadow-md"
+      className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[200px] overflow-y-auto rounded-md border border-border-subtle bg-surface-raised py-1 shadow-md"
       style={{
         left: position.x,
         top: position.y,

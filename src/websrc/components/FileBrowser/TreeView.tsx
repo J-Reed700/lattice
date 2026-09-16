@@ -1,5 +1,5 @@
 /**
- * Tree view — the corpus arranged by the folders it actually lives in.
+ * Tree view — user folders plus readable groups for managed imports and web pages.
  * Same hairline rows as the list; folders carry a chevron and a count.
  */
 
@@ -9,7 +9,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronDown, ChevronRight, Folder } from 'lucide-react';
 
 import { CorpusRow, ROW_HEIGHT } from './CorpusRow';
-import { isHttpUrl } from './docMeta';
+import { isWebDocument } from './docMeta';
 import { CorpusEmptyState, ErrorState, FilterEmptyState } from './EmptyStates';
 import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useFileBrowserStore } from '../../stores/fileBrowserStore';
@@ -26,7 +26,6 @@ interface TreeViewProps {
 
 const FOLDER_ROW_HEIGHT = 34;
 const INDENT_PX = 14;
-const WEB_FOLDER = 'Web';
 
 interface FolderNode {
   path: string;
@@ -49,11 +48,21 @@ const makeFolder = (path: string, name: string): FolderNode => ({
 });
 
 const directorySegments = (doc: DocumentMetadata): string[] => {
-  if (isHttpUrl(doc.filePath)) {
-    return [WEB_FOLDER];
-  }
   const segments = doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean);
   return segments.slice(0, -1);
+};
+
+const documentGroup = (doc: DocumentMetadata): { path: string; name: string } | null => {
+  // Virtual roots use keys that cannot collide with real filesystem folders.
+  if (isWebDocument(doc)) return { path: '\0web', name: 'Web' };
+
+  // ContentAddressedStorage keeps imports at .lattice/files/{sha256}/{filename}.
+  // Recognize that layout specifically; hash-named user folders are still folders.
+  const path = doc.filePath.replace(/\\/g, '/');
+  if (/(?:^|\/)\.lattice\/files\/[a-f0-9]{64}\/[^/]+$/i.test(path)) {
+    return { path: '\0imports', name: 'Imported files' };
+  }
+  return null;
 };
 
 /** Collapse chains of single-child folders so the tree starts where it branches. */
@@ -74,6 +83,15 @@ const buildTree = (documents: DocumentMetadata[]): FolderNode[] => {
   const roots = new Map<string, FolderNode>();
 
   for (const doc of documents) {
+    const group = documentGroup(doc);
+    if (group) {
+      const node = roots.get(group.path) ?? makeFolder(group.path, group.name);
+      node.docs.push(doc);
+      node.count += 1;
+      roots.set(group.path, node);
+      continue;
+    }
+
     const segments = directorySegments(doc);
     if (segments.length === 0) {
       const orphan = roots.get('') ?? makeFolder('', 'Ungrouped');

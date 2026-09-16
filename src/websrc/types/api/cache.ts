@@ -5,21 +5,9 @@
  * These types match the Rust backend structures from commands/cache.rs
  */
 
-export interface CacheStats {
-  size: number;
-  capacity: number;
-  hits: number;
-  misses: number;
-  total_time_saved_ms: number;
-  hit_rate: number;
-}
+export type CacheStats = import('../../lib/bindings').SearchCacheStats;
 
-export interface CacheMetrics {
-  hits: number;
-  misses: number;
-  total_time_saved_ms: number;
-  hit_rate: number;
-}
+export type CacheMetrics = import('../../lib/bindings').CacheMetrics;
 
 export interface LLMCacheStats {
   hits: number;

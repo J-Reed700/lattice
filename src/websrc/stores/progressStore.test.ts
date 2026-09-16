@@ -493,7 +493,6 @@ describe('progressStore', () => {
     it('store.clearAll() clears all operation timers and state', () => {
       const store = useProgressStore.getState();
 
-      // Create multiple operations
       const id1 = store.createOperation({ type: 'indexing', message: 'Test 1' });
       const id2 = store.createOperation({ type: 'upload', message: 'Test 2' });
 
@@ -509,7 +508,6 @@ describe('progressStore', () => {
         store.clearAll();
       });
 
-      // Verify all state is cleared
       expect(useProgressStore.getState().operations.size).toBe(0);
       expect(useProgressStore.getState().history).toHaveLength(0);
       expect(useProgressStore.getState().notifications).toHaveLength(0);
@@ -526,7 +524,6 @@ describe('progressStore', () => {
     it('store.clearNotifications() clears notification timers', () => {
       const store = useProgressStore.getState();
 
-      // Add notifications with auto-dismiss
       act(() => {
         store.addNotification({
           operationId: 'test-1',
@@ -605,7 +602,6 @@ describe('progressStore', () => {
       expect(finalState.operations.has(id1)).toBe(false);
       expect(finalState.operations.has(id2)).toBe(true);
 
-      // Verify timer for completed operation doesn't fire
       act(() => {
         vi.advanceTimersByTime(5 * 60 * 1000 + 1000);
       });

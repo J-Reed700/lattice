@@ -15,7 +15,7 @@ export interface CaptureChatReferenceInput {
   conversationId: string;
   conversationTitle?: string | null;
   messageId: string;
-  messageRole: 'user' | 'assistant' | 'system';
+  messageRole: string;
   messageContent: string;
   referenceTitle?: string | null;
   referenceNote?: string | null;

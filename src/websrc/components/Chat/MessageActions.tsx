@@ -5,7 +5,7 @@ import { Bookmark, Check, Copy, Cpu, GitBranch, Pencil, RefreshCw, Trash2 } from
 import { ModelPickerPopover } from './ModelPickerPopover';
 
 /**
- * The verbs on a message (BRIEF rank 4, contract §4.2).
+ * Actions available on a message.
  *
  * Which verbs appear depends on whose turn it is and whether it is the last
  * one — regenerating an answer in the middle of a thread would silently
@@ -13,7 +13,7 @@ import { ModelPickerPopover } from './ModelPickerPopover';
  */
 
 interface MessageActionsProps {
-  role: 'user' | 'assistant' | 'system';
+  role: string;
   /** True for the last turn of the conversation. */
   isLastTurn: boolean;
   canBookmark: boolean;

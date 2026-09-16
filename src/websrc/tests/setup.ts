@@ -4,7 +4,12 @@ import { afterEach, vi } from 'vitest';
 
 import * as apiMock from '../lib/__mocks__/api';
 
-// Mock the VaultAPI globally for all tests (support both relative and alias imports)
+// Node can expose its own experimental storage globals. Tests must use the
+// jsdom window's origin-scoped storage, just like the renderer does.
+const testWindow = (globalThis as typeof globalThis & { jsdom: { window: Window } }).jsdom.window;
+Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: testWindow.localStorage });
+Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: testWindow.sessionStorage });
+
 vi.mock('../lib/api', () => apiMock);
 vi.mock('@/lib/api', () => apiMock);
 
@@ -34,9 +39,6 @@ vi.mock('@tauri-apps/api/event', () => ({
   emit: vi.fn(() => Promise.resolve()),
 }));
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: mockIPC,
-}));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(() => Promise.resolve(null)),

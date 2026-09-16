@@ -1,4 +1,4 @@
-/** Comparison tables across documents. Contract: GROUND-RULES §4.10. */
+/** Comparison tables across documents. */
 export interface CompareCitationDto {
   chunkId: string;
   excerpt: string;

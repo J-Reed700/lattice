@@ -9,7 +9,7 @@ import type { DownloadedModel } from '../../types/downloadedModels';
 
 /**
  * The chat-model picker, used both by "Try with…" on an answer and by the
- * active-model label above the composer (BRIEF rank 4, UX "model at a glance").
+ * active-model label above the composer.
  *
  * `useDownloadedModels()` is the only source: there is no `list_ollama_models`
  * command, and an Ollama server already appears in `downloaded_models` as a

@@ -79,7 +79,7 @@ const toDownloadStatus = (
     created_at: identity.existing?.created_at ?? now,
     started_at: identity.existing?.started_at ?? null,
     completed_at: isTerminal ? (identity.existing?.completed_at ?? now) : null,
-    model_id: modelId,
+    model_id: modelId ?? null,
     model_name: modelName,
   };
 };
@@ -97,7 +97,7 @@ export function useDownloadsListener(): void {
       try {
         await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: fetchDownloadMap });
         const progressListener = await listenValidated(
-          TauriEventNames.Downloads.Progress,
+          TauriEventNames.Downloads.Event,
           EventSchemas.Downloads.StateSnapshot,
           (event: { payload: EventSchemas.Downloads.StateSnapshot }) => {
             if (!mounted) return;

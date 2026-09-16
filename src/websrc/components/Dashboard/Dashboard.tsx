@@ -1,9 +1,9 @@
-import { Bookmark, Combine, FileText, MessageSquare, NotebookPen } from 'lucide-react';
+import { ArrowRight, Bookmark, Combine, FileText, MessageSquare, NotebookPen, Plus, Search } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 import { weekPageTitle } from '@/components/Journal/synthesisTargets';
 import { describeWeekCandidates } from '@/components/Journal/SynthesizePopover';
-import { PageHeader, SectionHeading } from '@/components/ui';
+import { SectionHeading } from '@/components/ui';
 import {
   useCorpusShapeQuery,
   useDashboardQuery,
@@ -54,7 +54,7 @@ function writeDismissedWeek(value: string): void {
 }
 
 const rowClass =
-  'flex w-full items-start gap-3 border-b border-border-subtle px-2 py-3 text-left transition-colors duration-fast hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg';
+  'flex w-full items-start gap-3 border-b border-border-subtle px-2 py-3 text-left transition-colors duration-fast hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg';
 
 function EmptyRow({ children }: { children: string }) {
   return <p className="border-b border-border-subtle px-2 py-4 text-sm text-text-tertiary">{children}</p>;
@@ -127,16 +127,43 @@ export const Dashboard = () => {
 
   return (
     <main className="relative h-full overflow-y-auto bg-bg">
-      <div className="mx-auto w-full max-w-[760px] px-6 pt-10 pb-16">
-        <PageHeader title="Home" meta={formatTodayLabel()} />
+      <div className="mx-auto w-full max-w-[1080px] px-8 pt-12 pb-16 lg:px-14">
+        <header className="mb-10">
+          <div className="mb-5 flex items-center justify-between gap-4">
+            <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-accent">Your workspace</span>
+            <span className="text-xs text-text-tertiary">{formatTodayLabel()}</span>
+          </div>
+          <h1 className="font-serif text-[clamp(32px,4vw,48px)] font-medium leading-tight tracking-[-0.035em] text-text-primary">A little space to think.</h1>
+          <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Pick up a thread, explore your library, or begin with a blank page.</p>
+        </header>
+
+        <button type="button" onClick={() => navigate('/search')} className="group mb-6 flex w-full items-center gap-3 rounded-xl border border-border-default bg-surface px-5 py-4 text-left shadow-sm transition-colors hover:border-accent focus-visible:outline-accent">
+          <Search className="h-5 w-5 text-accent" strokeWidth={1.75} />
+          <span className="flex-1 text-sm text-text-tertiary">Find a document, an idea, a connection…</span>
+          <ArrowRight className="h-4 w-4 text-text-tertiary transition-transform group-hover:translate-x-1" />
+        </button>
+
+        <div className="mb-10 grid grid-cols-3 gap-3">
+          {[
+            { label: 'Write in your journal', detail: 'Make room for a thought', icon: NotebookPen, run: goToJournal },
+            { label: 'Start a conversation', detail: 'Explore something further', icon: MessageSquare, run: () => navigate('/chat?new=1') },
+            { label: 'Add to your library', detail: 'Files, folders, and links', icon: Plus, run: () => navigate('/ingest') },
+          ].map(({ label, detail, icon: Icon, run }) => (
+            <button key={label} type="button" onClick={run} className="group rounded-xl border border-border-subtle bg-surface p-4 text-left transition-colors hover:border-border-strong hover:bg-surface-raised">
+              <Icon className="mb-4 h-5 w-5 text-accent" strokeWidth={1.5} />
+              <span className="block text-sm font-medium text-text-primary">{label}</span>
+              <span className="mt-1 block text-xs leading-relaxed text-text-tertiary">{detail}</span>
+            </button>
+          ))}
+        </div>
 
         {/* Library readout */}
-        <section className="mb-12">
-          <div className="grid grid-cols-2 gap-x-12 gap-y-8 sm:grid-cols-4">
+        <section className="mb-10 rounded-xl border border-border-subtle px-5 py-5">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
             {tiles.map((tile) => (
               <div key={tile.label}>
                 <div className="text-xxs uppercase tracking-[0.04em] text-text-tertiary">{tile.label}</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums text-text-primary">{tile.value}</div>
+                <div className="mt-1 text-xl font-medium tabular-nums text-text-primary">{tile.value}</div>
               </div>
             ))}
           </div>
@@ -157,12 +184,13 @@ export const Dashboard = () => {
           ) : null}
         </section>
 
+        <div className="grid gap-x-10 lg:grid-cols-2">
         {/* Continue */}
         <section className="mb-12">
           <SectionHeading>Continue</SectionHeading>
           <div className="border-t border-border-subtle">
             {recentConversations.length === 0 ? (
-              <EmptyRow>No conversations yet.</EmptyRow>
+              <EmptyRow>Your conversations will appear here. Start one above to explore an idea.</EmptyRow>
             ) : (
               recentConversations.map((conv) => {
                 const preview = conv.lastMessagePreview?.trim() ?? '';
@@ -262,7 +290,7 @@ export const Dashboard = () => {
           <SectionHeading>Recently indexed</SectionHeading>
           <div className="border-t border-border-subtle">
             {recentDocuments.length === 0 ? (
-              <EmptyRow>Nothing indexed yet.</EmptyRow>
+              <EmptyRow>Add your first files to make your library searchable.</EmptyRow>
             ) : (
               recentDocuments.map((doc: RecentDocument, index: number) => (
                 <div
@@ -272,10 +300,10 @@ export const Dashboard = () => {
                   <FileText className="h-4 w-4 shrink-0 text-text-tertiary" strokeWidth={1.75} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-text-primary">
-                      {doc.fileName || doc.filePath || 'Untitled'}
+                      {doc.documentName || doc.documentPath || 'Untitled'}
                     </div>
                     <div className="text-xs text-text-muted">
-                      {formatRelativeTime(doc.modifiedAt || doc.indexedAt, '')}
+                      {formatRelativeTime(doc.lastAccessedAt, '')}
                       {doc.fileType ? ` · ${doc.fileType.toUpperCase()}` : ''}
                     </div>
                   </div>
@@ -284,6 +312,7 @@ export const Dashboard = () => {
             )}
           </div>
         </section>
+        </div>
       </div>
     </main>
   );

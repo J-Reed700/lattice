@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { Loader2 } from 'lucide-react';
 
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useFileContent } from '@/hooks/useFileContent';
 import VaultAPI from '@/lib/api';
 import { detectFileType } from '@/utils/fileTypeDetector';
@@ -67,14 +67,13 @@ export function ContentViewer({ filePath, onClose }: ContentViewerProps) {
         return;
       }
 
-      // Handle response
       if (result.data.action === 'render_internal') {
         // Show appropriate viewer inline (don't close dialog)
         setViewMode('internal');
         setOpenFileResponse({
           file_type: result.data.fileType,
           content_path: result.data.contentPath,
-          title: result.data.title,
+          title: result.data.title ?? undefined,
         });
       } else {
         // File opened externally, close viewer
@@ -159,7 +158,8 @@ export function ContentViewer({ filePath, onClose }: ContentViewerProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-5xl h-[85vh] p-0 gap-0 !flex !flex-col">
+      <DialogContent className="max-w-5xl h-[85vh] p-0 gap-0 !flex !flex-col" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">{fileName}</DialogTitle>
         <ViewerHeader fileName={fileName} />
         <div className="flex-1 overflow-hidden">
           {renderContent()}

@@ -33,7 +33,6 @@ export function ReferenceAnnotationStrip({
   const [titleState, setTitleState] = useState<FieldState>('idle');
   const [noteState, setNoteState] = useState<FieldState>('idle');
 
-  // Reset drafts when switching references or when server values change.
   useEffect(() => {
     setTitleDraft(title ?? '');
     setNoteDraft(note ?? '');

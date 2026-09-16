@@ -28,6 +28,8 @@ interface ModelRowProps {
   hasHfToken?: boolean;
   /** Sends the user to the token field on this page. */
   onAddToken?: () => void;
+  /** Category previews keep repository details in the full model view. */
+  compact?: boolean;
 }
 
 export function ModelRow({
@@ -40,6 +42,7 @@ export function ModelRow({
   capabilities,
   hasHfToken = false,
   onAddToken,
+  compact = false,
 }: ModelRowProps) {
   const { model: metadata } = model;
   const fit = computeModelFit(metadata, capabilities);
@@ -108,8 +111,8 @@ export function ModelRow({
           'focus-visible:ring-2 focus-visible:ring-ring',
         )}
       >
-        <div className="truncate text-sm font-medium text-text-primary">{metadata.name}</div>
-        <div className="truncate font-mono text-xs text-text-muted">{repoId}</div>
+        <div title={metadata.name} className={cn('text-sm font-medium text-text-primary', compact ? 'line-clamp-2' : 'truncate')}>{metadata.name}</div>
+        {!compact ? <div className="truncate font-mono text-xs text-text-muted">{repoId}</div> : null}
         <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
           {fit ? (
             <>

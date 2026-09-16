@@ -14,24 +14,7 @@ export interface StartDownloadRequest {
   model_id?: string;
 }
 
-export interface DownloadStatus {
-  id: string;
-  url: string;
-  destination: string;
-  state: DownloadState;
-  bytes_downloaded: number;
-  total_bytes: number | null;
-  bytes_per_second: number;
-  percentage: number | null;
-  eta_seconds: number | null;
-  error_message: string | null;
-  retry_count: number;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  model_name?: string;
-  model_id?: string;
-}
+export type DownloadStatus = Omit<import('../lib/bindings').DownloadStatusResponse, 'state'> & { state: DownloadState };
 
 export interface DownloadEvent {
   type: 'started' | 'progress' | 'paused' | 'resumed' | 'completed' | 'failed' | 'cancelled';

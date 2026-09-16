@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+import type { FileIndexingOptionsDto } from '@/lib/bindings';
+
 import { VaultAPI } from '../lib/api';
+import { listAllBatchJobs } from '../utils/batchHistory';
 
 import type { ApiResult, BatchJobItem, BatchJobStatus } from '../types';
 
@@ -8,6 +11,8 @@ interface IndexingOperation {
   id: string;
   totalFiles: number;
   processedFiles: number;
+  successfulFiles: number;
+  failedFiles: number;
   currentFile?: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   error?: string;
@@ -17,12 +22,14 @@ interface IndexingOperation {
 interface UseIndexingReturn {
   operations: Map<string, IndexingOperation>;
   isIndexing: boolean;
-  startBatchImport: (filePaths: string[]) => Promise<ApiResult<string>>;
+  historyError?: string;
+  startBatchImport: (filePaths: string[], spaceId?: string, indexing?: FileIndexingOptionsDto) => Promise<ApiResult<string>>;
   getOperation: (id: string) => IndexingOperation | undefined;
   clearOperation: (id: string) => void;
 }
 
 export function useIndexing(): UseIndexingReturn {
+  const [historyError, setHistoryError] = useState<string>();
   const [operations, setOperations] = useState<Map<string, IndexingOperation>>(new Map());
   const operationsRef = useRef<Map<string, IndexingOperation>>(operations);
 
@@ -37,18 +44,39 @@ export function useIndexing(): UseIndexingReturn {
     []
   );
 
-  // Single event listener for all indexing operations
+  // Poll all active operations without overlapping status requests.
   useEffect(() => {
     let mounted = true;
+    let polling = false;
+
+    // Reattach to imports after navigation or an app restart.
+    void listAllBatchJobs().then((jobs) => {
+      if (!mounted) return;
+      setHistoryError(undefined);
+      updateOperations((prev) => {
+        const next = new Map(prev);
+        for (const job of jobs) {
+          if (job.jobType !== 'file_import' || (!['pending', 'running'].includes(job.status) && job.failedItems === 0)) continue;
+          const id = job.jobId || job.id;
+          if (next.has(id)) continue;
+          next.set(id, {
+            id, totalFiles: job.totalItems,
+            successfulFiles: job.completedItems, failedFiles: job.failedItems,
+            processedFiles: job.completedItems + job.failedItems, status: 'processing',
+          });
+        }
+        return next;
+      });
+    }).catch((error: unknown) => {
+      if (mounted) setHistoryError(error instanceof Error ? error.message : 'Import status is unavailable');
+    });
 
     const poll = async () => {
+      if (polling) return;
+      polling = true;
       const activeOperations = Array.from(operationsRef.current.values()).filter(
         (op) => op.status === 'pending' || op.status === 'processing'
       );
-
-      if (activeOperations.length === 0) {
-        return;
-      }
 
       for (const operation of activeOperations) {
         try {
@@ -63,8 +91,7 @@ export function useIndexing(): UseIndexingReturn {
 
               next.set(operation.id, {
                 ...existing,
-                status: 'error',
-                error: result.error,
+                error: `Could not refresh import status: ${result.error}. Checking again…`,
               });
               return next;
             });
@@ -79,15 +106,20 @@ export function useIndexing(): UseIndexingReturn {
             const failedItems = result.data.failedItems ?? result.data.failed_items ?? 0;
             const totalItems = result.data.totalItems ?? result.data.total_items ?? 0;
             const processedFiles = completedItems + failedItems;
+            const currentItem = result.data.items?.find((item) =>
+              ['running', 'processing'].includes(item.status.toLowerCase())
+            );
 
             next.set(operation.id, {
               id: operation.id,
               totalFiles: totalItems,
               processedFiles,
+              successfulFiles: completedItems,
+              failedFiles: failedItems,
               status,
-              error: existing?.error,
+              error: undefined,
               items: result.data.items || existing?.items,
-              currentFile: existing?.currentFile,
+              currentFile: currentItem?.target || currentItem?.url,
             });
             return next;
           });
@@ -104,13 +136,13 @@ export function useIndexing(): UseIndexingReturn {
 
             next.set(operation.id, {
               ...existing,
-              status: 'error',
-              error: errorMessage,
+              error: `Could not refresh import status: ${errorMessage}. Checking again…`,
             });
             return next;
           });
         }
       }
+      polling = false;
     };
 
     const interval = setInterval(() => {
@@ -125,17 +157,18 @@ export function useIndexing(): UseIndexingReturn {
     };
   }, [updateOperations]);
 
-  const startBatchImport = useCallback(async (filePaths: string[]): Promise<ApiResult<string>> => {
-    const result = await VaultAPI.batchFileImport(filePaths);
+  const startBatchImport = useCallback(async (filePaths: string[], spaceId?: string, indexing?: FileIndexingOptionsDto): Promise<ApiResult<string>> => {
+    const result = await VaultAPI.batchFileImport(filePaths, spaceId, indexing);
 
     if (result.ok && result.data) {
-      // Create pending operation
       updateOperations((prev) => {
         const next = new Map(prev);
         next.set(result.data, {
           id: result.data,
           totalFiles: filePaths.length,
           processedFiles: 0,
+          successfulFiles: 0,
+          failedFiles: 0,
           status: 'pending',
         });
         return next;
@@ -165,6 +198,7 @@ export function useIndexing(): UseIndexingReturn {
   return {
     operations,
     isIndexing,
+    historyError,
     startBatchImport,
     getOperation,
     clearOperation,
@@ -182,7 +216,7 @@ function mapBatchStatus(status: BatchJobStatus): IndexingOperation['status'] {
       return 'processing';
     case 'completed':
     case 'success':
-      return 'completed';
+      return (status.failedItems ?? status.failed_items ?? 0) > 0 ? 'error' : 'completed';
     case 'failed':
     case 'error':
     case 'cancelled':

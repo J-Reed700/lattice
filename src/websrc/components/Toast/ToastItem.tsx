@@ -38,7 +38,6 @@ export const ToastItem: React.FC<ToastItemProps> = ({
   const startTimeRef = useRef<number>(Date.now());
   const remainingTimeRef = useRef<number>(toast.duration || 0);
 
-  // Get type-specific styling
   const getTypeStyles = () => {
     switch (toast.type) {
       case 'success':
@@ -74,7 +73,6 @@ export const ToastItem: React.FC<ToastItemProps> = ({
 
   const styles = getTypeStyles();
 
-  // Handle dismiss with exit animation
   const handleDismiss = () => {
     setIsExiting(true);
     setTimeout(() => {
@@ -82,7 +80,6 @@ export const ToastItem: React.FC<ToastItemProps> = ({
     }, 300); // Match animation duration
   };
 
-  // Handle action click
   const handleAction = () => {
     if (toast.action) {
       toast.action.onClick();

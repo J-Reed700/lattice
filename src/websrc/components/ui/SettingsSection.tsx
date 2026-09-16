@@ -7,7 +7,6 @@ import { cn } from '@/lib/utils';
  *
  * The two primitives every Settings pane is built from. No cards, no
  * backgrounds, no icons. Hairlines separate rows. See
- * `.design/UX-OVERHAUL-BRIEF.md` §3.
  */
 
 interface SettingsSectionProps {

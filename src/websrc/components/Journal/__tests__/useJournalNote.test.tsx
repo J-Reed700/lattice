@@ -155,4 +155,37 @@ describe('useJournalNote pages', () => {
 
     expect(result.current.pages.map((page) => page.id)).toContain('note_capture');
   });
+  it('keeps newer typing while a slow save is pending and saves it next', async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.isLoadingNote).toBe(false));
+    let finish!: (value: unknown) => void;
+    updateWorkspaceNote.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    act(() => result.current.updateNote((current) => ({ ...current, content: 'first draft' })));
+    let saving!: Promise<boolean>;
+    act(() => { saving = result.current.saveNow(); });
+    await waitFor(() => expect(updateWorkspaceNote).toHaveBeenCalledTimes(1));
+    act(() => result.current.updateNote((current) => ({ ...current, content: 'newer typing' })));
+    await act(async () => {
+      finish({ ok: true, data: note({ content: 'first draft' }) });
+      await saving;
+    });
+    expect(result.current.activeNote?.content).toBe('newer typing');
+    expect(updateWorkspaceNote).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'newer typing' }));
+    expect(result.current.hasPendingChanges).toBe(false);
+  });
+
+  it('keeps the current draft when saving fails during page navigation or creation', async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.isLoadingNote).toBe(false));
+    updateWorkspaceNote.mockResolvedValue({ ok: false, error: 'Disk is full' });
+    act(() => result.current.updateNote((current) => ({ ...current, content: 'unsaved work' })));
+    await act(async () => { await result.current.selectPage('note_week'); });
+    expect(result.current.activeNote?.content).toBe('unsaved work');
+    expect(result.current.saveError).toBe('Disk is full');
+    expect(result.current.hasPendingChanges).toBe(true);
+    await act(async () => { expect(await result.current.createPage('New page')).toBeNull(); });
+    expect(createWorkspaceNote).not.toHaveBeenCalled();
+    expect(result.current.activeNote?.content).toBe('unsaved work');
+  });
+
 });

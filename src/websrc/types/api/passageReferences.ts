@@ -1,8 +1,8 @@
 /**
- * Passage references — saved excerpts from documents (contract §4.3).
+ * Passage references are saved excerpts from documents.
  *
  * The backend slice (`features/references`) and the ReferenceInbox belong to
- * Track C; Track A creates references from the reading surface and reads the
+ * The reading surface creates references and reads the
  * list to mark citations that came from them. Imported directly rather than
  * through the `types` barrel so both tracks can declare it without colliding.
  */

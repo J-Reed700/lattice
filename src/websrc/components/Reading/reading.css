@@ -1,5 +1,5 @@
 /*
- * Passage highlighting for the reading surface (BRIEF rank 1).
+ * Passage highlighting for the reading surface.
  *
  * No animation: a highlight that fades in draws the eye to the motion rather
  * than the sentence (AESTHETIC-GUIDE §6). No new tokens either — the accent
@@ -18,6 +18,7 @@
 }
 
 .lattice-pdf-mark {
-  background-color: hsl(var(--accent-muted));
+  background-color: rgb(255 196 0 / 40%);
+  color: transparent;
   border-radius: 2px;
 }

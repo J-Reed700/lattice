@@ -74,24 +74,6 @@ export interface SourceConnection {
   updatedAt: string;
 }
 
-// Legacy FileNode for backward compatibility with FileIcon
-export interface FileNode {
-  id: string;
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  size: number;
-  modified: string;
-  created?: string;
-  extension?: string;
-  mimeType?: string;
-  isIndexed: boolean;
-  children?: FileNode[];
-  isExpanded?: boolean;
-  depth?: number;
-  parentPath?: string;
-}
-
 export interface FileBrowserState {
   // View configuration
   viewMode: ViewMode;
@@ -293,18 +275,7 @@ export function formatFileDate(dateString: string): string {
   }
 }
 
-// Get file extension
 export function getFileExtension(filename: string): string {
   const parts = filename.split('.');
   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
-}
-
-// Get file icon name
-export function getFileIconName(file: FileNode): string {
-  if (file.type === 'directory') {
-    return file.isExpanded ? FILE_TYPE_ICONS['folder-open'] : FILE_TYPE_ICONS['folder'];
-  }
-
-  const ext = file.extension || getFileExtension(file.name);
-  return FILE_TYPE_ICONS[ext] || FILE_TYPE_ICONS['default'];
 }

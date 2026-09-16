@@ -13,7 +13,7 @@ import { formatSourceLocation } from '../Reading/passageLocator';
  * Purpose: Inline superscript citation marker (e.g. [1], [2]) that opens
  * a click-to-pin popover showing source metadata and a preview.
  *
- * Follows CHAT-REDESIGN-SPEC §3.4 — click-to-pin (not hover tooltip),
+ * Click to pin the citation rather than showing it in a hover tooltip;
  * accent marker, serif-first editorial styling.
  */
 

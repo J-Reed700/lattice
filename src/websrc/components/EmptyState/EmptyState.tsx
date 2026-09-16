@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
  *
  * One sentence, optionally one action. No icon parade, no accent circle.
  * `icon` is accepted for backwards compatibility and rendered small and
- * muted; prefer omitting it. See `.design/UX-OVERHAUL-BRIEF.md` §4.
+ * muted; prefer omitting it.
  */
 export interface EmptyStateProps {
   icon?: ReactNode;

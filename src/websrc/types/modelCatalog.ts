@@ -5,9 +5,6 @@
  * compatibility scoring, and catalog search.
  */
 
-// ============================================================================
-// Enumerations (re-exported from leaf file to avoid cycle with api/models.ts)
-// ============================================================================
 
 import type {
   ModelCategory,
@@ -27,9 +24,6 @@ export type {
   ModelSortBy,
 } from './modelCatalogPrimitives';
 
-// ============================================================================
-// Value Objects
-// ============================================================================
 
 /**
  * System hardware capabilities detected from the user's machine.
@@ -160,9 +154,6 @@ export interface ModelRecommendation {
   popularity_likes?: number | null;
 }
 
-// ============================================================================
-// Search Filters
-// ============================================================================
 
 /**
  * Search filters for model catalog queries.
@@ -188,9 +179,6 @@ export interface SearchFilters {
   embedding_dimensions: number | null;
 }
 
-// ============================================================================
-// Search Results
-// ============================================================================
 
 /**
  * Model search result with relevance score.
@@ -210,9 +198,6 @@ export interface ModelSearchResult {
   popularity_likes?: number | null;
 }
 
-// ============================================================================
-// Cache Statistics
-// ============================================================================
 
 /**
  * Cache statistics for model catalog.
@@ -228,9 +213,6 @@ export interface CacheStats {
   expired_entries: number;
 }
 
-// ============================================================================
-// Request/Response DTOs
-// ============================================================================
 
 /**
  * Request to search external model catalogs.

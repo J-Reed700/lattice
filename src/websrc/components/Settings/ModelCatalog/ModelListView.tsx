@@ -11,6 +11,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { CATALOG_TEXT_BUTTON_CLASS } from './catalogUtils';
+import { ModelCatalogResults } from './ModelCatalogResults';
 import { ModelRow } from './ModelRow';
 import { startModelDownload } from './startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '../../../hooks/queries/useHuggingFaceTokenQuery';
@@ -20,9 +21,10 @@ import { useModelCatalog } from '../../../hooks/useModelCatalog';
 import { useToastStore } from '../../../stores/toastStore';
 import { Skeleton } from '../../ui/Skeleton/Skeleton';
 
+import type { CatalogResultsNavigation } from './ModelCatalogResults';
 import type { ModelRecommendation } from '../../../types/modelCatalog';
 
-interface ModelListViewProps {
+interface ModelListViewProps extends CatalogResultsNavigation {
   models: ModelRecommendation[];
   loading: boolean;
   error?: string | null;
@@ -45,6 +47,10 @@ export function ModelListView({
   onResetFilters,
   onRetry,
   onAddToken,
+  overview,
+  page,
+  onPageChange,
+  onBrowseCategory,
 }: ModelListViewProps) {
   const { downloadedModels } = useDownloadedModels();
   const { getActiveDownloadForModel } = useDownloadState();
@@ -130,11 +136,17 @@ export function ModelListView({
   }
 
   return (
-    <div className="border-t border-border-subtle">
-      {models.map((model) => (
+    <ModelCatalogResults
+      models={models}
+      overview={overview}
+      page={page}
+      onPageChange={onPageChange}
+      onBrowseCategory={onBrowseCategory}
+      renderModel={(model) => (
         <ModelRow
           key={model.model.id}
           model={model}
+          compact={overview}
           onSelect={() => onModelSelect(model)}
           isDownloaded={downloadedIds.has(model.model.id)}
           activeDownload={getActiveDownloadForModel(model.model.id)}
@@ -144,7 +156,7 @@ export function ModelListView({
           hasHfToken={tokenStatus?.isSet ?? false}
           onAddToken={onAddToken}
         />
-      ))}
-    </div>
+      )}
+    />
   );
 }

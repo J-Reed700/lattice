@@ -7,80 +7,17 @@
 /**
  * Web content ingestion response
  */
-export interface WebIngestResponse {
-  /** Unique document ID */
-  documentId: string;
-  /** Final URL (after redirects) */
-  url: string;
-  /** Document title */
-  title: string;
-  /** Word count */
-  wordCount: number;
-  /** Number of chunks created */
-  chunks: number;
-  /** Site name (if available) */
-  siteName?: string;
-  /** Author (if available) */
-  author?: string;
-  /** Estimated reading time in minutes */
-  readingTimeMinutes?: number;
-}
+export type WebIngestResponse = import('../../lib/bindings').WebIngestResponse;
 
 /**
  * URL preview metadata
  */
-export interface UrlPreview {
-  /** Page URL */
-  url: string;
-  /** Page title */
-  title: string;
-  /** Page description */
-  description?: string;
-  /** Preview image URL */
-  image?: string;
-  /** Site name */
-  siteName?: string;
-  /** Author name */
-  author?: string;
-  /** Publication timestamp (camelCase from backend) */
-  publishedDate?: string;
-  /** Legacy alias (avoid using in new code) */
-  publishedTime?: string;
-  /** Word count */
-  wordCount: number;
-  /** Estimated reading time in minutes */
-  readingTimeMinutes: number;
-  /** Language code (e.g., "en") */
-  language?: string;
-  /** Content type (e.g., "article") */
-  contentType?: string;
-  /** Extracted keywords */
-  keywords?: string[];
-}
+export type UrlPreview = import('../../lib/bindings').UrlPreview;
 
 /**
  * Extracted article content
  */
-export interface CleanArticle {
-  /** Article title */
-  title: string;
-  /** Clean HTML content */
-  content: string;
-  /** Plain text content */
-  textContent: string;
-  /** Article summary/excerpt */
-  excerpt?: string;
-  /** Author name */
-  author?: string;
-  /** Word count */
-  wordCount: number;
-  /** Estimated reading time in minutes */
-  readingTimeMinutes: number;
-  /** Publication timestamp (camelCase from backend) */
-  publishedDate?: string;
-  /** Legacy alias (avoid using in new code) */
-  publishedTime?: string;
-}
+export type CleanArticle = import('../../lib/bindings').CleanArticle;
 
 /**
  * Download status information

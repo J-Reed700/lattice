@@ -58,6 +58,8 @@ export interface ConfirmDialogProps {
 
   /** Disable confirm button */
   confirmDisabled?: boolean;
+  /** Allow stopping a multi-step operation while its current step finishes. */
+  allowCancelWhileLoading?: boolean;
 }
 
 export function ConfirmDialog({
@@ -72,9 +74,12 @@ export function ConfirmDialog({
   requireConfirmation,
   details,
   confirmDisabled = false,
+  allowCancelWhileLoading = false,
 }: ConfirmDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const pendingRef = useRef(false);
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -84,6 +89,7 @@ export function ConfirmDialog({
       // Focus cancel button by default (safer)
       cancelButtonRef.current?.focus();
       setConfirmText(''); // Reset confirmation text
+      setError(null);
     }
   }, [isOpen]);
 
@@ -99,7 +105,7 @@ export function ConfirmDialog({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCancel();
+        if (!pendingRef.current || allowCancelWhileLoading) onCancel();
       } else if (e.key === 'Enter' && e.metaKey) {
         // Cmd/Ctrl+Enter to confirm
         e.preventDefault();
@@ -112,17 +118,21 @@ export function ConfirmDialog({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, onCancel, confirmText, requireConfirmation, confirmDisabled, isLoading]);
+  }, [isOpen, onCancel, confirmText, requireConfirmation, confirmDisabled, isLoading, allowCancelWhileLoading]);
 
   const handleConfirm = async () => {
+    if (pendingRef.current || confirmDisabled || (requireConfirmation && confirmText !== requireConfirmation)) return;
+    pendingRef.current = true;
+    setError(null);
     setIsLoading(true);
     try {
       await onConfirm();
       onCancel(); // Close dialog after successful confirmation
     } catch (err) {
       console.error('Error during confirmation:', err);
-      // Keep dialog open on error
+      setError(err instanceof Error ? err.message : 'The operation failed. Please try again.');
     } finally {
+      pendingRef.current = false;
       setIsLoading(false);
     }
   };
@@ -145,7 +155,7 @@ export function ConfirmDialog({
     <>
       <div
         className="fixed inset-0 z-50 bg-overlay animate-in fade-in duration-fast"
-        onClick={onCancel}
+        onClick={() => { if (!pendingRef.current || allowCancelWhileLoading) onCancel(); }}
         aria-hidden="true"
       />
 
@@ -163,6 +173,7 @@ export function ConfirmDialog({
           <p id="confirm-dialog-description" className="mt-2 text-sm text-text-secondary">
             {message}
           </p>
+          {error && <p role="alert" className="mt-2 text-sm text-danger">{error}</p>}
           {details && <p className="mt-1 text-xs text-text-muted">{details}</p>}
 
           {requireConfirmation && (
@@ -188,7 +199,7 @@ export function ConfirmDialog({
               ref={cancelButtonRef}
               type="button"
               onClick={onCancel}
-              disabled={isLoading}
+              disabled={isLoading && !allowCancelWhileLoading}
               className="inline-flex h-8 items-center rounded-md px-3 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               {cancelLabel}

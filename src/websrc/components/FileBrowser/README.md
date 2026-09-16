@@ -5,9 +5,6 @@ is styled as content, not as a file manager: one page header, one toolbar row, a
 rail of the things the corpus is organised by, and the documents themselves as
 hairline rows.
 
-See `.design/UX-OVERHAUL-BRIEF.md` §2 (page anatomy) and §4 (voice), and
-`.design/PRODUCT-THESIS.md` §5–§7 for why this screen is Tier 1.
-
 ## Anatomy
 
 ```
@@ -15,6 +12,7 @@ FileBrowser              shell: PageHeader + toolbar + rail + main + dialogs
 ├── LibraryToolbar       search · source tabs · sort · group-by-date · rail toggle
 ├── LibraryRail          Folders / Collections / Saved searches / Sources
 ├── SelectionBar         shown only while ≥1 document is selected
+├── CollectionDialogs    add selected files, choose collection members, rename
 ├── ListView             flat hairline rows (virtualized)
 ├── TreeView             the same rows, arranged by folder (virtualized)
 ├── GridView             hairline tiles (virtualized)
@@ -28,6 +26,17 @@ FileBrowser              shell: PageHeader + toolbar + rail + main + dialogs
 `docMeta.ts` holds the shared document predicates and the meta-line formatter
 (`9,800 words · 1h ago · PDF`). `hooks/useCorpusIdentity.ts` produces the corpus
 readout — one muted line of type counts under the scope heading.
+
+## Organizing documents
+
+- Select documents to **Add to collection**, choosing an existing collection or
+  creating one with that selection. Documents can belong to multiple collections.
+- Use **Add documents** inside a collection to search and select Library documents.
+  New empty collections open this picker immediately.
+- Collection rows show document counts and an actions menu for rename and delete.
+- **Remove from collection** changes membership only. Deleting a collection also
+  leaves its documents in the Library. Snapshots keep their captured membership.
+- Each document has a visible actions menu in list, tree, and grid views.
 
 ## State
 

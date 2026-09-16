@@ -57,7 +57,6 @@ export default function Dialog({
   const [isAnimating, setIsAnimating] = useState(false);
   const [shouldRender, setShouldRender] = useState(open);
 
-  // Handle mount/unmount animations
   useEffect(() => {
     if (open) {
       setShouldRender(true);

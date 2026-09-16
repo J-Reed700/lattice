@@ -15,7 +15,7 @@ vi.mock('../../IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: 
 
 // The rail renders `null` under the mock above (and on a real idle vault), so
 // this list is still the complete set of buttons Layout puts in the nav.
-const NAV_LABELS = ['Home', 'Search', 'Library', 'Journal', 'Chat', 'References', 'Import', 'Settings'];
+const NAV_LABELS = ['Home', 'Search', 'Library', 'Journal', 'Chat', 'References', 'Study', 'Import', 'Settings'];
 
 describe('Layout', () => {
   let user: ReturnType<typeof userEvent.setup>;

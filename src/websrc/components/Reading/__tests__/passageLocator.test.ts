@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   approximateScrollRatio,
+  locatorFromSource,
   buildNeedles,
   forgetAllLocations,
   formatSourceLocation,
@@ -139,4 +140,18 @@ describe('rememberLocation / recallLocation', () => {
     expect(recallLocation('')).toBeUndefined();
     expect(recallLocation('chunk-2')).toBeUndefined();
   });
+});
+
+it('labels stored physical PDF pages distinctly from printed page labels', () => {
+  expect(formatSourceLocation({ section: '706.07', chunkId: 'c', pageNumber: 42 })).toBe('PDF p. 42');
+});
+
+// A query-centred preview must never replace the evidence passage sent to the model.
+it('locates the full cited passage instead of the search snippet', () => {
+  const source = {
+    chunkId: 'passage-2', content: 'A complete passage explaining the patent filing requirements.',
+    excerpt: '…patent…', highlights: ['patent'],
+    chunkExcerpts: [{ chunkId: 'passage-2', excerpt: '…patent…' }],
+  } as Parameters<typeof locatorFromSource>[0];
+  expect(locatorFromSource(source, 'passage-2').text).toBe(source.content);
 });

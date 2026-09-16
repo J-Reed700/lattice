@@ -6,6 +6,7 @@
  * as hairline rows. No cards, no badges, no explanatory copy.
  */
 
+
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -13,6 +14,8 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { EyeOff, LayoutGrid, Layers, List, ListTree, MessageSquare, PanelRight, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
+import { AddToCollectionDialog, CollectionDocumentsDialog, RenameCollectionDialog } from './CollectionDialogs';
+import { ContentSearchCache } from './contentSearchCache';
 import { ContextMenu } from './ContextMenu';
 import { isHttpUrl, isWebDocument, pathBasename, typeBucket } from './docMeta';
 import { GridView } from './GridView';
@@ -38,14 +41,15 @@ import {
 } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useRegisterPaletteCommands } from '../../hooks/useRegisterPaletteCommands';
 import VaultAPI from '../../lib/api';
-import { useFileBrowserStore } from '../../stores/fileBrowserStore';
+import { filterLibraryDocuments, useFileBrowserStore } from '../../stores/fileBrowserStore';
 import { toast } from '../../stores/toastStore';
 import { type ConversationSpaceDto } from '../../types';
-import { type DocumentMetadata, type SortField, type SortOrder } from '../../types/fileBrowser';
+import { type CustomCollection, type DocumentMetadata, type SortField, type SortOrder } from '../../types/fileBrowser';
 import { isSupportedFileType } from '../../utils/fileTypeDetector';
 import { handleAsyncEvent } from '../../utils/promiseHandlers';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { ContentViewer } from '../ContentViewer';
+import { EmptyState } from '../EmptyState/EmptyState';
 import { NeighborhoodPanel } from '../Neighborhood';
 import { IconButton } from '../ui/IconButton';
 import { PageHeader } from '../ui/PageHeader';
@@ -111,6 +115,9 @@ export function FileBrowser() {
   const setScope = useFileBrowserStore(state => state.setScope);
   const customCollections = useFileBrowserStore(state => state.customCollections);
   const createCustomCollection = useFileBrowserStore(state => state.createCustomCollection);
+  const addDocumentsToCollection = useFileBrowserStore(state => state.addDocumentsToCustomCollection);
+  const removeDocumentsFromCollection = useFileBrowserStore(state => state.removeDocumentsFromCustomCollection);
+  const deleteCollection = useFileBrowserStore(state => state.deleteCustomCollection);
   const createSnapshotCollection = useFileBrowserStore(state => state.createSnapshotCollection);
   const sourceConnections = useFileBrowserStore(state => state.sourceConnections);
   const searchQuery = useFileBrowserStore(state => state.searchQuery);
@@ -152,12 +159,17 @@ export function FileBrowser() {
   const [savedSearchNameDialogValue, setSavedSearchNameDialogValue] = useState('');
   const [savedSearchNameDialogTargetId, setSavedSearchNameDialogTargetId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const bulkDeleteCancelled = useRef(false);
+  const [deleteProgress, setDeleteProgress] = useState(0);
   const [spaces, setSpaces] = useState<ConversationSpaceDto[]>([]);
   const [isLoadingSpaces, setIsLoadingSpaces] = useState(false);
   const [isAssigningSpace, setIsAssigningSpace] = useState(false);
+  const [collectionSelection, setCollectionSelection] = useState<string[] | null>(null);
+  const [addDocumentsCollectionId, setAddDocumentsCollectionId] = useState<string | null>(null);
+  const [renameCollection, setRenameCollection] = useState<CustomCollection | null>(null);
+  const [pendingDeleteCollection, setPendingDeleteCollection] = useState<CustomCollection | null>(null);
 
-  const contentCacheRef = useRef<Map<string, string>>(new Map());
-  const contentReadFailuresRef = useRef<Set<string>>(new Set());
+  const contentCacheRef = useRef(new ContentSearchCache());
   const contentSearchSequenceRef = useRef(0);
 
   const navigate = useNavigate();
@@ -195,17 +207,7 @@ export function FileBrowser() {
   useEffect(() => {
     const currentIds = new Set(documents.map(doc => doc.id));
 
-    for (const id of contentCacheRef.current.keys()) {
-      if (!currentIds.has(id)) {
-        contentCacheRef.current.delete(id);
-      }
-    }
-
-    for (const id of contentReadFailuresRef.current) {
-      if (!currentIds.has(id)) {
-        contentReadFailuresRef.current.delete(id);
-      }
-    }
+    contentCacheRef.current.retain(currentIds);
   }, [documents]);
 
   const indexedFolders = useMemo(() => indexedFoldersQuery.data ?? [], [indexedFoldersQuery.data]);
@@ -231,6 +233,21 @@ export function FileBrowser() {
     () => new Map(documents.map((doc) => [doc.id, doc])),
     [documents]
   );
+  const activeCollection = scope.kind === 'collection'
+    ? customCollections.find(collection => collection.id === scope.id) ?? null
+    : null;
+  const addDocumentsCollection = customCollections.find(collection => collection.id === addDocumentsCollectionId);
+  const collectionCounts = useMemo(() => new Map(customCollections.map(collection => [
+    collection.id,
+    filterLibraryDocuments(documents, {
+      searchQuery: '', filterByType: null, filterBySource: 'all', contentSearchMatches: new Set(),
+      customCollections, scope: { kind: 'collection', id: collection.id },
+    }).length,
+  ])), [customCollections, documents]);
+
+  useEffect(() => {
+    if (scope.kind === 'collection' && !activeCollection) setScope({ kind: 'all' });
+  }, [activeCollection, scope, setScope]);
   const focusedDoc = useMemo(
     () => (focusedDocumentId ? documentsById.get(focusedDocumentId) ?? null : null),
     [documentsById, focusedDocumentId]
@@ -314,23 +331,19 @@ export function FileBrowser() {
 
           const batch = documentsToCheck.slice(start, start + batchSize);
           const batchResults = await Promise.all(batch.map(async (doc) => {
-            const cachedContent = contentCacheRef.current.get(doc.id);
+            const version = JSON.stringify([doc.filePath, doc.modifiedAt, doc.indexedAt]);
+            const cachedContent = contentCacheRef.current.get(doc.id, version);
             if (typeof cachedContent === 'string') {
               return cachedContent.includes(normalizedSearchQuery) ? doc.id : null;
             }
 
-            if (contentReadFailuresRef.current.has(doc.id)) {
-              return null;
-            }
-
             const result = await VaultAPI.readFileContent(doc.filePath);
             if (!result.ok) {
-              contentReadFailuresRef.current.add(doc.id);
               return null;
             }
 
             const normalizedContent = result.data.toLowerCase();
-            contentCacheRef.current.set(doc.id, normalizedContent);
+            contentCacheRef.current.set(doc.id, version, normalizedContent);
 
             return normalizedContent.includes(normalizedSearchQuery) ? doc.id : null;
           }));
@@ -563,7 +576,11 @@ export function FileBrowser() {
   const handleContextMenu = useCallback(
     (event: React.MouseEvent, doc: DocumentMetadata) => {
       event.preventDefault();
-      openContextMenu({ x: event.clientX, y: event.clientY }, doc);
+      const rect = event.currentTarget.getBoundingClientRect();
+      openContextMenu({
+        x: event.clientX || rect.left,
+        y: event.clientY || rect.bottom,
+      }, doc);
     },
     [openContextMenu]
   );
@@ -582,8 +599,21 @@ export function FileBrowser() {
       toast.warning('Collection not created', { message: 'That name is already in use.' });
       return;
     }
+    const ids = Array.from(selectedDocumentIds);
+    if (ids.length > 0) addDocumentsToCollection(collectionId, ids);
+    else setAddDocumentsCollectionId(collectionId);
+    setSearchQuery('');
+    setFilterByType(null);
+    setFilterBySource('all');
     setScope({ kind: 'collection', id: collectionId });
-  }, [createCustomCollection, setScope]);
+  }, [addDocumentsToCollection, createCustomCollection, selectedDocumentIds, setFilterBySource, setFilterByType, setScope, setSearchQuery]);
+
+  const handleRemoveFromCollection = useCallback((ids: string[]) => {
+    if (activeCollection?.kind !== 'manual') return;
+    removeDocumentsFromCollection(activeCollection.id, ids);
+    clearSelection();
+    toast.success(`Removed from ${activeCollection.name}`, { message: 'Documents are still in your Library.' });
+  }, [activeCollection, clearSelection, removeDocumentsFromCollection]);
 
   const handleSnapshotSelection = useCallback(() => {
     const docIds = Array.from(selectedDocumentIds);
@@ -675,51 +705,65 @@ export function FileBrowser() {
     }
 
     setIsAssigningSpace(true);
-    const result = await VaultAPI.setDocumentsSpaceMembership(selectedIds, spaceId, true);
-    if (result.ok) {
-      const spaceName = spaces.find((space) => space.id === spaceId)?.name ?? 'space';
-      toast.success(`${plural(selectedIds.length, 'document')} added to ${spaceName}`);
-      clearSelection();
-    } else {
-      toast.error('Failed to add documents to space', { message: result.error });
+    try {
+      const result = await VaultAPI.setDocumentsSpaceMembership(selectedIds, spaceId, true);
+      if (result.ok) {
+        const spaceName = spaces.find((space) => space.id === spaceId)?.name ?? 'space';
+        toast.success(`${plural(selectedIds.length, 'document')} added to ${spaceName}`);
+        clearSelection();
+      } else {
+        toast.error('Failed to add documents to space', { message: result.error });
+      }
+    } catch (error) {
+      toast.error('Failed to add documents to space', { message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsAssigningSpace(false);
     }
-    setIsAssigningSpace(false);
   }, [clearSelection, selectedDocumentIds, spaces]);
 
   const executeBulkDelete = useCallback(async () => {
-    if (!pendingBulkDelete) return;
+    if (!pendingBulkDelete || isDeleting) return;
 
+    bulkDeleteCancelled.current = false;
+    setDeleteProgress(0);
     setIsDeleting(true);
 
     let successCount = 0;
     let errorCount = 0;
     const errors: string[] = [];
 
-    for (const docId of pendingBulkDelete.ids) {
-      const result = await VaultAPI.deleteDocument(docId);
-      if (result.ok) {
-        successCount++;
-      } else {
-        errorCount++;
-        errors.push(result.error || 'Unknown error');
+    try {
+      for (const docId of pendingBulkDelete.ids) {
+        if (bulkDeleteCancelled.current) break;
+        const result = await VaultAPI.deleteDocument(docId);
+        if (result.ok) {
+          successCount++;
+        } else {
+          errorCount++;
+          errors.push(result.error || 'Unknown error');
+        }
+        setDeleteProgress(successCount + errorCount);
       }
-    }
 
-    if (successCount > 0) {
-      toast.success(`${plural(successCount, 'document')} deleted`);
-      clearSelection();
-      await refreshFiles();
-    }
+      if (successCount > 0) {
+        toast.success(`${plural(successCount, 'document')} deleted`);
+        clearSelection();
+      }
 
-    if (errorCount > 0) {
-      toast.error(`Failed to delete ${plural(errorCount, 'document')}`, {
-        message: errors.slice(0, 3).join(', ') + (errors.length > 3 ? '…' : ''),
-      });
-    }
+      if (errorCount > 0) {
+        toast.error(`Failed to delete ${plural(errorCount, 'document')}`, {
+          message: errors.slice(0, 3).join(', ') + (errors.length > 3 ? '…' : ''),
+        });
+      }
 
-    setIsDeleting(false);
-    setPendingBulkDelete(null);
-  }, [pendingBulkDelete, clearSelection, refreshFiles]);
+    } catch (error) {
+      toast.error('Deletion stopped', { message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsDeleting(false);
+      setPendingBulkDelete(null);
+      void refreshFiles();
+    }
+  }, [pendingBulkDelete, isDeleting, clearSelection, refreshFiles]);
 
   const handleRename = useCallback((doc: DocumentMetadata) => {
     setRenameDocument(doc);
@@ -737,15 +781,15 @@ export function FileBrowser() {
     if (!pendingDeleteDoc) return;
 
     setIsDeleting(true);
-    const result = await VaultAPI.deleteDocument(pendingDeleteDoc.id);
-    if (result.ok) {
+    try {
+      const result = await VaultAPI.deleteDocument(pendingDeleteDoc.id);
+      if (!result.ok) throw new Error(result.error || 'Failed to delete document');
       toast.success('Document deleted');
       await refreshFiles();
-    } else {
-      toast.error('Failed to delete document', { message: result.error });
+      setPendingDeleteDoc(null);
+    } finally {
+      setIsDeleting(false);
     }
-    setIsDeleting(false);
-    setPendingDeleteDoc(null);
   }, [pendingDeleteDoc, refreshFiles]);
 
   const viewProps = {
@@ -827,6 +871,9 @@ export function FileBrowser() {
               onScopeChange={setScope}
               collections={customCollections}
               onCreateCollection={handleCreateCollection}
+              onRenameCollection={setRenameCollection}
+              onDeleteCollection={setPendingDeleteCollection}
+              collectionCounts={collectionCounts}
               savedSearches={savedSearches}
               activeSavedSearchId={activeSavedSearchId}
               onApplySavedSearch={applySavedSearch}
@@ -845,11 +892,14 @@ export function FileBrowser() {
           ) : null}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-baseline gap-2">
-              <h2 className="pb-3 text-lg font-medium text-text-secondary">{scopeName}</h2>
+            <div className="flex items-baseline gap-2 pb-3">
+              <h2 className="min-w-0 truncate text-lg font-medium text-text-secondary">{scopeName}</h2>
               <span className="text-sm tabular-nums text-text-muted">
                 {filteredDocuments.length.toLocaleString()}
               </span>
+              {activeCollection?.kind === 'manual' ? (
+                <button type="button" onClick={() => setAddDocumentsCollectionId(activeCollection.id)} className="ml-auto shrink-0 rounded-sm border border-border-default px-3 py-1.5 text-sm text-text-primary hover:bg-surface">Add documents</button>
+              ) : null}
             </div>
             <TypeFacets
               buckets={identity.buckets}
@@ -864,6 +914,9 @@ export function FileBrowser() {
                 isLoadingSpaces={isLoadingSpaces}
                 isAssigningSpace={isAssigningSpace}
                 onAssignToSpace={handleAsyncEvent(handleBulkAssignToSpace)}
+                onAddToCollection={() => setCollectionSelection(Array.from(selectedDocumentIds))}
+                onRemoveFromCollection={activeCollection?.kind === 'manual' && activeCollection.documentIds.some(id => selectedDocumentIds.has(id))
+                  ? () => handleRemoveFromCollection(Array.from(selectedDocumentIds)) : undefined}
                 onSnapshot={handleSnapshotSelection}
                 onDelete={() =>
                   setPendingBulkDelete({
@@ -877,6 +930,13 @@ export function FileBrowser() {
             ) : null}
 
             <div className="min-h-0 flex-1">
+              {activeCollection && collectionCounts.get(activeCollection.id) === 0 ? (
+                <EmptyState
+                  title="This collection is empty."
+                  description={activeCollection.kind === 'manual' ? 'Add documents from your Library to get started.' : 'The documents in this snapshot are no longer in your Library.'}
+                  action={activeCollection.kind === 'manual' ? { label: 'Choose documents', onClick: () => setAddDocumentsCollectionId(activeCollection.id) } : undefined}
+                />
+              ) : <>
               {viewMode === 'tree' && <TreeView {...viewProps} />}
               {viewMode === 'list' && <ListView {...viewProps} />}
               {viewMode === 'grid' && (
@@ -886,6 +946,7 @@ export function FileBrowser() {
                   onAddFolder={viewProps.onAddFolder}
                 />
               )}
+              </>}
             </div>
           </div>
 
@@ -913,6 +974,9 @@ export function FileBrowser() {
           onRename={handleRename}
           onDelete={handleAsyncEvent(handleDelete)}
           onIndexChanged={invalidateLibrary}
+          onAddToCollection={doc => setCollectionSelection([doc.id])}
+          onRemoveFromCollection={activeCollection?.kind === 'manual' && activeCollection.documentIds.includes(contextMenuDocument.id)
+            ? doc => handleRemoveFromCollection([doc.id]) : undefined}
         />
       )}
 
@@ -935,6 +999,19 @@ export function FileBrowser() {
 
       <ContentViewer filePath={viewerFilePath} onClose={() => setViewerFilePath(null)} />
 
+      {collectionSelection ? <AddToCollectionDialog documentIds={collectionSelection} onClose={() => setCollectionSelection(null)} /> : null}
+      {addDocumentsCollection ? <CollectionDocumentsDialog collection={addDocumentsCollection} documents={documents} onClose={() => setAddDocumentsCollectionId(null)} /> : null}
+      {renameCollection ? <RenameCollectionDialog collection={renameCollection} onClose={() => setRenameCollection(null)} /> : null}
+      <ConfirmDialog
+        isOpen={pendingDeleteCollection !== null}
+        title="Delete collection?"
+        message={`Delete “${pendingDeleteCollection?.name ?? ''}” and any collections inside it? Your documents will remain in the Library.`}
+        confirmLabel="Delete collection"
+        variant="danger"
+        onConfirm={() => { if (pendingDeleteCollection) deleteCollection(pendingDeleteCollection.id); }}
+        onCancel={() => setPendingDeleteCollection(null)}
+      />
+
       <ConfirmDialog
         isOpen={pendingDeleteDoc !== null}
         title="Delete document?"
@@ -950,13 +1027,19 @@ export function FileBrowser() {
       <ConfirmDialog
         isOpen={pendingBulkDelete !== null}
         title="Delete documents?"
-        message={`Delete ${plural(pendingBulkDelete?.count ?? 0, 'document')}? They and their embeddings are removed from the index.`}
+        message={isDeleting
+          ? `Processed ${deleteProgress} of ${pendingBulkDelete?.count ?? 0} documents. Cancel stops after the current document finishes.`
+          : `Delete ${plural(pendingBulkDelete?.count ?? 0, 'document')}? They and their embeddings are removed from the index.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
         confirmDisabled={isDeleting}
         onConfirm={executeBulkDelete}
-        onCancel={() => setPendingBulkDelete(null)}
+        allowCancelWhileLoading
+        onCancel={() => {
+          bulkDeleteCancelled.current = true;
+          setPendingBulkDelete(null);
+        }}
       />
     </main>
   );

@@ -5,7 +5,6 @@ import { toast, useToastStore } from './toastStore';
 
 describe('toastStore - Zustand Implementation', () => {
   beforeEach(() => {
-    // Reset store state
     useToastStore.setState({
       toasts: [],
       config: {
@@ -352,7 +351,6 @@ describe('toastStore - Zustand Implementation', () => {
 
   describe('memory leak prevention', () => {
     it('dismissAll() clears all auto-dismiss timers', () => {
-      // Add multiple toasts with auto-dismiss
       useToastStore.getState().addToast({
         type: 'info',
         title: 'Toast 1',
@@ -413,7 +411,6 @@ describe('toastStore - Zustand Implementation', () => {
     });
 
     it('clears timers for oldest toasts when exceeding maxToasts limit', () => {
-      // Add toasts up to the limit
       for (let i = 0; i < 5; i++) {
         useToastStore.getState().addToast({
           type: 'info',
@@ -424,7 +421,6 @@ describe('toastStore - Zustand Implementation', () => {
 
       expect(useToastStore.getState().toasts).toHaveLength(5);
 
-      // Add one more toast, which should remove the oldest
       useToastStore.getState().addToast({
         type: 'info',
         title: 'Toast 5',
@@ -444,7 +440,6 @@ describe('toastStore - Zustand Implementation', () => {
     });
 
     it('handles multiple timer-based operations without leaks', () => {
-      // Add, dismiss, and add again to test timer cleanup
       const id1 = useToastStore.getState().addToast({
         type: 'info',
         title: 'First',

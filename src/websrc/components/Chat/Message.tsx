@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 
 import {
   AlertCircle,
@@ -66,6 +66,7 @@ export function Message({
     () => new Map()
   );
   const [isEditing, setIsEditing] = useState(false);
+  const verificationPanelId = useId();
   const [isVerificationPanelExpanded, setIsVerificationPanelExpanded] = useState(false);
   const [showAllVerifiedClaims, setShowAllVerifiedClaims] = useState(false);
   const [showAllUnverifiedClaims, setShowAllUnverifiedClaims] = useState(false);
@@ -148,8 +149,36 @@ export function Message({
 
   const claimsEvaluated = verificationSummary?.claimsEvaluated ?? 0;
   const supportedClaims = verificationSummary?.supportedClaimNotes ?? [];
-  const unsupportedClaims = verificationSummary?.unsupportedClaims ?? [];
+  // Memoized because the `?? []` fallback is a fresh array on every render,
+  // which would re-run every hook that reads it.
+  const unsupportedClaims = useMemo(
+    () => verificationSummary?.unsupportedClaims ?? [],
+    [verificationSummary]
+  );
   const unsupportedCount = unsupportedClaims.length;
+  // "Contradicted" is a stronger claim than "unsupported": a passage the model
+  // actually read says otherwise. The backend reports contradictions inside
+  // `unsupportedClaims` too, so they are subtracted here rather than counted
+  // twice. Absent on messages verified before the judge existed, which is why
+  // this reads as an empty list and never as "none were contradicted".
+  const contradictedClaims = useMemo(
+    () => verificationSummary?.contradictedClaims ?? [],
+    [verificationSummary]
+  );
+  const contradictedCount = contradictedClaims.length;
+  const unverifiedClaims = useMemo(() => {
+    if (contradictedCount === 0) return unsupportedClaims;
+    const contradicted = new Set(contradictedClaims);
+    return unsupportedClaims.filter((claim) => !contradicted.has(claim));
+  }, [contradictedClaims, contradictedCount, unsupportedClaims]);
+  /** The passage the judge read, keyed by the claim it ruled on. */
+  const evidenceByClaim = useMemo(() => {
+    const quotes = new Map<string, string>();
+    for (const verdict of verificationSummary?.claimVerdicts ?? []) {
+      if (verdict.evidenceQuote) quotes.set(verdict.sentence, verdict.evidenceQuote);
+    }
+    return quotes;
+  }, [verificationSummary]);
   const canExpandVerification =
     verificationSummary?.enabled === true && claimsEvaluated > 0;
 
@@ -157,8 +186,8 @@ export function Message({
     ? supportedClaims
     : supportedClaims.slice(0, 5);
   const visibleUnverifiedClaims = showAllUnverifiedClaims
-    ? unsupportedClaims
-    : unsupportedClaims.slice(0, 5);
+    ? unverifiedClaims
+    : unverifiedClaims.slice(0, 5);
 
   const verificationBadge = useMemo(() => {
     if (isUser || !verificationSummary) return null;
@@ -186,13 +215,24 @@ export function Message({
           'border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]',
       };
     }
+    // A contradiction outranks a merely ungrounded claim: the sources were read
+    // and they disagree. Folding it into "Partially verified" would report the
+    // worse finding as the milder one.
+    if (contradictedCount > 0) {
+      return {
+        label: `Contradicted · ${contradictedCount}`,
+        icon: ShieldAlert,
+        className:
+          'border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))] text-[hsl(var(--danger-fg))]',
+      };
+    }
     return {
       label: `Partially verified · ${unsupportedCount}`,
       icon: ShieldAlert,
       className:
         'border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] text-[hsl(var(--warning-fg))]',
     };
-  }, [claimsEvaluated, isUser, verificationSummary, unsupportedCount]);
+  }, [claimsEvaluated, isUser, verificationSummary, unsupportedCount, contradictedCount]);
 
   const normalizedMarkdownContent = useMemo(
     () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
@@ -398,11 +438,12 @@ export function Message({
                   canExpandVerification ? 'cursor-pointer' : 'cursor-default'
                 }`}
                 aria-expanded={canExpandVerification ? isVerificationPanelExpanded : undefined}
+                aria-controls={canExpandVerification ? verificationPanelId : undefined}
                 title={
                   !verificationSummary?.enabled
                     ? 'Verification is off. Turn on in settings.'
                     : canExpandVerification
-                      ? 'Show verification details'
+                      ? (isVerificationPanelExpanded ? 'Hide verification details' : 'Show verification details')
                       : 'Nothing in this message to verify.'
                 }
               >
@@ -426,6 +467,101 @@ export function Message({
             {timestamp}
           </time>
         </header>
+
+        {/* Verification details panel */}
+        {!isUser && verificationSummary && verificationSummary.enabled && claimsEvaluated > 0 && isVerificationPanelExpanded && (
+          <div id={verificationPanelId} role="region" aria-label="Verification details" className="mb-4 rounded-sm border border-subtle bg-surface p-4">
+            <p className="mb-1 text-sm font-medium text-text-primary">Verification details</p>
+            <p className="text-xs text-[hsl(var(--text-muted))]">
+              {verificationSummaryLine(claimsEvaluated, unsupportedCount)}
+            </p>
+
+            <div className="mt-3 grid gap-4 lg:grid-cols-2">
+              {contradictedClaims.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-medium text-[hsl(var(--danger-fg))]">
+                    Contradicted by your sources
+                  </p>
+                  <ul className="space-y-2">
+                    {contradictedClaims.map((claim, idx) => (
+                      <li
+                        key={`contradicted-${idx}`}
+                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
+                      >
+                        {claim}
+                        {/* The passage the judge read. Without it the verdict is
+                            an assertion; with it the reader can check. */}
+                        {evidenceByClaim.get(claim) && (
+                          <span className="mt-1 block border-l-2 border-[hsl(var(--danger-muted))] pl-2 text-xs italic text-[hsl(var(--text-muted))]">
+                            &ldquo;{evidenceByClaim.get(claim)}&rdquo;
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {supportedClaims.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
+                    Verified claims
+                  </p>
+                  <ul className="space-y-2">
+                    {visibleVerifiedClaims.map((claim, idx) => (
+                      <li
+                        key={`verified-${idx}`}
+                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
+                      >
+                        {claim}
+                      </li>
+                    ))}
+                  </ul>
+                  {supportedClaims.length > 5 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllVerifiedClaims((prev) => !prev)}
+                      className="mt-2 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+                    >
+                      {showAllVerifiedClaims
+                        ? 'Show fewer'
+                        : `Show all ${supportedClaims.length}`}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {unverifiedClaims.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
+                    Unverified claims
+                  </p>
+                  <ul className="space-y-2">
+                    {visibleUnverifiedClaims.map((claim, idx) => (
+                      <li
+                        key={`unsupported-${idx}`}
+                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
+                      >
+                        {claim}
+                      </li>
+                    ))}
+                  </ul>
+                  {unverifiedClaims.length > 5 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllUnverifiedClaims((prev) => !prev)}
+                      className="mt-2 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+                    >
+                      {showAllUnverifiedClaims
+                        ? 'Show fewer'
+                        : `Show all ${unverifiedClaims.length}`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <RetrievalTrace trace={retrievalTrace} />
 
@@ -459,75 +595,6 @@ export function Message({
         )}
 
         {citationFootnotes}
-
-        {/* Verification details panel */}
-        {!isUser && verificationSummary && verificationSummary.enabled && claimsEvaluated > 0 && isVerificationPanelExpanded && (
-          <div className="mt-4 border-t border-subtle pt-4">
-            <p className="text-xs text-[hsl(var(--text-muted))]">
-              {verificationSummaryLine(claimsEvaluated, unsupportedCount)}
-            </p>
-
-            <div className="mt-3 grid gap-4 lg:grid-cols-2">
-              {supportedClaims.length > 0 && (
-                <div>
-                  <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
-                    Verified claims
-                  </p>
-                  <ul className="space-y-2">
-                    {visibleVerifiedClaims.map((claim, idx) => (
-                      <li
-                        key={`verified-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
-                        {claim}
-                      </li>
-                    ))}
-                  </ul>
-                  {supportedClaims.length > 5 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllVerifiedClaims((prev) => !prev)}
-                      className="mt-2 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-                    >
-                      {showAllVerifiedClaims
-                        ? 'Show fewer'
-                        : `Show all ${supportedClaims.length}`}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {unsupportedClaims.length > 0 && (
-                <div>
-                  <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
-                    Unverified claims
-                  </p>
-                  <ul className="space-y-2">
-                    {visibleUnverifiedClaims.map((claim, idx) => (
-                      <li
-                        key={`unsupported-${idx}`}
-                        className="text-sm leading-relaxed text-[hsl(var(--text-secondary))]"
-                      >
-                        {claim}
-                      </li>
-                    ))}
-                  </ul>
-                  {unsupportedClaims.length > 5 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllUnverifiedClaims((prev) => !prev)}
-                      className="mt-2 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-                    >
-                      {showAllUnverifiedClaims
-                        ? 'Show fewer'
-                        : `Show all ${unsupportedClaims.length}`}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Source citations (assistant-only) */}
         {isAssistantWithSources && (
@@ -567,6 +634,7 @@ export function Message({
       </article>
 
       <FilePreviewModal
+        presentation="reading-pane"
         isOpen={previewIndex !== null && previewSource !== null}
         onClose={() => setPreviewIndex(null)}
         source={previewSource}

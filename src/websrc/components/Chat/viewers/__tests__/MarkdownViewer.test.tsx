@@ -62,7 +62,6 @@ describe('MarkdownViewer', () => {
     // Link should either be removed or have href sanitized
     if (link) {
       const href = link.getAttribute('href');
-      // Should not have javascript: URL (null is also acceptable)
       expect(!href?.includes('javascript:')).toBe(true);
     }
   });
@@ -106,7 +105,6 @@ describe('MarkdownViewer', () => {
 
   it('should strip multiple XSS attempts in single document', () => {
     const malicious = `
-# Test Document
 
 <script>alert("XSS1")</script>
 
@@ -134,7 +132,6 @@ More content
     const links = container.querySelectorAll('a');
     links.forEach(link => {
       const href = link.getAttribute('href');
-      // Should not have javascript: URL (null is also acceptable)
       expect(!href?.includes('javascript:')).toBe(true);
     });
   });

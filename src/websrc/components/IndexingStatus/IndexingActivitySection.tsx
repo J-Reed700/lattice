@@ -1,5 +1,7 @@
 import { formatDistanceToNow } from 'date-fns';
 
+import { FailedItemsList } from './FailedItemsList';
+import { formatFailureLine, formatIndexingLine } from './formatIndexingStatus';
 import {
   useIndexingActivitiesQuery,
   useIndexingControlMutation,
@@ -7,8 +9,6 @@ import {
 } from '../../hooks/queries/useIndexingStatusQuery';
 import { SECONDARY_BUTTON_CLASS } from '../Settings/settingsStyles';
 import { SettingsSection } from '../ui';
-import { FailedItemsList } from './FailedItemsList';
-import { formatFailureLine, formatIndexingLine } from './formatIndexingStatus';
 
 function relativeTime(iso: string): string {
   const date = new Date(iso);
@@ -96,8 +96,8 @@ export function IndexingActivitySection() {
             key={activity.id}
             className="flex items-center justify-between gap-4 border-b border-border-subtle py-2.5"
           >
-            <span className="truncate text-sm text-text-primary" title={activity.file_path}>
-              {fileName(activity.file_path)}
+            <span className="truncate text-sm text-text-primary" title={activity.filePath}>
+              {fileName(activity.filePath)}
             </span>
             <span className="shrink-0 text-xs tabular-nums text-text-muted">
               {relativeTime(activity.timestamp)}

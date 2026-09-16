@@ -11,6 +11,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 // Enhanced API Result types
 import { parseApiError } from './errorHandling';
 
+import type * as Wire from './bindings';
 import type {
   SearchOptions,
   SearchResult,
@@ -35,7 +36,6 @@ import type {
   WorkspaceNote,
   ListWorkspaceNotesResponse,
   Tag,
-  TagWithCount,
   FavoriteDocument,
   // Tag Request/Response types
   ListTagsResponse,
@@ -44,7 +44,6 @@ import type {
   DocumentTagsResponse,
   QAResponse,
   LLMHealthStatus,
-  CacheStats,
   CacheMetrics,
   HealthStatus,
   SystemStats,
@@ -60,7 +59,6 @@ import type {
   OpenFileResponseDto,
   // Conversation types (Wave 2B)
   Conversation,
-  ConversationMessage,
   ToolPreferences,
   GetConversationMessagesResponse,
   CreateConversationResponse,
@@ -104,24 +102,25 @@ import type {
   // Batch and credentials types (Wave 3)
   BatchJobSummary,
   BatchJobStatus,
-  CancelBatchJobResponse,
-  DeleteBatchJobResponse,
   HfTokenStatus,
   IndexingSnapshot,
-  IndexingFailure,
   BackupInfo,
   CreateBackupResult,
   RestoreBackupResult,
   ExportSummary,
+  // Off-device backup (encrypted archive)
+  ArchiveStatus,
+  ArchiveSetup,
+  ArchiveRun,
+  RestoreArchiveResult,
+  WordConfirmation,
   VersionInfo,
-  ListBatchJobsResponse,
-  RetryFailedItemsResponse,
   // Model management types (Wave 4B)
   SystemCapabilities,
   ModelSearchResult,
   ModelRecommendation,
   ModelCatalogCacheStats,
-  // Corpus shape types (Track B)
+  // Corpus shape types
   CorpusShapeDto,
   CitingConversationDto,
   SimilarDocumentDto,
@@ -273,13 +272,20 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
 
-  // References domain (passage references, contract §4.3)
+  // Passage references
   create_passage_reference: { domain: 'references', command: 'create_passage_reference' },
   list_passage_references: { domain: 'references', command: 'list_passage_references' },
   update_passage_reference: { domain: 'references', command: 'update_passage_reference' },
   delete_passage_reference: { domain: 'references', command: 'delete_passage_reference' },
 
   // Compare domain
+  list_study_decks: { domain: 'study', command: 'list_study_decks' },
+  get_study_deck: { domain: 'study', command: 'get_study_deck' },
+  generate_study_deck: { domain: 'study', command: 'generate_study_deck' },
+  generate_conversation_study_deck: { domain: 'study', command: 'generate_conversation_study_deck' },
+  review_study_card: { domain: 'study', command: 'review_study_card' },
+  update_study_card: { domain: 'study', command: 'update_study_card' },
+  delete_study_deck: { domain: 'study', command: 'delete_study_deck' },
   compare_documents: { domain: 'compare', command: 'compare_documents' },
 
   // Credentials domain
@@ -289,13 +295,13 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   delete_huggingface_token: { domain: 'huggingface', command: 'delete_huggingface_token' },
 
   // Batch operations domain
-  list_batch_jobs: { domain: 'batch', command: 'list_batch_jobs' },
+  get_batch_history: { domain: 'batch', command: 'get_batch_history' },
   delete_batch_job: { domain: 'batch', command: 'delete_batch_job' },
   retry_failed_items: { domain: 'batch', command: 'retry_failed_items' },
-  get_batch_job_status: { domain: 'batch', command: 'get_batch_job_status' },
-  cancel_batch_job: { domain: 'batch', command: 'cancel_batch_job' },
-  start_batch_file_import: { domain: 'batch', command: 'start_batch_file_import' },
-  start_batch_url_import: { domain: 'batch', command: 'start_batch_url_import' },
+  get_batch_status: { domain: 'batch', command: 'get_batch_status' },
+  cancel_batch: { domain: 'batch', command: 'cancel_batch' },
+  batch_import_files: { domain: 'batch', command: 'batch_import_files' },
+  batch_import_urls: { domain: 'batch', command: 'batch_import_urls' },
 
   // Download management domain
   start_model_download: { domain: 'download', command: 'start_model_download' },
@@ -344,7 +350,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   generate_embedding: { domain: 'embeddings', command: 'generate_embedding' },
   generate_embeddings_batch: { domain: 'embeddings', command: 'generate_embeddings_batch' },
   get_embedding_model_info: { domain: 'embeddings', command: 'get_embedding_model_info' },
-  initialize_models: { domain: 'embeddings', command: 'initialize_models' },
   parse_wikilinks: { domain: 'extraction', command: 'parse_wikilinks' },
   extract_document_title: { domain: 'extraction', command: 'extract_document_title' },
   resolve_wikilink: { domain: 'extraction', command: 'resolve_wikilink' },
@@ -358,6 +363,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   get_system_theme: { domain: 'settings', command: 'get_system_theme' },
   validate_folder_path: { domain: 'settings', command: 'validate_folder_path' },
   test_ollama_connection: { domain: 'settings', command: 'test_ollama_connection' },
+  test_llama_cpp_connection: { domain: 'settings', command: 'test_llama_cpp_connection' },
   test_custom_tool: { domain: 'settings', command: 'test_custom_tool' },
   get_today_note: { domain: 'dailynotes', command: 'get_today_note' },
   quick_capture: { domain: 'dailynotes', command: 'quick_capture' },
@@ -382,11 +388,11 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   get_version_info: { domain: 'updates', command: 'get_version_info' },
   rescan_vault: { domain: 'vault', command: 'rescan_vault' },
 
-  // Transcription (Track E)
+  // Transcription
   transcribe_file: { domain: 'transcription', command: 'transcribe_file' },
   get_transcription_status: { domain: 'transcription', command: 'get_transcription_status' },
 
-  // Corpus shape (Track B)
+  // Corpus shape
   get_corpus_shape: { domain: 'file', command: 'get_corpus_shape' },
   list_conversations_citing_document: { domain: 'file', command: 'list_conversations_citing_document' },
   find_similar_documents: { domain: 'search', command: 'find_similar_documents' },
@@ -402,6 +408,18 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   plugin_export_json: { domain: 'backup', command: 'plugin_export_json' },
   plugin_export_csv: { domain: 'backup', command: 'plugin_export_csv' },
   plugin_export_html: { domain: 'backup', command: 'plugin_export_html' },
+
+  // Off-device backup (encrypted archive) domain
+  plugin_get_archive_status: { domain: 'backup', command: 'plugin_get_archive_status' },
+  plugin_begin_archive_setup: { domain: 'backup', command: 'plugin_begin_archive_setup' },
+  plugin_confirm_archive_setup: { domain: 'backup', command: 'plugin_confirm_archive_setup' },
+  plugin_choose_archive_destination: { domain: 'backup', command: 'plugin_choose_archive_destination' },
+  plugin_set_archive_keep_count: { domain: 'backup', command: 'plugin_set_archive_keep_count' },
+  plugin_set_archive_passphrase: { domain: 'backup', command: 'plugin_set_archive_passphrase' },
+  plugin_rotate_recovery_code: { domain: 'backup', command: 'plugin_rotate_recovery_code' },
+  plugin_disable_archive: { domain: 'backup', command: 'plugin_disable_archive' },
+  plugin_create_archive_now: { domain: 'backup', command: 'plugin_create_archive_now' },
+  plugin_restore_archive: { domain: 'backup', command: 'plugin_restore_archive' },
 };
 
 /**
@@ -449,24 +467,21 @@ async function invokeCommandWithFallback<T>(
 }
 
 async function apiCall<T>(command: string, args?: Record<string, unknown>): Promise<ApiResult<T>> {
-  try {
-    // Check if command should be routed through plugin system
-    const pluginRoute = COMMAND_DOMAIN_MAP[command];
+  const pluginRoute = COMMAND_DOMAIN_MAP[command];
+  if (!pluginRoute) {
+    // A missing route is a programming error, not a backend failure: every
+    // command must be declared in COMMAND_DOMAIN_MAP so `contracts:check` can
+    // verify it against the generated bindings.
+    throw new Error(`[API] Command '${command}' has no COMMAND_DOMAIN_MAP entry`);
+  }
 
-    let data: T;
-    if (pluginRoute) {
-      const rawResult = await invokeCommandWithFallback<T>(
-        command,
-        args,
-        pluginRoute.domain,
-        pluginRoute.command
-      );
-      data = rawResult;
-    } else {
-      // Legacy direct command (for unmapped commands)
-      console.warn(`[API] Command '${command}' not in domain map, using legacy invoke`);
-      data = await invoke<T>(command, args);
-    }
+  try {
+    const data = await invokeCommandWithFallback<T>(
+      command,
+      args,
+      pluginRoute.domain,
+      pluginRoute.command
+    );
 
     return { ok: true, data };
   } catch (error) {
@@ -479,6 +494,15 @@ async function apiCall<T>(command: string, args?: Record<string, unknown>): Prom
   }
 }
 
+function normalizeDownloadStatus(raw: Wire.DownloadStatusResponse): DownloadStatus {
+  switch (raw.state) {
+    case 'Pending': case 'Downloading': case 'Paused': case 'Completed': case 'Failed': case 'Cancelled':
+      return { ...raw, state: raw.state };
+    default:
+      throw new Error(`Unknown download state: ${raw.state}`);
+  }
+}
+
 function computeBatchProgress(totalItems: number, completedItems: number, failedItems: number): number {
   if (totalItems <= 0) {
     return 0;
@@ -487,54 +511,24 @@ function computeBatchProgress(totalItems: number, completedItems: number, failed
   return Math.min(100, Math.max(0, (processed / totalItems) * 100));
 }
 
-function normalizeBatchSummary(raw: BatchJobSummary): BatchJobSummary {
-  const jobId = raw.jobId || raw.id || (raw as { job_id?: string }).job_id || '';
-  const totalItems =
-    raw.totalItems ?? (raw as { total_items?: number }).total_items ?? 0;
-  const completedItems =
-    raw.completedItems ?? (raw as { completed_items?: number }).completed_items ?? 0;
-  const failedItems =
-    raw.failedItems ?? (raw as { failed_items?: number }).failed_items ?? 0;
-  const progress =
-    raw.progress ?? computeBatchProgress(totalItems, completedItems, failedItems);
-
+function normalizeBatchSummary(raw: Wire.BatchJobSummaryDto): BatchJobSummary {
   return {
     ...raw,
-    jobId,
-    id: jobId,
-    totalItems,
-    completedItems,
-    failedItems,
-    progress,
+    id: raw.jobId,
+    progress: computeBatchProgress(raw.totalItems, raw.completedItems, raw.failedItems),
   };
 }
 
-function normalizeBatchStatus(raw: BatchJobStatus): BatchJobStatus {
-  const jobId = raw.jobId || raw.id || (raw as { job_id?: string }).job_id || '';
-  const totalItems =
-    raw.totalItems ?? raw.total_items ?? 0;
-  const completedItems =
-    raw.completedItems ?? raw.completed_items ?? 0;
-  const failedItems =
-    raw.failedItems ?? raw.failed_items ?? 0;
-  const progress =
-    raw.progress ?? computeBatchProgress(totalItems, completedItems, failedItems);
-
+function normalizeBatchStatus(raw: Wire.BatchJobStatusDto): BatchJobStatus {
   return {
     ...raw,
-    jobId,
-    id: jobId,
-    totalItems,
-    completedItems,
-    failedItems,
-    progress,
-    items: (raw.items || []).map((item) => ({
-      ...item,
-      itemId: item.itemId || item.id || (item as { item_id?: string }).item_id || '',
-      target: item.target || item.url || (item as { target?: string }).target || '',
-      id: item.itemId || item.id,
-      url: item.target || item.url,
-    })),
+    id: raw.jobId,
+    total_items: raw.totalItems,
+    completed_items: raw.completedItems,
+    failed_items: raw.failedItems,
+    progress: computeBatchProgress(raw.totalItems, raw.completedItems, raw.failedItems),
+    completedAt: raw.completedAt ?? null,
+    items: raw.items.map(item => ({ ...item, id: item.itemId, url: item.target })),
   };
 }
 
@@ -579,14 +573,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeSearchResult(raw: unknown): SearchResult | null {
-  if (!isRecord(raw)) {
+  if (!isRecord(raw) || typeof raw.id !== 'string' || !raw.id
+    || typeof raw.title !== 'string' || typeof raw.content !== 'string'
+    || typeof raw.score !== 'number' || !Number.isFinite(raw.score)) {
     return null;
   }
 
-  const id = typeof raw.id === 'string' ? raw.id : '';
-  const title = typeof raw.title === 'string' ? raw.title : id;
-  const content = typeof raw.content === 'string' ? raw.content : '';
-  const score = typeof raw.score === 'number' ? raw.score : 0;
+  const { id, title, content, score } = raw;
 
   return {
     id,
@@ -622,18 +615,17 @@ function normalizeSearchResult(raw: unknown): SearchResult | null {
   };
 }
 
-function extractSearchResults(payload: unknown): SearchResult[] {
+function extractSearchResults(payload: unknown): SearchResult[] | null {
   if (Array.isArray(payload)) {
-    return payload
-      .map(normalizeSearchResult)
-      .filter((item): item is SearchResult => item !== null);
+    const results = payload.map(normalizeSearchResult);
+    return results.every((item): item is SearchResult => item !== null) ? results : null;
   }
 
   if (!isRecord(payload)) {
-    return [];
+    return null;
   }
 
-  if (typeof payload.ok === 'boolean' && 'data' in payload) {
+  if (payload.ok === true && 'data' in payload) {
     return extractSearchResults(payload.data);
   }
 
@@ -645,7 +637,7 @@ function extractSearchResults(payload: unknown): SearchResult[] {
     return extractSearchResults(payload.data);
   }
 
-  return [];
+  return null;
 }
 
 function unwrapSearchResults(
@@ -657,20 +649,11 @@ function unwrapSearchResults(
     return unwrapped;
   }
 
-  return { ok: true, data: extractSearchResults(unwrapped.data) };
+  const data = extractSearchResults(unwrapped.data);
+  return data === null ? { ok: false, error: `${fallbackError}: invalid search response` } : { ok: true, data };
 }
 
-interface BackendIndexProgress {
-  is_indexing: boolean;
-  current_file: string | null;
-  files_processed: number;
-  total_files?: number | null;
-  percent_complete?: number | null;
-  failed?: number | null;
-  status?: IndexStatus | null;
-  paused?: boolean | null;
-  failures?: IndexingFailure[] | null;
-}
+type BackendIndexProgress = Wire.IndexProgress;
 
 function normalizeIndexProgress(raw: BackendIndexProgress): IndexingSnapshot {
   const totalFiles = raw.total_files ?? 0;
@@ -679,15 +662,11 @@ function normalizeIndexProgress(raw: BackendIndexProgress): IndexingSnapshot {
   const percentage =
     raw.percent_complete ?? (totalFiles > 0 ? (processed / totalFiles) * 100 : 0);
 
-  // The backend reports its own status word; the derived fallback stays for
-  // older builds that predate the field.
-  const status: IndexStatus =
-    raw.status ??
-    (raw.is_indexing
-      ? 'processing'
-      : percentage >= 100 && totalFiles > 0
-        ? 'complete'
-        : 'idle');
+  const validStatuses: ReadonlySet<string> = new Set(['idle', 'scanning', 'processing', 'complete', 'error', 'cancelled']);
+  if (!validStatuses.has(raw.status)) {
+    throw new Error(`Unknown indexing status: ${raw.status}`);
+  }
+  const status = raw.status as IndexStatus;
 
   return {
     totalFiles,
@@ -721,9 +700,6 @@ function normalizeIndexingStats(raw: IndexingStats): IndexingStats {
  * All methods return ApiResult<T> for consistent error handling.
  */
 const VaultAPI = {
-  // ============================================================
-  // Database Management
-  // ============================================================
 
   /**
    * Initializes the SQLite database with required schema and tables.
@@ -734,9 +710,6 @@ const VaultAPI = {
    */
   initializeDatabase: async (): Promise<ApiResult<string>> => apiCall<string>('initialize_database'),
 
-  // ============================================================
-  // Search
-  // ============================================================
 
   /**
    * Searches indexed documents using configurable search options.
@@ -777,8 +750,10 @@ const VaultAPI = {
     limit?: number;
     recencyWeight?: number;
     maxAgeDays?: number;
-  }): Promise<ApiResult<SearchResult[]>> =>
-    apiCall<SearchResult[]>('search_with_recency', { options }),
+  }): Promise<ApiResult<SearchResult[]>> => {
+    const result = await apiCall<Wire.SearchResultDto[]>('search_with_recency', { options });
+    return unwrapSearchResults(result, 'Recency search failed');
+  },
 
   /**
    * Performs batch search for multiple queries efficiently.
@@ -803,8 +778,17 @@ const VaultAPI = {
     queries: string[],
     limit?: number,
     searchMode?: string
-  ): Promise<ApiResult<SearchResult[][]>> =>
-    apiCall<SearchResult[][]>('batch_search', { queries, limit, search_mode: searchMode }),
+  ): Promise<ApiResult<SearchResult[][]>> => {
+    const result = await apiCall<Wire.SearchResultDto[][]>('batch_search', { queries, limit, searchMode });
+    if (!result.ok) return result;
+    const groups: SearchResult[][] = [];
+    for (const raw of result.data) {
+      const group = unwrapSearchResults({ ok: true, data: raw }, 'Batch search failed');
+      if (!group.ok) return group;
+      groups.push(group.data);
+    }
+    return { ok: true, data: groups };
+  },
 
   /**
    * Performs fast full-text search without semantic embeddings.
@@ -815,7 +799,7 @@ const VaultAPI = {
    * @returns Array of matching documents ranked by relevance
    */
   searchFast: async (query: string, limit?: number): Promise<ApiResult<SearchResult[]>> => {
-    const raw = await apiCall<unknown>('search_fast', { query, limit });
+    const raw = await apiCall<unknown>('search_fast', { query, limit: limit ?? 10 });
     return unwrapSearchResults(raw, 'Keyword search failed');
   },
 
@@ -868,7 +852,7 @@ const VaultAPI = {
    * @returns Array of search results ranked by semantic similarity
    */
   searchSemantic: async (query: string, limit?: number): Promise<ApiResult<SearchResult[]>> => {
-    const request = { query, limit: limit || 10 };
+    const request: Wire.SearchRequestDto = { query, limit: limit ?? 10, threshold: null, mode: { type: 'vector' } };
     const raw = await apiCall<unknown>('semantic_search', { request });
     const primary = unwrapSearchResults(raw, 'Semantic search failed');
     if (!primary.ok || primary.data.length > 0) {
@@ -893,7 +877,10 @@ const VaultAPI = {
    * @param limit - Maximum number of results to return (optional)
    * @returns Array of similar documents ranked by similarity score
    */
-  findSimilar: async (chunkId: string, limit?: number): Promise<ApiResult<SearchResult[]>> => apiCall<SearchResult[]>('find_similar', { chunkId, limit }),
+  findSimilar: async (chunkId: string, limit?: number): Promise<ApiResult<SearchResult[]>> => {
+    const result = await apiCall<Wire.SearchResultDto[]>('find_similar', { chunkId, limit });
+    return unwrapSearchResults(result, 'Similar document search failed');
+  },
 
   /**
    * Finds documents whose content is closest to a given document.
@@ -909,12 +896,9 @@ const VaultAPI = {
     documentId: string,
     limit?: number,
   ): Promise<ApiResult<SimilarDocumentDto[]>> =>
-    apiCall<SimilarDocumentDto[]>('find_similar_documents', { documentId, limit }),
+    apiCall<Wire.SimilarDocumentDto[]>('find_similar_documents', { documentId, limit }),
 
 
-  // ============================================================
-  // Indexing
-  // ============================================================
 
   /**
    * Starts indexing a folder and all its contents.
@@ -934,7 +918,7 @@ const VaultAPI = {
     apiCall<void>('index_directory', {
       path,
       recursive: recursive ?? true,
-      space_id: spaceId,
+
       spaceId,
     }),
 
@@ -947,7 +931,7 @@ const VaultAPI = {
    * @returns IndexFileResponse with status information
    */
   indexFile: async (path: string, spaceId?: string): Promise<ApiResult<IndexFileResponse>> =>
-    apiCall<IndexFileResponse>('index_file', { path, space_id: spaceId, spaceId }),
+    apiCall<Wire.IndexFileResponseDto>('index_file', { path, spaceId }),
 
   /**
    * Reindexes an existing file with fresh content and embeddings.
@@ -995,7 +979,7 @@ const VaultAPI = {
   renameDocument: async (
     documentId: string,
     newName: string
-  ): Promise<ApiResult<{ status: string; message: string; newName: string }>> => apiCall<{ status: string; message: string; newName: string }>(
+  ): Promise<ApiResult<Wire.RenameDocumentResponseDto>> => apiCall<Wire.RenameDocumentResponseDto>(
       'rename_document',
       { documentId, newName }
     ),
@@ -1007,7 +991,7 @@ const VaultAPI = {
    * @returns IndexProgress object with current state
    */
   getIndexProgress: async (): Promise<ApiResult<IndexingSnapshot>> => {
-    const result = await apiCall<BackendIndexProgress>('get_index_progress');
+    const result = await apiCall<Wire.IndexProgress>('get_index_progress');
     if (!result.ok) {
       return result;
     }
@@ -1045,15 +1029,12 @@ const VaultAPI = {
    * pause flag and the failure list.
    */
   getIndexingStatus: async (): Promise<ApiResult<{ active: boolean; progress: number }>> =>
-    apiCall<{ active: boolean; progress: number }>('get_indexing_status'),
+    apiCall<Wire.IndexingStatus>('get_indexing_status'),
 
   /** Absolute paths of indexed files, newest first. */
   listIndexedFiles: async (limit?: number): Promise<ApiResult<string[]>> =>
     apiCall<string[]>('list_indexed_files', { limit }),
 
-  // ============================================================
-  // Backup and export
-  // ============================================================
 
   /**
    * Writes a database backup into the app's backups folder and returns its path.
@@ -1061,11 +1042,11 @@ const VaultAPI = {
    * folder argument to pass.
    */
   createBackup: async (): Promise<ApiResult<CreateBackupResult>> =>
-    apiCall<CreateBackupResult>('plugin_create_backup', { request: { backupPath: null } }),
+    apiCall<Wire.CreateBackupResultDto>('plugin_create_backup', { request: { backupPath: null } }),
 
   /** Backups on disk, newest first. */
   listBackups: async (): Promise<ApiResult<BackupInfo[]>> => {
-    const result = await apiCall<{ backups: BackupInfo[] }>('plugin_list_backups');
+    const result = await apiCall<Wire.ListBackupsResultDto>('plugin_list_backups');
     if (!result.ok) return result;
     return { ok: true, data: result.data.backups ?? [] };
   },
@@ -1075,15 +1056,91 @@ const VaultAPI = {
    * pool and does not reopen it — the app must be quit and reopened afterwards.
    */
   restoreBackup: async (backupPath: string): Promise<ApiResult<RestoreBackupResult>> =>
-    apiCall<RestoreBackupResult>('plugin_restore_backup', { request: { backupPath } }),
+    apiCall<Wire.RestoreBackupResultDto>('plugin_restore_backup', { request: { backupPath } }),
 
   /** Exports conversations and journal pages as Markdown into the app's exports folder. */
   exportMarkdown: async (): Promise<ApiResult<ExportSummary>> =>
-    apiCall<ExportSummary>('plugin_export_markdown', { request: { outputDir: null } }),
+    apiCall<Wire.ExportResultDto>('plugin_export_markdown', { request: { outputDir: null } }),
 
   /** Exports conversations and journal pages as one JSON file in the app's exports folder. */
   exportJson: async (): Promise<ApiResult<ExportSummary>> =>
-    apiCall<ExportSummary>('plugin_export_json', { request: { outputPath: null, pretty: true } }),
+    apiCall<Wire.ExportResultDto>('plugin_export_json', { request: { outputPath: null, pretty: true } }),
+
+  /* ---------------------------------------------------------------- *
+   * Off-device backup (encrypted archive).
+   *
+   * Every path in this group is chosen by a native picker on the Rust side —
+   * the webview neither sends nor receives a folder to write to. The generic
+   * on each `apiCall` is the local DTO type in `types/api/backup.ts` rather
+   * than a `Wire.*` type, because these commands are added to
+   * `lib/bindings.ts` by `npm run bindings:generate` on the Rust side.
+   * ---------------------------------------------------------------- */
+
+  /** Current archive configuration, last run, and the archives on disk. */
+  getArchiveStatus: async (): Promise<ApiResult<ArchiveStatus>> =>
+    apiCall<Wire.ArchiveStatusDto>('plugin_get_archive_status') as Promise<ApiResult<ArchiveStatus>>,
+
+  /**
+   * Generates a master key and a 24-word recovery code, held in memory only.
+   * Nothing is written until `confirmArchiveSetup` succeeds; calling again
+   * throws the previous pending setup away.
+   */
+  beginArchiveSetup: async (): Promise<ApiResult<ArchiveSetup>> =>
+    apiCall<Wire.ArchiveSetupDto>('plugin_begin_archive_setup'),
+
+  /**
+   * Proves the user wrote the recovery code down, then persists the envelope.
+   * `passphrase` is optional and must be at least 8 characters when present.
+   */
+  confirmArchiveSetup: async (
+    confirmations: WordConfirmation[],
+    passphrase: string | null,
+  ): Promise<ApiResult<ArchiveStatus>> =>
+    apiCall<Wire.ArchiveStatusDto>('plugin_confirm_archive_setup', {
+      request: { confirmations, passphrase },
+    }) as Promise<ApiResult<ArchiveStatus>>,
+
+  /** Opens the Rust-side folder picker. Cancelling returns the status unchanged. */
+  chooseArchiveDestination: async (): Promise<ApiResult<ArchiveStatus>> =>
+    apiCall<Wire.ArchiveStatusDto>('plugin_choose_archive_destination') as Promise<ApiResult<ArchiveStatus>>,
+
+  /** How many archives to keep in the destination folder (1–50). */
+  setArchiveKeepCount: async (keepCount: number): Promise<ApiResult<ArchiveStatus>> =>
+    apiCall<Wire.ArchiveStatusDto>('plugin_set_archive_keep_count', {
+      request: { keepCount },
+    }) as Promise<ApiResult<ArchiveStatus>>,
+
+  /** Sets, changes, or (with `null`) removes the passphrase slot. */
+  setArchivePassphrase: async (passphrase: string | null): Promise<ApiResult<ArchiveStatus>> =>
+    apiCall<Wire.ArchiveStatusDto>('plugin_set_archive_passphrase', {
+      request: { passphrase },
+    }) as Promise<ApiResult<ArchiveStatus>>,
+
+  /**
+   * Issues a new recovery code. Confirm it with `confirmArchiveSetup`; the
+   * passphrase slot is untouched, so pass `null` for the passphrase there.
+   */
+  rotateRecoveryCode: async (): Promise<ApiResult<ArchiveSetup>> =>
+    apiCall<Wire.ArchiveSetupDto>('plugin_rotate_recovery_code'),
+
+  /** Stops writing archives. The key and the envelope stay, so it can be turned back on. */
+  disableArchive: async (): Promise<ApiResult<ArchiveStatus>> =>
+    apiCall<Wire.ArchiveStatusDto>('plugin_disable_archive') as Promise<ApiResult<ArchiveStatus>>,
+
+  /** Writes one archive now, outside the schedule. */
+  createArchiveNow: async (): Promise<ApiResult<ArchiveRun>> =>
+    apiCall<Wire.ArchiveRunDto>('plugin_create_archive_now'),
+
+  /**
+   * Restores from an archive the user picks in the Rust-side file dialog.
+   * Pass `null` first: the keyring usually holds the key already. A
+   * `needs_secret` outcome means asking for the passphrase or the recovery
+   * code and calling again with it.
+   */
+  restoreArchive: async (secret: string | null): Promise<ApiResult<RestoreArchiveResult>> =>
+    apiCall<Wire.RestoreArchiveResultDto>('plugin_restore_archive', {
+      request: { secret },
+    }) as Promise<ApiResult<RestoreArchiveResult>>,
 
   /**
    * Gets comprehensive statistics about indexed content.
@@ -1092,7 +1149,7 @@ const VaultAPI = {
    * @returns IndexingStats object with counts and metrics
    */
   getIndexingStats: async (): Promise<ApiResult<IndexingStats>> => {
-    const result = await apiCall<IndexingStats>('get_indexing_stats');
+    const result = await apiCall<Wire.IndexingStatsDto>('get_indexing_stats');
     if (!result.ok) {
       return result;
     }
@@ -1105,7 +1162,7 @@ const VaultAPI = {
    *
    * @returns Array of IndexedFolder objects
    */
-  getIndexedFolders: async (): Promise<ApiResult<IndexedFolder[]>> => apiCall<IndexedFolder[]>('get_indexed_folders'),
+  getIndexedFolders: async (): Promise<ApiResult<IndexedFolder[]>> => apiCall<Wire.IndexedFolder[]>('get_indexed_folders'),
 
   /**
    * Removes an entire folder from the index.
@@ -1123,11 +1180,8 @@ const VaultAPI = {
    * @param limit - Maximum number of activity records to return
    * @returns Array of IndexingActivity objects ordered by recency
    */
-  getIndexingActivities: async (limit: number): Promise<ApiResult<IndexingActivity[]>> => apiCall<IndexingActivity[]>('get_indexing_activities', { limit }),
+  getIndexingActivities: async (limit: number): Promise<ApiResult<IndexingActivity[]>> => apiCall<Wire.IndexingActivity[]>('get_indexing_activities', { limit }),
 
-  // ============================================================
-  // File Management
-  // ============================================================
 
   /**
    * Opens a file in the system's default application.
@@ -1253,7 +1307,7 @@ const VaultAPI = {
    * @param limit - Maximum number of recent documents to return
    * @returns Array of RecentDocument objects with paths and timestamps
    */
-  getRecentDocuments: async (limit: number): Promise<ApiResult<RecentDocument[]>> => apiCall<RecentDocument[]>('get_recent_documents', { limit }),
+  getRecentDocuments: async (limit: number): Promise<ApiResult<RecentDocument[]>> => apiCall<Wire.RecentDocument[]>('get_recent_documents', { limit }),
 
   /**
    * Lists ALL documents from the documents table.
@@ -1265,7 +1319,7 @@ const VaultAPI = {
    * @param limit - Maximum number of documents to return (capped at 10000)
    * @returns Array of all documents with metadata
    */
-  listAllDocuments: async (limit: number): Promise<ApiResult<DocumentMetadata[]>> => apiCall<DocumentMetadata[]>('list_all_documents', { limit }),
+  listAllDocuments: async (limit: number): Promise<ApiResult<DocumentMetadata[]>> => apiCall<Wire.DocumentMetadataDto[]>('list_all_documents', { limit }),
 
   /**
    * Retrieves document metadata by ID.
@@ -1319,7 +1373,7 @@ const VaultAPI = {
    * @param path - Absolute path to file
    * @returns Metadata object with file system information
    */
-  getFileMetadata: async (path: string): Promise<ApiResult<FileMetadata>> => apiCall<FileMetadata>('get_file_metadata', { path }),
+  getFileMetadata: async (path: string): Promise<ApiResult<FileMetadata>> => apiCall<Wire.FileMetadataDto>('get_file_metadata', { path }),
 
   /**
    * Opens the file's parent folder in the system file manager.
@@ -1330,9 +1384,6 @@ const VaultAPI = {
    */
   showInFolder: async (path: string): Promise<ApiResult<void>> => apiCall<void>('show_in_folder', { path }),
 
-  // ============================================================
-  // Configuration
-  // ============================================================
 
   /**
    * Adds a folder to the file watcher.
@@ -1352,9 +1403,6 @@ const VaultAPI = {
    */
   removeWatchFolder: async (path: string): Promise<ApiResult<void>> => apiCall<void>('remove_watch_folder', { path }),
 
-  // ============================================================
-  // Web Ingest
-  // ============================================================
 
   /**
    * Fetches preview metadata for a web URL without ingesting it.
@@ -1364,7 +1412,7 @@ const VaultAPI = {
    * @returns UrlPreview metadata
    */
   fetchUrlPreview: async (url: string): Promise<ApiResult<UrlPreview>> =>
-    apiCall<UrlPreview>('fetch_url_preview', { url }),
+    apiCall<Wire.UrlPreview>('fetch_url_preview', { url }),
 
   /**
    * Extracts article content (reader mode) from a URL.
@@ -1374,7 +1422,7 @@ const VaultAPI = {
    * @returns CleanArticle content
    */
   extractArticle: async (url: string): Promise<ApiResult<CleanArticle>> =>
-    apiCall<CleanArticle>('extract_article', { url }),
+    apiCall<Wire.CleanArticle>('extract_article', { url }),
 
   /**
    * Ingests content from a web URL and adds it to the index.
@@ -1387,11 +1435,11 @@ const VaultAPI = {
     url: string,
     options?: { spaceId?: string; conversationId?: string }
   ): Promise<ApiResult<WebIngestResponse>> =>
-    apiCall<WebIngestResponse>('ingest_web_url', {
+    apiCall<Wire.WebIngestResponse>('ingest_web_url', {
       url,
-      space_id: options?.spaceId,
+
       spaceId: options?.spaceId,
-      conversation_id: options?.conversationId,
+
       conversationId: options?.conversationId,
     }),
 
@@ -1421,9 +1469,6 @@ const VaultAPI = {
    */
   reindexWebArchive: async (): Promise<ApiResult<number>> => apiCall<number>('reindex_web_archive'),
 
-  // ============================================================
-  // Daily Notes
-  // ============================================================
 
   /**
    * Retrieves the daily note for today's date.
@@ -1431,7 +1476,7 @@ const VaultAPI = {
    *
    * @returns Daily note object with content and metadata
    */
-  getTodayNote: async (): Promise<ApiResult<DailyNote>> => apiCall<DailyNote>('get_today_note'),
+  getTodayNote: async (): Promise<ApiResult<DailyNote>> => apiCall<Wire.DailyNoteCompatDto>('get_today_note'),
 
   /**
    * Quickly captures text to today's daily note.
@@ -1441,7 +1486,7 @@ const VaultAPI = {
    * @param content - Text content to append to today's note
    * @returns Which page the capture landed on, so the UI can name it
    */
-  quickCapture: async (content: string): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<QuickCaptureResultDto>('quick_capture', { content }),
+  quickCapture: async (content: string): Promise<ApiResult<QuickCaptureResultDto>> => apiCall<Wire.QuickCaptureResultDto>('quick_capture', { content }),
 
   /**
    * Retrieves all daily notes within a date range.
@@ -1452,7 +1497,7 @@ const VaultAPI = {
    * @returns Array of daily note objects within the range
    */
   getDailyNotesRange: async (startDate: string, endDate: string): Promise<ApiResult<DailyNote[]>> =>
-    apiCall<DailyNote[]>('get_daily_notes_range', { request: { startDate, endDate } }),
+    apiCall<Wire.DailyNoteCompatDto[]>('get_daily_notes_range', { request: { startDate, endDate } }),
 
   /**
    * Gets the daily note immediately before the specified date.
@@ -1462,7 +1507,7 @@ const VaultAPI = {
    * @returns Previous daily note or null
    */
   getPreviousDailyNote: async (currentDate: string): Promise<ApiResult<DailyNote | null>> =>
-    apiCall<DailyNote | null>('get_previous_daily_note', { request: { currentDate } }),
+    apiCall<Wire.DailyNoteCompatDto | null>('get_previous_daily_note', { request: { currentDate } }),
 
   /**
    * Gets the daily note immediately after the specified date.
@@ -1472,7 +1517,7 @@ const VaultAPI = {
    * @returns Next daily note or null
    */
   getNextDailyNote: async (currentDate: string): Promise<ApiResult<DailyNote | null>> =>
-    apiCall<DailyNote | null>('get_next_daily_note', { request: { currentDate } }),
+    apiCall<Wire.DailyNoteCompatDto | null>('get_next_daily_note', { request: { currentDate } }),
 
   /**
    * Updates the content of an existing daily note.
@@ -1489,19 +1534,19 @@ const VaultAPI = {
    * Lists all persisted notes in the Daily Notes workspace.
    */
   listWorkspaceNotes: async (): Promise<ApiResult<ListWorkspaceNotesResponse>> =>
-    apiCall<ListWorkspaceNotesResponse>('list_workspace_notes'),
+    apiCall<Wire.ListWorkspaceNotesResponseDto>('list_workspace_notes'),
 
   /**
    * Creates a new persisted workspace note.
    */
   createWorkspaceNote: async (title?: string): Promise<ApiResult<WorkspaceNote>> =>
-    apiCall<WorkspaceNote>('create_workspace_note', { request: { title } }),
+    apiCall<Wire.WorkspaceNoteDto>('create_workspace_note', { request: { title } }),
 
   /**
    * Persists a workspace note update.
    */
   updateWorkspaceNote: async (note: WorkspaceNote): Promise<ApiResult<WorkspaceNote>> =>
-    apiCall<WorkspaceNote>('update_workspace_note', { note }),
+    apiCall<Wire.WorkspaceNoteDto>('update_workspace_note', { note }),
 
   /**
    * Deletes a persisted workspace note by id.
@@ -1509,9 +1554,6 @@ const VaultAPI = {
   deleteWorkspaceNote: async (noteId: string): Promise<ApiResult<void>> =>
     apiCall<void>('delete_workspace_note', { request: { noteId } }),
 
-  // ============================================================
-  // Settings
-  // ============================================================
 
   /**
    * Retrieves all application settings.
@@ -1537,7 +1579,7 @@ const VaultAPI = {
    * @param settings - Partial settings object with values to update
    * @returns Updated settings object
    */
-  updateSettings: async (settings: Record<string, unknown>): Promise<ApiResult<AppSettings>> =>
+  updateSettings: async (settings: Wire.UpdateSettingsRequest): Promise<ApiResult<AppSettings>> =>
     apiCall<AppSettings>('update_settings', { settings }),
 
   /**
@@ -1592,17 +1634,17 @@ const VaultAPI = {
    */
   validateFolderPath: async (path: string): Promise<ApiResult<boolean>> => apiCall<boolean>('validate_folder_path', { path }),
 
-  /**
-   * Tests Ollama connectivity and fetches models from the server.
-   * Attempts OpenAI-compatible `/v1/models` first, then Ollama `/api/tags`.
-   *
-   * @param request - Connection details and optional auth header
-   * @returns Endpoint used and available model IDs
-   */
+  /** Checks llama.cpp model discovery and a small chat completion. */
+  testLlamaCppConnection: async (
+    request: Wire.LlamaCppSettingsDto
+  ): Promise<ApiResult<TestOllamaConnectionResponse>> =>
+    apiCall<Wire.TestOllamaConnectionResponse>('test_llama_cpp_connection', { request }),
+
+  /** Lists models through the native Ollama API. */
   testOllamaConnection: async (
     request: TestOllamaConnectionRequest
   ): Promise<ApiResult<TestOllamaConnectionResponse>> =>
-    apiCall<TestOllamaConnectionResponse>('test_ollama_connection', { request }),
+    apiCall<Wire.TestOllamaConnectionResponse>('test_ollama_connection', { request }),
 
   /**
    * Tests a custom tool endpoint with a sample query.
@@ -1611,11 +1653,8 @@ const VaultAPI = {
   testCustomTool: async (
     request: TestCustomToolRequest
   ): Promise<ApiResult<TestCustomToolResponse>> =>
-    apiCall<TestCustomToolResponse>('test_custom_tool', { request }),
+    apiCall<Wire.TestCustomToolResponse>('test_custom_tool', { request }),
 
-  // ============================================================
-  // Tag Management (DDD Architecture)
-  // ============================================================
 
   /**
    * Retrieves all tags in the system.
@@ -1629,8 +1668,11 @@ const VaultAPI = {
    *   console.log(`Found ${result.data.tags.length} tags`);
    * }
    */
-  listAllTags: async (): Promise<ApiResult<ListTagsResponse>> =>
-    apiCall<ListTagsResponse>('get_all_tags_with_counts'),
+  listAllTags: async (): Promise<ApiResult<ListTagsResponse>> => {
+    const result = await apiCall<Wire.TagWithCountDto[]>('get_all_tags_with_counts');
+    if (!result.ok) return result;
+    return { ok: true, data: { tags: result.data.map(tag => ({ ...tag, description: null })) } };
+  },
 
   /**
    * Removes a tag assignment from a document.
@@ -1647,7 +1689,10 @@ const VaultAPI = {
    * });
    */
   removeTagFromDocument: async (request: RemoveTagFromDocumentRequest): Promise<ApiResult<void>> =>
-    apiCall<void>('remove_tag_from_document', { request }),
+    apiCall<void>('remove_tag_from_document', { request: {
+      document_id: request.documentId,
+      tag_id: request.tagId,
+    } }),
 
   /**
    * Retrieves all tags applied to a specific document.
@@ -1661,8 +1706,11 @@ const VaultAPI = {
    *   console.log(`Document has ${result.data.tags.length} tags`);
    * }
    */
-  getDocumentTags: async (request: GetDocumentTagsRequest): Promise<ApiResult<DocumentTagsResponse>> =>
-    apiCall<DocumentTagsResponse>('get_document_tags', { documentId: request.documentId }),
+  getDocumentTags: async (request: GetDocumentTagsRequest): Promise<ApiResult<DocumentTagsResponse>> => {
+    const result = await apiCall<Wire.TagDto[]>('get_document_tags', { documentId: request.documentId });
+    if (!result.ok) return result;
+    return { ok: true, data: { documentId: request.documentId, tags: result.data } };
+  },
 
   /**
    * Retrieves all tags with document counts.
@@ -1681,8 +1729,8 @@ const VaultAPI = {
    *   console.error('Failed to load tags:', result.error);
    * }
    */
-  getAllTagsWithCounts: async (): Promise<ApiResult<TagWithCount[]>> =>
-    apiCall<TagWithCount[]>('get_all_tags_with_counts'),
+  getAllTagsWithCounts: async (): Promise<ApiResult<Wire.TagWithCountDto[]>> =>
+    apiCall<Wire.TagWithCountDto[]>('get_all_tags_with_counts'),
 
   /**
    * Applies multiple tags to a document by name.
@@ -1706,7 +1754,7 @@ const VaultAPI = {
     documentId: string,
     tagNames: string[]
   ): Promise<ApiResult<Tag[]>> =>
-    apiCall<Tag[]>('apply_tags', {
+    apiCall<Wire.TagDto[]>('apply_tags', {
       request: {
         document_id: documentId,
         tag_names: tagNames
@@ -1736,9 +1784,6 @@ const VaultAPI = {
       }
     }),
 
-  // ============================================================
-  // Q&A (Question Answering)
-  // ============================================================
 
   /**
    * Asks a question and retrieves an AI-generated answer based on indexed content.
@@ -1750,7 +1795,7 @@ const VaultAPI = {
    * @returns Answer object with generated text and source references
    */
   askQuestion: async (question: string, contextLimit?: number): Promise<ApiResult<QAResponse>> => {
-    const request = { question, contextLimit };
+    const request = { question, context_limit: contextLimit };
     return apiCall<QAResponse>('ask_question', { request });
   },
 
@@ -1764,7 +1809,7 @@ const VaultAPI = {
    * @returns Answer object with generated text (streaming not yet implemented)
    */
   askQuestionStream: async (question: string, contextLimit?: number): Promise<ApiResult<QAResponse>> => {
-    const request = { question, contextLimit };
+    const request = { question, context_limit: contextLimit };
     return apiCall<QAResponse>('ask_question_stream', { request });
   },
 
@@ -1785,8 +1830,7 @@ const VaultAPI = {
     apiCall<ChatStarters>('generate_chat_starters', {}),
 
   /**
-   * Saves an excerpt from a document as a reference (contract §4.3).
-   * Backend slice and inbox belong to Track C.
+   * Saves an excerpt from a document as a reference.
    */
   createPassageReference: async (
     request: CreatePassageReferenceRequest
@@ -1809,15 +1853,20 @@ const VaultAPI = {
   deletePassageReference: async (id: string): Promise<ApiResult<void>> =>
     apiCall<void>('delete_passage_reference', { id }),
 
-  /** Builds a comparison table across documents. See GROUND-RULES §4.10. */
+  /** Builds a comparison table across documents. */
+  listStudyDecks: (): Promise<ApiResult<Wire.StudyDeckSummaryDto[]>> => apiCall('list_study_decks'),
+  getStudyDeck: (id: string): Promise<ApiResult<Wire.StudyDeckDto>> => apiCall('get_study_deck', { id }),
+  generateStudyDeck: (request: Wire.GenerateStudyDeckRequestDto): Promise<ApiResult<Wire.StudyDeckDto>> => apiCall('generate_study_deck', { request }),
+  generateConversationStudyDeck: (request: Wire.GenerateConversationStudyDeckRequestDto): Promise<ApiResult<Wire.StudyDeckDto>> => apiCall('generate_conversation_study_deck', { request }),
+  reviewStudyCard: (request: Wire.ReviewStudyCardRequestDto): Promise<ApiResult<Wire.StudyCardDto>> => apiCall('review_study_card', { request }),
+  updateStudyCard: (request: Wire.UpdateStudyCardRequestDto): Promise<ApiResult<void>> => apiCall('update_study_card', { request }),
+  deleteStudyDeck: (id: string): Promise<ApiResult<void>> => apiCall('delete_study_deck', { id }),
+
   compareDocuments: async (
     request: CompareDocumentsRequest
   ): Promise<ApiResult<CompareTableDto>> =>
     apiCall<CompareTableDto>('compare_documents', { request }),
 
-  // ============================================================
-  // Favorites
-  // ============================================================
 
   /**
    * Marks a document as favorite.
@@ -1843,7 +1892,7 @@ const VaultAPI = {
    *
    * @returns Array of favorite document objects
    */
-  getFavorites: async (): Promise<ApiResult<FavoriteDocument[]>> => apiCall<FavoriteDocument[]>('get_favorites'),
+  getFavorites: async (): Promise<ApiResult<FavoriteDocument[]>> => apiCall<Wire.FavoriteDocument[]>('get_favorites'),
 
   /**
    * Checks if a document is marked as favorite.
@@ -1853,17 +1902,8 @@ const VaultAPI = {
    */
   isFavorite: async (documentId: string): Promise<ApiResult<boolean>> => apiCall<boolean>('is_favorite', { documentId }),
 
-  // ============================================================
-  // Recent Documents
-  // ============================================================
 
-  // ============================================================
-  // Credentials
-  // ============================================================
 
-  // ============================================================
-  // Cache Management
-  // ============================================================
 
   /**
    * Clears the search results cache.
@@ -1887,7 +1927,7 @@ const VaultAPI = {
    *
    * @returns Cache statistics object
    */
-  getCacheStats: async (): Promise<ApiResult<CacheStats>> => apiCall<CacheStats>('get_cache_stats'),
+  getCacheStats: async (): Promise<ApiResult<Wire.SearchCacheStats>> => apiCall<Wire.SearchCacheStats>('get_cache_stats'),
 
   /**
    * Gets detailed cache performance metrics.
@@ -1895,29 +1935,26 @@ const VaultAPI = {
    *
    * @returns Cache metrics object with detailed statistics
    */
-  getCacheMetrics: async (): Promise<ApiResult<CacheMetrics>> => apiCall<CacheMetrics>('get_cache_metrics'),
+  getCacheMetrics: async (): Promise<ApiResult<CacheMetrics>> => apiCall<Wire.CacheMetrics>('get_cache_metrics'),
 
-  // ============================================================
-  // Health & Metrics
-  // ============================================================
 
   /**
    * Performs a health check on the backend system (DDD architecture).
    * Verifies database connectivity, model availability, and system status.
    *
    * @returns Health status object with component statuses
-   * @note Updated to use DDD architecture command (Phase 1 migration)
+   * Uses the current domain command.
    */
-  healthCheck: async (): Promise<ApiResult<HealthStatus>> => apiCall<HealthStatus>('health_check'),
+  healthCheck: async (): Promise<ApiResult<HealthStatus>> => apiCall<Wire.HealthStatus>('health_check'),
 
   /**
    * Retrieves system statistics (DDD architecture).
    * Includes total documents, chunks, tags, and storage size.
    *
    * @returns System statistics object
-   * @note Updated to use DDD architecture command (Phase 1 migration)
+   * Uses the current domain command.
    */
-  getSystemStats: async (): Promise<ApiResult<SystemStats>> => apiCall<SystemStats>('get_system_stats'),
+  getSystemStats: async (): Promise<ApiResult<SystemStats>> => apiCall<Wire.SystemStats>('get_system_stats'),
 
   /**
    * Gets the application version from Cargo.toml.
@@ -1933,22 +1970,8 @@ const VaultAPI = {
    *
    * @returns Detailed version information object
    */
-  getVersionInfo: async (): Promise<ApiResult<VersionInfo>> => apiCall<VersionInfo>('get_version_info'),
+  getVersionInfo: async (): Promise<ApiResult<VersionInfo>> => apiCall<Wire.VersionInfoDto>('get_version_info'),
 
-  // ============================================================
-  // Initialization Commands
-  // ============================================================
-
-  /**
-   * Initializes embedding models for semantic search.
-   * @deprecated Models are now auto-initialized at startup. This exists for compatibility.
-   * @returns Success message
-   */
-  initializeModels: async (): Promise<ApiResult<string>> => apiCall<string>('initialize_models'),
-
-  // ============================================================
-  // HuggingFace Credentials
-  // ============================================================
 
   /**
    * Stores a HuggingFace authentication token securely in OS keyring.
@@ -1967,7 +1990,7 @@ const VaultAPI = {
    * @returns Token status object
    */
   getHuggingFaceTokenStatus: async (): Promise<ApiResult<HfTokenStatus>> =>
-    apiCall<HfTokenStatus>('get_huggingface_token_status'),
+    apiCall<Wire.HfTokenStatus>('get_huggingface_token_status'),
 
   /**
    * Gets the actual HuggingFace token value.
@@ -1986,9 +2009,6 @@ const VaultAPI = {
   deleteHuggingFaceToken: async (): Promise<ApiResult<void>> =>
     apiCall<void>('delete_huggingface_token'),
 
-  // ============================================================
-  // Batch Job Management
-  // ============================================================
 
   /**
    * Lists all batch jobs with pagination support.
@@ -1999,7 +2019,7 @@ const VaultAPI = {
    * @returns Array of batch job summaries
    */
   listBatchJobs: async (limit?: number, offset?: number): Promise<ApiResult<BatchJobSummary[]>> => {
-    const result = await apiCall<ListBatchJobsResponse>('list_batch_jobs', { limit, offset });
+    const result = await apiCall<Wire.ListBatchJobsResponseDto>('get_batch_history', { request: { limit, offset } });
     if (!result.ok) {
       return result;
     }
@@ -2017,7 +2037,7 @@ const VaultAPI = {
    * @returns Void on success
    */
   deleteBatchJob: async (jobId: string): Promise<ApiResult<void>> => {
-    const result = await apiCall<DeleteBatchJobResponse>('delete_batch_job', { jobId });
+    const result = await apiCall<Wire.DeleteBatchJobResponseDto>('delete_batch_job', { jobId });
     if (!result.ok) {
       return result;
     }
@@ -2028,14 +2048,14 @@ const VaultAPI = {
   },
 
   /**
-   * Retries failed items from a batch job by creating a new job.
-   * Extracts failed URLs and creates a new batch import job.
+   * Retries failed items through the matching importer. File retries update
+   * their original job; an optional path replaces one selected failed file.
    *
    * @param jobId - ID of job with failed items
    * @returns New job ID for the retry operation
    */
-  retryFailedBatchItems: async (jobId: string): Promise<ApiResult<string>> => {
-    const result = await apiCall<RetryFailedItemsResponse>('retry_failed_items', { jobId });
+  retryFailedBatchItems: async (jobId: string, itemId?: string, replacementPath?: string): Promise<ApiResult<string>> => {
+    const result = await apiCall<Wire.RetryFailedItemsResponseDto>('retry_failed_items', { jobId, itemId, replacementPath });
     if (!result.ok) {
       return result;
     }
@@ -2050,7 +2070,7 @@ const VaultAPI = {
    * @returns Detailed batch job status with all items
    */
   getBatchJobStatus: async (jobId: string): Promise<ApiResult<BatchJobStatus>> => {
-    const result = await apiCall<BatchJobStatus>('get_batch_job_status', { jobId });
+    const result = await apiCall<Wire.BatchJobStatusDto>('get_batch_status', { request: { jobId } });
     if (!result.ok) {
       return result;
     }
@@ -2065,7 +2085,7 @@ const VaultAPI = {
    * @returns Number of items cancelled
    */
   cancelBatchJob: async (jobId: string): Promise<ApiResult<number>> => {
-    const result = await apiCall<CancelBatchJobResponse>('cancel_batch_job', { jobId });
+    const result = await apiCall<Wire.CancelBatchJobResponseDto>('cancel_batch', { request: { jobId } });
     if (!result.ok) {
       return result;
     }
@@ -2079,8 +2099,15 @@ const VaultAPI = {
    * @param filePaths - Array of absolute file paths to import
    * @returns Batch job ID for tracking progress
    */
-  startBatchFileImport: async (filePaths: string[]): Promise<ApiResult<string>> =>
-    apiCall<string>('start_batch_file_import', { filePaths }),
+  startBatchFileImport: async (filePaths: string[]): Promise<ApiResult<string>> => {
+    const result = await apiCall<Wire.StartBatchFileImportResponseDto>('batch_import_files', {
+      request: { filePaths },
+    });
+    if (!result.ok) {
+      return result;
+    }
+    return { ok: true, data: result.data.jobId };
+  },
 
   /**
    * Starts a batch import of URLs.
@@ -2092,15 +2119,19 @@ const VaultAPI = {
   startBatchUrlImport: async (
     urls: string[],
     options?: { extractArticle?: boolean }
-  ): Promise<ApiResult<string>> =>
-    apiCall<string>('start_batch_url_import', {
-      urls,
-      extract_article: options?.extractArticle,
-    }),
+  ): Promise<ApiResult<string>> => {
+    const result = await apiCall<Wire.StartBatchUrlImportResponseDto>('batch_import_urls', {
+      request: {
+        urls,
+        options: options ? { extractArticle: options.extractArticle } : null,
+      },
+    });
+    if (!result.ok) {
+      return result;
+    }
+    return { ok: true, data: result.data.jobId };
+  },
 
-  // ============================================================
-  // Mentions (Wikilinks & References)
-  // ============================================================
 
   /**
    * Extracts mentions (wikilinks, @-mentions) from document content.
@@ -2110,7 +2141,7 @@ const VaultAPI = {
    * @param content - Document content to parse
    * @returns Array of extracted mention objects
    */
-  extractMentions: async (documentId: string, content: string): Promise<ApiResult<ExtractMentionsResponse>> => apiCall<ExtractMentionsResponse>('extract_mentions', { documentId, content }),
+  extractMentions: async (documentId: string, content: string): Promise<ApiResult<ExtractMentionsResponse>> => apiCall<Wire.ExtractMentionsResultDto>('extract_mentions', { documentId, content }),
 
   /**
    * Searches for mentions matching a query.
@@ -2120,7 +2151,7 @@ const VaultAPI = {
    * @param limit - Maximum number of results to return (optional)
    * @returns Array of matching mention objects
    */
-  searchMentions: async (query: string, limit?: number): Promise<ApiResult<SearchMentionsResponse>> => apiCall<SearchMentionsResponse>('search_mentions', { query, limit }),
+  searchMentions: async (query: string, limit?: number): Promise<ApiResult<SearchMentionsResponse>> => apiCall<Wire.SearchMentionsResultDto>('search_mentions', { query, limit }),
 
   /**
    * Gets all mentions found in a specific document.
@@ -2129,7 +2160,7 @@ const VaultAPI = {
    * @param documentId - Internal document identifier
    * @returns Array of mention objects found in the document
    */
-  getMentionsForDocument: async (documentId: string): Promise<ApiResult<GetMentionsForDocumentResult>> => apiCall<GetMentionsForDocumentResult>('get_mentions_for_document', { documentId }),
+  getMentionsForDocument: async (documentId: string): Promise<ApiResult<GetMentionsForDocumentResult>> => apiCall<Wire.GetMentionsForDocumentResultDto>('get_mentions_for_document', { documentId }),
 
   /**
    * Gets backlinks for a mention (documents that reference it).
@@ -2138,7 +2169,7 @@ const VaultAPI = {
    * @param mentionName - Name of the mention to find backlinks for
    * @returns Array of documents that reference this mention
    */
-  getBacklinksForMention: async (mentionName: string): Promise<ApiResult<BacklinksResponse>> => apiCall<BacklinksResponse>('get_backlinks_for_mention', { mentionName }),
+  getBacklinksForMention: async (mentionName: string): Promise<ApiResult<BacklinksResponse>> => apiCall<Wire.BacklinksResultDto>('get_backlinks_for_mention', { mentionName }),
 
   /**
    * Vault-wide type mix and recent growth.
@@ -2148,7 +2179,7 @@ const VaultAPI = {
    * the filter can never disagree.
    */
   getCorpusShape: async (): Promise<ApiResult<CorpusShapeDto>> =>
-    apiCall<CorpusShapeDto>('get_corpus_shape'),
+    apiCall<Wire.CorpusShapeDto>('get_corpus_shape'),
 
   /**
    * Conversations that have this document among their linked documents.
@@ -2160,19 +2191,18 @@ const VaultAPI = {
     documentId: string,
     limit?: number,
   ): Promise<ApiResult<CitingConversationDto[]>> =>
-    apiCall<CitingConversationDto[]>('list_conversations_citing_document', {
-      document_id: documentId,
+    apiCall<Wire.CitingConversationDto[]>('list_conversations_citing_document', {
       documentId,
       limit,
     }),
 
   /** The themes from the most recent clustering run. */
   listClusters: async (): Promise<ApiResult<ClusterDto[]>> =>
-    apiCall<ClusterDto[]>('list_clusters'),
+    apiCall<Wire.ClusterDto[]>('list_clusters'),
 
   /** Runs clustering over the vault and replaces the stored themes. */
   clusterVaultRun: async (): Promise<ApiResult<ClusterRunDto>> =>
-    apiCall<ClusterRunDto>('cluster_vault_run'),
+    apiCall<Wire.ClusterRunDto>('cluster_vault_run'),
 
   /**
    * Gets mentions filtered by type.
@@ -2181,7 +2211,7 @@ const VaultAPI = {
    * @param mentionType - Type of mentions to retrieve
    * @returns Array of mentions of the specified type
    */
-  getMentionsByType: async (mentionType: string): Promise<ApiResult<Mention[]>> => apiCall<Mention[]>('get_mentions_by_type', { mentionType }),
+  getMentionsByType: async (mentionType: string): Promise<ApiResult<Mention[]>> => apiCall<Wire.MentionDto[]>('get_mentions_by_type', { mentionType }),
 
   /**
    * Creates a new mention entity.
@@ -2191,7 +2221,7 @@ const VaultAPI = {
    * @param mentionType - Type of mention (e.g., 'person', 'concept')
    * @returns Created mention object
    */
-  createMention: async (name: string, mentionType: string): Promise<ApiResult<Mention>> => apiCall<Mention>('create_mention', { name, mentionType }),
+  createMention: async (name: string, mentionType: string): Promise<ApiResult<Mention>> => apiCall<Wire.MentionDto>('create_mention', { name, mentionType }),
 
   /**
    * Deletes a mention entity.
@@ -2202,9 +2232,6 @@ const VaultAPI = {
    */
   deleteMention: async (mentionId: string): Promise<ApiResult<void>> => apiCall<void>('delete_mention', { mentionId }),
 
-  // ============================================================
-  // Updates
-  // ============================================================
 
   /**
    * Checks for application updates.
@@ -2212,11 +2239,8 @@ const VaultAPI = {
    *
    * @returns Update information with available version and download URL
    */
-  checkForUpdates: async (): Promise<ApiResult<UpdateInfo>> => apiCall<UpdateInfo>('check_for_updates'),
+  checkForUpdates: async (): Promise<ApiResult<UpdateInfo>> => apiCall<Wire.UpdateInfoDto>('check_for_updates'),
 
-  // ============================================================
-  // Embeddings
-  // ============================================================
 
   /**
    * Generates a vector embedding for a text string.
@@ -2242,11 +2266,8 @@ const VaultAPI = {
    *
    * @returns Model information object
    */
-  getEmbeddingModelInfo: async (): Promise<ApiResult<EmbeddingModelInfo>> => apiCall<EmbeddingModelInfo>('get_embedding_model_info'),
+  getEmbeddingModelInfo: async (): Promise<ApiResult<EmbeddingModelInfo>> => apiCall<Wire.ModelInfo>('get_embedding_model_info'),
 
-  // ============================================================
-  // Text Extraction & Parsing
-  // ============================================================
 
   /**
    * Parses wikilinks from markdown text.
@@ -2256,7 +2277,7 @@ const VaultAPI = {
    * @param sourcePath - Source file path for relative link resolution (optional)
    * @returns Array of parsed wikilink objects
    */
-  parseWikilinks: async (text: string, sourcePath?: string): Promise<ApiResult<ParsedLinksResponse>> => apiCall<ParsedLinksResponse>('parse_wikilinks', { text, sourcePath }),
+  parseWikilinks: async (text: string, sourcePath?: string): Promise<ApiResult<ParsedLinksResponse>> => apiCall<Wire.ParsedLinksResponse>('parse_wikilinks', { text, sourcePath }),
 
   /**
    * Extracts the document title from content.
@@ -2273,9 +2294,10 @@ const VaultAPI = {
    *
    * @param target - Wikilink target (e.g., 'Page Name' or '../folder/page')
    * @param sourcePath - Source file path for relative resolution
-   * @returns Resolved absolute file path
+   * @param availableDocuments - Candidate documents to resolve against
+   * @returns Resolution and matching document, if found
    */
-  resolveWikilink: async (target: string, sourcePath: string): Promise<ApiResult<string>> => apiCall<string>('resolve_wikilink', { target, sourcePath }),
+  resolveWikilink: async (target: string, sourcePath: string, availableDocuments: Wire.DocumentRefDto[]): Promise<ApiResult<Wire.ResolveLinkResponse>> => apiCall<Wire.ResolveLinkResponse>('resolve_wikilink', { target, sourcePath, availableDocuments }),
 
   /**
    * Extracts and resolves all links from document content.
@@ -2285,11 +2307,8 @@ const VaultAPI = {
    * @param sourcePath - Source file path for resolution
    * @returns Object with extracted and resolved links
    */
-  extractAndResolveLinks: async (content: string, sourcePath: string): Promise<ApiResult<ExtractAndResolveLinksResponse>> => apiCall<ExtractAndResolveLinksResponse>('extract_and_resolve_links', { content, sourcePath }),
+  extractAndResolveLinks: async (content: string, documentId: string): Promise<ApiResult<ExtractAndResolveLinksResponse>> => apiCall<Wire.ExtractAndResolveResponseDto>('extract_and_resolve_links', { content, documentId }),
 
-  // ============================================================
-  // Conversation Operations (Wave 2B)
-  // ============================================================
 
   /**
    * Creates a new conversation for multi-turn Q&A with context.
@@ -2306,7 +2325,7 @@ const VaultAPI = {
     modelName: string,
     systemPrompt?: string
   ): Promise<ApiResult<CreateConversationResponse>> =>
-    apiCall<CreateConversationResponse>('create_conversation', {
+    apiCall<Wire.CreateConversationResponseDto>('create_conversation', {
     request: {
       title,
       modelName,
@@ -2326,7 +2345,7 @@ const VaultAPI = {
     limit?: number,
     offset?: number
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall<ListConversationsResponse>('list_conversations', {
+    apiCall<Wire.ListConversationsResponseDto>('list_conversations', {
     query: {
       limit,
       offset,
@@ -2343,7 +2362,7 @@ const VaultAPI = {
   getConversation: async (
     conversationId: string
   ): Promise<ApiResult<GetConversationResponse>> =>
-    apiCall<GetConversationResponse>('get_conversation', {
+    apiCall<Wire.GetConversationResponseDto>('get_conversation', {
       request: {
         conversationId,
       },
@@ -2359,7 +2378,7 @@ const VaultAPI = {
   getConversationMessages: async (
     conversationId: string
   ): Promise<ApiResult<GetConversationMessagesResponse>> =>
-    apiCall<GetConversationMessagesResponse>('get_conversation_messages', {
+    apiCall<Wire.GetConversationMessagesResponseDto>('get_conversation_messages', {
       request: {
         conversationId,
       },
@@ -2377,7 +2396,7 @@ const VaultAPI = {
     conversationId: string,
     newTitle: string
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('rename_conversation', {
+    apiCall<Wire.RenameConversationResponseDto>('rename_conversation', {
     request: {
       conversationId,
       newTitle,
@@ -2397,34 +2416,12 @@ const VaultAPI = {
     message: string,
     toolPreferences?: ToolPreferences,
     requestId?: string
-  ): Promise<ApiResult<{
-    conversationId: string;
-    messages: ConversationMessage[];
-    contextUsed: number;
-  }>> => {
-    const payload: Record<string, unknown> = {
-      // Send both naming styles for compatibility with Tauri arg deserialization.
-      conversation_id: conversationId,
+  ): Promise<ApiResult<Wire.ChatResponse>> => apiCall<Wire.ChatResponse>('chat_with_conversation', {
       conversationId,
       message,
-    };
-
-    if (requestId) {
-      payload.request_id = requestId;
-      payload.requestId = requestId;
-    }
-
-    if (toolPreferences) {
-      payload.tool_preferences = toolPreferences;
-      payload.toolPreferences = toolPreferences;
-    }
-
-    return apiCall<{
-      conversationId: string;
-      messages: ConversationMessage[];
-      contextUsed: number;
-    }>('chat_with_conversation', payload);
-  },
+      requestId,
+      toolPreferences,
+    }),
 
   /**
    * Cancels active model generation for a conversation if one is currently in-flight.
@@ -2433,17 +2430,10 @@ const VaultAPI = {
     conversationId: string,
     requestId: string
   ): Promise<ApiResult<void>> => {
-    const response = await apiCall<{
-      conversationId: string;
-      messages: ConversationMessage[];
-      contextUsed: number;
-    }>('chat_with_conversation', {
-      conversation_id: conversationId,
+    const response = await apiCall<Wire.ChatResponse>('chat_with_conversation', {
       conversationId,
       message: '',
-      request_id: requestId,
       requestId,
-      cancel_only: true,
       cancelOnly: true,
     });
     if (!response.ok) {
@@ -2462,7 +2452,7 @@ const VaultAPI = {
   deleteConversation: async (
     conversationId: string
   ): Promise<ApiResult<DeleteConversationResponse>> =>
-    apiCall<DeleteConversationResponse>('delete_conversation', {
+    apiCall<Wire.DeleteConversationResponseDto>('delete_conversation', {
       request: {
         conversationId,
       },
@@ -2474,13 +2464,13 @@ const VaultAPI = {
   createConversationSpace: async (
     request: CreateConversationSpaceRequest
   ): Promise<ApiResult<ConversationSpaceDto>> =>
-    apiCall<ConversationSpaceDto>('create_conversation_space', { request }),
+    apiCall<Wire.ConversationSpaceDto>('create_conversation_space', { request }),
 
   /**
    * Lists all conversation spaces.
    */
   listConversationSpaces: async (): Promise<ApiResult<ConversationSpaceDto[]>> =>
-    apiCall<ConversationSpaceDto[]>('list_conversation_spaces'),
+    apiCall<Wire.ConversationSpaceDto[]>('list_conversation_spaces'),
 
   /**
    * Creates a journal notebook.
@@ -2488,13 +2478,13 @@ const VaultAPI = {
   createJournal: async (
     request: CreateConversationJournalRequest
   ): Promise<ApiResult<ConversationJournalDto>> =>
-    apiCall<ConversationJournalDto>('create_journal', { request }),
+    apiCall<Wire.ConversationJournalDto>('create_journal', { request }),
 
   /**
    * Lists all journals.
    */
   listJournals: async (): Promise<ApiResult<ConversationJournalDto[]>> =>
-    apiCall<ConversationJournalDto[]>('list_journals'),
+    apiCall<Wire.ConversationJournalDto[]>('list_journals'),
 
   /**
    * Lists members for a specific conversation space.
@@ -2502,8 +2492,7 @@ const VaultAPI = {
   listConversationSpaceMembers: async (
     spaceId: string
   ): Promise<ApiResult<ConversationSpaceMemberDto[]>> =>
-    apiCall<ConversationSpaceMemberDto[]>('list_conversation_space_members', {
-      space_id: spaceId,
+    apiCall<Wire.ConversationSpaceMemberDto[]>('list_conversation_space_members', {
       spaceId,
     }),
 
@@ -2513,7 +2502,7 @@ const VaultAPI = {
   upsertConversationSpaceMember: async (
     request: UpsertConversationSpaceMemberRequest
   ): Promise<ApiResult<ConversationSpaceMemberDto>> =>
-    apiCall<ConversationSpaceMemberDto>('upsert_conversation_space_member', { request }),
+    apiCall<Wire.ConversationSpaceMemberDto>('upsert_conversation_space_member', { request }),
 
   /**
    * Removes a member from a conversation space.
@@ -2521,7 +2510,7 @@ const VaultAPI = {
   removeConversationSpaceMember: async (
     request: RemoveConversationSpaceMemberRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('remove_conversation_space_member', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('remove_conversation_space_member', { request }),
 
   /**
    * Updates a conversation space.
@@ -2529,7 +2518,7 @@ const VaultAPI = {
   updateConversationSpace: async (
     request: UpdateConversationSpaceRequest
   ): Promise<ApiResult<ConversationSpaceDto>> =>
-    apiCall<ConversationSpaceDto>('update_conversation_space', { request }),
+    apiCall<Wire.ConversationSpaceDto>('update_conversation_space', { request }),
 
   /**
    * Archives/unarchives a conversation space.
@@ -2537,7 +2526,7 @@ const VaultAPI = {
   archiveConversationSpace: async (
     request: ArchiveConversationSpaceRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('archive_conversation_space', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('archive_conversation_space', { request }),
 
   // The `*ConversationThread` wrappers that used to live here were removed:
   // the feature was renamed thread → space on the backend, so they invoked
@@ -2550,7 +2539,7 @@ const VaultAPI = {
   updateJournal: async (
     request: UpdateConversationJournalRequest
   ): Promise<ApiResult<ConversationJournalDto>> =>
-    apiCall<ConversationJournalDto>('update_journal', { request }),
+    apiCall<Wire.ConversationJournalDto>('update_journal', { request }),
 
   /**
    * Archives/unarchives a journal notebook.
@@ -2558,7 +2547,7 @@ const VaultAPI = {
   archiveJournal: async (
     request: ArchiveConversationJournalRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('archive_journal', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('archive_journal', { request }),
 
   /**
    * Permanently deletes a journal notebook.
@@ -2566,7 +2555,7 @@ const VaultAPI = {
   deleteJournal: async (
     request: DeleteConversationJournalRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('delete_journal', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('delete_journal', { request }),
 
   /**
    * Moves a conversation to a space.
@@ -2574,7 +2563,7 @@ const VaultAPI = {
   moveConversationToSpace: async (
     request: MoveConversationToSpaceRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('move_conversation_to_space', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('move_conversation_to_space', { request }),
 
   /**
    * Adds a conversation to a journal without changing its owning space.
@@ -2582,7 +2571,7 @@ const VaultAPI = {
   addConversationToJournal: async (
     request: AddConversationToJournalRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('add_conversation_to_journal', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('add_conversation_to_journal', { request }),
 
   /**
    * Removes a conversation from a journal entry deck.
@@ -2590,7 +2579,7 @@ const VaultAPI = {
   removeConversationFromJournal: async (
     request: RemoveConversationFromJournalRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('remove_conversation_from_journal', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('remove_conversation_from_journal', { request }),
 
   /**
    * Sets the "saved" state for a conversation.
@@ -2598,7 +2587,7 @@ const VaultAPI = {
   setConversationSaved: async (
     request: SetConversationStateRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('set_conversation_saved', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('set_conversation_saved', { request }),
 
   /**
    * Sets the "bookmarked" state for a conversation.
@@ -2606,7 +2595,7 @@ const VaultAPI = {
   setConversationBookmarked: async (
     request: SetConversationStateRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('set_conversation_bookmarked', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('set_conversation_bookmarked', { request }),
 
   /**
    * Sets the "pinned" state for a conversation.
@@ -2614,7 +2603,7 @@ const VaultAPI = {
   setConversationPinned: async (
     request: SetConversationStateRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('set_conversation_pinned', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('set_conversation_pinned', { request }),
 
   /**
    * Sets the "archived" state for a conversation.
@@ -2622,7 +2611,7 @@ const VaultAPI = {
   setConversationArchived: async (
     request: SetConversationStateRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('set_conversation_archived', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('set_conversation_archived', { request }),
 
   /**
    * Deletes a specific message from a conversation.
@@ -2630,7 +2619,7 @@ const VaultAPI = {
   deleteConversationMessage: async (
     request: DeleteConversationMessageRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('delete_conversation_message', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('delete_conversation_message', { request }),
 
   /**
    * Bookmarks a specific message in a conversation (upsert by message).
@@ -2638,7 +2627,7 @@ const VaultAPI = {
   bookmarkConversationMessage: async (
     request: BookmarkConversationMessageRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('bookmark_conversation_message', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('bookmark_conversation_message', { request }),
 
   /**
    * Removes a message bookmark from a conversation.
@@ -2646,7 +2635,7 @@ const VaultAPI = {
   unbookmarkConversationMessage: async (
     request: UnbookmarkConversationMessageRequest
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('unbookmark_conversation_message', { request }),
+    apiCall<Wire.RenameConversationResponseDto>('unbookmark_conversation_message', { request }),
 
   /**
    * Lists message-level bookmarks with optional conversation and text filters.
@@ -2654,7 +2643,7 @@ const VaultAPI = {
   listMessageBookmarks: async (
     query?: ListMessageBookmarksQuery
   ): Promise<ApiResult<ListMessageBookmarksResponse>> =>
-    apiCall<ListMessageBookmarksResponse>('list_message_bookmarks', {
+    apiCall<Wire.ListMessageBookmarksResponseDto>('list_message_bookmarks', {
       query: query ?? {},
     }),
 
@@ -2664,7 +2653,7 @@ const VaultAPI = {
   listConversationsExplorer: async (
     query?: ListConversationsExplorerQuery
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall<ListConversationsResponse>('list_conversations_explorer', {
+    apiCall<Wire.ListConversationsResponseDto>('list_conversations_explorer', {
       query: query ?? {},
     }),
 
@@ -2674,7 +2663,7 @@ const VaultAPI = {
   listJournalConversations: async (
     query: ListJournalConversationsQuery
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall<ListConversationsResponse>('list_journal_conversations', {
+    apiCall<Wire.ListConversationsResponseDto>('list_journal_conversations', {
       query,
     }),
 
@@ -2684,8 +2673,7 @@ const VaultAPI = {
   listConversationLinkedDocuments: async (
     conversationId: string
   ): Promise<ApiResult<ConversationLinkedDocumentDto[]>> =>
-    apiCall<ConversationLinkedDocumentDto[]>('list_conversation_linked_documents', {
-      conversation_id: conversationId,
+    apiCall<Wire.ConversationLinkedDocumentDto[]>('list_conversation_linked_documents', {
       conversationId,
     }),
 
@@ -2696,10 +2684,9 @@ const VaultAPI = {
     conversationId: string,
     documentId: string
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('remove_conversation_linked_document', {
-      conversation_id: conversationId,
+    apiCall<Wire.RenameConversationResponseDto>('remove_conversation_linked_document', {
       conversationId,
-      document_id: documentId,
+
       documentId,
     }),
 
@@ -2715,13 +2702,12 @@ const VaultAPI = {
       relevanceScore?: number;
     }
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('add_conversation_web_source', {
-      conversation_id: conversationId,
+    apiCall<Wire.RenameConversationResponseDto>('add_conversation_web_source', {
       conversationId,
       url,
       title: options?.title,
       excerpt: options?.excerpt,
-      relevance_score: options?.relevanceScore,
+
       relevanceScore: options?.relevanceScore,
     }),
 
@@ -2731,8 +2717,7 @@ const VaultAPI = {
   listConversationWebSources: async (
     conversationId: string
   ): Promise<ApiResult<ConversationWebSourceDto[]>> =>
-    apiCall<ConversationWebSourceDto[]>('list_conversation_web_sources', {
-      conversation_id: conversationId,
+    apiCall<Wire.ConversationWebSourceDto[]>('list_conversation_web_sources', {
       conversationId,
     }),
 
@@ -2743,10 +2728,9 @@ const VaultAPI = {
     conversationId: string,
     sourceId: string
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('remove_conversation_web_source', {
-      conversation_id: conversationId,
+    apiCall<Wire.RenameConversationResponseDto>('remove_conversation_web_source', {
       conversationId,
-      source_id: sourceId,
+
       sourceId,
     }),
 
@@ -2756,8 +2740,7 @@ const VaultAPI = {
   listDocumentSpaceMemberships: async (
     documentId: string
   ): Promise<ApiResult<DocumentSpaceMembershipDto[]>> =>
-    apiCall<DocumentSpaceMembershipDto[]>('list_document_space_memberships', {
-      document_id: documentId,
+    apiCall<Wire.DocumentSpaceMembershipDto[]>('list_document_space_memberships', {
       documentId,
     }),
 
@@ -2769,10 +2752,9 @@ const VaultAPI = {
     spaceId: string,
     assigned: boolean
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('set_document_space_membership', {
-      document_id: documentId,
+    apiCall<Wire.RenameConversationResponseDto>('set_document_space_membership', {
       documentId,
-      space_id: spaceId,
+
       spaceId,
       assigned,
     }),
@@ -2783,7 +2765,7 @@ const VaultAPI = {
   synthesizeJournalEntries: async (
     request: SynthesizeJournalEntriesRequest
   ): Promise<ApiResult<SynthesizeJournalEntriesResponse>> =>
-    apiCall<SynthesizeJournalEntriesResponse>('synthesize_journal_entries', {
+    apiCall<Wire.SynthesizeJournalEntriesResponseDto>('synthesize_journal_entries', {
       request,
     }),
 
@@ -2799,7 +2781,7 @@ const VaultAPI = {
   ): Promise<ApiResult<{
     conversationId: string;
     deletedCount: number;
-    messages: ConversationMessage[];
+    messages: Wire.MessageDto[];
   }>> =>
     apiCall('truncate_conversation_after', {
       request: { conversationId, messageId, inclusive },
@@ -2822,29 +2804,11 @@ const VaultAPI = {
     conversationId: string,
     toolPreferences?: ToolPreferences,
     requestId?: string
-  ): Promise<ApiResult<{
-    conversationId: string;
-    messages: ConversationMessage[];
-    contextUsed: number;
-  }>> => {
-    const payload: Record<string, unknown> = {
-      // Send both naming styles for compatibility with Tauri arg deserialization.
-      conversation_id: conversationId,
+  ): Promise<ApiResult<Wire.ChatResponse>> => apiCall<Wire.ChatResponse>('regenerate_response', {
       conversationId,
-    };
-
-    if (toolPreferences) {
-      payload.tool_preferences = toolPreferences;
-      payload.toolPreferences = toolPreferences;
-    }
-
-    if (requestId) {
-      payload.request_id = requestId;
-      payload.requestId = requestId;
-    }
-
-    return apiCall('regenerate_response', payload);
-  },
+      toolPreferences,
+      requestId,
+    }),
 
   /**
    * Assigns or removes multiple documents from a space scope.
@@ -2854,17 +2818,13 @@ const VaultAPI = {
     spaceId: string,
     assigned: boolean
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<RenameConversationResponse>('set_documents_space_membership', {
-      document_ids: documentIds,
+    apiCall<Wire.RenameConversationResponseDto>('set_documents_space_membership', {
       documentIds,
-      space_id: spaceId,
+
       spaceId,
       assigned,
     }),
 
-  // ============================================================
-  // Function Calling Operations (Wave 2B)
-  // ============================================================
 
   /**
    * Executes an LLM function call with security checks.
@@ -2876,7 +2836,7 @@ const VaultAPI = {
    */
   executeFunction: async (
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, Wire.JsonValue>
   ): Promise<ApiResult<FunctionResult>> => apiCall<FunctionResult>('execute_function', {
     call: {
       id: crypto.randomUUID(),
@@ -2893,9 +2853,6 @@ const VaultAPI = {
    */
   listAvailableFunctions: async (): Promise<ApiResult<FunctionDefinition[]>> => apiCall<FunctionDefinition[]>('list_available_functions'),
 
-  // ============================================================
-  // Model Management - Downloads (Wave 2C)
-  // ============================================================
 
   /**
    * Starts downloading a model from a URL.
@@ -2982,7 +2939,7 @@ const VaultAPI = {
    * @returns Download status with progress information or null
    */
   getDownloadStatus: async (downloadId: string): Promise<ApiResult<DownloadStatus | null>> =>
-    apiCall<DownloadStatus | null>('get_download_status', { id: downloadId }),
+    apiCall<Wire.DownloadStatusResponse | null>('get_download_status', { id: downloadId }).then(result => result.ok ? { ok: true, data: result.data === null ? null : normalizeDownloadStatus(result.data) } : result),
 
   /**
    * Lists all downloads (active, paused, completed, failed).
@@ -2991,11 +2948,8 @@ const VaultAPI = {
    * @returns Array of all download statuses
    */
   listDownloads: async (): Promise<ApiResult<DownloadStatus[]>> =>
-    apiCall<DownloadStatus[]>('list_downloads'),
+    apiCall<Wire.DownloadStatusResponse[]>('list_downloads').then(result => result.ok ? { ok: true, data: result.data.map(normalizeDownloadStatus) } : result),
 
-  // ============================================================
-  // Model Management - Downloaded Models (Wave 2C)
-  // ============================================================
 
   /**
    * Gets all downloaded models with metadata.
@@ -3006,7 +2960,7 @@ const VaultAPI = {
    * @returns Array of downloaded model records
    */
   getDownloadedModels: async (): Promise<ApiResult<DownloadedModel[]>> =>
-    apiCall<DownloadedModel[]>('get_models_with_metadata'),
+    apiCall<Wire.DownloadedModelResponse[]>('get_models_with_metadata'),
 
   /**
    * Checks if a model is already downloaded.
@@ -3055,7 +3009,7 @@ const VaultAPI = {
    * @returns Active chat model or null
    */
   getActiveChatModel: async (): Promise<ApiResult<DownloadedModel | null>> =>
-    apiCall<DownloadedModel | null>('get_active_chat_model'),
+    apiCall<Wire.DownloadedModelResponse | null>('get_active_chat_model'),
 
   /**
    * Sets the active embedding model.
@@ -3092,7 +3046,7 @@ const VaultAPI = {
    * @returns Active embedding model or null
    */
   getActiveEmbeddingModel: async (): Promise<ApiResult<DownloadedModel | null>> =>
-    apiCall<DownloadedModel | null>('get_active_embedding_model'),
+    apiCall<Wire.DownloadedModelResponse | null>('get_active_embedding_model'),
 
   /**
    * Absolute path of the local models folder (created on first call).
@@ -3104,10 +3058,7 @@ const VaultAPI = {
     chat_model: DownloadedModel | null;
     embedding_model: DownloadedModel | null;
   }>> =>
-    apiCall<{
-      chat_model: DownloadedModel | null;
-      embedding_model: DownloadedModel | null;
-    }>('get_active_models'),
+    apiCall<Wire.ActiveModels>('get_active_models'),
 
   /**
    * Deletes a downloaded model record and optionally its file.
@@ -3120,9 +3071,6 @@ const VaultAPI = {
   deleteDownloadedModel: async (modelId: string, deleteFile: boolean = false): Promise<ApiResult<void>> =>
     apiCall<void>('delete_downloaded_model_and_file', { modelId, deleteFile }),
 
-  // ============================================================
-  // Model Management - LLM & Catalog (Wave 4B)
-  // ============================================================
 
   /**
    * Gets system hardware capabilities for model selection.
@@ -3131,7 +3079,7 @@ const VaultAPI = {
    * @returns System capabilities including GPU availability and resources
    */
   getSystemCapabilities: async (): Promise<ApiResult<SystemCapabilities>> =>
-    apiCall<SystemCapabilities>('detect_system_capabilities'),
+    apiCall<Wire.SystemCapabilitiesResponse>('detect_system_capabilities'),
 
   /**
    * Downloads a model from the catalog.
@@ -3141,7 +3089,7 @@ const VaultAPI = {
    * @returns Download ID for tracking progress
    */
   downloadModel: async (modelId: string): Promise<ApiResult<DownloadModelResponse>> =>
-    apiCall<DownloadModelResponse>('download_model', { modelId }),
+    apiCall<Wire.DownloadModelResponse>('download_model', { modelId }),
 
   /**
    * Rescan the vault folder for external `.md` edits the watcher may have
@@ -3154,15 +3102,22 @@ const VaultAPI = {
   rescanVault: async (): Promise<
     ApiResult<{ scanned: number; imported: number; deleted: number }>
   > =>
-    apiCall<{ scanned: number; imported: number; deleted: number }>('rescan_vault'),
+    apiCall<Wire.RescanSummary>('rescan_vault'),
 
   /**
    * Starts a batch file import operation for indexing multiple files
    * @param filePaths - Array of absolute file paths to index
    * @returns Operation ID for tracking progress
    */
-  batchFileImport: async (filePaths: string[]): Promise<ApiResult<string>> =>
-    apiCall<string>('start_batch_file_import', { filePaths }),
+  batchFileImport: async (filePaths: string[], spaceId?: string, indexing?: Wire.FileIndexingOptionsDto): Promise<ApiResult<string>> => {
+    const result = await apiCall<Wire.StartBatchFileImportResponseDto>('batch_import_files', {
+      request: { filePaths, spaceId, indexing },
+    });
+    if (!result.ok) {
+      return result;
+    }
+    return { ok: true, data: result.data.jobId };
+  },
 
   /**
    * Deletes a model file from disk.
@@ -3171,12 +3126,9 @@ const VaultAPI = {
    * @param modelId - Model identifier to delete
    * @returns Void on success
    */
-  deleteModel: async (modelId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_model', { modelId }),
+  deleteModel: async (modelId: string, deleteFile = true): Promise<ApiResult<void>> =>
+    apiCall<void>('delete_model', { modelId, deleteFile }),
 
-  // ============================================================
-  // Model Catalog Management (Wave 4B)
-  // ============================================================
 
   /**
    * Detects system capabilities for model compatibility.
@@ -3185,7 +3137,7 @@ const VaultAPI = {
    * @returns Detailed system capabilities
    */
   detectSystemCapabilities: async (): Promise<ApiResult<SystemCapabilities>> =>
-    apiCall<SystemCapabilities>('detect_system_capabilities'),
+    apiCall<Wire.SystemCapabilitiesResponse>('detect_system_capabilities'),
 
   /**
    * Gets all models compatible with the current system.
@@ -3194,7 +3146,7 @@ const VaultAPI = {
    * @returns Array of compatible models
    */
   getCompatibleModels: async (category?: string): Promise<ApiResult<ModelRecommendation[]>> =>
-    apiCall<ModelRecommendation[]>('get_compatible_models', category ? { category } : {}),
+    apiCall<Wire.ModelRecommendationDto[]>('get_compatible_models', category ? { category } : {}),
 
   /**
    * Gets all recommended models across all tasks.
@@ -3203,7 +3155,7 @@ const VaultAPI = {
    * @returns Array of recommended models by task type
    */
   getAllRecommendedModels: async (): Promise<ApiResult<ModelRecommendation[]>> =>
-    apiCall<ModelRecommendation[]>('get_all_recommended_models'),
+    apiCall<Wire.ModelRecommendationDto[]>('get_all_recommended_models'),
 
   /**
    * Searches the model catalog by name or description.
@@ -3213,7 +3165,7 @@ const VaultAPI = {
    * @returns Array of matching models with relevance scores
    */
   searchModelCatalog: async (request: SearchModelCatalogRequest): Promise<ApiResult<ModelSearchResult[]>> =>
-    apiCall<ModelSearchResult[]>('search_model_catalog', { request }),
+    apiCall<Wire.ModelSearchResultDto[]>('search_model_catalog', { request }),
 
   /**
    * Refreshes the model catalog from remote source.
@@ -3230,8 +3182,8 @@ const VaultAPI = {
    *
    * @returns Void on success
    */
-  clearModelCatalogCache: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_model_catalog_cache'),
+  clearModelCatalogCache: async (): Promise<ApiResult<number>> =>
+    apiCall<number>('clear_model_catalog_cache'),
 
   /**
    * Gets statistics about the model catalog cache.
@@ -3240,11 +3192,8 @@ const VaultAPI = {
    * @returns Cache statistics
    */
   getModelCatalogStats: async (): Promise<ApiResult<ModelCatalogCacheStats>> =>
-    apiCall<ModelCatalogCacheStats>('get_model_catalog_stats'),
+    apiCall<Wire.ModelCatalogStats>('get_model_catalog_stats'),
 
-  // ============================================================
-  // Model State Management (Wave 4B)
-  // ============================================================
 
   /**
    * Clears the active chat model selection.
@@ -3264,13 +3213,7 @@ const VaultAPI = {
   clearActiveEmbeddingModel: async (): Promise<ApiResult<void>> =>
     apiCall<void>('clear_active_embedding_model'),
 
-  // ============================================================
-  // Auto-Backup Operations (Wave 4B)
-  // ============================================================
 
-  // ============================================================
-  // Function Calling Stats (Wave 4B)
-  // ============================================================
 
   /**
    * Gets statistics about LLM function calling usage.
@@ -3281,13 +3224,7 @@ const VaultAPI = {
   getFunctionStats: async (): Promise<ApiResult<Record<string, unknown>>> =>
     apiCall<Record<string, unknown>>('get_function_stats'),
 
-  // ============================================================
-  // Backup and Export Operations (Wave 2D)
-  // ============================================================
 
-  // ============================================================
-  // Transcription
-  // ============================================================
 
   /**
    * Transcribes an audio file on-device and returns timestamped segments.
@@ -3297,7 +3234,7 @@ const VaultAPI = {
    * @returns Transcript with segments and rendered text
    */
   transcribeFile: async (path: string): Promise<ApiResult<Transcript>> =>
-    apiCall<Transcript>('transcribe_file', { path }),
+    apiCall<Wire.TranscriptDto>('transcribe_file', { path }),
 
   /**
    * Reports whether a transcription model is downloaded.
@@ -3305,7 +3242,7 @@ const VaultAPI = {
    * @returns TranscriptionStatus with the model name when ready
    */
   getTranscriptionStatus: async (): Promise<ApiResult<TranscriptionStatus>> =>
-    apiCall<TranscriptionStatus>('get_transcription_status'),
+    apiCall<Wire.TranscriptionStatusDto>('get_transcription_status'),
 
 };
 

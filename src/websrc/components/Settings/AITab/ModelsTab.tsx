@@ -24,12 +24,11 @@ export function ModelsTab() {
 
   const [modelDownloadPath, setModelDownloadPath] = useState('');
   const [isLoadingModelDownloadPath, setIsLoadingModelDownloadPath] = useState(true);
-  const [isModelCatalogExpanded, setIsModelCatalogExpanded] = useState(false);
+  const [isModelCatalogExpanded, setIsModelCatalogExpanded] = useState(true);
   const [isAddingExternalDirectory, setIsAddingExternalDirectory] = useState(false);
   const selectedCatalogModel = useModelCatalogStore((state) => state.selectedModel);
   const catalogSectionRef = useRef<HTMLDivElement | null>(null);
 
-  const provider = llmSettings?.provider ?? 'auto';
   const externalModelDirectories = llmSettings?.externalModelDirectories ?? [];
 
   const loadModelDownloadPath = useCallback(async () => {
@@ -107,12 +106,6 @@ export function ModelsTab() {
     );
   };
 
-  const canBrowseCatalog = provider === 'auto' || provider === 'local';
-
-  const goToChatTab = () => {
-    window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));
-  };
-
   const paletteCommands = useMemo<PaletteCommand[]>(
     () => [
       {
@@ -133,6 +126,39 @@ export function ModelsTab() {
   return (
     <>
       <PageHeader title="Models" />
+
+      <div ref={catalogSectionRef}>
+        <SettingsSection
+          title="Catalog"
+          actions={
+            <button
+              type="button"
+              onClick={() => setIsModelCatalogExpanded((previous) => !previous)}
+              aria-expanded={isModelCatalogExpanded}
+              className={SECONDARY_BUTTON_CLASS}
+            >
+              {isModelCatalogExpanded ? 'Hide catalog' : 'Browse catalog'}
+            </button>
+          }
+        >
+          {isModelCatalogExpanded ? (
+            <div className="pt-4">
+              <ModelCatalogBrowser
+                routerModelId={llmSettings?.router?.model}
+                onSetRouterModel={async (modelId) => {
+                  if (!llmSettings) return;
+                  await saveLlmUpdates({
+                    router: {
+                      ...llmSettings.router,
+                      model: modelId,
+                    },
+                  });
+                }}
+              />
+            </div>
+          ) : null}
+        </SettingsSection>
+      </div>
 
       <SettingsSection title="Model storage">
         <SettingsRow label="Downloads folder" stacked>
@@ -196,54 +222,6 @@ export function ModelsTab() {
       </SettingsSection>
 
       <HuggingFaceSettings />
-
-      <div ref={catalogSectionRef}>
-        <SettingsSection
-          title="Catalog"
-          actions={
-            canBrowseCatalog ? (
-              <button
-                type="button"
-                onClick={() => setIsModelCatalogExpanded((previous) => !previous)}
-                aria-expanded={isModelCatalogExpanded}
-                className={SECONDARY_BUTTON_CLASS}
-              >
-                {isModelCatalogExpanded ? 'Hide catalog' : 'Browse catalog'}
-              </button>
-            ) : null
-          }
-        >
-          {!canBrowseCatalog ? (
-            <div className="flex items-center gap-2 border-b border-border-subtle py-3">
-              <p className="text-sm text-text-muted">
-                Local downloads are off while the provider is Ollama.
-              </p>
-              <button
-                type="button"
-                onClick={goToChatTab}
-                className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
-              >
-                Change provider
-              </button>
-            </div>
-          ) : isModelCatalogExpanded ? (
-            <div className="pt-4">
-              <ModelCatalogBrowser
-                routerModelId={llmSettings?.router?.model}
-                onSetRouterModel={async (modelId) => {
-                  if (!llmSettings) return;
-                  await saveLlmUpdates({
-                    router: {
-                      ...llmSettings.router,
-                      model: modelId,
-                    },
-                  });
-                }}
-              />
-            </div>
-          ) : null}
-        </SettingsSection>
-      </div>
     </>
   );
 }

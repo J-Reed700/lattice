@@ -14,9 +14,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 
-// ============================================================================
-// ZOD RUNTIME VALIDATION SCHEMAS
-// ============================================================================
 
 /**
  * Zod schemas for runtime validation of event payloads
@@ -61,6 +58,14 @@ export namespace EventSchemas {
 
     export const StateSnapshot = z.discriminatedUnion('kind', [Single, Batch]);
 
+    export const Completed = z.object({
+      modelId: z.string(),
+      modelName: z.string(),
+      totalSize: z.number(),
+      fileCount: z.number(),
+      timestamp: z.string(),
+    });
+
     export const Failed = z.object({
       id: z.string(),
       error: z.string(),
@@ -70,6 +75,7 @@ export namespace EventSchemas {
     export type Single = z.infer<typeof Single>;
     export type Batch = z.infer<typeof Batch>;
     export type StateSnapshot = z.infer<typeof StateSnapshot>;
+    export type Completed = z.infer<typeof Completed>;
     export type Failed = z.infer<typeof Failed>;
   }
 
@@ -126,33 +132,9 @@ export namespace EventSchemas {
       Completed,
       Cancelled,
     ]);
-
-    // Legacy alias for backward compatibility
-    export const Progress = FileStarted;
-    export const Complete = Completed;
-    export const Error = FileError;
   }
 
   export namespace Models {
-    export const DownloadProgress = z.object({
-      percentage: z.number(),
-      speedMbps: z.number().optional(),
-      etaSeconds: z.number().optional(),
-    });
-
-    export const DownloadCompleted = z.object({
-      modelId: z.string(),
-      modelName: z.string(),
-      totalSize: z.number(),
-      fileCount: z.number(),
-      timestamp: z.string(),
-    });
-
-    export const DownloadError = z.object({
-      model_id: z.string(),
-      error: z.string(),
-    });
-
     /// Phases: `started → ready | skipped | failed`.
     export const WarmupStatus = z.object({
       role: z.enum(['chat', 'utility', 'embedding']),
@@ -280,9 +262,6 @@ export namespace EventSchemas {
   }
 }
 
-// ============================================================================
-// NAMESPACE: Downloads
-// ============================================================================
 
 export namespace TauriEvents {
   export namespace Downloads {
@@ -351,6 +330,19 @@ export namespace TauriEvents {
     export type StateSnapshot = Single | Batch;
 
     /**
+     * Download completed event
+     * Emitted when a download is fully written and ready.
+     * Note: uses camelCase to match Rust serialization.
+     */
+    export interface Completed {
+      modelId: string;
+      modelName: string;
+      totalSize: number;
+      fileCount: number;
+      timestamp: string;
+    }
+
+    /**
      * Download failed event
      * Emitted when a download fails
      */
@@ -360,9 +352,6 @@ export namespace TauriEvents {
     }
   }
 
-  // ============================================================================
-  // NAMESPACE: Indexing
-  // ============================================================================
 
   export namespace Indexing {
     /**
@@ -439,75 +428,8 @@ export namespace TauriEvents {
       | FileError
       | Completed
       | Cancelled;
-
-    // Legacy aliases for backward compatibility
-    /** @deprecated Use FileStarted instead */
-    export type Progress = FileStarted;
-    /** @deprecated Use Completed instead */
-    export type Complete = Completed;
-    /** @deprecated Use FileError instead */
-    export type Error = FileError;
   }
 
-  // ============================================================================
-  // NAMESPACE: Models
-  // ⚠️ DEPRECATED: Model download events have moved to TauriEvents.Downloads.*
-  // ============================================================================
-
-  /**
-   * NAMESPACE: Models
-   *
-   * ⚠️ DEPRECATED: Model download events have moved to TauriEvents.Downloads.*
-   * These types are kept for backward compatibility only.
-   *
-   * Migration:
-   * - TauriEvents.Models.DownloadProgress → TauriEvents.Downloads.Progress
-   * - TauriEvents.Models.DownloadCompleted → TauriEvents.Downloads.Completed
-   * - TauriEvents.Models.DownloadError → TauriEvents.Downloads.Failed
-   */
-  export namespace Models {
-    /**
-     * @deprecated Use TauriEvents.Downloads.Progress instead
-     *
-     * Model download progress event
-     * For backward compatibility with ModelDownloadScreen
-     */
-    export interface DownloadProgress {
-      percentage: number;
-      speedMbps?: number;
-      etaSeconds?: number;
-    }
-
-    /**
-     * @deprecated Use TauriEvents.Downloads.Completed instead
-     *
-     * Model download completed event
-     * Emitted when a model is fully downloaded and ready
-     * Note: Uses camelCase to match Rust serialization
-     */
-    export interface DownloadCompleted {
-      modelId: string;
-      modelName: string;
-      totalSize: number;
-      fileCount: number;
-      timestamp: string;
-    }
-
-    /**
-     * @deprecated Use TauriEvents.Downloads.Failed instead
-     *
-     * Model download error event
-     * Emitted when model download fails
-     */
-    export interface DownloadError {
-      model_id: string;
-      error: string;
-    }
-  }
-
-  // ============================================================================
-  // NAMESPACE: Progress (Generic)
-  // ============================================================================
 
   export namespace Progress {
     /**
@@ -522,9 +444,6 @@ export namespace TauriEvents {
     }
   }
 
-  // ============================================================================
-  // NAMESPACE: LLM
-  // ============================================================================
 
   export namespace LLM {
     /**
@@ -565,9 +484,6 @@ export namespace TauriEvents {
     }
   }
 
-  // ============================================================================
-  // NAMESPACE: FileWatch
-  // ============================================================================
 
   export namespace FileWatch {
     /**
@@ -599,9 +515,6 @@ export namespace TauriEvents {
     }
   }
 
-  // ============================================================================
-  // NAMESPACE: Search
-  // ============================================================================
 
   export namespace Search {
     /**
@@ -626,9 +539,6 @@ export namespace TauriEvents {
   }
 }
 
-// ============================================================================
-// EVENT NAME CONSTANTS
-// ============================================================================
 
 /**
  * Type-safe event name constants
@@ -636,46 +546,17 @@ export namespace TauriEvents {
  */
 export const TauriEventNames = {
   Downloads: {
-    // Single event name for all download events (discriminated by payload.kind and payload.status)
+    // Progress snapshots for every download, discriminated by payload.kind and payload.status
     Event: 'download:progress' as const,
-
-    // Legacy event names for backward compatibility
-    /** @deprecated Use Event instead - discriminate by payload.status */
-    Started: 'download:started' as const,
-    /** @deprecated Use Event instead - status is in payload */
-    Progress: 'download:progress' as const,
-    /** @deprecated Use Event instead - status is in payload */
-    Paused: 'download:paused' as const,
-    /** @deprecated Use Event instead - status is in payload */
-    Resumed: 'download:resumed' as const,
-    /** @deprecated Use Event instead - status is in payload */
+    // Terminal events, emitted alongside the final progress snapshot
     Completed: 'download:completed' as const,
-    /** @deprecated Use Event instead - status is in payload */
     Failed: 'download:failed' as const,
-    /** @deprecated Use Event instead - status is in payload */
-    Cancelled: 'download:cancelled' as const,
   },
   Indexing: {
     // Single event name for all indexing events (discriminated by payload.type)
     Event: 'indexing-progress' as const,
-
-    // Legacy aliases for backward compatibility
-    /** @deprecated Use Event instead */
-    Progress: 'indexing-progress' as const,
-    /** @deprecated Event type is now discriminated by payload.type field */
-    Complete: 'indexing-complete' as const,
-    /** @deprecated Event type is now discriminated by payload.type field */
-    Error: 'indexing-error' as const,
-    /** @deprecated Event type is now discriminated by payload.type field */
-    Started: 'indexing-started' as const,
   },
   Models: {
-    // ⚠️ DEPRECATED: Use TauriEventNames.Downloads.* instead
-    // Legacy event names kept for reference during migration
-    DownloadProgress: 'download:progress' as const,
-    DownloadCompleted: 'download:completed' as const,
-    DownloadError: 'download:failed' as const,
-
     /// Boot-time pre-warm status for chat/utility/embedding model roles.
     /// Backend fires `started → ready|skipped|failed` per role.
     WarmupStatus: 'model:warmup-status' as const,
@@ -700,9 +581,6 @@ export const TauriEventNames = {
   },
 } as const;
 
-// ============================================================================
-// RUNTIME VALIDATION UTILITIES
-// ============================================================================
 
 /**
  * Listen to a Tauri event with runtime validation of the payload
@@ -713,8 +591,8 @@ export const TauriEventNames = {
  * @example
  * ```typescript
  * const unlisten = await listenValidated(
- *   TauriEventNames.Downloads.Progress,
- *   EventSchemas.Downloads.Progress,
+ *   TauriEventNames.Downloads.Event,
+ *   EventSchemas.Downloads.StateSnapshot,
  *   (event) => {
  *     // event.payload is guaranteed to match the schema
  *     console.log('Progress:', event.payload.bytes_downloaded);
@@ -749,37 +627,3 @@ export async function listenValidated<T>(
     }
   });
 }
-
-// ============================================================================
-// BACKWARD COMPATIBILITY EXPORTS
-// ============================================================================
-
-/**
- * @deprecated Use TauriEvents.Indexing.Progress instead
- */
-export type IndexingProgressEvent = TauriEvents.Indexing.Progress;
-
-/**
- * @deprecated Use TauriEvents.Indexing.Complete instead
- */
-export type IndexingCompleteEvent = TauriEvents.Indexing.Complete;
-
-/**
- * @deprecated Use TauriEvents.Indexing.Error instead
- */
-export type IndexingErrorEvent = TauriEvents.Indexing.Error;
-
-/**
- * @deprecated Use TauriEvents.FileWatch.Event instead
- */
-export type FileWatchEvent = TauriEvents.FileWatch.Event;
-
-/**
- * @deprecated Use TauriEvents.Search.Started instead
- */
-export type SearchStartedEvent = TauriEvents.Search.Started;
-
-/**
- * @deprecated Use TauriEvents.Search.Complete instead
- */
-export type SearchCompleteEvent = TauriEvents.Search.Complete;

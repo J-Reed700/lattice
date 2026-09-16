@@ -1,3 +1,4 @@
+
 /**
  * Settings API Types
  *
@@ -5,28 +6,15 @@
  * These types match the Rust backend structures from commands/settings.rs
  */
 
-export interface AppSettings {
-  indexing: IndexingSettings;
-  search: SearchSettings;
-  llm: LLMSettings;
-  ui: UISettings;
-  sync: SyncSettings;
-  backup: BackupSettings;
-  privacy: PrivacySettings;
-  vault: VaultSettings;
-  onboarding: OnboardingSettings;
-}
+export type AppSettings = import('../../lib/bindings').SettingsDto;
 
 /**
  * Onboarding state — what the user has already been through.
  *
- * SSOT for the first-run gate. This used to be a `localStorage` key
- * (`lattice:first-run-skipped`), which put state the startup path acts on
- * outside the repository. Matches Rust `OnboardingSettingsDto`.
+ * SSOT for the first-run gate: the startup path acts on this state, so it
+ * lives in the settings repository. Matches Rust `OnboardingSettingsDto`.
  */
-export interface OnboardingSettings {
-  firstRunDismissed: boolean;  // Matches Rust first_run_dismissed with camelCase
-}
+export type OnboardingSettings = import('../../lib/bindings').OnboardingSettingsDto;
 
 /**
  * Vault portability settings.
@@ -41,149 +29,37 @@ export interface OnboardingSettings {
  *   watcher → SQLite re-import). Independent so users can have one-way
  *   export without inviting external editors to write back.
  */
-export interface VaultSettings {
-  vaultPath: string;
-  enabled: boolean;
-  watchExternalChanges: boolean;
-}
+export type VaultSettings = import('../../lib/bindings').VaultSettingsDto;
 
 /**
- * Privacy settings (Phase 4b SSOT).
+ * Privacy settings persisted by the backend.
  *
  * Both flags default to OFF. Backend code that sends telemetry or
  * crash reports upstream MUST gate on these via `privacy_gate` helpers
  * in features/settings/privacy_gate.rs.
  */
-export interface PrivacySettings {
-  telemetryEnabled: boolean;  // Matches Rust telemetry_enabled with camelCase
-  crashReporting: boolean;    // Matches Rust crash_reporting with camelCase
-}
+export type PrivacySettings = import('../../lib/bindings').PrivacySettingsDto;
 
 // All field names use camelCase to match Rust #[serde(rename_all = "camelCase")]
-export interface IndexingSettings {
-  chunkSize: number;           // Matches Rust chunk_size with camelCase
-  chunkOverlap: number;        // Matches Rust chunk_overlap with camelCase
-  batchSize: number;           // Matches Rust batch_size with camelCase
-  autoIndexNewFiles: boolean;  // Matches Rust auto_index_new_files with camelCase
-  fileTypes: string[];         // Matches Rust file_types with camelCase
-  // Watch list — folders the user wants monitored. Mutated only via the
-  // dedicated VaultAPI.addWatchFolder / removeWatchFolder commands so
-  // the backend can run path validation (CWE-22 / CWE-158).
-  indexedPaths: string[];      // Matches Rust indexed_paths with camelCase
-  // File patterns to ignore during indexing (e.g. *.tmp, node_modules).
-  // Renamed from excluded_paths in the AppConfig→Settings unification;
-  // Rust still accepts the old name via #[serde(alias)].
-  excludePatterns: string[];   // Matches Rust exclude_patterns with camelCase
-}
+export type IndexingSettings = import('../../lib/bindings').IndexingSettingsDto;
 
-export interface SearchSettings {
-  maxResults: number;          // Matches Rust max_results with camelCase
-  similarityThreshold: number; // Matches Rust similarity_threshold with camelCase
-  enableReranking: boolean;    // Matches Rust enable_reranking with camelCase
-  hybridSearchAlpha: number;   // Matches Rust hybrid_search_alpha with camelCase
-  retrievalTuning: RetrievalTuningSettings; // Matches Rust retrieval_tuning with camelCase
-}
+export type SearchSettings = import('../../lib/bindings').SearchSettingsDto;
 
-export interface RetrievalTuningSettings {
-  kbSearchMinLimit: number;
-  kbSearchMaxLimit: number;
-  docShortlistCandidateMin: number;
-  docShortlistCandidateMax: number;
-  docShortlistDocMin: number;
-  docShortlistDocMax: number;
-  shortlistGateMinCandidates: number;
-  shortlistGateMinDocs: number;
-  wikiSearchMaxResults: number;
-  wikiSnippetMaxChars: number;
-  wikiContextLimit: number;
-  webSearchMaxResults: number;
-  webSnippetMaxChars: number;
-  deepResearchDepth: number;
-  deepResearchBranchQueries: number;
-  externalSearchMaxWikiTerms: number;
-  externalSearchMaxWebTerms: number;
-  externalSearchQueryMaxChars: number;
-  rerankMaxCandidates: number;
-  rerankQueryMaxChars: number;
-  overlapMinHitsForMultiTerm: number;
-  docSupportMultiHitRatioFactor: number;
-  docSupportSingleHitRatioFactor: number;
-  docSupportMultiHitRatioMin: number;
-  docSupportMultiHitRatioMax: number;
-  docSupportSingleHitRatioMin: number;
-  docSupportSingleHitRatioMax: number;
-}
+export type RetrievalTuningSettings = import('../../lib/bindings').RetrievalTuningSettingsDto;
 
-export interface LLMSettings {
-  provider: 'auto' | 'local' | 'ollama';
-  model: string;
-  temperature: number;
-  topP: number;
-  topK: number;
-  repeatPenalty: number;
-  maxTokens: number;           // Matches Rust max_tokens with camelCase
-  contextWindow: number;       // Matches Rust context_window with camelCase
-  ollamaUrl: string;           // Matches Rust ollama_url with camelCase
-  ollamaUtilityModel: string;  // Matches Rust ollama_utility_model with camelCase
-  ollamaAuthHeaderName: string;  // Matches Rust ollama_auth_header_name with camelCase
-  ollamaAuthHeaderValue: string; // Matches Rust ollama_auth_header_value with camelCase
-  timeoutSeconds: number;      // Matches Rust timeout_seconds with camelCase
-  streamResponses: boolean;    // Matches Rust stream_responses with camelCase
-  prompts: LLMPromptSettings;
-  verification: LLMVerificationSettings;
-  toolOutput: ToolOutputSettings;
-  router: RouterSettings;
-  externalModelDirectories: string[]; // Matches Rust external_model_directories with camelCase
-  customTools: CustomToolSettings[]; // Matches Rust custom_tools with camelCase
-}
+export type LLMSettings = import('../../lib/bindings').LLMSettingsDto;
 
-export interface CustomToolSettings {
-  enabled: boolean;
-  name: string;
-  description: string;
-  endpoint: string;
-  queryParam: string;
-  maxResultsParam: string | null;
-  defaultMaxResults: number;
-}
+export type CustomToolSettings = import('../../lib/bindings').CustomToolSettingsDto;
 
-export interface LLMVerificationSettings {
-  enabled: boolean;
-}
+export type LLMVerificationSettings = import('../../lib/bindings').LLMVerificationSettingsDto;
 
-export interface RouterSettings {
-  enabled: boolean;
-  model: string;
-  timeoutMs: number;
-  maxTokens: number;
-  temperature: number;
-  ambiguityThreshold: number;
-  preferLastDocument: boolean;
-  promptTemplate: string;
-  clarifyPromptTemplate: string;
-}
+export type RouterSettings = import('../../lib/bindings').RouterSettingsDto;
 
-export interface LLMPromptSettings {
-  systemPrompt: string;
-  greetingPromptTemplate: string;
-  ragPromptTemplate: string;
-  noContextPromptTemplate: string;
-  toolFollowupPromptTemplate: string;
-}
+export type LLMPromptSettings = import('../../lib/bindings').LLMPromptSettingsDto;
 
-export interface ToolOutputSettings {
-  maxChars: number;
-  excerptChars: number;
-  maxResults: number;
-  highlightTermsMax: number;
-  templates: ToolOutputTemplates;
-}
+export type ToolOutputSettings = import('../../lib/bindings').ToolOutputSettingsDto;
 
-export interface ToolOutputTemplates {
-  defaultTemplate: string;
-  getDocumentTemplate: string;
-  semanticSearchTemplate: string;
-}
+export type ToolOutputTemplates = import('../../lib/bindings').ToolOutputTemplatesDto;
 
 export interface TestOllamaConnectionRequest {
   ollamaUrl: string;
@@ -212,26 +88,8 @@ export interface TestCustomToolResponse {
   bodyPreview: string;
 }
 
-export interface UISettings {
-  theme: string;
-  fontSize: number;            // Matches Rust font_size with camelCase
-  showPreview: boolean;        // Matches Rust show_preview with camelCase
-  resultsPerPage: number;      // Matches Rust results_per_page with camelCase
-  enableAnimations: boolean;   // Matches Rust enable_animations with camelCase
-}
+export type UISettings = import('../../lib/bindings').UISettingsDto;
 
-export interface SyncSettings {
-  syncEnabled: boolean;        // Matches Rust sync_enabled with camelCase
-  syncUrl: string;             // Matches Rust sync_url with camelCase
-  syncIntervalMinutes: number; // Matches Rust sync_interval_minutes with camelCase
-  autoSync: boolean;           // Matches Rust auto_sync with camelCase
-  syncOnStartup: boolean;      // Matches Rust sync_on_startup with camelCase
-}
+export type SyncSettings = import('../../lib/bindings').SyncSettingsDto;
 
-export interface BackupSettings {
-  autoBackupEnabled: boolean;  // Matches Rust auto_backup_enabled with camelCase
-  backupFrequency: string;     // Matches Rust backup_frequency with camelCase
-  backupRetentionDays: number; // Matches Rust backup_retention_days with camelCase
-  backupPath: string;          // Matches Rust backup_path with camelCase
-  compressBackups: boolean;    // Matches Rust compress_backups with camelCase
-}
+export type BackupSettings = import('../../lib/bindings').BackupSettingsDto;

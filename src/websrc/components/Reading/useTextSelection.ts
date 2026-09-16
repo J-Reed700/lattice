@@ -9,7 +9,7 @@ export interface TextSelectionState {
 const EMPTY: TextSelectionState = { text: '', rect: null };
 
 /**
- * Tracks the text selection inside `containerRef` (BRIEF rank 6).
+ * Tracks the text selection inside `containerRef`.
  *
  * `rect` is the raw viewport-relative `getBoundingClientRect()` — no scroll
  * offsets added — because the toolbar renders into `document.body` with

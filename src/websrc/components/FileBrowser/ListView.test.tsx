@@ -6,7 +6,7 @@ import { ListView } from './ListView';
 import { useLibraryDocumentsQuery } from '../../hooks/queries/useLibraryDocumentsQuery';
 import { useFileBrowserStore } from '../../stores/fileBrowserStore';
 
-import type { DocumentMetadata, FileNode } from '../../types/fileBrowser';
+import type { DocumentMetadata } from '../../types/fileBrowser';
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -38,37 +38,30 @@ vi.mock('../../hooks/queries/useLibraryDocumentsQuery', () => ({
 }));
 
 describe('ListView', () => {
-  const mockFiles: FileNode[] = [
+  const mockDocuments: DocumentMetadata[] = [
     {
       id: '1',
-      name: 'document.pdf',
-      path: '/path/document.pdf',
-      type: 'file',
-      size: 1024000,
-      modified: '2024-01-01',
-      isIndexed: true,
+      fileName: 'document.pdf',
+      filePath: '/path/document.pdf',
+      fileType: 'pdf',
+      category: 'document',
+      language: 'en',
+      modifiedAt: '2024-01-01',
+      indexedAt: '2024-01-01',
+      wordCount: 10240,
     },
     {
       id: '2',
-      name: 'image.png',
-      path: '/path/image.png',
-      type: 'file',
-      size: 512000,
-      modified: '2024-01-02',
-      isIndexed: true,
+      fileName: 'image.png',
+      filePath: '/path/image.png',
+      fileType: 'png',
+      category: 'document',
+      language: 'en',
+      modifiedAt: '2024-01-02',
+      indexedAt: '2024-01-02',
+      wordCount: 5120,
     },
   ];
-  const mockDocuments: DocumentMetadata[] = mockFiles.map(file => ({
-    id: file.id,
-    fileName: file.name,
-    filePath: file.path,
-    fileType: file.name.split('.').pop() || 'txt',
-    category: 'document',
-    language: 'en',
-    modifiedAt: file.modified,
-    indexedAt: file.modified,
-    wordCount: Math.max(1, Math.floor(file.size / 100)),
-  }));
 
   const mockSetSortField = vi.fn();
   const mockToggleSortOrder = vi.fn();
@@ -116,7 +109,6 @@ describe('ListView', () => {
         filterByType: null,
 
         // Data
-        files: mockFiles,
         documents: mockDocuments,
         fileTree: [],
         isLoading: false,
@@ -126,7 +118,6 @@ describe('ListView', () => {
         contextMenuPosition: null,
         contextMenuFile: null,
 
-        // Actions
         setViewMode: mockSetViewMode,
         setCurrentPath: mockSetCurrentPath,
         navigateUp: mockNavigateUp,
@@ -410,7 +401,6 @@ describe('ListView', () => {
         sortOrder: 'asc' as const,
         searchQuery: '',
         filterByType: null,
-        files: mockFiles,
         documents: mockDocuments,
         fileTree: [],
         isLoading: false,

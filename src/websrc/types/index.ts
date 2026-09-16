@@ -1,47 +1,17 @@
 import type { ApiError } from './api/result';
-import type { SearchFilter } from './metadata';
 
 
 export type { SearchResultMetadata, SearchFilter, PerformanceStats, PerformanceReport } from './metadata';
 export type { SearchResult } from './searchResult';
 
-export interface SearchOptions {
-  query: string;
-  limit?: number;
-  filter?: SearchFilter;
-  searchMode?: 'semantic' | 'keyword' | 'hybrid';
-}
+type SearchOptionsWire = import('../lib/bindings').SearchOptions;
+export type SearchOptions = Pick<SearchOptionsWire, 'query'> & Partial<Omit<SearchOptionsWire, 'query'>>;
 
-// Add RecentDocument type to match backend
-export interface RecentDocument {
-  id: string;
-  documentId: string;
-  documentName: string;
-  documentPath: string;
-  fileType: string | null;
-  lastAccessedAt: string;
-  accessCount: number;
-  // Additional fields used by Dashboard components
-  fileName: string;
-  filePath: string;
-  indexedAt: string;
-  modifiedAt: string;
-  sizeBytes: number;
-}
+export type RecentDocument = import('../lib/bindings').RecentDocument;
 
 // DocumentMetadata type matching list_all_documents backend response
 // This matches DocumentMetadataDto from document_list.rs
-export interface DocumentMetadata {
-  id: string;
-  fileName: string;
-  filePath: string;
-  fileType: string;
-  category: string;
-  language: string;
-  modifiedAt: string;
-  indexedAt: string;
-  wordCount: number;
-}
+export type DocumentMetadata = import('../lib/bindings').DocumentMetadataDto;
 
 export interface IndexProgress {
   totalFiles: number;
@@ -60,7 +30,6 @@ export interface IndexingStats {
   totalChunks: number;
 }
 
-// Import types from API definitions (use snake_case to match Rust backend)
 export type { IndexedFolder, IndexingActivity, IndexFileResponse } from './api/files';
 
 export type ApiResult<T> =
@@ -78,7 +47,6 @@ export interface WebIngestResponse {
   readingTimeMinutes: number | null;
 }
 
-// Export conversation types
 export type {
   Conversation,
   ConversationMessage,
@@ -90,14 +58,12 @@ export type {
   ToolPreferences,
 } from './conversation';
 
-// Export all API types
 export * from './api';
 
-// Export model catalog types
 export type { ModelRecommendation, ModelSearchResult, CacheStats as ModelCatalogCacheStats } from './modelCatalog';
 
-// Chat starters (Track A)
+// Chat starters
 export type { ChatStarter, ChatStarters } from './api/chatStarters';
 
-// Transcription (Track E)
+// Transcription
 export type { Transcript, TranscriptSegment, TranscriptionStatus } from './transcription';

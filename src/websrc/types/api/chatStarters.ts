@@ -1,17 +1,9 @@
 /**
- * Corpus-derived chat starters (BRIEF rank 11, contract §4.7).
+ * Corpus-derived chat starters.
  *
  * `starters` is empty whenever no LLM produced usable questions. The empty
  * state renders one plain line in that case and never invents a question.
  */
-export interface ChatStarter {
-  question: string;
-  hint?: string;
-}
+export type ChatStarter = import('../../lib/bindings').ChatStarterDto;
 
-export interface ChatStarters {
-  fingerprint: string;
-  generatedAt: string;
-  starters: ChatStarter[];
-  documentCount: number;
-}
+export type ChatStarters = import('../../lib/bindings').ChatStartersDto;

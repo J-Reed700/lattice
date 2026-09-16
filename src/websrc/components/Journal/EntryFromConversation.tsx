@@ -396,5 +396,4 @@ export function EntryFromConversation({
   );
 }
 
-// Re-export the helper so index.ts can use the types
 export { parseMessageSources };

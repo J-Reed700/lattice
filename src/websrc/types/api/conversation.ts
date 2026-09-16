@@ -8,68 +8,13 @@
 /**
  * Conversation representation with metadata and usage statistics.
  */
-export interface ConversationDto {
-  /** Conversation identifier (UUID) */
-  id: string;
-  /** Conversation title */
-  title: string;
-  /** LLM model name (e.g., "claude-sonnet-4-5-20250929") */
-  modelName: string;
-  /** Optional system prompt */
-  systemPrompt: string | null;
-  /** Creation timestamp (ISO 8601) */
-  createdAt: string;
-  /** Last update timestamp (ISO 8601) */
-  updatedAt: string;
-  /** Number of messages in conversation */
-  messageCount: number;
-  /** Total tokens used across all messages */
-  totalTokens: number;
-  /** Space/environment identifier that owns this conversation */
-  spaceId?: string | null;
-  /** Whether this conversation is saved */
-  isSaved?: boolean | null;
-  /** Whether this conversation is bookmarked */
-  isBookmarked?: boolean | null;
-  /** Whether this conversation is pinned */
-  isPinned?: boolean | null;
-  /** Whether this conversation is archived */
-  isArchived?: boolean | null;
-  /** Timestamp when saved (ISO 8601) */
-  savedAt?: string | null;
-  /** Timestamp when bookmarked (ISO 8601) */
-  bookmarkedAt?: string | null;
-  /** Timestamp when pinned (ISO 8601) */
-  pinnedAt?: string | null;
-  /** Timestamp when archived (ISO 8601) */
-  archivedAt?: string | null;
-  /** Optional preview of latest message */
-  lastMessagePreview?: string | null;
-}
+export type ConversationDto = import('../../lib/bindings').ConversationDto;
 
 /**
  * Conversation message with role and content.
  */
-export interface MessageDto {
-  /** Message identifier (UUID) */
-  id: string;
-  /** Conversation identifier this message belongs to */
-  conversationId: string;
-  /** Message role (user, assistant, system) */
-  role: 'user' | 'assistant' | 'system';
-  /** Message content */
-  content: string;
-  /** Token count for this message */
-  tokens: number;
-  /** Creation timestamp (ISO 8601) */
-  createdAt: string;
-  /** Optional metadata (JSON string) */
-  metadata: string | null;
-  /** Message status (pending/completed/failed) */
-  status: 'pending' | 'completed' | 'failed';
-}
+export type MessageDto = import('../../lib/bindings').MessageDto;
 
-// Request DTOs
 
 /**
  * Request to create a new conversation.
@@ -127,7 +72,6 @@ export interface ListConversationsQuery {
   offset?: number;
 }
 
-// Response DTOs
 
 /**
  * Response from creating a conversation.
@@ -198,11 +142,7 @@ export interface SynthesizeJournalEntriesRequest {
 /**
  * One source a synthesis drew on.
  */
-export interface SynthesisCitationDto {
-  kind: 'conversation' | 'reference' | 'note';
-  id: string;
-  title: string;
-}
+export type SynthesisCitationDto = import('../../lib/bindings').SynthesisCitationDto;
 
 /**
  * Response from journal synthesis command.
@@ -355,18 +295,7 @@ export interface ListJournalConversationsQuery {
   offset?: number;
 }
 
-export interface ConversationMessageBookmarkDto {
-  id: string;
-  conversationId: string;
-  conversationTitle: string;
-  spaceId: string;
-  messageId: string;
-  messageRole: 'user' | 'assistant' | 'system';
-  messagePreview: string;
-  title: string | null;
-  note: string | null;
-  createdAt: string;
-}
+export type ConversationMessageBookmarkDto = import('../../lib/bindings').ConversationMessageBookmarkDto;
 
 export interface BookmarkConversationMessageRequest {
   conversationId: string;
@@ -408,33 +337,11 @@ export interface ConversationLinkedDocumentDto {
   referenceCount: number;
 }
 
-export interface ConversationWebSourceDto {
-  id: string;
-  url: string;
-  normalizedUrl: string;
-  title?: string | null;
-  excerpt?: string | null;
-  relevanceScore?: number | null;
-  addedAt: string;
-}
+export type ConversationWebSourceDto = import('../../lib/bindings').ConversationWebSourceDto;
 
-export interface DocumentSpaceMembershipDto {
-  spaceId: string;
-  spaceName: string;
-  isArchived: boolean;
-  createdAt?: string | null;
-}
+export type DocumentSpaceMembershipDto = import('../../lib/bindings').DocumentSpaceMembershipDto;
 
-export interface ConversationSpaceMemberDto {
-  spaceId: string;
-  memberId: string;
-  displayName: string;
-  email?: string | null;
-  avatarUrl?: string | null;
-  role: 'owner' | 'editor' | 'viewer';
-  createdAt: string;
-  updatedAt: string;
-}
+export type ConversationSpaceMemberDto = import('../../lib/bindings').ConversationSpaceMemberDto;
 
 export interface UpsertConversationSpaceMemberRequest {
   spaceId: string;

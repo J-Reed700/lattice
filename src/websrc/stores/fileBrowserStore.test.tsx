@@ -47,7 +47,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
   beforeEach(() => {
     renderCount = 0;
     window.localStorage.clear();
-    // Reset store state between tests
     useFileBrowserStore.setState({
       viewMode: 'list',
       groupByDate: true,
@@ -70,8 +69,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
   });
 
   afterEach(() => {
-    // Clean up store
-    // useFileBrowserStore.getState() cleanup if needed
   });
 
   it('should not cause infinite re-renders when changing sort field', async () => {
@@ -332,19 +329,19 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     renderHook(() => useFileBrowserStore());
     const documents: DocumentMetadata[] = [
       {
-        id: '1', fileName: 'alpha.txt', filePath: '/Users/josh/Notes/alpha.txt', fileType: 'txt',
+        id: '1', fileName: 'alpha.txt', filePath: '/Users/example/Notes/alpha.txt', fileType: 'txt',
         category: 'document', language: 'en', modifiedAt: '2026-01-01',
         indexedAt: '2026-01-01', wordCount: 10,
       },
       {
-        id: '2', fileName: 'beta.txt', filePath: '/Users/josh/Research/beta.txt', fileType: 'txt',
+        id: '2', fileName: 'beta.txt', filePath: '/Users/example/Research/beta.txt', fileType: 'txt',
         category: 'document', language: 'en', modifiedAt: '2026-01-01',
         indexedAt: '2026-01-01', wordCount: 10,
       },
     ];
 
     act(() => {
-      useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/josh/Notes' });
+      useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/example/Notes' });
     });
 
     const filtered = filterLibraryDocuments(documents, useFileBrowserStore.getState());
@@ -357,7 +354,7 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
 
     act(() => {
       useFileBrowserStore.getState().selectAll(['1', '2']);
-      useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/josh/Notes' });
+      useFileBrowserStore.getState().setScope({ kind: 'folder', path: '/Users/example/Notes' });
     });
 
     expect(useFileBrowserStore.getState().selectedDocumentIds.size).toBe(0);

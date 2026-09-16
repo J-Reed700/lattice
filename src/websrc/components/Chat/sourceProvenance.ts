@@ -1,5 +1,5 @@
 /**
- * Where a cited source came from (BRIEF rank 2a).
+ * Where a cited source came from.
  *
  * Two marks, both earned:
  * - `from your journal` — the file is one of the user's own workspace notes,

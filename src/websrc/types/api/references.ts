@@ -1,11 +1,9 @@
 /**
- * Passage references — barrel surface for the Reference inbox (contract §4.3).
+ * Passage-reference types used by the Reference inbox.
  *
- * `PassageReferenceDto` and `CreatePassageReferenceRequest` are declared once,
- * in `passageReferences.ts` (Track A's reading surface writes them, Track C's
- * inbox reads them). One entity, one type — CLAUDE.md SSOT rule 4. This file
- * re-exports them through the `types/api` barrel and adds the annotation-update
- * request the inbox needs.
+ * `PassageReferenceDto` and `CreatePassageReferenceRequest` are declared in
+ * `passageReferences.ts`. This module re-exports them through the `types/api`
+ * barrel and adds the annotation update used by the inbox.
  */
 export type {
   PassageReferenceDto,

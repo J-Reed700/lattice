@@ -75,9 +75,7 @@ function detectConflicts(
   for (const [id, existing] of registry) {
     if (id === newShortcut.id) continue;
 
-    // Check if shortcuts have the same key combination
     if (existing.keys === newShortcut.keys) {
-      // Check if they're in the same context
       const existingContext = existing.options?.context;
       const newContext = newShortcut.options?.context;
 
@@ -143,7 +141,6 @@ export function useKeyboardShortcuts(
   const shortcutsRef = useRef(shortcuts);
   const [conflicts, setConflicts] = useState<ShortcutConflict[]>([]);
 
-  // Update ref when shortcuts change
   useEffect(() => {
     shortcutsRef.current = shortcuts;
   }, [shortcuts]);
@@ -164,7 +161,6 @@ export function useKeyboardShortcuts(
         options: { ...shortcut.options, context },
       };
 
-      // Check for conflicts
       const conflicts = detectConflicts(registration, globalShortcutRegistry);
       if (conflicts.length > 0) {
         newConflicts.push(...conflicts);
@@ -180,7 +176,6 @@ export function useKeyboardShortcuts(
       areConflictsEqual(current, newConflicts) ? current : newConflicts
     );
 
-    // Cleanup: unregister shortcuts on unmount
     return () => {
       for (const id of registeredIds) {
         globalShortcutRegistry.delete(id);
@@ -188,7 +183,6 @@ export function useKeyboardShortcuts(
     };
   }, [shortcuts, enabled, context]);
 
-  // Handle keyboard events
   useEffect(() => {
     if (!enabled) return;
 
@@ -204,14 +198,12 @@ export function useKeyboardShortcuts(
       for (const shortcut of shortcutsRef.current) {
         const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys);
 
-        // Check if event matches this shortcut
         if (matchesShortcut(event, effectiveKeys)) {
           // Skip if typing in input and not a global shortcut
           if (isInput && !shortcut.global) {
             continue;
           }
 
-          // Check context match
           const shortcutContext = shortcut.options?.context || shortcut.contexts?.[0];
           if (shortcutContext && context && shortcutContext !== context) {
             continue;
@@ -223,7 +215,6 @@ export function useKeyboardShortcuts(
             event.stopPropagation();
           }
 
-          // Execute handler
           try {
             shortcut.handler(event);
             logger.info(`Executed: ${shortcut.id}`, {
@@ -244,13 +235,11 @@ export function useKeyboardShortcuts(
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [enabled, context, preventDefault]);
 
-  // Update a specific shortcut
   const updateShortcut = useCallback((id: string, newKeys: string) => {
     const customShortcuts = loadCustomShortcuts();
     customShortcuts[id] = newKeys;
     saveCustomShortcuts(customShortcuts);
 
-    // Update registry
     const existing = globalShortcutRegistry.get(id);
     if (existing) {
       globalShortcutRegistry.set(id, { ...existing, keys: newKeys });
@@ -259,13 +248,11 @@ export function useKeyboardShortcuts(
     logger.info(`Updated shortcut: ${id}`, { component: 'shortcuts', newKeys });
   }, []);
 
-  // Reset a specific shortcut to default
   const resetShortcut = useCallback((id: string) => {
     const customShortcuts = loadCustomShortcuts();
     delete customShortcuts[id];
     saveCustomShortcuts(customShortcuts);
 
-    // Update registry to default
     const existing = globalShortcutRegistry.get(id);
     if (existing) {
       const defaultShortcut = shortcuts.find(s => s.id === id);
@@ -277,11 +264,9 @@ export function useKeyboardShortcuts(
     logger.info(`Reset shortcut: ${id}`, { component: 'shortcuts' });
   }, [shortcuts]);
 
-  // Reset all shortcuts to defaults
   const resetAllShortcuts = useCallback(() => {
     localStorage.removeItem('lattice-custom-shortcuts');
 
-    // Update registry to defaults
     for (const shortcut of shortcuts) {
       const existing = globalShortcutRegistry.get(shortcut.id);
       if (existing) {

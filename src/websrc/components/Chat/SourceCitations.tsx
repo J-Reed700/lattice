@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
-import { renderHighlightedText } from '../../utils/sourcePreview';
 import { formatSourceLocation } from '../Reading/passageLocator';
 
 import type { SourceWithMetadata } from '../../types/conversation';
@@ -14,6 +13,7 @@ interface GroupedSourceChunk {
   excerpt: string;
   section?: string;
   chunkIndex?: number;
+  pageNumber?: number;
   score: number;
   highlights?: string[];
 }
@@ -67,6 +67,7 @@ export function SourceCitations({
             excerpt: chunk.excerpt,
             section: chunk.section,
             chunkIndex: chunk.chunkIndex,
+            pageNumber: chunk.pageNumber,
             score: chunk.score,
             highlights: chunk.highlights ?? source.highlights,
           }))
@@ -75,6 +76,7 @@ export function SourceCitations({
             excerpt: source.excerpt ?? source.content,
             section: source.section,
             chunkIndex: source.chunkIndex,
+            pageNumber: source.pageNumber,
             score: source.score,
             highlights: source.highlights,
           }];
@@ -90,6 +92,7 @@ export function SourceCitations({
             excerpt: normalizedExcerpt,
             section: chunk.section,
             chunkIndex: chunk.chunkIndex,
+            pageNumber: chunk.pageNumber,
             score: chunk.score,
             highlights: chunk.highlights,
           } as GroupedSourceChunk;
@@ -208,12 +211,12 @@ export function SourceCitations({
             ].filter(Boolean);
 
             return (
-              <li key={group.key} className="space-y-2">
+              <li key={group.key} className="space-y-2 rounded-lg border border-border-subtle bg-surface px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="font-mono text-xs text-[hsl(var(--text-muted))]">
-                        [{idx + 1}]
+                        [{source.citationId ?? idx + 1}]
                       </span>
                       <span className="text-sm font-semibold text-[hsl(var(--text-primary))] break-words">
                         {source.fileName}
@@ -246,21 +249,27 @@ export function SourceCitations({
                           formatSourceLocation({
                             section: chunk.section,
                             chunkId: chunk.chunkId,
+                            pageNumber: chunk.pageNumber,
                           }),
                       ].filter(Boolean);
 
                       return (
                         <div
                           key={chunk.key}
-                          className="rounded-sm border border-subtle bg-surface px-4 py-3"
+                          className="border-l-2 border-accent/30 pl-4 py-2"
                         >
                           {chunkMetaParts.length > 0 && (
                             <div className="mb-1 text-xs text-[hsl(var(--text-muted))]">
                               {chunkMetaParts.join(' · ')}
                             </div>
                           )}
+                          <button type="button"
+                            className="mb-1 text-xs text-[hsl(var(--accent))] hover:underline"
+                            onClick={() => onViewSource(sources.find(candidate => candidate.chunkId === chunk.chunkId) ?? source)}>
+                            View passage [{sources.find(candidate => candidate.chunkId === chunk.chunkId)?.citationId ?? source.citationId ?? idx + 1}]
+                          </button>
                           <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 break-words">
-                            {renderHighlightedText(chunk.excerpt, chunk.highlights)}
+                            {chunk.excerpt}
                           </p>
                         </div>
                       );

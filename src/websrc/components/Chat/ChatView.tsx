@@ -111,8 +111,7 @@ export function ChatView() {
   }, [handleNewConversation, searchParams, setSearchParams]);
 
   // `?documentId=` / `?quote=` — the contract for "Ask about this" from the
-  // Library (Track B) and from the reading surface.
-  //
+  // Library and reading surfaces both open conversations here.
   // Reading the params and acting on them are two steps on purpose. `?new=1`
   // starts a conversation asynchronously, so at the moment the params are read
   // `activeConversationId` is still the *previous* conversation (or null).

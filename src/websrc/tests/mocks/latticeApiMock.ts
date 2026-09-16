@@ -11,7 +11,7 @@ export function createVaultAPIMock() {
       batchSize: 100,
       autoIndexNewFiles: true,
       fileTypes: [],
-      excludedPaths: [],
+      excludePatterns: [],
     },
     search: {
       maxResults: 10,
@@ -39,6 +39,9 @@ export function createVaultAPIMock() {
         externalSearchQueryMaxChars: 1200,
         rerankMaxCandidates: 48,
         rerankQueryMaxChars: 6000,
+        sufficiencyMinTopScore: 0.35,
+        sufficiencyMinTermCoverage: 0.4,
+        sufficiencyRetryEnabled: true,
         overlapMinHitsForMultiTerm: 2,
         docSupportMultiHitRatioFactor: 0.35,
         docSupportSingleHitRatioFactor: 0.65,
@@ -47,6 +50,9 @@ export function createVaultAPIMock() {
         docSupportSingleHitRatioMin: 0.3,
         docSupportSingleHitRatioMax: 0.55,
       },
+      vectorIndexCompression: { mode: 'none', dims: 512, quantization: 'i8' },
+      embeddingStrategy: 'chunk_first',
+      summaryIndexEnabled: false,
     },
     llm: {
       provider: 'auto',
@@ -178,7 +184,8 @@ export function createVaultAPIMock() {
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
-    testOllamaConnection: vi.fn().mockResolvedValue({
+    testLlamaCppConnection: vi.fn().mockResolvedValue({ ok: true, data: { endpoint: '/v1/chat/completions', models: ['test-model'] } }),
+  testOllamaConnection: vi.fn().mockResolvedValue({
       ok: true,
       data: {
         endpoint: 'http://localhost:11434',
@@ -253,7 +260,7 @@ export function createVaultAPIMock() {
       data: note,
     })),
 
-    // Track A: branching, starters, passage references
+    // Branching, starters, and passage references
     truncateConversationAfter: vi.fn().mockResolvedValue({
       ok: true,
       data: { conversationId: 'test-conversation', deletedCount: 0, messages: [] },
@@ -299,7 +306,64 @@ export function createVaultAPIMock() {
     }),
     listPassageReferences: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 
-    // Transcription (Track E)
+    // Off-device backup (encrypted archive).
+    // Unconfigured by default: the block renders its setup CTA and nothing
+    // else, so tests that are not about archives are unaffected.
+    getArchiveStatus: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        configured: false,
+        destination: null,
+        destinationProvider: null,
+        destinationMissing: false,
+        keepCount: 5,
+        hasPassphrase: false,
+        recoveryConfirmed: false,
+        lastSuccess: null,
+        lastError: null,
+        dataDirCloudProvider: null,
+        archives: [],
+      },
+    }),
+    beginArchiveSetup: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { recoveryWords: [], confirmIndices: [] },
+    }),
+    confirmArchiveSetup: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'not configured in this test' }),
+    chooseArchiveDestination: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'not configured in this test' }),
+    setArchiveKeepCount: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'not configured in this test' }),
+    setArchivePassphrase: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'not configured in this test' }),
+    rotateRecoveryCode: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { recoveryWords: [], confirmIndices: [] },
+    }),
+    disableArchive: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'not configured in this test' }),
+    createArchiveNow: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'not configured in this test' }),
+    restoreArchive: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        outcome: 'cancelled',
+        message: null,
+        restartRequired: false,
+        reembedRequired: false,
+        vaultRestoredTo: null,
+        filesRestored: 0,
+      },
+    }),
+
+    // Transcription
     transcribeFile: vi.fn().mockResolvedValue({
       ok: true,
       data: {
@@ -314,9 +378,7 @@ export function createVaultAPIMock() {
       .fn()
       .mockResolvedValue({ ok: true, data: { modelReady: false } }),
 
-    // Mock utilities
     __reset: vi.fn(() => {
-      // Reset all mocks
       Object.values(api).forEach((value) => {
         const maybeMock = value as { mockReset?: () => void };
         if (typeof value === 'function' && maybeMock.mockReset) {

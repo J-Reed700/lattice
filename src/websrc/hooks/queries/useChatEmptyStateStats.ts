@@ -29,7 +29,7 @@ export function useChatEmptyStateStats(
     queryFn: async () => {
       const [statsResult, recentResult] = await Promise.all([
         VaultAPI.getIndexingStats(),
-        VaultAPI.getRecentDocuments(200),
+        VaultAPI.listAllDocuments(10000),
       ]);
 
       const totalDocuments = statsResult.ok

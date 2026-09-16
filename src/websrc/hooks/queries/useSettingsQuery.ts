@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import VaultAPI from '@/lib/api';
+import type { UpdateSettingsRequest } from '@/lib/bindings';
 import type { AppSettings } from '@/types/api/settings';
 
 export const SETTINGS_QUERY_KEY = ['settings'] as const;
@@ -19,18 +20,13 @@ export function useSettingsQuery() {
   });
 }
 
-export interface UpdateSettingsArgs {
-  category?: string;
-  updates: Record<string, unknown>;
-}
+export type UpdateSettingsArgs = Pick<UpdateSettingsRequest, 'updates'> & Partial<Pick<UpdateSettingsRequest, 'category'>>;
 
 export function useUpdateSettingsMutation() {
   const queryClient = useQueryClient();
   return useMutation<AppSettings, Error, UpdateSettingsArgs>({
     mutationFn: async (args) => {
-      const payload: Record<string, unknown> = args.category
-        ? { category: args.category, updates: args.updates }
-        : { updates: args.updates };
+      const payload: UpdateSettingsRequest = { category: args.category ?? null, updates: args.updates };
       const result = await VaultAPI.updateSettings(payload);
       if (!result.ok) {
         throw new Error(result.error);

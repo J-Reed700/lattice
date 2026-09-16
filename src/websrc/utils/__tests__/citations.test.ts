@@ -242,21 +242,18 @@ describe('parseCitations - Performance & DoS Protection', () => {
 
     const result = parseCitations(oversized);
 
-    // Should truncate
     expect(result).toHaveLength(1);
     expect(result[0].citationNumber).toBeUndefined();
     expect(result[0].text).toContain('truncated');
   });
 
   it('should timeout on excessive citations', () => {
-    // Create pathological case: many citations
     const manyCitations = Array.from({ length: 10000 }, (_, i) => `[${i}]`).join(' ');
 
     const start = Date.now();
     const result = parseCitations(manyCitations);
     const duration = Date.now() - start;
 
-    // Should timeout and return partial results
     expect(duration).toBeLessThan(150); // Timeout at 100ms + overhead
     expect(result.length).toBeGreaterThan(0); // Should have partial results
   });
@@ -269,9 +266,7 @@ describe('parseCitations - Performance & DoS Protection', () => {
     const result = parseCitations(attack);
     const duration = Date.now() - start;
 
-    // Should complete quickly (bounded quantifier prevents backtracking)
     expect(duration).toBeLessThan(50);
-    // Should treat as text since >5 digits
     expect(result).toHaveLength(1);
     expect(result[0].citationNumber).toBeUndefined();
   });

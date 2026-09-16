@@ -67,7 +67,6 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
     const helperId = helperText ? `${inputId}-helper` : undefined;
     const hasError = Boolean(error);
 
-    // Update character count when value changes
     useEffect(() => {
       if (value) {
         setCharCount(String(value).length);
@@ -76,7 +75,6 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       }
     }, [value]);
 
-    // Handle blur validation
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
       if (validateOnBlur && validate) {
         const validationError = validate(e.target.value);
@@ -85,7 +83,6 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       onBlur?.(e);
     };
 
-    // Handle clear button
     const handleClear = () => {
       setInternalError(undefined);
       setCharCount(0);

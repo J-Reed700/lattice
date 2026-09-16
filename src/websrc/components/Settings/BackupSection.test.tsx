@@ -6,7 +6,11 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 
-import type { BackupInfo } from '@/types/api/backup';
+import type {
+  ArchiveStatus,
+  BackupInfo,
+  RestoreArchiveResult,
+} from '@/types/api/backup';
 import type { IndexingSnapshot } from '@/types/api/indexing';
 
 import { BackupSection } from './BackupSection';
@@ -19,6 +23,16 @@ const {
   mockExportJson,
   mockShowInFolder,
   mockGetIndexProgress,
+  mockGetArchiveStatus,
+  mockBeginArchiveSetup,
+  mockConfirmArchiveSetup,
+  mockChooseArchiveDestination,
+  mockSetArchiveKeepCount,
+  mockSetArchivePassphrase,
+  mockRotateRecoveryCode,
+  mockDisableArchive,
+  mockCreateArchiveNow,
+  mockRestoreArchive,
 } = vi.hoisted(() => ({
   mockListBackups: vi.fn(),
   mockCreateBackup: vi.fn(),
@@ -27,6 +41,16 @@ const {
   mockExportJson: vi.fn(),
   mockShowInFolder: vi.fn(),
   mockGetIndexProgress: vi.fn(),
+  mockGetArchiveStatus: vi.fn(),
+  mockBeginArchiveSetup: vi.fn(),
+  mockConfirmArchiveSetup: vi.fn(),
+  mockChooseArchiveDestination: vi.fn(),
+  mockSetArchiveKeepCount: vi.fn(),
+  mockSetArchivePassphrase: vi.fn(),
+  mockRotateRecoveryCode: vi.fn(),
+  mockDisableArchive: vi.fn(),
+  mockCreateArchiveNow: vi.fn(),
+  mockRestoreArchive: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -39,8 +63,48 @@ vi.mock('@/lib/api', () => ({
     exportJson: mockExportJson,
     showInFolder: mockShowInFolder,
     getIndexProgress: mockGetIndexProgress,
+    getArchiveStatus: mockGetArchiveStatus,
+    beginArchiveSetup: mockBeginArchiveSetup,
+    confirmArchiveSetup: mockConfirmArchiveSetup,
+    chooseArchiveDestination: mockChooseArchiveDestination,
+    setArchiveKeepCount: mockSetArchiveKeepCount,
+    setArchivePassphrase: mockSetArchivePassphrase,
+    rotateRecoveryCode: mockRotateRecoveryCode,
+    disableArchive: mockDisableArchive,
+    createArchiveNow: mockCreateArchiveNow,
+    restoreArchive: mockRestoreArchive,
   },
 }));
+
+/** 24 distinct stand-ins for the BIP-39 words. */
+const RECOVERY_WORDS = [
+  'abandon',
+  'ability',
+  'able',
+  'about',
+  'above',
+  'absent',
+  'absorb',
+  'abstract',
+  'absurd',
+  'abuse',
+  'access',
+  'accident',
+  'account',
+  'accuse',
+  'achieve',
+  'acid',
+  'acoustic',
+  'acquire',
+  'across',
+  'act',
+  'action',
+  'actor',
+  'actress',
+  'actual',
+];
+
+const CONFIRM_INDICES = [2, 10, 17];
 
 function backup(overrides: Partial<BackupInfo> = {}): BackupInfo {
   return {
@@ -50,6 +114,67 @@ function backup(overrides: Partial<BackupInfo> = {}): BackupInfo {
     version: '1.0',
     fileCount: 1247,
     size: 432013312,
+    ...overrides,
+  };
+}
+
+function archiveStatus(overrides: Partial<ArchiveStatus> = {}): ArchiveStatus {
+  return {
+    configured: false,
+    destination: null,
+    destinationProvider: null,
+    destinationMissing: false,
+    keepCount: 5,
+    hasPassphrase: false,
+    recoveryConfirmed: false,
+    lastSuccess: null,
+    lastError: null,
+    dataDirCloudProvider: null,
+    archives: [],
+    ...overrides,
+  };
+}
+
+function configuredStatus(overrides: Partial<ArchiveStatus> = {}): ArchiveStatus {
+  return archiveStatus({
+    configured: true,
+    destination: '/Users/x/Library/Mobile Documents/com~apple~CloudDocs',
+    destinationProvider: 'iCloud Drive',
+    recoveryConfirmed: true,
+    lastSuccess: {
+      path: '/Users/x/Lattice Backups/lattice-backup-20260915.lattice-backup',
+      createdAt: '2026-09-15T12:00:00.000Z',
+      size: 104857600,
+      durationMs: 4500,
+    },
+    archives: [
+      {
+        path: '/Users/x/Lattice Backups/lattice-backup-20260915.lattice-backup',
+        name: 'lattice-backup-20260915.lattice-backup',
+        createdAt: '2026-09-15T12:00:00.000Z',
+        size: 104857600,
+        availability: 'local',
+      },
+      {
+        path: '/Users/x/Lattice Backups/lattice-backup-20260914.lattice-backup',
+        name: 'lattice-backup-20260914.lattice-backup',
+        createdAt: '2026-09-14T12:00:00.000Z',
+        size: 103809024,
+        availability: 'placeholder',
+      },
+    ],
+    ...overrides,
+  });
+}
+
+function restoreResult(overrides: Partial<RestoreArchiveResult> = {}): RestoreArchiveResult {
+  return {
+    outcome: 'restored',
+    message: null,
+    restartRequired: true,
+    reembedRequired: true,
+    vaultRestoredTo: null,
+    filesRestored: 42,
     ...overrides,
   };
 }
@@ -77,6 +202,16 @@ function renderSection() {
   return render(<BackupSection />, { wrapper });
 }
 
+/** Walks the wizard from the section's CTA to the word-confirmation step. */
+async function openWizardToConfirmStep(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: 'Set up encrypted backup' }));
+  await user.click(await screen.findByRole('button', { name: 'Show my recovery code' }));
+  await screen.findByText(RECOVERY_WORDS[0]);
+  await user.click(screen.getByLabelText('I have saved these words somewhere safe'));
+  await user.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByLabelText('Word 3');
+}
+
 describe('BackupSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -99,6 +234,37 @@ describe('BackupSection', () => {
     });
     mockShowInFolder.mockResolvedValue({ ok: true, data: undefined });
     mockGetIndexProgress.mockResolvedValue({ ok: true, data: snapshot() });
+
+    mockGetArchiveStatus.mockResolvedValue({ ok: true, data: archiveStatus() });
+    mockBeginArchiveSetup.mockResolvedValue({
+      ok: true,
+      data: { recoveryWords: RECOVERY_WORDS, confirmIndices: CONFIRM_INDICES },
+    });
+    mockRotateRecoveryCode.mockResolvedValue({
+      ok: true,
+      data: { recoveryWords: RECOVERY_WORDS, confirmIndices: CONFIRM_INDICES },
+    });
+    mockConfirmArchiveSetup.mockResolvedValue({ ok: true, data: configuredStatus() });
+    mockChooseArchiveDestination.mockResolvedValue({ ok: true, data: configuredStatus() });
+    mockSetArchiveKeepCount.mockResolvedValue({ ok: true, data: configuredStatus() });
+    mockSetArchivePassphrase.mockResolvedValue({
+      ok: true,
+      data: configuredStatus({ hasPassphrase: true }),
+    });
+    mockDisableArchive.mockResolvedValue({
+      ok: true,
+      data: configuredStatus({ destination: null, destinationProvider: null }),
+    });
+    mockCreateArchiveNow.mockResolvedValue({
+      ok: true,
+      data: {
+        path: '/Users/x/Lattice Backups/lattice-backup-20260916.lattice-backup',
+        createdAt: '2026-09-16T12:00:00.000Z',
+        size: 104857600,
+        durationMs: 4200,
+      },
+    });
+    mockRestoreArchive.mockResolvedValue({ ok: true, data: restoreResult({ outcome: 'cancelled' }) });
   });
 
   it('says so when there are no backups', async () => {
@@ -181,5 +347,139 @@ describe('BackupSection', () => {
     await user.click(await screen.findByRole('button', { name: 'Markdown' }));
 
     await waitFor(() => expect(mockExportMarkdown).toHaveBeenCalled());
+  });
+
+  describe('off-device backup', () => {
+    it('offers setup when nothing is configured', async () => {
+      renderSection();
+
+      expect(await screen.findByText('Off-device backup')).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Set up encrypted backup' }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Restore from file' })).not.toBeInTheDocument();
+    });
+
+    it('confirms the three words the backend asked for and no passphrase', async () => {
+      const user = userEvent.setup();
+      renderSection();
+
+      await openWizardToConfirmStep(user);
+
+      await user.type(screen.getByLabelText('Word 3'), RECOVERY_WORDS[2]);
+      await user.type(screen.getByLabelText('Word 11'), RECOVERY_WORDS[10]);
+      await user.type(screen.getByLabelText('Word 18'), RECOVERY_WORDS[17]);
+      await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+      await waitFor(() =>
+        expect(mockConfirmArchiveSetup).toHaveBeenCalledWith(
+          [
+            { index: 2, word: RECOVERY_WORDS[2] },
+            { index: 10, word: RECOVERY_WORDS[10] },
+            { index: 17, word: RECOVERY_WORDS[17] },
+          ],
+          null,
+        ),
+      );
+
+      // The passphrase is its own step, so it cannot have been sent yet.
+      expect(mockSetArchivePassphrase).not.toHaveBeenCalled();
+      expect(await screen.findByLabelText('Passphrase')).toBeInTheDocument();
+    });
+
+    it('stays on the confirmation step when a word is wrong', async () => {
+      const user = userEvent.setup();
+      mockConfirmArchiveSetup.mockResolvedValue({
+        ok: false,
+        error: "That isn't the right word.",
+      });
+      renderSection();
+
+      await openWizardToConfirmStep(user);
+
+      await user.type(screen.getByLabelText('Word 3'), 'wrong');
+      await user.type(screen.getByLabelText('Word 11'), RECOVERY_WORDS[10]);
+      await user.type(screen.getByLabelText('Word 18'), RECOVERY_WORDS[17]);
+      await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent("That isn't the right word.");
+      expect(screen.getByLabelText('Word 3')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Passphrase')).not.toBeInTheDocument();
+    });
+
+    it('shows the folder, its provider, the last backup, and undownloaded archives', async () => {
+      mockGetArchiveStatus.mockResolvedValue({ ok: true, data: configuredStatus() });
+      renderSection();
+
+      expect(
+        await screen.findByText('/Users/x/Library/Mobile Documents/com~apple~CloudDocs'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('iCloud Drive')).toBeInTheDocument();
+      expect(screen.getByText(/Last backup Sep 15, 2026/)).toBeInTheDocument();
+      expect(screen.getByText('not downloaded')).toBeInTheDocument();
+    });
+
+    it('asks for the passphrase or recovery code and retries with it', async () => {
+      const user = userEvent.setup();
+      mockGetArchiveStatus.mockResolvedValue({ ok: true, data: configuredStatus() });
+      mockRestoreArchive
+        .mockResolvedValueOnce({ ok: true, data: restoreResult({ outcome: 'needs_secret' }) })
+        .mockResolvedValueOnce({ ok: true, data: restoreResult() });
+      renderSection();
+
+      await user.click(await screen.findByRole('button', { name: 'Restore from file' }));
+
+      const secretField = await screen.findByLabelText('Passphrase or recovery code');
+      expect(mockRestoreArchive).toHaveBeenNthCalledWith(1, null);
+
+      await user.type(secretField, 'open sesame');
+      await user.click(screen.getByRole('button', { name: 'Unlock' }));
+
+      await waitFor(() => expect(mockRestoreArchive).toHaveBeenNthCalledWith(2, 'open sesame'));
+      expect(
+        await screen.findByText(/Search indexes rebuild on the next launch/),
+      ).toBeInTheDocument();
+    });
+
+    it('names the provider when the archive is still a placeholder', async () => {
+      const user = userEvent.setup();
+      mockGetArchiveStatus.mockResolvedValue({
+        ok: true,
+        data: configuredStatus({ destinationProvider: 'Dropbox' }),
+      });
+      mockRestoreArchive.mockResolvedValue({
+        ok: true,
+        data: restoreResult({ outcome: 'not_hydrated', message: 'iCloud Drive' }),
+      });
+      renderSection();
+
+      await user.click(await screen.findByRole('button', { name: 'Restore from file' }));
+
+      expect(await screen.findByText(/still only in iCloud Drive/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    });
+
+    it('asks before turning off', async () => {
+      const user = userEvent.setup();
+      mockGetArchiveStatus.mockResolvedValue({ ok: true, data: configuredStatus() });
+      renderSection();
+
+      await user.click(await screen.findByRole('button', { name: 'Turn off' }));
+
+      expect(screen.getByText('Turn off off-device backup?')).toBeInTheDocument();
+      expect(mockDisableArchive).not.toHaveBeenCalled();
+    });
+
+    it('warns when the live database sits in a synced folder', async () => {
+      mockGetArchiveStatus.mockResolvedValue({
+        ok: true,
+        data: configuredStatus({ dataDirCloudProvider: 'OneDrive' }),
+      });
+      renderSection();
+
+      expect(
+        await screen.findByText(/Your Lattice database itself is inside OneDrive/),
+      ).toBeInTheDocument();
+    });
   });
 });

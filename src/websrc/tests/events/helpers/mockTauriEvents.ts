@@ -35,23 +35,19 @@ export class MockTauriEventEmitter {
    * Call this in beforeEach()
    */
   mockListen(): void {
-    // Store original if not already stored
     if (!this.originalListen) {
       this.originalListen = vi.fn();
     }
 
-    // Mock the listen function
     const mockListenFn = vi.fn(<T>(
       eventName: string,
       handler: EventHandler<T>
     ): Promise<UnlistenFn> => {
-      // Add handler to listeners map
       if (!this.listeners.has(eventName)) {
         this.listeners.set(eventName, new Set());
       }
       this.listeners.get(eventName)!.add(handler);
 
-      // Return unlisten function
       const unlisten = () => {
         const handlers = this.listeners.get(eventName);
         if (handlers) {

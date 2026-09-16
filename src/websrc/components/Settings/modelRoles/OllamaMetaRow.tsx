@@ -26,8 +26,6 @@ export function OllamaMetaRow() {
   // they are edited.
   const { data: settings } = useSettingsQuery();
 
-  // Find the synthetic server row. Hide it entirely if it isn't there yet
-  // (e.g. mid-migration on first launch) — no dead UI.
   const ollamaRow = models.find((m) => m.model_id === OLLAMA_SERVER_MODEL_ID);
 
   if (isLoading || !ollamaRow) {
@@ -36,6 +34,8 @@ export function OllamaMetaRow() {
 
   const ollamaUrl = settings?.llm.ollamaUrl.trim() ?? '';
   const chatTag = settings?.llm.model.trim() ?? '';
+  const provider = settings?.llm.provider;
+  const chatOverride = ollamaRow.is_active_for_chat && provider && provider !== 'ollama';
   const utilityTag = settings?.llm.ollamaUtilityModel.trim() ?? '';
 
   // Utility falls back to the chat tag when the user hasn't set a
@@ -51,14 +51,14 @@ export function OllamaMetaRow() {
   const meta = [
     'Ollama',
     ollamaUrl || 'no server URL',
-    chatTag ? `chat ${chatTag}` : 'chat tag not set',
+    chatTag ? `assigned chat model ${chatTag}` : 'chat tag not set',
     resolvedUtilityTag ? `utility ${resolvedUtilityTag}` : 'utility tag not set',
   ].join(' · ');
 
   return (
     <div className="group flex items-center gap-4 border-b border-border-subtle py-3">
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-text-primary">Ollama server</div>
+        <div className="truncate text-sm font-medium text-text-primary">Ollama connection</div>
         {ollamaUrl ? (
           <div className="truncate font-mono text-xs text-text-muted">{ollamaUrl}</div>
         ) : (
@@ -70,10 +70,17 @@ export function OllamaMetaRow() {
             Set a server URL
           </button>
         )}
-      </div>
-
-      <div className="hidden shrink-0 items-center gap-2 truncate text-xs text-text-muted lg:flex">
-        <span className="truncate">{meta}</span>
+        <p className="mt-1 break-words text-xs text-text-muted">{meta}</p>
+        {chatOverride && (
+          <div role="status" className="mt-2 max-w-xl text-xs text-text-secondary">
+            {provider === 'auto'
+              ? 'Chat provider is Auto: local models and llama.cpp take priority over this Ollama assignment.'
+              : `Chat provider is ${provider === 'llamacpp' ? 'llama.cpp' : provider}: this Ollama chat assignment does not select the provider.`}{' '}
+            <button type="button" onClick={goToChatSettings} className="text-accent underline underline-offset-2">
+              Change chat provider
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Outside the lg-only meta line: on a narrow window the missing-tag

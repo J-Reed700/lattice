@@ -1,5 +1,5 @@
 /**
- * Finding a cited passage inside an open PDF (BRIEF rank 1).
+ * Finds a cited passage inside an open PDF.
  *
  * No extractor writes a page number into a chunk, so the page is resolved
  * client-side by scanning the already-loaded document. That is why a citation
@@ -12,8 +12,6 @@ import { buildNeedles, normalizeForMatch } from './passageLocator';
 /** Pages scanned before giving up. A very long PDF is not worth a stall. */
 const DEFAULT_MAX_PAGES = 400;
 
-/** Words in the shortest run we are willing to mark on the page. */
-const MIN_MARK_WORDS = 6;
 
 interface PdfTextItem {
   str: string;
@@ -59,7 +57,6 @@ export function buildPassageTextRenderer(
   return (item) => {
     const text = item.str ?? '';
     if (!text) return '';
-    // Reset between items: the regex is global and stateful.
     pattern.lastIndex = 0;
     if (!pattern.test(text)) return escapeHtml(text);
     pattern.lastIndex = 0;
@@ -75,26 +72,47 @@ export function buildPassageTextRenderer(
   };
 }
 
-/**
- * The literal on-page substring to mark for a normalized needle.
- *
- * Matching happens on normalized text, but the renderer sees the *raw* page
- * strings, so we look for the longest run of needle words that occurs verbatim
- * in the raw page. Returns null when nothing long enough survives — landing on
- * the right page is the feature; the mark is a nicety, and a mark drawn in the
- * wrong place would be worse than none.
- */
-function literalMarkFor(rawPageText: string, needle: string): string | null {
-  const words = needle.split(' ').filter(Boolean);
-  const haystack = rawPageText.toLowerCase();
-
-  for (let length = words.length; length >= MIN_MARK_WORDS; length -= 1) {
-    for (let start = 0; start + length <= words.length; start += 1) {
-      const run = words.slice(start, start + length).join(' ');
-      if (haystack.includes(run)) return run;
+/** Match the page as a whole, then map the matched span back to PDF text items. */
+export function passageItemMarks(items: PdfTextItem[], needle: string, compact = false): Record<number, [number, number]> {
+  const raw = items.map(item => item.str ?? '').join(' ');
+  const tokens = Array.from(raw.matchAll(/[\p{L}\p{N}'"\u2018-\u201f\u2010-\u2015-]+/gu))
+    .map(match => ({ text: normalizeForMatch(match[0]), start: match.index!, end: match.index! + match[0].length }))
+    .filter(token => token.text);
+  const fold = (text: string) => compact ? text.replace(/[^\p{L}\p{N}]/gu, '') : text;
+  const separator = compact ? '' : ' ';
+  const normalized = tokens.map(token => fold(token.text)).join(separator);
+  const wanted = fold(normalizeForMatch(needle));
+  const start = wanted ? normalized.indexOf(wanted) : -1;
+  if (start < 0) return {};
+  const end = start + wanted.length;
+  let offset = 0;
+  const matched = tokens.filter(token => {
+    const intersects = offset < end && offset + fold(token.text).length > start;
+    offset += fold(token.text).length + separator.length;
+    return intersects;
+  });
+  if (!matched.length) return {};
+  const rawStart = matched[0].start;
+  const rawEnd = matched[matched.length - 1].end;
+  const marks: Record<number, [number, number]> = {};
+  offset = 0;
+  items.forEach((item, index) => {
+    const length = (item.str ?? '').length;
+    if (offset < rawEnd && offset + length > rawStart) {
+      marks[index] = [Math.max(0, rawStart - offset), Math.min(length, rawEnd - offset)];
     }
-  }
-  return null;
+    offset += length + 1;
+  });
+  return marks;
+}
+
+export function buildItemTextRenderer(marks: Record<number, [number, number]>) {
+  return ({ str, itemIndex }: { str: string; itemIndex: number }): string => {
+    const range = marks[itemIndex];
+    if (!range) return escapeHtml(str);
+    const [start, end] = range;
+    return `${escapeHtml(str.slice(0, start))}<mark class="lattice-pdf-mark">${escapeHtml(str.slice(start, end))}</mark>${escapeHtml(str.slice(end))}`;
+  };
 }
 
 /**
@@ -106,21 +124,30 @@ function literalMarkFor(rawPageText: string, needle: string): string | null {
 export async function findPassagePage(
   pdf: PdfDocumentLike,
   text: string,
-  options: { maxPages?: number; signal?: { aborted: boolean } } = {}
-): Promise<{ page: number; needle: string } | null> {
+  options: { maxPages?: number; preferredPage?: number; signal?: { aborted: boolean } } = {}
+): Promise<{ page: number; needle: string; marks: Record<number, [number, number]> } | null> {
   const needles = buildNeedles(text);
+  if (needles.length) needles.unshift(normalizeForMatch(text));
   if (needles.length === 0) return null;
 
   const maxPages = Math.min(pdf.numPages, options.maxPages ?? DEFAULT_MAX_PAGES);
 
-  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+  const pages = Array.from({ length: maxPages }, (_, index) => index + 1);
+  if (options.preferredPage && options.preferredPage <= pdf.numPages && options.preferredPage > 0) {
+    const index = pages.indexOf(options.preferredPage);
+    if (index >= 0) pages.splice(index, 1);
+    pages.unshift(options.preferredPage);
+  }
+  for (const pageNumber of pages) {
     if (options.signal?.aborted) return null;
 
     let pageText: string;
+    let items: PdfTextItem[];
     try {
       const page = await pdf.getPage(pageNumber);
       const content = await page.getTextContent();
-      pageText = content.items.map((item) => item.str).join(' ');
+      items = content.items;
+      pageText = items.map((item) => item.str ?? '').join(' ');
     } catch {
       // A page that will not render is a page we cannot search. Keep going.
       continue;
@@ -130,9 +157,13 @@ export async function findPassagePage(
     if (!normalized) continue;
 
     for (const needle of needles) {
-      if (!normalized.includes(needle)) continue;
-      // Marked with the raw run when one exists, unmarked otherwise.
-      return { page: pageNumber, needle: literalMarkFor(pageText, needle) ?? '' };
+      if (normalized.includes(needle)) {
+        return { page: pageNumber, needle, marks: passageItemMarks(items, needle) };
+      }
+      // Try extraction-tolerant matching before shortening the passage.
+      if (needle.replace(/[^\p{L}\p{N}]/gu, '').length < 40) continue;
+      const marks = passageItemMarks(items, needle, true);
+      if (Object.keys(marks).length) return { page: pageNumber, needle, marks };
     }
   }
 

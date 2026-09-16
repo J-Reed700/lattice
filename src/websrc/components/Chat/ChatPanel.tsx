@@ -13,9 +13,11 @@ import { ChatModelNotice } from './ChatModelNotice';
 import { ChatStarters } from './ChatStarters';
 import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from './ComposerControls';
 import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
+import { ImportFailuresNotice } from './ImportFailuresNotice';
 import { Message } from './Message';
 import { ModelPickerPopover } from './ModelPickerPopover';
 import { useChatFileDrop } from './useChatFileDrop';
+import { UtilityModelNotice } from './UtilityModelNotice';
 import { useSettingsQuery } from '../../hooks/queries/useSettingsQuery';
 import { conversationKeys } from '../../hooks/useConversationsController';
 import { useDownloadedModels } from '../../hooks/useDownloadedModels';
@@ -23,6 +25,7 @@ import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarmupStore';
 import { toast } from '../../stores/toastStore';
+import { resolveChatModel } from '../../utils/chatModelSelection';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 
 import type { CustomToolSettings, ToolPreferences } from '../../types';
@@ -152,7 +155,6 @@ export function ChatPanel() {
     cancelGeneration,
     createConversation,
     optimisticMessages,
-    liveRetrieval,
     messageRetrieval,
     composerDraft,
     setComposerDraft,
@@ -598,37 +600,27 @@ export function ChatPanel() {
   const isChatWarming = useModelWarmupStore(selectIsChatWarming);
   const chatWarmupPhase = useModelWarmupStore((state) => state.chat.phase);
 
-  // An Ollama-only install has no `is_active_for_chat` row, but the controller
-  // will happily build a conversation from the configured endpoint. Reading
-  // only `activeModel` left those users with a dead send button forever.
   const llmSettings = settings?.llm;
-  const hasOllamaChat =
-    Boolean(llmSettings?.ollamaUrl && llmSettings?.model) &&
-    (llmSettings?.provider === 'ollama' || llmSettings?.provider === 'auto');
-  const hasChatModel = activeModel !== null || hasOllamaChat;
+  const resolvedModel = resolveChatModel(llmSettings, activeModel?.model_id ?? null);
+  const activeModelLabel = resolvedModel && (downloadedModels.find(model => model.model_id === resolvedModel)?.model_name || resolvedModel);
+  const hasChatModel = activeModelLabel !== null;
   const isChatUnavailable = isChatWarming || !hasChatModel;
 
-  const activeModelLabel = activeModel
-    ? activeModel.model_name || activeModel.model_id
-    : hasOllamaChat
-      ? (llmSettings?.model ?? null)
-      : null;
-
-  // The last thing the backend told us about why it could not read the vault.
-  // Never inferred here.
+  // Report the completed turn. Initial retrieval can fail and a later tool
+  // search can recover while generation is still running.
   const retrievalUnavailableReason = useMemo(() => {
-    if (!activeConversationId) return null;
-    const live = liveRetrieval.get(activeConversationId);
-    if (live?.unavailableReason) return live.unavailableReason;
+    if (!activeConversationId || isSending) return null;
     const conversationMessages =
       conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
     for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
       const candidate = conversationMessages[index];
       if (candidate.role !== 'assistant') continue;
-      return messageRetrieval.get(candidate.id)?.unavailableReason ?? null;
+      const trace = messageRetrieval.get(candidate.id);
+      if (trace && (trace.files > 0 || trace.passages > 0)) return null;
+      return trace?.unavailableReason ?? null;
     }
     return null;
-  }, [activeConversationId, conversations, liveRetrieval, messageRetrieval]);
+  }, [activeConversationId, conversations, isSending, messageRetrieval]);
 
   // Model state lives in the notice below the composer, not in the placeholder.
   const placeholder =
@@ -780,6 +772,8 @@ export function ChatPanel() {
           </p>
         </div>
       )}
+      <ImportFailuresNotice />
+      <UtilityModelNotice />
       {/* Thread scroll region */}
       <div
         ref={scrollContainerRef}
@@ -840,7 +834,7 @@ export function ChatPanel() {
         </div>
       </div>
 
-      {/* Composer — pinned bottom (CHAT-REDESIGN-SPEC §4) */}
+      {/* Composer pinned to the bottom of the panel. */}
       <div className="border-t border-subtle bg-bg">
         <ChatDropStaging
           staged={staged}

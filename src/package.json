@@ -21,8 +21,8 @@
     "build:master:backend": "powershell -ExecutionPolicy Bypass -File build-master.ps1 -Components backend",
     "build:master:sidecar": "powershell -ExecutionPolicy Bypass -File build-master.ps1 -Components sidecar",
     "build:complete": "powershell -ExecutionPolicy Bypass -File build-master.ps1 -Components all -Clean -Checksums",
-    "build:all": "bash ../../scripts/build-all.sh",
-    "checksums": "bash ../../scripts/generate-checksums.sh",
+    "build:all": "bash ../scripts/build-all.sh",
+    "checksums": "bash ../scripts/generate-checksums.sh",
     "bundle:python": "python scripts/bundle_python.py",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -41,7 +41,9 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report e2e-results/html",
     "bindings:generate": "cd src && cargo run --bin export_bindings",
-    "bindings:check": "cd src && cargo run --bin export_bindings -- --check"
+    "bindings:check": "cd src && cargo run --bin export_bindings -- --check",
+    "contracts:check": "node ../scripts/check-ipc-contracts.mjs --self-test",
+    "contracts:sql": "python3 ../scripts/check-sql-contracts.py"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

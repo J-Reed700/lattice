@@ -26,7 +26,6 @@ const model = (overrides: Partial<DownloadedModel>): DownloadedModel => ({
   is_active_for_utility: false,
   backend: 'local',
   model_type: 'language_model',
-  metadata: null,
   ...overrides,
 });
 

@@ -53,12 +53,12 @@ export function usePassageReferenceIds(): PassageReferenceKey[] {
   );
 }
 
-/** Alias for the same key, spelled as GROUND-RULES §4.3 writes it. */
+/** Public alias for the passage-reference query key. */
 export const passageReferencesKey = PASSAGE_REFERENCES_QUERY_KEY;
 
 /**
- * Annotation-only update. The repository is the SSOT, so success invalidates
- * rather than patching a local copy (CLAUDE.md rule 3).
+ * Annotation-only update. Success invalidates the query rather than patching a
+ * second local copy.
  */
 export function useUpdatePassageReferenceMutation() {
   const queryClient = useQueryClient();

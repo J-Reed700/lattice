@@ -61,7 +61,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     const { onError, name } = this.props;
 
-    // Update state with error details
     this.setState((prevState) => ({
       error,
       errorInfo,
@@ -71,7 +70,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     // Log error
     logComponentError(error, errorInfo, name);
 
-    // Call custom error handler
     if (onError) {
       try {
         onError(error, errorInfo);
@@ -126,7 +124,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return;
     }
 
-    // Call custom reset handler
     if (onReset) {
       try {
         onReset();
@@ -135,7 +132,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
     }
 
-    // Reset state
     this.setState({
       hasError: false,
       error: null,

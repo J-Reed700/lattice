@@ -8,6 +8,7 @@ export * from './useCompareQuery';
 export * from './useWeeklySynthesisCandidatesQuery';
 export * from './useChatStartersQuery';
 export * from './useBackupsQuery';
+export * from './useArchiveQuery';
 export * from './useUpdateCheckQuery';
 export * from './useCorpusShapeQuery';
 export * from './useClustersQuery';

@@ -157,8 +157,8 @@ export function IndexingStatusPopover({ snapshot, open, onClose }: IndexingStatu
               key={activity.id}
               className="flex items-center justify-between gap-3 border-b border-border-subtle py-1.5 last:border-b-0"
             >
-              <span className="truncate text-sm text-text-primary" title={activity.file_path}>
-                {basename(activity.file_path)}
+              <span className="truncate text-sm text-text-primary" title={activity.filePath}>
+                {basename(activity.filePath)}
               </span>
               <span className="shrink-0 text-xs tabular-nums text-text-muted">
                 {relativeTime(activity.timestamp)}

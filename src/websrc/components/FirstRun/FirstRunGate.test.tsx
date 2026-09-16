@@ -7,7 +7,6 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FirstRunGate } from './FirstRunGate';
-import { LEGACY_FIRST_RUN_SKIPPED_KEY } from './useFirstRunDismissal';
 import { VaultAPI } from '../../lib/api';
 import { makeAppSettings } from '../../tests/fixtures/appSettings';
 
@@ -88,40 +87,7 @@ describe('FirstRunGate', () => {
     expect(screen.queryByText('Set up AI')).not.toBeInTheDocument();
   });
 
-  it('migrates the legacy localStorage key into the repository, once, then deletes it', async () => {
-    localStorage.setItem(LEGACY_FIRST_RUN_SKIPPED_KEY, 'true');
-
-    renderGate();
-
-    await waitFor(() => {
-      expect(VaultAPI.updateSettings).toHaveBeenCalledWith({
-        category: 'onboarding',
-        updates: { firstRunDismissed: true },
-      });
-    });
-    await waitFor(() => {
-      expect(localStorage.getItem(LEGACY_FIRST_RUN_SKIPPED_KEY)).toBeNull();
-    });
-
-    // Someone who already skipped is not asked again while the migration runs.
-    expect(invoke).not.toHaveBeenCalled();
-    expect(VaultAPI.updateSettings).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the legacy key when the migrating write fails', async () => {
-    localStorage.setItem(LEGACY_FIRST_RUN_SKIPPED_KEY, 'true');
-    vi.spyOn(VaultAPI, 'updateSettings').mockResolvedValue({
-      ok: false,
-      error: 'disk full',
-    } as Awaited<ReturnType<typeof VaultAPI.updateSettings>>);
-
-    renderGate();
-
-    await waitFor(() => expect(VaultAPI.updateSettings).toHaveBeenCalled());
-    expect(localStorage.getItem(LEGACY_FIRST_RUN_SKIPPED_KEY)).toBe('true');
-  });
-
-  it('records "Not now" against the repository instead of localStorage', async () => {
+  it('records "Not now" against the repository', async () => {
     const user = userEvent.setup();
     renderGate();
 
@@ -133,6 +99,5 @@ describe('FirstRunGate', () => {
         updates: { firstRunDismissed: true },
       });
     });
-    expect(localStorage.getItem(LEGACY_FIRST_RUN_SKIPPED_KEY)).toBeNull();
   });
 });

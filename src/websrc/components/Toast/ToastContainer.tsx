@@ -30,7 +30,6 @@ export const ToastContainer: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [toasts.length, dismissAll]);
 
-  // Get position styles
   const getPositionStyles = (): React.CSSProperties => {
     const baseStyles: React.CSSProperties = {
       position: 'fixed',
@@ -132,7 +131,6 @@ export const ToastContainer: React.FC = () => {
   );
 };
 
-// Add animation styles to global CSS if not already present
 const style = document.createElement('style');
 style.textContent = `
   @keyframes slide-in {

@@ -19,6 +19,8 @@ interface SelectionBarProps {
   isLoadingSpaces: boolean;
   isAssigningSpace: boolean;
   onAssignToSpace: (_spaceId: string) => void;
+  onAddToCollection: () => void;
+  onRemoveFromCollection?: () => void;
   onSnapshot: () => void;
   onDelete: () => void;
   onSelectAll: () => void;
@@ -35,6 +37,8 @@ export function SelectionBar({
   isLoadingSpaces,
   isAssigningSpace,
   onAssignToSpace,
+  onAddToCollection,
+  onRemoveFromCollection,
   onSnapshot,
   onDelete,
   onSelectAll,
@@ -65,8 +69,10 @@ export function SelectionBar({
   useRegisterPaletteCommands(compareCommands);
 
   return (
-    <div className="flex h-10 items-center gap-4">
+    <div className="flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 py-2" aria-label="Document selection actions">
       <span className="text-sm tabular-nums text-text-primary">{selectedCount} selected</span>
+      <button type="button" onClick={onAddToCollection} className="rounded-sm bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover">Add to collection</button>
+      {onRemoveFromCollection ? <TextAction label="Remove from collection" onClick={onRemoveFromCollection} /> : null}
       <AddToSpace
         spaces={spaces}
         isLoadingSpaces={isLoadingSpaces}

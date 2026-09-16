@@ -5,16 +5,9 @@
  * These types match the Rust backend structures from commands/qa.rs and qa/types.rs
  */
 
-export interface QAResponse {
-  answer: string;
-  sources: SourceReference[];
-}
+export type QAResponse = import('../../lib/bindings').QAResponseDto;
 
-export interface SourceReference {
-  file_path: string;
-  score: number;
-  snippet: string;
-}
+export type SourceReference = import('../../lib/bindings').SourceDto;
 
 export type StreamChunk =
   | { type: 'token'; content: string }
@@ -22,8 +15,4 @@ export type StreamChunk =
   | { type: 'done' }
   | { type: 'error'; message: string };
 
-export interface LLMHealthStatus {
-  available: boolean;
-  model: string;
-  backend: string;
-}
+export type LLMHealthStatus = import('../../lib/bindings').LLMHealthStatusDto;

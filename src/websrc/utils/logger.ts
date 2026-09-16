@@ -66,7 +66,6 @@ class Logger {
 
     const formatted = this.formatMessage(level, message, context);
 
-    // Extract context for structured logging
     const { component, action, ...additionalContext } = context || {};
     const hasAdditionalContext = Object.keys(additionalContext).length > 0;
 
@@ -188,11 +187,8 @@ class ScopedLogger {
   }
 }
 
-// Export singleton instance
 export const logger = new Logger();
 
-// Export convenience function for creating scoped loggers
 export function createLogger(component: string): ScopedLogger {
   return logger.scope(component);
 }
-

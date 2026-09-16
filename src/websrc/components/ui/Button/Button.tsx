@@ -43,7 +43,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     const baseStyles = 'inline-flex items-center justify-center font-medium rounded-md transition-colors duration-fast ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))] disabled:opacity-50 disabled:cursor-not-allowed select-none motion-reduce:transition-none';
 
     const variantStyles = {
-      primary: 'bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))]',
+      primary: 'bg-[hsl(var(--action))] text-[hsl(var(--action-fg))] hover:bg-[hsl(var(--action-hover))]',
       secondary: 'bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] border border-[hsl(var(--border-default))] hover:bg-[hsl(var(--surface-raised))]',
       ghost: 'bg-transparent text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))]',
       danger: 'bg-[hsl(var(--danger))] text-[hsl(var(--accent-fg))] hover:opacity-90',

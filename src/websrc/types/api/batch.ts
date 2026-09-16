@@ -5,49 +5,21 @@
  * These types match the Rust backend structures from batch_history.rs
  */
 
-export interface BatchJobSummary {
-  jobId: string;
-  // Legacy alias for compatibility with existing UI code paths
+export type BatchJobSummary = import('../../lib/bindings').BatchJobSummaryDto & {
   id: string;
-  jobType: string;
-  status: string;
-  totalItems: number;
-  completedItems: number;
-  failedItems: number;
-  createdAt: string;
-  completedAt?: string | null;
   progress: number;
-}
+};
 
-export interface BatchJobStatus {
-  jobId: string;
-  // Legacy alias for compatibility with existing UI code paths
+export type BatchJobStatus = Omit<import('../../lib/bindings').BatchJobStatusDto, 'items'> & {
   id: string;
-  jobType: string;
-  status: string;
-  totalItems: number;
-  completedItems: number;
-  failedItems: number;
   total_items: number;
   completed_items: number;
   failed_items: number;
   progress: number;
-  createdAt: string;
-  completedAt: string | null;
   items: BatchJobItem[];
-}
+};
 
-export interface BatchJobItem {
-  itemId: string;
-  target: string;
-  status: string;
-  errorMessage: string | null;
-  documentId: string | null;
-  processedAt: string | null;
-  // Legacy aliases
-  id?: string;
-  url?: string;
-}
+export type BatchJobItem = import('../../lib/bindings').BatchJobItemDto & { id?: string; url?: string };
 
 export interface ListBatchJobsResponse {
   jobs: BatchJobSummary[];

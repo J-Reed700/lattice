@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
 
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { createBrowserRouter, Navigate } from 'react-router';
 
 import {
@@ -20,6 +20,7 @@ const ChatView = lazy(() => import('./components/Chat').then((m) => ({ default: 
 const IngestHub = lazy(() => import('./components/IngestHub').then((m) => ({ default: m.IngestHub })));
 const JournalWorkspace = lazy(() => import('./components/Journal').then((m) => ({ default: m.JournalWorkspace })));
 const ReferenceInbox = lazy(() => import('./components/ReferenceInbox').then((m) => ({ default: m.ReferenceInbox })));
+const StudyPage = lazy(() => import('./components/Study').then((m) => ({ default: m.StudyPage })));
 const ComparePage = lazy(() => import('./components/Compare').then((m) => ({ default: m.ComparePage })));
 const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })));
 
@@ -44,15 +45,16 @@ interface PageProps {
 }
 
 function Page({ id, boundary: Boundary, children }: PageProps) {
+  const reduceMotion = useReducedMotion();
   const content = <Suspense fallback={<PageLoading />}>{children}</Suspense>;
   return (
     <motion.div
       key={id}
       variants={PAGE_VARIANTS}
-      initial="initial"
+      initial={reduceMotion ? false : "initial"}
       animate="animate"
       exit="exit"
-      transition={PAGE_TRANSITION}
+      transition={reduceMotion ? { duration: 0 } : PAGE_TRANSITION}
       className="h-full"
     >
       {Boundary ? <Boundary>{content}</Boundary> : content}
@@ -85,6 +87,7 @@ export const router = createBrowserRouter([
           { path: 'journals', element: <Page id="journals"><JournalWorkspace /></Page> },
           { path: 'daily', element: <Navigate to="/journals" replace /> },
           { path: 'references', element: <Page id="references"><ReferenceInbox /></Page> },
+          { path: 'study', element: <Page id="study"><StudyPage /></Page> },
           { path: 'compare', element: <Page id="compare"><ComparePage /></Page> },
           {
             path: 'settings',

@@ -58,7 +58,6 @@ export function JournalCalendarPopover({ entries, onJumpToEntry }: JournalCalend
       setIsOpen(false);
       return;
     }
-    // Find closest entry by date
     let best: { id: string; diff: number } | null = null;
     for (const [ts, id] of entryDateMap.entries()) {
       const diff = Math.abs(ts - key);

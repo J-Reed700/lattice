@@ -150,7 +150,6 @@ export function ModelDetailPanel({
   const hasDownloadSource =
     Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
 
-  // Check if model is already downloaded
   const checkDownloadStatus = useCallback(async () => {
     const requestId = ++checkRequestRef.current;
     const currentModelId = metadata.id;
@@ -233,7 +232,7 @@ export function ModelDetailPanel({
       addToast({
         type: 'success',
         title: 'Embedding model updated',
-        message: `${metadata.name} is now the active embedding model.`,
+        message: `${metadata.name} is prepared. Restart Lattice to use its search index.`,
       });
       queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
     } catch (error) {

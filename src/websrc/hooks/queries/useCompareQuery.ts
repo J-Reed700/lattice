@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import VaultAPI from '@/lib/api';
 import type { CompareTableDto } from '@/types/api/compare';
 
-/** Fixed by GROUND-RULES §4.10 — one cache entry per (documents, columns). */
+/** One cache entry per document-and-column selection. */
 export function compareQueryKey(documentIds: string[], columns: string[]) {
   return ['compare', documentIds, columns] as const;
 }

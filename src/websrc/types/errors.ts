@@ -158,17 +158,13 @@ export function getUserFriendlyMessage(error: Error): string {
  * Sanitize error message for production (remove sensitive data)
  */
 export function sanitizeErrorMessage(message: string): string {
-  // Remove file paths
   let sanitized = message.replace(/[A-Z]:[\\/ ][\w\s\-\\.]+/gi, '[PATH]');
   sanitized = sanitized.replace(/\/[\w\s\-\\.]+/gi, '[PATH]');
 
-  // Remove potential tokens/keys
   sanitized = sanitized.replace(/[a-f0-9]{32,}/gi, '[TOKEN]');
 
-  // Remove email addresses
   sanitized = sanitized.replace(/[\w.-]+@[\w.-]+\.\w+/gi, '[EMAIL]');
 
-  // Remove IP addresses
   sanitized = sanitized.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]');
 
   return sanitized;

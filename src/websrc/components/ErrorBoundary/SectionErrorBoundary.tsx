@@ -54,7 +54,6 @@ export function SectionErrorBoundary({
       console.error('=========================');
     }
 
-    // Call custom error handler
     if (onError) {
       onError(error, errorInfo);
     }

@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui';
 import { useToast } from '@/hooks/useToast';
 import VaultAPI from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useFileBrowserStore } from '@/stores/fileBrowserStore';
 import type { CorpusShapeDto } from '@/types';
 
 import { composeIngestSummary, type IngestNoun } from './ingestSummary';
@@ -55,6 +56,12 @@ const loadCorpusShapeSafe = async (): Promise<CorpusShapeDto | null> => {
  * the route table, no cycle.
  */
 const openLibrary = (): void => {
+  const library = useFileBrowserStore.getState();
+  library.setScope({ kind: 'all' });
+  library.setSearchQuery('');
+  library.setFilterByType(null);
+  library.setFilterBySource('all');
+  library.clearContentSearch();
   window.history.pushState({}, '', '/files');
   window.dispatchEvent(new PopStateEvent('popstate'));
 };
@@ -71,7 +78,6 @@ const triggerClass = cn(
  *
  * The onramp. Reading-column anatomy A: one PageHeader, one row of text
  * tabs, then the surface for the chosen source.
- * See `.design/UX-OVERHAUL-BRIEF.md` §2A.
  */
 export const IngestHub: FC<IngestHubProps> = ({
   defaultTab = 'single-url',
@@ -83,6 +89,8 @@ export const IngestHub: FC<IngestHubProps> = ({
   const toastRef = useRef(toast);
   toastRef.current = toast;
   const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    if (TABS.some(tab => tab.id === requested)) return requested as TabId;
     const saved = localStorage.getItem('ingestHub.lastTab');
     return (saved as TabId) || defaultTab;
   });
@@ -156,6 +164,7 @@ export const IngestHub: FC<IngestHubProps> = ({
 
           <Tabs.Content value="files" className="mt-6 outline-none">
             <BatchFileImport
+              onReviewFailures={() => setActiveTab('history')}
               onImportComplete={(results: { successful: number; failed: number }) =>
                 handleImportComplete(
                   'files',

@@ -130,7 +130,6 @@ describe('GridView', () => {
         contextMenuPosition: null,
         contextMenuFile: null,
 
-        // Actions
         setViewMode: mockSetViewMode,
         setCurrentPath: mockSetCurrentPath,
         navigateUp: mockNavigateUp,

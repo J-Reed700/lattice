@@ -6,6 +6,7 @@
 import { useCallback, memo, useRef } from 'react';
 
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { MoreHorizontal } from 'lucide-react';
 
 import { metaLine } from './docMeta';
 import { CorpusEmptyState, ErrorState, FilterEmptyState } from './EmptyStates';
@@ -137,6 +138,7 @@ const FileCard = memo(({ doc, isSelected, onClick, onDoubleClick, onContextMenu 
       onContextMenu?.(event, doc);
     }}
     onKeyDown={(event) => {
+      if (event.target !== event.currentTarget) return;
       if (event.key === 'Enter') {
         event.preventDefault();
         onDoubleClick();
@@ -148,7 +150,12 @@ const FileCard = memo(({ doc, isSelected, onClick, onDoubleClick, onContextMenu 
         : 'border-border-subtle hover:bg-surface'
     }`}
   >
-    <FileIcon file={doc} size={18} className="shrink-0" />
+    <div className="flex items-center justify-between">
+      <FileIcon file={doc} size={18} className="shrink-0" />
+      <button type="button" aria-label={`Actions for ${doc.fileName}`} onClick={event => { event.stopPropagation(); onContextMenu?.(event, doc); }} onDoubleClick={event => event.stopPropagation()} className="rounded-sm p-1 text-text-muted hover:bg-surface-raised hover:text-text-primary">
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+    </div>
     <div className="min-w-0">
       <p className="truncate text-sm text-text-primary" title={doc.fileName}>
         {doc.fileName}

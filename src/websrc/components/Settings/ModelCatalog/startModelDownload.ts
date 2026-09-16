@@ -2,7 +2,7 @@
  * Starting a model download, in one place.
  *
  * Both the result row and the detail panel offer a Download button; the
- * command call, the two response shapes, and the toasts are identical, so
+ * command call, response contract, and toasts are identical, so
  * they share this instead of drifting apart.
  */
 
@@ -14,10 +14,6 @@ import { useToastStore } from '../../../stores/toastStore';
 
 import type { DownloadModelResponse } from '../../../types/download';
 import type { ModelMetadata } from '../../../types/modelCatalog';
-
-type DownloadModelCommandResponse =
-  | DownloadModelResponse
-  | { download_id: string; status: string };
 
 type AddToast = ReturnType<typeof useToastStore.getState>['addToast'];
 
@@ -38,41 +34,11 @@ export async function startModelDownload({
   queryClient,
 }: StartModelDownloadArgs): Promise<StartModelDownloadResult> {
   try {
-    const response = await invoke<DownloadModelCommandResponse>('plugin:model|download_model', {
+    const response = await invoke<DownloadModelResponse>('plugin:model|download_model', {
       modelId: metadata.id,
     });
 
-    // Two API shapes are live during the migration: the rich `state` payload
-    // and the legacy `status` string.
-    if ('state' in response) {
-      if (response.state.type === 'DownloadStarted') {
-        addToast({
-          type: 'success',
-          title: 'Download started',
-          message: `${metadata.name} · ${response.state.data.files_to_download} files`,
-        });
-      } else if (response.state.type === 'AlreadyDownloaded') {
-        addToast({
-          type: 'info',
-          title: 'Already downloaded',
-          message: `${metadata.name} is on disk (${response.state.data.verified_files} files verified).`,
-        });
-        queryClient.invalidateQueries({ queryKey: ['downloaded-models'] });
-        return { alreadyDownloaded: true };
-      } else if (response.state.type === 'NetworkError') {
-        addToast({
-          type: 'error',
-          title: "Couldn't reach the model host",
-          message: response.state.data.error_message,
-        });
-      } else if (response.state.type === 'OperationFailed') {
-        addToast({
-          type: 'error',
-          title: "Couldn't start the download",
-          message: response.state.data.error_message,
-        });
-      }
-    } else if (response.status === 'started') {
+    if (response.status === 'started') {
       addToast({
         type: 'success',
         title: 'Download started',

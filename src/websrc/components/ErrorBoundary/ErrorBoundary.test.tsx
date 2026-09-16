@@ -87,7 +87,6 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
 
-    // Reset the error
     fireEvent.click(screen.getByText('Reset'));
 
     await waitFor(() => {
@@ -407,7 +406,6 @@ describe('Accessibility', () => {
       />
     );
 
-    // Should have heading
     expect(screen.getByRole('heading', { level: 1 })).toBeDefined();
   });
 

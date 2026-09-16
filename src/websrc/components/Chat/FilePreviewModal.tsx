@@ -3,7 +3,7 @@ import { type FC, useCallback, useEffect, useMemo, useRef, useState } from 'reac
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { X, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { X, Download, ExternalLink, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 import { HTMLViewer } from '@/components/ContentViewer/renderers/HTMLViewer';
@@ -28,6 +28,7 @@ import {
 
 import { CitationRail } from './CitationRail';
 import { passageMatchNotice, sourceHeaderMeta } from './filePreviewMeta';
+import { JournalCapturePreview } from './JournalCapturePreview';
 import { AudioViewer, audioViewerPropsFromSource } from './viewers/AudioViewer';
 import { ImageViewer } from './viewers/ImageViewer';
 import { MarkdownViewer } from './viewers/MarkdownViewer';
@@ -46,6 +47,7 @@ const isAbsolutePath = (value: string): boolean => value.startsWith('/') || /^[A
 
 interface FilePreviewModalProps {
   isOpen: boolean;
+  presentation?: 'dialog' | 'reading-pane';
   onClose: () => void;
   source: SourceWithMetadata | null;
   /** Where in the file to land. Omit for "open the whole file". */
@@ -61,6 +63,7 @@ interface FilePreviewModalProps {
 
 export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   isOpen,
+  presentation = 'dialog',
   onClose,
   source,
   initialLocator = null,
@@ -70,6 +73,18 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   onLocationResolved,
 }) => {
   const navigate = useNavigate();
+  const [isFocused, setIsFocused] = useState(false);
+  const [captureDraft, setCaptureDraft] = useState<string | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const isReadingPane = presentation === 'reading-pane';
+  useEffect(() => {
+    if (isOpen) {
+      returnFocusRef.current = document.activeElement as HTMLElement;
+    } else {
+      setIsFocused(false);
+      setCaptureDraft(null);
+    }
+  }, [isOpen]);
   const queryClient = useQueryClient();
   const viewerColumnRef = useRef<HTMLDivElement | null>(null);
   const selection = useTextSelection(viewerColumnRef);
@@ -302,14 +317,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
         .split('\n')
         .map((line) => `> ${line}`)
         .join('\n');
-      const result = await VaultAPI.quickCapture(`${quoted}\n${attribution}`);
-      if (!result.ok) {
-        toast.error("Couldn't add to your journal", { message: result.error });
-        return;
-      }
-      toast.success(
-        result.data.noteTitle ? `Added to ${result.data.noteTitle}` : 'Added to your journal'
-      );
+      setCaptureDraft(`${quoted}\n${attribution}`);
     },
     [source, captureLocator, resolvedLabel]
   );
@@ -509,7 +517,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               <p className="text-xs text-[hsl(var(--text-muted))]">Web source</p>
               <p className="mt-1 truncate text-sm text-[hsl(var(--text-secondary))]">{sourceUrl}</p>
             </div>
-            {openableUrl && (
+            {openableUrl && !isReadingPane && (
               <div className="inline-flex items-center gap-2">
                 {importableUrl && renderImportScopeSelect()}
                 {importableUrl && (
@@ -561,7 +569,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               <p className="text-xs text-[hsl(var(--text-muted))]">Web source</p>
               <p className="mt-1 truncate text-sm text-[hsl(var(--text-secondary))]">{sourceUrl}</p>
             </div>
-            {openableUrl && (
+            {openableUrl && !isReadingPane && (
               <div className="inline-flex items-center gap-2">
                 {importableUrl && renderImportScopeSelect()}
                 {importableUrl && (
@@ -647,15 +655,23 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   };
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={onClose}>
+    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-[hsl(var(--overlay))] data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-
-        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 flex h-[92vh] w-[96vw] max-w-[1500px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-subtle bg-surface-raised shadow-md outline-none data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+        {!isReadingPane && <Dialog.Overlay className="fixed inset-0 z-50 bg-[hsl(var(--overlay))]" />}
+        <Dialog.Content
+          aria-describedby={undefined}
+          onInteractOutside={isReadingPane ? (event) => event.preventDefault() : undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+          }}
+          className={`source-reader ${isReadingPane ? 'source-reader--pane' : 'source-reader--dialog'} ${isFocused ? 'source-reader--focused' : ''}`}
+        >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-subtle px-8 py-6">
-            <div className="flex-1">
-              <Dialog.Title className="text-2xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-subtle px-6 py-5">
+            <div className="min-w-0 flex-1">
+              <p className="mb-1 text-xs text-text-muted">Source reader</p>
+              <Dialog.Title className="break-words text-xl font-semibold font-serif leading-tight text-[hsl(var(--text-primary))]">
                 {sanitizedFileName}
               </Dialog.Title>
               {headerMeta.length > 0 && (
@@ -665,6 +681,14 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               )}
             </div>
 
+            {isReadingPane && (
+              <button type="button" className="rounded-md p-2 text-text-secondary hover:bg-surface-raised"
+                aria-label={isFocused ? 'Return to reading pane' : 'Expand reader'}
+                title={isFocused ? 'Return to reading pane' : 'Expand reader'}
+                onClick={() => setIsFocused((value) => !value)}>
+                {isFocused ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              </button>
+            )}
             <Dialog.Close
               className="rounded-sm p-2 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]"
               aria-label="Close"
@@ -675,7 +699,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
           </div>
 
           {/* Content */}
-          <div className="flex min-h-0 flex-1">
+          <div className="source-reader-body flex min-h-0 flex-1">
             <div ref={viewerColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
               {/*
                 How well we found the passage belongs beside the passage, not in
@@ -725,15 +749,15 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
             )}
           </div>
 
-          <SelectionToolbar
+          {captureDraft === null && <SelectionToolbar
             selection={selection}
             onReference={handleReference}
             onAddToJournal={handleAddToJournal}
             onAskAbout={handleAskAbout}
-          />
+          />}
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-3 border-t border-subtle px-8 py-4">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-subtle px-5 py-3">
             {canShowInFolder && (
               <button
                 onClick={handleShowInFolder}
@@ -767,6 +791,10 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
               <span>{primaryActionLabel}</span>
             </button>
           </div>
+          {captureDraft !== null && (
+            <JournalCapturePreview content={captureDraft} onClose={() => setCaptureDraft(null)}
+              onOpenNote={(noteId) => { setCaptureDraft(null); onClose(); navigate(`/journals?noteId=${encodeURIComponent(noteId)}`); }} />
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

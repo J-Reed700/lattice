@@ -7,7 +7,7 @@
  *   Call once at the app root (App.tsx) to apply theme globally.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 
 import { useSettingsQuery } from './queries/useSettingsQuery';
 
@@ -22,56 +22,26 @@ function normalizeTheme(value: string | undefined): 'light' | 'dark' | 'system' 
   return 'system';
 }
 
+function subscribeSystemTheme(onChange: () => void): () => void {
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
 export function useApplyTheme() {
-  const { data } = useSettingsQuery();
-  const theme = normalizeTheme(data?.ui.theme);
-
+  const theme = useEffectiveTheme();
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const systemTheme = mediaQuery.matches ? 'dark' : 'light';
-
-    const effectiveTheme = theme === 'system' ? systemTheme : theme;
-
-    document.documentElement.setAttribute('data-theme', effectiveTheme);
-
-    if (effectiveTheme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-
-    const handleSystemThemeChange = (e: MediaQueryListEvent) => {
-      if (theme === 'system') {
-        const newSystemTheme = e.matches ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-theme', newSystemTheme);
-
-        if (newSystemTheme === 'dark') {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
-      }
-    };
-
-    mediaQuery.addEventListener('change', handleSystemThemeChange);
-
-    return () => {
-      mediaQuery.removeEventListener('change', handleSystemThemeChange);
-    };
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+    root.classList.toggle('dark', theme === 'dark');
+    root.style.colorScheme = theme;
   }, [theme]);
 }
 
-/**
- * Hook to get current effective theme (light or dark)
- * Useful for components that need to know the actual theme being displayed
- */
+/** Keep JS-rendered previews in sync with the same theme as the app shell. */
 export function useEffectiveTheme(): ResolvedTheme {
   const { data } = useSettingsQuery();
   const theme = normalizeTheme(data?.ui.theme);
-
-  if (theme === 'system') {
-    return resolveSystemTheme();
-  }
-
-  return theme;
+  const systemTheme = useSyncExternalStore<ResolvedTheme>(subscribeSystemTheme, resolveSystemTheme, () => 'light');
+  return theme === 'system' ? systemTheme : theme;
 }

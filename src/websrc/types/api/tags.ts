@@ -5,7 +5,6 @@
  * These types match the Rust backend DDD structures from commands/tags.rs
  */
 
-// === Request DTOs ===
 
 export interface CreateTagRequest {
   name: string;
@@ -71,24 +70,10 @@ export interface FindDocumentsByTagRequest {
   tagName: string;
 }
 
-// === Response DTOs ===
 
-export interface Tag {
-  id: string;
-  name: string;
-  color?: string;
-  documentCount?: number;
-  createdAt: string;
-  updatedAt: string;
-}
+export type Tag = import('../../lib/bindings').TagDto;
 
-export interface TagDto {
-  id: string;
-  name: string;
-  color?: string;
-  createdAt: string;
-  updatedAt: string;
-}
+export type TagDto = import('../../lib/bindings').TagDto;
 
 export interface CreateTagResponse {
   tag: Tag;
@@ -135,17 +120,4 @@ export interface TaggedDocumentsResponse {
   tagName: string;
   documentIds: string[];
   count: number;
-}
-
-// === Legacy Types (deprecated) ===
-
-/**
- * @deprecated Use Tag instead
- */
-export interface TagWithCount {
-  id: string;
-  name: string;
-  color: string | null;
-  created_at: string;
-  document_count: number;
 }

@@ -184,6 +184,8 @@ describe('ModelRow', () => {
             created_at: '2026-09-05T00:00:00Z',
             started_at: '2026-09-05T00:00:00Z',
             completed_at: null,
+            model_name: null,
+            model_id: null,
           }
         }
       />,

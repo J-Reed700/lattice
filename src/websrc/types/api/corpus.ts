@@ -1,5 +1,5 @@
 /**
- * Corpus API Types (Track B)
+ * Corpus API types.
  *
  * Shapes for the vault-wide readouts: type mix, growth, document neighbourhoods
  * and the automatic themes produced by `corpus_shape`.
@@ -36,16 +36,7 @@ export type ClusterLabelSource = 'llm' | 'inherited_exact' | 'inherited_jaccard'
  * One automatic theme. Called a "cluster" on the backend (the table and the
  * commands predate the name); the UI says "theme" everywhere.
  */
-export interface ClusterDto {
-  id: string;
-  label: string;
-  description: string | null;
-  memberCount: number;
-  sampleTitles: string[];
-  labelSource: ClusterLabelSource;
-  inheritedFromClusterId: string | null;
-  memberDocumentIds: string[];
-}
+export type ClusterDto = import('../../lib/bindings').ClusterDto;
 
 export interface ClusterRunDto {
   runId: string;

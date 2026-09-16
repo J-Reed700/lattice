@@ -33,7 +33,6 @@ describe('useKeyboardShortcuts', () => {
       ])
     );
 
-    // Simulate Ctrl+K (or Cmd+K on Mac)
     const event = new KeyboardEvent('keydown', {
       key: 'k',
       ...modKey,
@@ -95,12 +94,10 @@ describe('useKeyboardShortcuts', () => {
       ])
     );
 
-    // Update shortcut
     act(() => {
       result.current.updateShortcut('test.customizable', 'Mod+Shift+J');
     });
 
-    // Simulate new shortcut
     const event = new KeyboardEvent('keydown', {
       key: 'j',
       ...modKey,
@@ -135,7 +132,6 @@ describe('useKeyboardShortcuts', () => {
       result.current.updateShortcut('test.resettable', 'Mod+Shift+R');
     });
 
-    // Reset shortcut
     act(() => {
       result.current.resetShortcut('test.resettable');
     });
@@ -295,11 +291,9 @@ describe('useKeyboardShortcuts', () => {
       ])
     );
 
-    // Create input element
     const input = document.createElement('input');
     document.body.appendChild(input);
 
-    // Simulate typing in input
     const event1 = new KeyboardEvent('keydown', {
       key: 'k',
       ...modKey,

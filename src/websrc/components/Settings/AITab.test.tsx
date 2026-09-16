@@ -80,6 +80,8 @@ vi.mock('./ModelCatalog', () => ({
 describe('ChatTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLlmSettings.llmSettings!.provider = 'auto';
+    mockLlmSettings.llmSettings!.llamaCpp = { url: 'http://localhost:8080', model: 'qwen.gguf', authHeaderName: '', authHeaderValue: '' };
   });
 
   it('renders one page header, a noun, with no explanatory subtitle', () => {
@@ -113,7 +115,7 @@ describe('ChatTab', () => {
       const testConnectionMock = vi.fn().mockResolvedValueOnce({
         ok: true,
         data: {
-          endpoint: '/v1/models',
+          endpoint: '/api/tags',
           models: ['llama3.2:latest', 'qwen2.5:latest'],
         },
       });
@@ -130,4 +132,51 @@ describe('ChatTab', () => {
       expect(modelSelect).not.toBeDisabled();
     });
   });
+  it('offers llama.cpp separately and keeps the saved Ollama connection when switching', async () => {
+    const user = userEvent.setup();
+    render(<ChatTab />);
+    await user.selectOptions(screen.getByLabelText('Chat provider'), 'llamacpp');
+    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ provider: 'llamacpp' });
+    expect(mockLlmSettings.llmSettings!.ollamaUrl).toBe('http://localhost:11434');
+  });
+
+  it('tests llama.cpp through its own command and saves its independent connection', async () => {
+    mockLlmSettings.llmSettings!.provider = 'llamacpp';
+    vi.spyOn(VaultAPI, 'testLlamaCppConnection').mockResolvedValueOnce({
+      ok: true, data: { endpoint: '/v1/chat/completions', models: ['qwen.gguf'] },
+    });
+    const user = userEvent.setup();
+    render(<ChatTab />);
+    const url = screen.getByLabelText('llama.cpp URL');
+    await user.clear(url);
+    await user.type(url, 'https://llama.example.com');
+    await user.type(screen.getByLabelText('llama.cpp auth header name'), 'Authorization');
+    await user.type(screen.getByLabelText('llama.cpp auth header value'), 'Basic test-token');
+    await user.click(screen.getByRole('button', { name: 'Test llama.cpp connection' }));
+    const connection = { url: 'https://llama.example.com', model: 'qwen.gguf', authHeaderName: 'Authorization', authHeaderValue: 'Basic test-token' };
+    expect(VaultAPI.testLlamaCppConnection).toHaveBeenCalledWith(connection);
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ provider: 'llamacpp', llamaCpp: connection });
+    expect(screen.getByLabelText('llama.cpp auth header value')).toHaveAttribute('type', 'password');
+  });
+
+  it('configures both remote providers in Auto without switching out of Auto', async () => {
+    const user = userEvent.setup();
+    render(<ChatTab />);
+    expect(screen.getByText('llama.cpp server')).toBeInTheDocument();
+    expect(screen.getByText('Ollama server')).toBeInTheDocument();
+    expect(screen.getByLabelText('Chat provider')).toHaveValue('auto');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+    expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ provider: 'auto', llamaCpp: mockLlmSettings.llmSettings!.llamaCpp });
+  });
+
+  it('does not save a partial llama.cpp authentication header', async () => {
+    mockLlmSettings.llmSettings!.provider = 'llamacpp';
+    const user = userEvent.setup();
+    render(<ChatTab />);
+    await user.type(screen.getByLabelText('llama.cpp auth header name'), 'Authorization');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+    expect(mockLlmSettings.saveLlmUpdates).not.toHaveBeenCalled();
+  });
+
 });

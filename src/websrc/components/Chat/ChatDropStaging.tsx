@@ -5,7 +5,7 @@ import { IconButton } from '@/components/ui';
 import type { StagedFile } from './useChatFileDrop';
 
 /**
- * The staged-files row above the composer (BRIEF rank 5, contract §4.5).
+ * The staged-files row above the composer.
  *
  * The scope line lives in the linked-documents footer instead: this row only
  * exists while files are staged, and the narrowing it used to announce outlives

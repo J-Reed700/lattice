@@ -113,7 +113,6 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
       setLoading(true);
       setError(null);
       try {
-        // Actually import the URL via backend
         const result = await VaultAPI.ingestWebUrl(resolvedUrl);
         if (!result.ok) {
           throw new Error(result.error);

@@ -9,7 +9,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
  *
  * A 28px square ghost button for sidebar headers and toolbars. Always has an
  * accessible label; the tooltip shows the label and, if given, the shortcut.
- * See `.design/UX-OVERHAUL-BRIEF.md` §2B.
  */
 interface IconButtonProps extends Omit<ComponentPropsWithoutRef<'button'>, 'aria-label'> {
   label: string;

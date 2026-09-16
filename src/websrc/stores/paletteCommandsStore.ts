@@ -7,8 +7,7 @@ import type { LucideIcon } from 'lucide-react';
  * sense for what is on screen (synthesize, capture, reindex this file…) so the
  * chrome can stay quiet and ⌘K stays the one place every action lives.
  *
- * Pure UI state: nothing here is read by the backend, so Zustand is the right
- * home (see CLAUDE.md, Repository Barrier rule 3).
+ * This is UI-only state; the backend does not read it.
  */
 export interface PaletteCommand {
   /** Stable, namespaced id, e.g. `chat.regenerate`. Re-registering replaces. */

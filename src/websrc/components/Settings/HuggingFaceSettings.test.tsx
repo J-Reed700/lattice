@@ -46,7 +46,7 @@ describe('HuggingFaceSettings', () => {
     renderSection();
 
     expect(
-      await screen.findByText('Needed for gated models like Gemma and Mistral.'),
+      await screen.findByText('Optional. Public models can be browsed and downloaded without a token. Gated downloads require one.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Token')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove token' })).not.toBeInTheDocument();

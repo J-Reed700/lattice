@@ -9,6 +9,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: true,
+    watch: {
+      ignored: ['**/e2e-results/**', '**/src/target/**'],
+    },
     hmr: {
       protocol: 'ws',
       host: 'localhost',

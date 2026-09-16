@@ -40,7 +40,7 @@ describe('ChatModelNotice', () => {
   it('surfaces the backend reason retrieval was skipped', () => {
     renderNotice({ retrievalUnavailableReason: 'the embedding model is not ready' });
     expect(
-      screen.getByText('Answered without your documents — the embedding model is not ready.')
+      screen.getByText('Document search was unavailable for the last answer: the embedding model is not ready.')
     ).toBeInTheDocument();
   });
 
@@ -53,6 +53,12 @@ describe('ChatModelNotice', () => {
   it('renders nothing for a working Ollama-only setup', () => {
     const { container } = renderNotice({ hasChatModel: true, warmupPhase: 'idle' });
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('links a document scope problem to the library', () => {
+    renderNotice({ retrievalUnavailableReason: 'no indexed documents are assigned to this conversation’s space' });
+    expect(screen.getByRole('link', { name: 'Review documents' })).toHaveAttribute('href', '/files');
+    expect(screen.queryByText('Open model settings')).not.toBeInTheDocument();
   });
 
   it('reports the most blocking problem first', () => {

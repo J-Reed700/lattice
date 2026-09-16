@@ -5,36 +5,15 @@
  * These types match the Rust backend structures from commands/extraction.rs
  */
 
-export interface WikiLink {
-  target: string;
-  display_text: string | null;
-  header: string | null;
-  line_number: number;
-  // context field removed - Rust WikiLinkDto doesn't have this field
-}
+export type WikiLink = import('../../lib/bindings').WikiLinkDto;
 
-export interface ParsedLinksResponse {
-  links: WikiLink[];
-  count: number;
-}
+export type ParsedLinksResponse = import('../../lib/bindings').ParsedLinksResponse;
 
-export interface ResolveLinkResponse {
-  resolved_path: string | null;
-}
+export type ResolveLinkResponse = import('../../lib/bindings').ResolveLinkResponse;
 
-export interface ResolvedLink {
-  target: string;
-  displayText: string | null;
-  header: string | null;
-  lineNumber: number;
-  context: string;
-  resolvedPath: string | null;
-}
+export type ResolvedLink = import('../../lib/bindings').ResolvedLinkDto;
 
-export interface ExtractAndResolveLinksResponse {
-  links: ResolvedLink[];
-  count: number;
-}
+export type ExtractAndResolveLinksResponse = import('../../lib/bindings').ExtractAndResolveResponseDto;
 
 export interface DocumentMetadata {
   title?: string;

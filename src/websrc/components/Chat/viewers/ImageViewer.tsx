@@ -36,7 +36,6 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
         setIsLoading(false);
       });
 
-    // Cleanup blob URL on unmount
     return () => {
       if (safeSrc?.startsWith('blob:')) {
         URL.revokeObjectURL(safeSrc);
@@ -45,7 +44,6 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
   }, [filePath, isSVG, safeSrc]);
 
   async function sanitizeSVG(path: string): Promise<string> {
-    // Fetch SVG content via Tauri
     const response = await fetch(convertFileSrc(path));
     const svgText = await response.text();
 
@@ -57,7 +55,6 @@ export const ImageViewer: FC<ImageViewerProps> = ({ filePath }) => {
       FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
     });
 
-    // Create blob URL from sanitized content
     const blob = new Blob([clean], { type: 'image/svg+xml' });
     return URL.createObjectURL(blob);
   }

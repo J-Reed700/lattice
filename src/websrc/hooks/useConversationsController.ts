@@ -4,6 +4,7 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
 import { VaultAPI } from '@/lib/api';
+import type { ChatResponse, ChatStreamEventDto, MessageDto } from '@/lib/bindings';
 import type {
   ConversationsState,
   GenerationOutcome,
@@ -35,26 +36,12 @@ import {
   SourceWithMetadataSchema,
   SourcesArraySchema,
 } from '@/types/conversation';
+import { resolveChatModel } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
-interface ConversationListParams {
-  spaceId: string | null;
-  filterMode: ConversationsState['filterMode'];
-  searchQuery: string;
-}
+import { conversationKeys, type ConversationListParams } from './queries/conversationKeys';
 
-export const conversationKeys = {
-  all: ['conversations'] as const,
-  lists: ['conversations', 'list'] as const,
-  list: (params: ConversationListParams) => ['conversations', 'list', params] as const,
-  spaces: ['conversations', 'spaces'] as const,
-  detail: (id: string) => ['conversations', 'detail', id] as const,
-  messages: (id: string) => ['conversations', 'messages', id] as const,
-  bookmarks: (id: string, query = '') => ['conversations', 'bookmarks', id, query] as const,
-  linkedDocuments: (id: string) => ['conversations', 'linked-documents', id] as const,
-  webSources: (id: string) => ['conversations', 'web-sources', id] as const,
-  memberships: (documentId: string) => ['conversations', 'memberships', documentId] as const,
-};
+export { conversationKeys } from './queries/conversationKeys';
 
 const pendingCancellationRequests = new Set<string>();
 
@@ -111,10 +98,19 @@ const fetchConversationDetail = async (id: string): Promise<Conversation | null>
   return result.data.conversation as Conversation | null;
 };
 
+function toConversationMessage(message: MessageDto): ConversationMessage {
+  switch (message.status) {
+    case 'pending': case 'processing': case 'completed': case 'failed':
+      return { ...message, status: message.status };
+    default:
+      throw new Error(`Unknown conversation message status: ${message.status}`);
+  }
+}
+
 const fetchMessages = async (id: string): Promise<ConversationMessage[]> => {
   const result = await VaultAPI.getConversationMessages(id);
   if (!result.ok) throw new Error(result.error);
-  return result.data.messages as ConversationMessage[];
+  return result.data.messages.map(toConversationMessage);
 };
 
 const fetchBookmarks = async (id: string, query = ''): Promise<ConversationMessageBookmark[]> => {
@@ -163,6 +159,7 @@ const normalizeChunkExcerpt = (raw: unknown): Record<string, unknown> | null => 
     excerpt,
     section: value.section ?? undefined,
     chunkIndex: value.chunkIndex ?? value.chunk_index ?? undefined,
+    pageNumber: value.pageNumber ?? value.page_number ?? undefined,
     score: Number.isFinite(rawScore) && rawScore >= 0 ? rawScore : 0,
     highlights: value.highlights ?? undefined,
   };
@@ -193,6 +190,7 @@ const normalizeSource = (raw: unknown): Record<string, unknown> | null => {
     highlights: value.highlights ?? undefined,
     section: value.section ?? undefined,
     chunkIndex: value.chunkIndex ?? value.chunk_index ?? undefined,
+    pageNumber: value.pageNumber ?? value.page_number ?? undefined,
     chunkExcerpts: rawExcerpts
       .map(normalizeChunkExcerpt)
       .filter((item): item is Record<string, unknown> => item !== null),
@@ -226,6 +224,10 @@ const parseVerification = (raw: unknown): MessageVerificationSummary | null => {
     supportedClaimNotes: value.supportedClaimNotes ?? value.supported_claim_notes,
     unsupportedClaims: value.unsupportedClaims ?? value.unsupported_claims,
     groundedRatio: value.groundedRatio ?? value.grounded_ratio,
+    contradictedClaims: value.contradictedClaims ?? value.contradicted_claims,
+    verdictCounts: value.verdictCounts ?? value.verdict_counts,
+    claimVerdicts: value.claimVerdicts ?? value.claim_verdicts,
+    judgeUsed: value.judgeUsed ?? value.judge_used,
   });
   return parsed.success ? parsed.data : null;
 };
@@ -444,25 +446,21 @@ export function useConversationsController(): ConversationsState {
       queryFn: fetchSpaces,
     });
     const selectedSpace = spaces.find(space => space.id === state.selectedSpaceId);
+    if (state.selectedSpaceId && !selectedSpace) {
+      const error = new Error('The selected space is unavailable. Select a space and try again.');
+      setUiError(error);
+      throw error;
+    }
     const [activeModelsResult, settingsResult] = await Promise.all([
       VaultAPI.getActiveModels(),
       VaultAPI.getSettings(),
     ]);
     const activeModel = activeModelsResult.ok ? activeModelsResult.data.chat_model : null;
     const llmSettings = settingsResult.ok ? settingsResult.data.llm : null;
-    const provider = llmSettings?.provider ?? 'auto';
-    const hasOllamaConfig = Boolean(llmSettings?.ollamaUrl && llmSettings.model);
     const spaceModel = selectedSpace?.defaultModelName?.trim();
-    let modelName = spaceModel || null;
-    if (!modelName && provider === 'ollama') {
-      modelName = hasOllamaConfig ? llmSettings?.model ?? null : null;
-    } else if (!modelName && activeModel) {
-      modelName = activeModel.model_id;
-    } else if (!modelName && provider === 'auto' && hasOllamaConfig) {
-      modelName = llmSettings?.model ?? null;
-    }
+    const modelName = spaceModel || resolveChatModel(llmSettings, activeModel?.model_id ?? null);
     if (!modelName) {
-      const error = new Error('No chat model available. Select a local model in Settings or configure Ollama.');
+      const error = new Error('No chat model available. Select a chat provider and model in Settings.');
       setUiError(error);
       throw error;
     }
@@ -474,15 +472,30 @@ export function useConversationsController(): ConversationsState {
       throw error;
     }
     const id = result.data.conversation.id;
-    queryClient.setQueryData(conversationKeys.detail(id), result.data.conversation as Conversation);
-    queryClient.setQueryData(conversationKeys.messages(id), []);
+    let created = result.data.conversation as Conversation;
     if (state.selectedSpaceId && state.selectedSpaceId !== 'space_general' && selectedSpace) {
       const moveResult = await VaultAPI.moveConversationToSpace({
         conversationId: id,
         spaceId: state.selectedSpaceId,
       });
-      if (!moveResult.ok) setUiError(moveResult.error);
+      if (!moveResult.ok) {
+        const error = new Error(`Could not create the chat in ${selectedSpace.name}: ${moveResult.error}`);
+        setUiError(error);
+        await invalidateLists();
+        throw error;
+      }
+      // The create response still describes General. Read the saved destination
+      // before opening the chat or letting a message use its scope.
+      const moved = await fetchConversationDetail(id);
+      if (moved?.spaceId !== state.selectedSpaceId) {
+        const error = new Error('Could not confirm the new chat’s space. Refresh and try again.');
+        setUiError(error);
+        throw error;
+      }
+      created = moved;
     }
+    queryClient.setQueryData(conversationKeys.detail(id), created);
+    queryClient.setQueryData(conversationKeys.messages(id), []);
     conversationUiStore.setState({ activeConversationId: id });
     await invalidateLists();
     return id;
@@ -539,6 +552,7 @@ export function useConversationsController(): ConversationsState {
     queryClient.setQueryData<Conversation | null>(conversationKeys.detail(id), current =>
       current ? { ...current, title: nextTitle, updatedAt: new Date().toISOString() } : current
     );
+    await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
     return true;
   }, [queryClient]);
 
@@ -550,20 +564,20 @@ export function useConversationsController(): ConversationsState {
   ) => {
     const result = await VaultAPI.bookmarkConversationMessage({ conversationId, messageId, title, note });
     if (!result.ok) setUiError(result.error);
-    else await queryClient.invalidateQueries({ queryKey: conversationKeys.bookmarks(conversationId) });
+    else await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
   }, [queryClient]);
 
   const unbookmarkMessage = useCallback(async (conversationId: string, messageId: string) => {
     const result = await VaultAPI.unbookmarkConversationMessage({ conversationId, messageId });
     if (!result.ok) setUiError(result.error);
-    else await queryClient.invalidateQueries({ queryKey: conversationKeys.bookmarks(conversationId) });
+    else await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
   }, [queryClient]);
 
   const moveConversationToSpace = useCallback(async (id: string, spaceId: string) => {
     const result = await VaultAPI.moveConversationToSpace({ conversationId: id, spaceId });
     if (!result.ok) setUiError(result.error);
-    else await invalidateLists();
-  }, [invalidateLists]);
+    else await Promise.all([invalidateLists(), queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks })]);
+  }, [invalidateLists, queryClient]);
 
   const loadConversationLinkedDocuments = useCallback(async (conversationId: string) => {
     addRequestedId('requestedLinkedConversationIds', conversationId);
@@ -695,11 +709,7 @@ export function useConversationsController(): ConversationsState {
     conversationId: string;
     content: string;
     showUserBubble: boolean;
-    invoke: (_requestId: string) => Promise<ApiResult<{
-      conversationId: string;
-      messages: ConversationMessage[];
-      contextUsed: number;
-    }>>;
+    invoke: (_requestId: string) => Promise<ApiResult<ChatResponse>>;
     onFailure?: (_error: string) => void;
   }): Promise<GenerationOutcome> => {
     const { conversationId: requestConversationId, content, showUserBubble, invoke, onFailure } = options;
@@ -760,26 +770,17 @@ export function useConversationsController(): ConversationsState {
       if (error) onFailure?.(error);
     };
 
-    const retryingNotice = 'Model returned an empty response. Retrying...';
+    const retryingNotice = 'Model response failed. Retrying...';
     let unlisten: (() => void) | undefined;
     try {
-      unlisten = await listen<{
-        conversationId?: string;
-        requestId?: string;
-        content?: string;
-        done?: boolean;
-        status?: string;
-        attempt?: number;
-        retrieval?: unknown;
-      }>('llm-stream', event => {
+      unlisten = await listen<ChatStreamEventDto>('llm-stream', event => {
         const payload = event.payload;
-        if (payload.conversationId && payload.conversationId !== requestConversationId) return;
-        if (payload.requestId && payload.requestId !== requestId) return;
+        if (payload.conversationId !== requestConversationId || payload.requestId !== requestId) return;
         if (payload.done) {
           unlisten?.();
           return;
         }
-        // The retrieval trace arrives once, before generation (contract §4.6).
+        // Tool searches can update the initial retrieval trace during generation.
         if (payload.status === 'retrieval' && payload.retrieval) {
           const parsed = RetrievalTraceSchema.safeParse(payload.retrieval);
           if (parsed.success) {
@@ -821,7 +822,8 @@ export function useConversationsController(): ConversationsState {
           conversationUiStore.setState({ error: null });
           return 'cancelled';
         }
-        settleOptimisticMessages(result.error);
+        const detail: unknown = result.details?.details;
+        settleOptimisticMessages(typeof detail === 'string' && detail.trim() ? detail : result.error);
         return 'failed';
       }
 
@@ -834,7 +836,7 @@ export function useConversationsController(): ConversationsState {
         settleOptimisticMessages('Chat response missing conversation ID. Please try again.');
         return 'failed';
       }
-      const responseMessages = [...(raw.messages ?? [])] as ConversationMessage[];
+      const responseMessages = raw.messages.map(toConversationMessage);
       const lastAssistant = [...responseMessages].reverse().find(message => message.role === 'assistant');
       if (lastAssistant && raw.sources?.length && !lastAssistant.sources?.length) {
         lastAssistant.sources = parseSources(raw.sources);
@@ -956,7 +958,7 @@ export function useConversationsController(): ConversationsState {
     }
     queryClient.setQueryData(
       conversationKeys.messages(conversationId),
-      result.data.messages as ConversationMessage[]
+      result.data.messages.map(toConversationMessage)
     );
     await invalidateLists();
     return true;
@@ -1008,7 +1010,7 @@ export function useConversationsController(): ConversationsState {
     }
     await Promise.all([
       invalidateLists(),
-      queryClient.invalidateQueries({ queryKey: conversationKeys.bookmarks(conversationId) }),
+      queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks }),
     ]);
   }, [invalidateLists, queryClient]);
 
@@ -1036,6 +1038,7 @@ export function useConversationsController(): ConversationsState {
     queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(id) });
     queryClient.removeQueries({ queryKey: conversationKeys.linkedDocuments(id), exact: true });
     queryClient.removeQueries({ queryKey: conversationKeys.webSources(id), exact: true });
+    await queryClient.invalidateQueries({ queryKey: conversationKeys.allBookmarks });
   }, [queryClient]);
 
   /** Pure UI state: the text the composer should adopt on its next render. */

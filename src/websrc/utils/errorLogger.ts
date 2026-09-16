@@ -81,7 +81,6 @@ class ErrorLogger {
       },
     };
 
-    // Add to queue
     this.addToQueue(logEntry);
 
     // Console logging
@@ -275,7 +274,6 @@ class ErrorLogger {
 // Singleton instance
 export const errorLogger = new ErrorLogger();
 
-// Export convenience functions
 export const logError = errorLogger.logError.bind(errorLogger);
 export const logComponentError = errorLogger.logComponentError.bind(errorLogger);
 export const logNetworkError = errorLogger.logNetworkError.bind(errorLogger);

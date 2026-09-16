@@ -72,7 +72,7 @@ describe('PassageHighlighter', () => {
     expect(getByTestId('p2').classList.contains('lattice-passage-block')).toBe(false);
   });
 
-  it('adds term marks inside the located block', async () => {
+  it('highlights the passage without marking query keywords', async () => {
     const onMatch = vi.fn();
     const { container } = render(
       <PassageHighlighter
@@ -84,7 +84,8 @@ describe('PassageHighlighter', () => {
     );
 
     await waitFor(() => expect(onMatch).toHaveBeenCalledWith('exact'));
-    expect(container.querySelectorAll('.lattice-passage-term').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.lattice-passage-term')).toHaveLength(0);
+    expect(container.querySelectorAll('.lattice-passage-block')).toHaveLength(1);
   });
 
   it('removes every class it added on unmount', async () => {

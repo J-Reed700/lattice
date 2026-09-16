@@ -22,7 +22,6 @@ interface ProgressStore {
   history: ProgressHistory[];
   isCollapsed: boolean;
 
-  // Actions
   createOperation: (_params: CreateOperationParams) => string;
   updateOperation: (_update: ProgressUpdate) => void;
   completeOperation: (_id: string, _message?: string) => void;
@@ -45,7 +44,6 @@ interface ProgressStore {
   clearCompleted: () => void;
   clearAll: () => void;
 
-  // Cleanup
   cleanupStaleEntries: () => void;
 }
 
@@ -164,7 +162,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
         errors: update.errors ?? operation.errors,
       };
 
-      // Calculate progress if current/total provided
       if (updatedOperation.total > 0) {
         updatedOperation.progress = Math.min(
           100,
@@ -195,7 +192,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
       const newOperations = new Map(state.operations);
       newOperations.set(id, completedOperation);
 
-      // Add to history (keep last 10)
       const newHistory = [
         { operation: completedOperation, timestamp: new Date() },
         ...state.history,
@@ -204,7 +200,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
       // Schedule cleanup
       scheduleCleanup(id, get().removeOperation);
 
-      // Add success notification
       get().addNotification({
         operationId: id,
         message: `${operation.type} completed successfully`,
@@ -234,7 +229,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
       const newOperations = new Map(state.operations);
       newOperations.set(id, failedOperation);
 
-      // Add to history
       const newHistory = [
         { operation: failedOperation, timestamp: new Date() },
         ...state.history,
@@ -243,7 +237,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
       // Schedule cleanup
       scheduleCleanup(id, get().removeOperation);
 
-      // Add error notification
       get().addNotification({
         operationId: id,
         message: `${operation.type} failed: ${error}`,
@@ -272,7 +265,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
       const newOperations = new Map(state.operations);
       newOperations.set(id, cancelledOperation);
 
-      // Add to history
       const newHistory = [
         { operation: cancelledOperation, timestamp: new Date() },
         ...state.history,
@@ -408,7 +400,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
     const state = get();
     const activeIds = new Set(state.operations.keys());
 
-    // Clean up stale throttle timers
     cleanupStaleTimers(activeIds);
 
     // Optional: Log cleanup statistics
@@ -418,7 +409,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
   },
 }));
 
-// Export selectors for optimized component re-renders
 export const selectActiveOperations = (state: ProgressStore) =>
   Array.from(state.operations.values()).filter(
     (op) => op.status === 'running' || op.status === 'pending'

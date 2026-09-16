@@ -26,6 +26,7 @@ export interface SourceWithMetadata {
   highlights?: string[];
   section?: string;
   chunkIndex?: number;
+  pageNumber?: number;
   chunkExcerpts?: SourceChunkExcerpt[];
   score: number;
   fileSizeBytes: number;
@@ -45,6 +46,7 @@ export interface SourceChunkExcerpt {
   excerpt: string;
   section?: string;
   chunkIndex?: number;
+  pageNumber?: number;
   score: number;
   highlights?: string[];
 }
@@ -63,13 +65,15 @@ export const SourceWithMetadataSchema = z.object({
   content: z.string().max(10000), // Limit preview content
   excerpt: z.string().max(2000).optional(),
   highlights: z.array(z.string().max(64)).max(12).optional(),
-  section: z.string().max(200).optional(),
+  section: z.string().max(1000).optional(),
   chunkIndex: z.number().min(0).max(1_000_000).optional(),
+  pageNumber: z.number().int().min(1).optional(),
   chunkExcerpts: z.array(z.object({
     chunkId: z.string().min(1).max(255),
     excerpt: z.string().min(1).max(4000),
-    section: z.string().max(200).optional(),
+    section: z.string().max(1000).optional(),
     chunkIndex: z.number().min(0).max(1_000_000).optional(),
+  pageNumber: z.number().int().min(1).optional(),
     score: z.number().finite().min(0),
     highlights: z.array(z.string().max(64)).max(12).optional(),
   })).max(24).optional(),
@@ -85,6 +89,23 @@ export const SourceWithMetadataSchema = z.object({
 export const SourcesArraySchema = z.array(SourceWithMetadataSchema)
   .max(100); // Limit max sources to prevent DoS
 
+/**
+ * One claim and how it was checked.
+ *
+ * `method` says which pass produced the verdict: `lexical` is stemmed token
+ * overlap against the cited passage, `judge` is an LLM entailment decision.
+ * Treat them as different strengths of evidence, not the same verdict.
+ */
+export const ClaimVerdictSchema = z.object({
+  sentence: z.string().max(2000),
+  citationIds: z.array(z.number().int().min(1).max(1000)).max(24),
+  verdict: z.enum(['supported', 'contradicted', 'unsupported']),
+  evidenceQuote: z.string().max(1000).nullable().optional(),
+  method: z.enum(['lexical', 'judge']),
+}).strict();
+
+export type ClaimVerdict = z.infer<typeof ClaimVerdictSchema>;
+
 export const MessageVerificationSummarySchema = z.object({
   enabled: z.boolean(),
   claimsEvaluated: z.number().min(0).optional(),
@@ -92,6 +113,19 @@ export const MessageVerificationSummarySchema = z.object({
   supportedClaimNotes: z.array(z.string().max(2000)).max(40).optional(),
   unsupportedClaims: z.array(z.string().max(2000)).max(20).optional(),
   groundedRatio: z.number().min(0).max(1).optional(),
+  // Added alongside the LLM claim judge. Absent on messages verified before it
+  // existed, so every consumer must tolerate `undefined` rather than read a
+  // missing count as zero.
+  /** Claims a passage actively refutes. Also present in `unsupportedClaims`. */
+  contradictedClaims: z.array(z.string().max(2000)).max(20).optional(),
+  verdictCounts: z.object({
+    supported: z.number().min(0),
+    contradicted: z.number().min(0),
+    unsupported: z.number().min(0),
+  }).strict().optional(),
+  claimVerdicts: z.array(ClaimVerdictSchema).max(60).optional(),
+  /** Whether any claim in this turn was judged by a model rather than by overlap. */
+  judgeUsed: z.boolean().optional(),
 }).strict();
 
 export type MessageVerificationSummary = z.infer<typeof MessageVerificationSummarySchema>;
@@ -142,7 +176,7 @@ export interface Conversation {
 export interface ConversationMessage {
   id: string;
   conversationId: string;
-  role: 'user' | 'assistant' | 'system';
+  role: string;
   content: string;
   tokens: number;
   createdAt: string;
@@ -157,7 +191,7 @@ export interface ConversationMessageBookmark {
   conversationTitle: string;
   spaceId: string;
   messageId: string;
-  messageRole: 'user' | 'assistant' | 'system';
+  messageRole: string;
   messagePreview: string;
   title?: string | null;
   note?: string | null;
@@ -224,7 +258,7 @@ export function isOptimistic(message: DisplayMessage): message is OptimisticMess
 export type DisplayMessage = ConversationMessage | OptimisticMessage;
 
 /**
- * Retrieval trace for one assistant turn (BRIEF rank 17, contract §4.6).
+ * Retrieval trace for one assistant turn.
  *
  * `searchedDocuments` is the size of the set the backend's hard space-scope
  * filter actually allowed — not the size of the corpus. An absent trace means
@@ -237,6 +271,17 @@ export interface RetrievalTrace {
   scope: 'vault' | 'linked';
   /** Why the knowledge base could not be searched, straight from the backend. */
   unavailableReason?: string;
+  // Added alongside the post-rerank sufficiency check. Absent on every trace
+  // persisted before it existed, so an absent verdict means "not judged" and
+  // never "insufficient".
+  /** The post-rerank sufficiency verdict, after any corrective pass. */
+  kbSufficient?: boolean;
+  /** Replanned retrieval passes that ran. Capped at one per turn. */
+  kbCorrectiveRetries?: number;
+  /** True when a short follow-up reused the last topic and skipped the planner. */
+  kbPlannerSkipped?: boolean;
+  /** Stable verdict codes (`low_term_coverage`, …), not prose. */
+  sufficiencyReasons?: string[];
 }
 
 export const RetrievalTraceSchema = z.object({
@@ -245,6 +290,10 @@ export const RetrievalTraceSchema = z.object({
   files: z.number().int().min(0).max(1000),
   scope: z.enum(['vault', 'linked']),
   unavailableReason: z.string().max(400).optional(),
+  kbSufficient: z.boolean().optional(),
+  kbCorrectiveRetries: z.number().int().min(0).max(8).optional(),
+  kbPlannerSkipped: z.boolean().optional(),
+  sufficiencyReasons: z.array(z.string().max(64)).max(8).optional(),
 }).strict();
 
 /** Where in a file a cited passage lives, and how to find it again. */
@@ -253,6 +302,7 @@ export interface PassageLocator {
   text: string;
   /** Ordinal of the chunk in the document, when known. */
   chunkIndex?: number;
+  pageNumber?: number;
   /** 1-based PDF page, only when already resolved. */
   page?: number;
   /** Terms to sub-highlight inside the located passage. */

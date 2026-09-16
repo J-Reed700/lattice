@@ -3,7 +3,6 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { ImageViewer } from '../ImageViewer';
 
-// Mock Tauri
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: (path: string) => `tauri://localhost${path}`,
 }));

@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import * as mammoth from 'mammoth';
 
+import { useEffectiveTheme } from '../../../hooks/useApplyTheme';
 import VaultAPI from '../../../lib/api';
 
 interface DocxViewerProps {
@@ -12,6 +13,7 @@ interface DocxViewerProps {
 }
 
 export function DocxViewer({ filePath, title }: DocxViewerProps) {
+  const theme = useEffectiveTheme();
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,13 +42,13 @@ export function DocxViewer({ filePath, title }: DocxViewerProps) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 860px; margin: 32px auto; padding: 0 20px; line-height: 1.6; color: #111827; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 860px; margin: 32px auto; padding: 0 20px; line-height: 1.6; color: CanvasText; background: Canvas; }
 img { max-width: 100%; height: auto; }
 table { border-collapse: collapse; width: 100%; }
-table, th, td { border: 1px solid #e5e7eb; }
+table, th, td { border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas); }
 th, td { padding: 8px; text-align: left; }
-blockquote { border-left: 4px solid #e5e7eb; margin: 0; padding-left: 16px; color: #4b5563; }
-code, pre { background: #f3f4f6; }
+blockquote { border-left: 4px solid color-mix(in srgb, CanvasText 20%, Canvas); margin: 0; padding-left: 16px; color: color-mix(in srgb, CanvasText 75%, Canvas); }
+code, pre { background: color-mix(in srgb, CanvasText 6%, Canvas); }
 pre { padding: 12px; overflow-x: auto; }
 </style>
 </head>
@@ -104,7 +106,7 @@ ${sanitized}
         </div>
       )}
       <iframe
-        srcDoc={htmlContent}
+        srcDoc={htmlContent.replace('<style>', `<style>:root { color-scheme: ${theme}; }`)}
         className="flex-1 w-full border-0"
         sandbox="allow-same-origin"
         title={title || 'DOCX Document'}

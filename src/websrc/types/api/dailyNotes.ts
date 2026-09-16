@@ -29,36 +29,10 @@ export interface StickyItem {
   createdAt: string;
 }
 
-export interface SnapshotMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  createdAt: string;
-  metadata?: string | null;
-}
+export type SnapshotMessage = import('../../lib/bindings').SnapshotMessageDto;
 
-export interface ConversationSnapshot {
-  id: string;
-  conversationId: string;
-  conversationTitle: string;
-  capturedAt: string;
-  messageCount: number;
-  messages: SnapshotMessage[];
-}
+export type ConversationSnapshot = import('../../lib/bindings').ConversationSnapshotDto;
 
-export interface WorkspaceNote {
-  id: string;
-  title: string;
-  content: string;
-  linkedDocumentIds: string[];
-  linkedConversationIds: string[];
-  highlights: NoteHighlight[];
-  stickyNotes: StickyItem[];
-  conversationSnapshots: ConversationSnapshot[];
-  createdAt: string;
-  updatedAt: string;
-}
+export type WorkspaceNote = import('../../lib/bindings').WorkspaceNoteDto;
 
-export interface ListWorkspaceNotesResponse {
-  notes: WorkspaceNote[];
-}
+export type ListWorkspaceNotesResponse = import('../../lib/bindings').ListWorkspaceNotesResponseDto;

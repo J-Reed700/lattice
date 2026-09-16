@@ -24,6 +24,12 @@ export function useLibraryDocumentsQuery() {
       return result.data;
     },
     staleTime: 15_000,
+    // Imports continue after leaving the import screen. Refresh on every visit
+    // and while the library is visible so their results cannot stay hidden in
+    // a fresh cache (including imports completed by background jobs).
+    refetchOnMount: 'always',
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
   const sortField = useFileBrowserStore(state => state.sortField);
   const sortOrder = useFileBrowserStore(state => state.sortOrder);

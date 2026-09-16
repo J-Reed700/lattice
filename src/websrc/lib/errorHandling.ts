@@ -23,7 +23,6 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.UNAUTHORIZED]: 'Authentication failed. Please log in again.',
   [ErrorCode.SECURITY_VIOLATION]: 'Security violation detected. Action blocked.',
 
-  // Validation Errors
   [ErrorCode.VALIDATION_ERROR]: 'The provided data is invalid.',
   [ErrorCode.INVALID_INPUT]: 'Invalid input provided.',
   [ErrorCode.INVALID_CONFIG]: 'Configuration error. Please check settings.',

@@ -39,7 +39,7 @@ vi.mock('@/hooks/queries', () => ({
 const result = (overrides: Partial<SearchResult> & { id: string }): SearchResult => ({
   documentId: overrides.id,
   title: 'RAG survey 2025.pdf',
-  path: '/Users/josh/Documents/Research/RAG survey 2025.pdf',
+  path: '/Users/example/Documents/Research/RAG survey 2025.pdf',
   content: 'The survey categorizes retrievers into sparse, dense, and hybrid families.',
   score: 0.92,
   vectorScore: 0.9,

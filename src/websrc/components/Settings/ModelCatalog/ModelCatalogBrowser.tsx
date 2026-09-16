@@ -6,10 +6,10 @@
  * the filter row stay presentational.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { CatalogManagementSection } from './CatalogManagementSection';
-import { clearedFilters, hasActiveFilters } from './catalogUtils';
+import { CATALOG_TEXT_BUTTON_CLASS, clearedFilters, hasActiveFilters } from './catalogUtils';
 import { ModelDetailPanel } from './ModelDetailPanel';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelListView } from './ModelListView';
@@ -30,6 +30,8 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     compatibleModelsLoading,
     compatibleModelsError,
     searchLoading,
+    searchError,
+    reloadSearch,
     searchQuery,
     filters,
     sortBy,
@@ -38,6 +40,13 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     clearSelection,
     loadCompatibleModels,
   } = useModelCatalog({ loadCacheStats: true });
+  const [browseAll, setBrowseAll] = useState(false);
+  const [pagination, setPagination] = useState({ key: '', page: 1 });
+  const resultsKey = JSON.stringify([searchQuery, filters, sortBy, browseAll]);
+  const page = pagination.key === resultsKey ? pagination.page : 1;
+  const isSearching = searchQuery.trim().length > 0;
+  const filtersActive = hasActiveFilters(filters);
+  const overview = !browseAll && !isSearching && !filtersActive;
 
   // The catalog and the token field share this page, so "Add token" is a scroll,
   // not a navigation.
@@ -132,7 +141,6 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         );
       }
 
-      // Filter embedding models by dimension compatibility
       if (filters.embedding_dimensions != null) {
         filtered = filtered.filter((m) => {
           // Only filter embedding models; pass through LLM/OCR
@@ -147,7 +155,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     };
 
     // If there's a search query and we have search results, show those
-    if (searchQuery.trim() && searchResults.length > 0) {
+    if (searchQuery.trim()) {
       const mapped = searchResults.map((result) => ({
         model: result.model,
         compatibility: {
@@ -171,8 +179,8 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     return sortModels(applyFilters(compatibleModels));
   }, [compatibleModels, searchResults, searchQuery, filters, sortBy]);
 
-  const isLoading = compatibleModelsLoading || searchLoading;
-  const error = compatibleModelsError;
+  const isLoading = isSearching ? searchLoading : compatibleModelsLoading;
+  const error = isSearching ? searchError : compatibleModelsError;
 
   if (selectedModel) {
     return (
@@ -188,25 +196,48 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
 
   return (
     <div className="space-y-5">
-      <SystemCapabilitiesCard />
       <ModelSearchBar />
       <ModelFilterPanel />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-base font-medium text-text-primary">
+            {overview ? 'Explore by purpose' : isSearching ? 'Search results' : 'Browse models'}
+          </h3>
+          {overview ? <p className="mt-1 text-sm text-text-muted">A few models from each category. Open a category to see more.</p> : null}
+        </div>
+        {!isSearching && !filtersActive ? (
+          <button type="button" onClick={() => setBrowseAll((previous) => !previous)} className={CATALOG_TEXT_BUTTON_CLASS}>
+            {browseAll ? 'Explore categories' : 'Browse all models'}
+          </button>
+        ) : null}
+      </div>
       <ModelListView
         models={displayedModels}
         loading={isLoading}
         error={error}
         onModelSelect={selectModel}
-        filtersActive={hasActiveFilters(filters)}
+        overview={overview}
+        page={page}
+        onPageChange={(nextPage) => setPagination({ key: resultsKey, page: nextPage })}
+        onBrowseCategory={(category) => setFilters({ category })}
+        filtersActive={filtersActive}
         onResetFilters={() => setFilters(clearedFilters(filters))}
         // The hook surfaces the failure in `compatibleModelsError`; catching
         // keeps a second consecutive failure from becoming an unhandled
         // rejection.
         onRetry={() => {
-          loadCompatibleModels().catch(() => undefined);
+          (isSearching ? reloadSearch() : loadCompatibleModels()).catch(() => undefined);
         }}
         onAddToken={focusTokenField}
       />
-      <CatalogManagementSection />
+      <details className="border-t border-border-subtle pt-3">
+        <summary className="cursor-pointer text-sm text-text-secondary">This computer</summary>
+        <div className="mt-3"><SystemCapabilitiesCard /></div>
+      </details>
+      <details className="border-t border-border-subtle pt-3">
+        <summary className="cursor-pointer text-sm text-text-secondary">Catalog maintenance</summary>
+        <div className="mt-3"><CatalogManagementSection /></div>
+      </details>
     </div>
   );
 }

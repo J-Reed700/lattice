@@ -24,7 +24,7 @@ const SEARCH_MODES: ReadonlyArray<{ id: SearchMode; label: string }> = [
  *
  * The "I know the file exists, find it" escape hatch. Reading-column
  * anatomy A: one PageHeader, one input, one row of mode tabs, then
- * hairline result rows. See `.design/UX-OVERHAUL-BRIEF.md` §2A.
+ * hairline result rows.
  *
  * Data: TanStack Query (useSearchQuery, 300ms debounce).
  */
@@ -38,7 +38,6 @@ export function SearchInterface() {
   // Debounce query to avoid excessive API calls
   const debouncedQuery = useDebounce(query, 300);
 
-  // Use TanStack Query for search
   const {
     data: results = [],
     isLoading: isSearching,

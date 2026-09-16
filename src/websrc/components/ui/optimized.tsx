@@ -85,7 +85,6 @@ export const MemoCard = memo(Card, (prevProps, nextProps) => (
   ));
 MemoCard.displayName = 'MemoCard';
 
-// Export all optimized components
 export const Optimized = {
   Button: MemoButton,
   Input: MemoInput,

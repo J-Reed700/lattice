@@ -5,15 +5,51 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { NUMBER_FIELD_CLASS, SWITCH_CLASS } from './settingsStyles';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../../hooks/queries/useSettingsQuery';
 import { toast } from '../../stores/toastStore';
-import { PageHeader, SettingsRow, SettingsSection, Switch } from '../ui';
+import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '../ui';
 
 import type {
   RetrievalTuningSettings as ApiRetrievalTuningSettings,
   SearchSettings as ApiSearchSettings,
 } from '../../types/api/settings';
 
+/// Vector storage and embedding strategy are properties of the index rather
+/// than of a query, but they live here because this is where the index's knobs
+/// are: changing either one re-keys the vector space and the next start
+/// rebuilds from the vectors SQLite already holds.
+type VectorCompression = ApiSearchSettings['vectorIndexCompression'];
+type CompressionMode = VectorCompression['mode'];
+type Quantization = VectorCompression['quantization'];
+type EmbeddingStrategy = ApiSearchSettings['embeddingStrategy'];
+
+const COMPRESSION_MODES: { value: CompressionMode; label: string }[] = [
+  { value: 'none', label: 'Full precision' },
+  { value: 'truncated', label: 'Matryoshka truncation' },
+];
+
+const QUANTIZATIONS: { value: Quantization; label: string }[] = [
+  { value: 'f32', label: '32-bit float' },
+  { value: 'i8', label: '8-bit integer' },
+];
+
+const EMBEDDING_STRATEGIES: { value: EmbeddingStrategy; label: string }[] = [
+  { value: 'chunk_first', label: 'Chunk first' },
+  { value: 'late_chunking', label: 'Late chunking' },
+];
+
+/// Matches the backend's accepted range; the index clamps again against the
+/// active model's real dimension, which the UI cannot know here.
+const MIN_COMPRESSION_DIMS = 32;
+const MAX_COMPRESSION_DIMS = 4096;
+
+/// Only the numeric knobs get a number input. `sufficiencyRetryEnabled` is a
+/// switch, and letting it into this union would type its stored value as
+/// `number | boolean` everywhere the rows are rendered.
+type NumericTuningKey = {
+  [K in keyof ApiRetrievalTuningSettings]: ApiRetrievalTuningSettings[K] extends number ? K : never;
+}[keyof ApiRetrievalTuningSettings];
+
 type NumericFieldConfig = {
-  key: keyof ApiRetrievalTuningSettings;
+  key: NumericTuningKey;
   label: string;
   min: number;
   max: number;
@@ -106,6 +142,23 @@ const RERANK_FIELDS: NumericFieldConfig[] = [
   },
 ];
 
+const SUFFICIENCY_FIELDS: NumericFieldConfig[] = [
+  {
+    key: 'sufficiencyMinTopScore',
+    label: 'Sufficiency min top score',
+    min: 0,
+    max: 1,
+    step: 0.01,
+  },
+  {
+    key: 'sufficiencyMinTermCoverage',
+    label: 'Sufficiency min term coverage',
+    min: 0,
+    max: 1,
+    step: 0.01,
+  },
+];
+
 const DOC_SUPPORT_FIELDS: NumericFieldConfig[] = [
   {
     key: 'docSupportMultiHitRatioFactor',
@@ -156,6 +209,7 @@ const TUNING_GROUPS: TuningGroup[] = [
   { title: 'External sources', fields: EXTERNAL_SOURCE_FIELDS },
   { title: 'Deep research', fields: DEEP_RESEARCH_FIELDS },
   { title: 'Rerank and overlap', fields: RERANK_FIELDS },
+  { title: 'Corrective retrieval', fields: SUFFICIENCY_FIELDS },
   { title: 'Document support ratios', fields: DOC_SUPPORT_FIELDS },
 ];
 
@@ -177,7 +231,7 @@ function normalizeFieldValue(field: NumericFieldConfig, value: number): number {
 }
 
 function normalizeTuningPairBounds(
-  key: keyof ApiRetrievalTuningSettings,
+  key: NumericTuningKey,
   tuning: ApiRetrievalTuningSettings
 ): ApiRetrievalTuningSettings {
   const next = { ...tuning };
@@ -282,10 +336,10 @@ export function SearchTab() {
 
   const fieldValue = (key: string, stored: number): number => drafts[key] ?? stored;
 
-  const tuningValue = (key: keyof ApiRetrievalTuningSettings, stored: number): number =>
+  const tuningValue = (key: NumericTuningKey, stored: number): number =>
     drafts[`tuning.${String(key)}`] ?? stored;
 
-  const saveTuningField = (key: keyof ApiRetrievalTuningSettings, value: number) => {
+  const saveTuningField = (key: NumericTuningKey, value: number) => {
     if (!searchSettings) {
       return;
     }
@@ -370,6 +424,17 @@ export function SearchTab() {
     );
   }
 
+  const compression = searchSettings.vectorIndexCompression;
+  const compressionDims = fieldValue('vectorCompressionDims', compression.dims);
+  const saveCompression = (
+    updates: Partial<VectorCompression>,
+    draftKeys: string[] = []
+  ) =>
+    saveSearchUpdates(
+      { vectorIndexCompression: { ...compression, ...updates } },
+      draftKeys
+    );
+
   const maxResults = fieldValue('maxResults', searchSettings.maxResults);
   const similarityThreshold = fieldValue(
     'similarityThreshold',
@@ -389,6 +454,128 @@ export function SearchTab() {
             onCheckedChange={(checked) => saveSearchUpdates({ enableReranking: checked })}
             className={SWITCH_CLASS}
           />
+        </SettingsRow>
+
+        <SettingsRow label="Corrective retry" htmlFor="search-corrective-retry">
+          <Switch
+            id="search-corrective-retry"
+            checked={searchSettings.retrievalTuning.sufficiencyRetryEnabled}
+            onCheckedChange={(checked) =>
+              saveSearchUpdates({
+                retrievalTuning: {
+                  ...searchSettings.retrievalTuning,
+                  sufficiencyRetryEnabled: checked,
+                },
+              })
+            }
+            className={SWITCH_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Vector storage"
+          hint="Truncation needs a model trained for it (Qwen3 Embedding); it is ignored for models that are not"
+          htmlFor="search-vector-compression-mode"
+        >
+          <select
+            id="search-vector-compression-mode"
+            value={compression.mode}
+            onChange={(event) =>
+              saveCompression({ mode: event.target.value as CompressionMode })
+            }
+            className={settingsFieldClass}
+          >
+            {COMPRESSION_MODES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+
+        {compression.mode === 'truncated' && (
+          <>
+            <SettingsRow label="Stored dimensions" htmlFor="search-vector-compression-dims">
+              <input
+                id="search-vector-compression-dims"
+                type="number"
+                min={MIN_COMPRESSION_DIMS}
+                max={MAX_COMPRESSION_DIMS}
+                step={1}
+                value={compressionDims}
+                onChange={(event) =>
+                  setDraft(
+                    'vectorCompressionDims',
+                    toFinite(event.target.value, compressionDims)
+                  )
+                }
+                onBlur={() =>
+                  saveCompression(
+                    {
+                      dims: Math.round(
+                        clamp(compressionDims, MIN_COMPRESSION_DIMS, MAX_COMPRESSION_DIMS)
+                      ),
+                    },
+                    ['vectorCompressionDims']
+                  )
+                }
+                className={NUMBER_FIELD_CLASS}
+              />
+            </SettingsRow>
+
+            <SettingsRow label="Stored precision" htmlFor="search-vector-compression-quantization">
+              <select
+                id="search-vector-compression-quantization"
+                value={compression.quantization}
+                onChange={(event) =>
+                  saveCompression({ quantization: event.target.value as Quantization })
+                }
+                className={settingsFieldClass}
+              >
+                {QUANTIZATIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </SettingsRow>
+          </>
+        )}
+
+        <SettingsRow
+          label="Document summaries"
+          hint="Summarize each document and section with the utility model so whole-document questions start from the right place. Requires a utility model and takes effect after restart."
+          htmlFor="search-summary-index"
+        >
+          <Switch
+            id="search-summary-index"
+            checked={searchSettings.summaryIndexEnabled}
+            onCheckedChange={(checked) => saveSearchUpdates({ summaryIndexEnabled: checked })}
+            className={SWITCH_CLASS}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Embedding strategy"
+          hint="Late chunking conditions each chunk on its whole section. Changing it re-embeds your library."
+          htmlFor="search-embedding-strategy"
+        >
+          <select
+            id="search-embedding-strategy"
+            value={searchSettings.embeddingStrategy}
+            onChange={(event) =>
+              saveSearchUpdates({
+                embeddingStrategy: event.target.value as EmbeddingStrategy,
+              })
+            }
+            className={settingsFieldClass}
+          >
+            {EMBEDDING_STRATEGIES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </SettingsRow>
 
         <SettingsRow label="Maximum results" htmlFor="search-max-results">

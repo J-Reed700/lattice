@@ -3,7 +3,7 @@
  *
  * Plain-text tab list on the left (no icons, no icon box), reading column
  * on the right. Every tab renders exactly one PageHeader whose title is a
- * noun. See `.design/UX-OVERHAUL-BRIEF.md` §3.
+ * noun.
  */
 
 import { useEffect, useState } from 'react';
@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { useSearchParams } from 'react-router';
 
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,7 @@ import { DisplayTab } from './DisplayTab';
 import { IndexingTab } from './IndexingTab';
 import { PrivacyTab } from './PrivacyTab';
 import { SearchTab } from './SearchTab';
+import { SpacesTab } from './SpacesTab';
 import { VaultTab } from './VaultTab';
 import { SETTINGS_QUERY_KEY } from '../../hooks/queries/useSettingsQuery';
 import VaultAPI from '../../lib/api';
@@ -30,6 +32,7 @@ type SettingsTab =
   | 'search'
   | 'indexing'
   | 'vault'
+  | 'spaces'
   | 'chat'
   | 'models'
   | 'downloaded-models'
@@ -57,6 +60,7 @@ const tabGroups: TabGroup[] = [
       { id: 'search', label: 'Search', component: SearchTab },
       { id: 'indexing', label: 'Indexing', component: IndexingTab },
       { id: 'vault', label: 'Vault', component: VaultTab },
+      { id: 'spaces', label: 'Spaces', component: SpacesTab },
       { id: 'display', label: 'Display', component: DisplayTab },
       { id: 'privacy', label: 'Privacy', component: PrivacyTab },
     ],
@@ -81,7 +85,14 @@ const footerButtonClass =
   'flex w-full items-center rounded-sm px-2.5 py-1.5 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50';
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('search');
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
+    requestedTab && tabIds.has(requestedTab) ? requestedTab as SettingsTab : 'search'
+  );
+  useEffect(() => {
+    if (requestedTab && tabIds.has(requestedTab)) setActiveTab(requestedTab as SettingsTab);
+  }, [requestedTab]);
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -190,7 +201,7 @@ export function Settings() {
   return (
     <div className="flex h-full bg-bg">
       {/* Sidebar */}
-      <div className="flex w-[240px] shrink-0 flex-col border-r border-border-subtle bg-surface">
+      <div className="flex w-[240px] shrink-0 flex-col border-r border-border-subtle bg-bg">
         <SidebarHeader title="Settings" />
 
         {/* Tab list — scrolls so the footer never clips it */}

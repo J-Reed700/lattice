@@ -152,14 +152,6 @@ export function getSourcePreviewKind(source: SourcePathLike): SourcePreviewKind 
   return 'local-file';
 }
 
-// ---------------------------------------------------------------
-// Excerpt term highlighting
-//
-// Shared by `SourceCitations` (the footnote list) and `CitationRail` (the
-// pinned excerpt beside an open file) so the same excerpt is marked the same
-// way in both places. Built with `createElement` rather than JSX because this
-// module is a `.ts` file that predates any React in it.
-// ---------------------------------------------------------------
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

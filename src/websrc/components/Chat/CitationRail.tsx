@@ -2,12 +2,11 @@ import { Bookmark, ChevronDown, ChevronUp, MessageSquare, NotebookPen } from 'lu
 
 import { IconButton } from '@/components/ui';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
-import { renderHighlightedText } from '@/utils/sourcePreview';
 
 import { formatSourceLocation } from '../Reading/passageLocator';
 
 /**
- * The pinned excerpt beside an open file (BRIEF rank 1).
+ * The pinned excerpt beside an open file.
  *
  * Keeps the cited sentence visible while the reader looks at the document
  * around it, and offers the same three capture verbs as the selection toolbar,
@@ -82,7 +81,7 @@ export function CitationRail({
 
       {excerpt && (
         <blockquote className="border-l-2 border-border-default pl-4 font-serif text-sm leading-relaxed text-[hsl(var(--text-secondary))]">
-          {renderHighlightedText(excerpt, locator.highlights)}
+          {excerpt}
         </blockquote>
       )}
 

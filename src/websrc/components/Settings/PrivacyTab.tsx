@@ -3,7 +3,7 @@
  *
  * Reads from + writes to the backend Privacy settings slice via React Query.
  * The Rust SettingsRepository is the SSOT — Zustand is intentionally not
- * involved (per Phase 4b: backend-backed state must use React Query).
+ * involved because backend-backed state uses React Query.
  *
  * The marketing panels that used to live here ("Privacy First", the
  * telemetry bullet lists, "Local Data Storage", "Current Status", and three

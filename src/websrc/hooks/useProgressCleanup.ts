@@ -38,16 +38,13 @@ export function useProgressCleanup(): void {
   useEffect(() => {
     console.debug('[useProgressCleanup] Starting periodic cleanup interval');
 
-    // Run initial cleanup
     cleanupStaleEntries();
 
-    // Set up periodic cleanup
     const intervalId = setInterval(() => {
       console.debug('[useProgressCleanup] Running periodic cleanup');
       cleanupStaleEntries();
     }, CLEANUP_INTERVAL_MS);
 
-    // Cleanup on unmount
     return () => {
       console.debug('[useProgressCleanup] Stopping periodic cleanup interval');
       clearInterval(intervalId);

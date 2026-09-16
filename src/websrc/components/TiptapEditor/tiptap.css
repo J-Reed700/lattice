@@ -10,8 +10,8 @@
  * References:
  *   AESTHETIC-GUIDE.md  — quiet, considered, editorial, precise.
  *   TOKENS-SPEC.md      — tokens of record.
- *   CHAT-REDESIGN-SPEC.md §3.3 — prose contract (serif for assistant, monochrome
- *                                 code palette, violet accent links, etc).
+ *   Assistant messages use serif prose, a monochrome code palette, and violet
+ *   accent links.
  */
 
 /* ------------------------------------------------------------------ *
@@ -196,7 +196,7 @@
 
 /* ------------------------------------------------------------------ *
  * 6. Syntax highlighting (lowlight / highlight.js classes)
- *    Monochrome-plus-accent per CHAT-REDESIGN-SPEC §3.3.
+ *    Monochrome plus the product accent.
  *    Default: everything is --text-primary. Only strings/regex reach for accent.
  * ------------------------------------------------------------------ */
 

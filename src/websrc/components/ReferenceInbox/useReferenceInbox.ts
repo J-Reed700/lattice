@@ -110,8 +110,7 @@ export function useReferenceInbox(options: {
 
   const debouncedQuery = useDebounce(query, 220);
 
-  // Passage references are React Query's, not local state: the repository is
-  // the SSOT and this is its read-only mirror (CLAUDE.md rule 3).
+  // React Query mirrors passage-reference state owned by the repository.
   const passagesQuery = usePassageReferencesQuery();
   const updatePassageMutation = useUpdatePassageReferenceMutation();
   const deletePassageMutation = useDeletePassageReferenceMutation();

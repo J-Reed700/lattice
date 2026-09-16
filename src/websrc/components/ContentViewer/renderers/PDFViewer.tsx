@@ -6,7 +6,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import VaultAPI from '../../../lib/api';
 import { isRemoteFileSource, resolveLocalPathFromViewerSource } from '../../../utils/fileSources';
 import {
-  buildPassageTextRenderer,
+  buildItemTextRenderer,
   findPassagePage,
 } from '../../Reading/pdfPassageSearch';
 
@@ -15,6 +15,7 @@ import type { PassageLocator, PassageMatchTier } from '../../../types/conversati
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+import '../../Reading/reading.css';
 
 // Configure PDF.js worker (bundled with app for CSP + offline support)
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -49,7 +50,7 @@ export function PDFViewer({
   const [error, setError] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [isResolvingPassage, setIsResolvingPassage] = useState(false);
-  const [passageHit, setPassageHit] = useState<{ page: number; needle: string } | null>(null);
+  const [passageHit, setPassageHit] = useState<Awaited<ReturnType<typeof findPassagePage>>>(null);
   const pdfProxyRef = useRef<Parameters<typeof findPassagePage>[0] | null>(null);
   const [proxyReadyAt, setProxyReadyAt] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -60,7 +61,6 @@ export function PDFViewer({
   const isRemoteSource = useMemo(() => isRemoteFileSource(filePath), [filePath]);
   const highlightText = highlight?.text ?? '';
   const highlightPage = highlight?.page;
-  const highlightChunkIndex = highlight?.chunkIndex;
 
   useEffect(() => {
     let isMounted = true;
@@ -70,6 +70,8 @@ export function PDFViewer({
     setNumPages(0);
     setPageNumber(1);
     setPdfBytes(null);
+    pdfProxyRef.current = null;
+    setPassageHit(null);
 
     if (isRemoteSource) {
       return () => {
@@ -113,19 +115,14 @@ export function PDFViewer({
   }, []);
 
   useEffect(() => {
+    setPassageHit(null);
+    setIsResolvingPassage(false);
     const proxy = pdfProxyRef.current;
     if (!proxy || !highlightText.trim()) return;
 
-    // A page the caller already knows needs no scan.
-    if (typeof highlightPage === 'number' && highlightPage > 0) {
-      setPageNumber(highlightPage);
-      onMatchRef.current?.('exact');
-      return;
-    }
-
     const signal = { aborted: false };
     setIsResolvingPassage(true);
-    void findPassagePage(proxy, highlightText, { signal })
+    void findPassagePage(proxy, highlightText, { signal, preferredPage: highlightPage })
       .then((hit) => {
         if (signal.aborted) return;
         if (hit) {
@@ -135,10 +132,10 @@ export function PDFViewer({
           onMatchRef.current?.('exact');
           return;
         }
-        // Not found: say which kind of "not found" it is.
-        onMatchRef.current?.(
-          typeof highlightChunkIndex === 'number' ? 'approximate' : 'none'
-        );
+        onMatchRef.current?.('none');
+      })
+      .catch(() => {
+        if (!signal.aborted) onMatchRef.current?.('none');
       })
       .finally(() => {
         if (!signal.aborted) setIsResolvingPassage(false);
@@ -147,12 +144,12 @@ export function PDFViewer({
     return () => {
       signal.aborted = true;
     };
-  }, [proxyReadyAt, highlightText, highlightPage, highlightChunkIndex]);
+  }, [proxyReadyAt, highlightText, highlightPage]);
 
   const customTextRenderer = useMemo(
     () =>
       passageHit?.needle && pageNumber === passageHit.page
-        ? buildPassageTextRenderer(passageHit.needle)
+        ? buildItemTextRenderer(passageHit.marks)
         : undefined,
     [passageHit, pageNumber]
   );

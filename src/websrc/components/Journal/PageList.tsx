@@ -38,7 +38,7 @@ export function PageList({ pages, activePageId, onSelectPage, onNewPage }: PageL
   return (
     <div className="shrink-0 border-b border-border-subtle">
       <div className="flex h-9 items-center justify-between pl-4 pr-2">
-        <h3 className="font-serif text-xs italic text-text-tertiary">Pages</h3>
+        <h3 className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-tertiary">Pages</h3>
         <IconButton label="New page" onClick={onNewPage}>
           <Plus />
         </IconButton>
@@ -47,7 +47,7 @@ export function PageList({ pages, activePageId, onSelectPage, onNewPage }: PageL
       {pages.length === 0 ? (
         <p className="px-4 pb-2 text-xs text-text-muted">No pages yet.</p>
       ) : (
-        <ul className="max-h-[220px] overflow-y-auto pb-1">
+        <ul className="max-h-[220px] overflow-y-auto px-2 pb-3">
           {pages.map((page) => {
             const isActive = page.id === activePageId;
             return (
@@ -56,8 +56,8 @@ export function PageList({ pages, activePageId, onSelectPage, onNewPage }: PageL
                   type="button"
                   onClick={() => onSelectPage(page.id)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`relative flex w-full items-baseline gap-2 px-4 py-1.5 text-left transition-colors duration-fast ${
-                    isActive ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+                  className={`relative flex w-full items-baseline gap-2 rounded-md px-3 py-2.5 text-left transition-colors duration-fast ${
+                    isActive ? 'bg-accent-muted' : 'hover:bg-surface-raised'
                   }`}
                 >
                   {isActive && (

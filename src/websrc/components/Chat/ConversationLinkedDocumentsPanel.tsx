@@ -11,7 +11,7 @@ import { getSourceExternalUrl } from '../../utils/sourcePreview';
 
 interface ConversationLinkedDocumentsPanelProps {
   conversationId: string;
-  /** Retrieval is narrowed to this conversation's own files (contract §4.5). */
+  /** Retrieval is narrowed to this conversation's own files. */
   isScopedToLinkedFiles?: boolean;
   onSearchWholeVault?: () => void;
 }
@@ -274,7 +274,7 @@ export function ConversationLinkedDocumentsPanel({
   return (
     <section className="border-t border-subtle py-4">
       {/* No count when there is nothing to count: "· 0" is a stat that is always
-          zero (UX-OVERHAUL-BRIEF §1), and there is nothing behind it to open. */}
+          zero, and there is nothing behind it to open. */}
       {(linkedContextCount > 0 || expanded) && (
         <button
           type="button"

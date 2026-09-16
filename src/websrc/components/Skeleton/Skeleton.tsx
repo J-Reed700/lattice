@@ -45,7 +45,6 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   count = 1,
   gap = 'space-y-3',
 }) => {
-  // Convert number values to pixels
   const widthStyle = typeof width === 'number' ? `${width}px` : width;
   const heightStyle = typeof height === 'number' ? `${height}px` : height;
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildPassageTextRenderer,
+  buildItemTextRenderer,
   escapeHtml,
   findPassagePage,
 } from '../pdfPassageSearch';
@@ -128,4 +129,42 @@ describe('findPassagePage', () => {
     const hit = await findPassagePage(pdf, passage);
     expect(hit?.page).toBe(2);
   });
+});
+
+describe('PDF text fragment highlighting', () => {
+  it('marks a passage across individual word items, including punctuation differences', async () => {
+    const words = 'Before. The cited passage, crosses several PDF text fragments here. After.'.split(' ');
+    const pdf = { numPages: 1, getPage: async () => ({ getTextContent: async () => ({ items: words.map(str => ({ str })) }) }) };
+    const hit = await findPassagePage(pdf, 'The cited passage crosses several PDF text fragments here');
+    expect(hit).not.toBeNull();
+    const render = buildItemTextRenderer(hit!.marks);
+    const rendered = words.map((str, itemIndex) => render({ str, itemIndex }));
+    expect(rendered[0]).not.toContain('<mark');
+    expect(rendered[rendered.length - 1]).not.toContain('<mark');
+    expect(rendered.slice(1, -1).every(item => item.includes('<mark'))).toBe(true);
+  });
+
+  it('searches a supplied page first and still builds highlights', async () => {
+    const text = 'This is the specific cited passage that must be highlighted';
+    const hit = await findPassagePage(fakePdf([text, text]), text, { preferredPage: 2 });
+    expect(hit?.page).toBe(2);
+    expect(Object.keys(hit!.marks).length).toBeGreaterThan(1);
+  });
+
+  it('falls back when the supplied page is wrong', async () => {
+    const text = 'This is the specific cited passage that must be highlighted';
+    const hit = await findPassagePage(fakePdf([text, 'unrelated']), text, { preferredPage: 2 });
+    expect(hit?.page).toBe(1);
+  });
+});
+
+it('matches extractor spacing differences without highlighting repeated query words', async () => {
+  const words = ['patent patent patent', 'The patent application', 'must include a written description', 'of the claimed invention.', 'patent patent'];
+  const pdf = { numPages: 1, getPage: async () => ({ getTextContent: async () => ({ items: words.map(str => ({ str })) }) }) };
+  const hit = await findPassagePage(pdf, 'The patent applicationmust include a written descriptionof the claimed invention.');
+  expect(hit).not.toBeNull();
+  const renderer = buildItemTextRenderer(hit!.marks);
+  expect(renderer({ str: words[0], itemIndex: 0 })).not.toContain('<mark');
+  expect(renderer({ str: words[4], itemIndex: 4 })).not.toContain('<mark');
+  for (const itemIndex of [1, 2, 3]) expect(renderer({ str: words[itemIndex], itemIndex })).toContain('<mark');
 });

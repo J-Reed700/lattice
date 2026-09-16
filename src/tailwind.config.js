@@ -10,7 +10,7 @@ export default {
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
-        serif: ['Source Serif 4', 'Charter', 'Iowan Old Style', 'Apple Garamond', 'Georgia', 'Cambria', 'Times New Roman', 'serif'],
+        serif: ['var(--font-serif)'],
       },
       colors: {
         bg: 'hsl(var(--bg))',

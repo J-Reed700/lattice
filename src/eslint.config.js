@@ -170,7 +170,7 @@ export default [
             'Example:\n' +
             '  ❌ import { invoke } from \'@tauri-apps/api/core\';\n' +
             '  ✅ import { vaultApi } from \'@/lib/api\';\n\n' +
-            'See CLAUDE.md IPC Best Practices for details.'
+            'See CONTRIBUTING.md for the IPC conventions.'
         }]
       }],
       */
@@ -312,6 +312,19 @@ export default [
           ],
         },
       ],
+    },
+  },
+
+  // Sidebar surfaces compose query-backed workflows; transport access belongs
+  // in workspaceQueries.ts so sibling views share cache invalidation.
+  {
+    files: ['websrc/components/Chat/ConversationSidebar.tsx', 'websrc/components/Chat/sidebar/**/*.tsx'],
+    ignores: ['**/__tests__/**', '**/*.test.tsx'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{
+        group: ['@/lib/api', '**/lib/api', '@/lib/bindings', '**/lib/bindings', '@tauri-apps/**'],
+        message: 'Use the sidebar query/mutation hooks instead of accessing the backend from a view.',
+      }] }],
     },
   },
 

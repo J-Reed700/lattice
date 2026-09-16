@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import VaultAPI from '@/lib/api';
+import { registerPendingSave } from '@/lib/pendingSaves';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
 function nowIso(): string {
@@ -17,8 +18,7 @@ function storageKeyFor(spaceId: string): string {
 
 /**
  * Which page this journal was last on. A remembered selection is a UI
- * preference, not state the backend reads, so localStorage is the right home
- * for it (CLAUDE.md rule 3).
+ * preference, not state the backend reads, so localStorage is the right home.
  */
 function readRememberedNoteId(spaceId: string): string | null {
   try {
@@ -110,9 +110,7 @@ export function useJournalNote(options: {
   const dirtyRef = useRef<boolean>(false);
   const appliedRequestRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    noteRef.current = activeNote;
-  }, [activeNote]);
+  const saveQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
 
   const clearPersistTimer = useCallback(() => {
     if (persistTimerRef.current) {
@@ -122,38 +120,59 @@ export function useJournalNote(options: {
   }, []);
 
   const persistNote = useCallback(async (note: WorkspaceNote): Promise<boolean> => {
-    const result = await VaultAPI.updateWorkspaceNote(note);
-    if (!result.ok) {
-      setSaveError(result.error);
+    const write = async (): Promise<boolean> => {
+      const result = await VaultAPI.updateWorkspaceNote(note);
+      if (!result.ok) {
+        setSaveError(result.error);
+        return false;
+      }
+      // A response acknowledges only the snapshot sent. Typing while IPC is
+      // pending must remain dirty and must never be replaced by that response.
+      if (noteRef.current === note) {
+        setSaveError(null);
+        dirtyRef.current = false;
+        setHasPendingChanges(false);
+        setActiveNote(result.data);
+        noteRef.current = result.data;
+      }
+      // Keep the sidebar's page list honest: a save moves the page to the top of
+      // "most recently updated" and may have renamed it.
+      setPages((current) => {
+        const next = sortPages(
+          current.some((page) => page.id === result.data.id)
+            ? current.map((page) => (page.id === result.data.id ? result.data : page))
+            : [...current, result.data],
+        );
+        pagesRef.current = next;
+        return next;
+      });
+      return true;
+    };
+    // Serialize writes so an older request cannot land after a newer one.
+    const queued = saveQueueRef.current.then(write, write).catch((error: unknown) => {
+      setSaveError(error instanceof Error ? error.message : 'Could not save this page.');
       return false;
-    }
-    setSaveError(null);
-    dirtyRef.current = false;
-    setHasPendingChanges(false);
-    setActiveNote((current) => (current?.id === result.data.id ? result.data : current));
-    noteRef.current = result.data;
-    // Keep the sidebar's page list honest: a save moves the page to the top of
-    // "most recently updated" and may have renamed it.
-    setPages((current) => {
-      const next = sortPages(
-        current.some((page) => page.id === result.data.id)
-          ? current.map((page) => (page.id === result.data.id ? result.data : page))
-          : [...current, result.data],
-      );
-      pagesRef.current = next;
-      return next;
     });
-    return true;
+    saveQueueRef.current = queued;
+    return queued;
   }, []);
 
   const saveNow = useCallback(async (): Promise<boolean> => {
     if (!dirtyRef.current || !noteRef.current) return true;
     setIsSavingNow(true);
     clearPersistTimer();
-    const ok = await persistNote(noteRef.current);
-    setIsSavingNow(false);
-    return ok;
+    try {
+      while (dirtyRef.current && noteRef.current) {
+        if (!(await persistNote(noteRef.current))) return false;
+      }
+      return true;
+    } finally {
+      clearPersistTimer();
+      setIsSavingNow(false);
+    }
   }, [clearPersistTimer, persistNote]);
+
+  useEffect(() => registerPendingSave(saveNow), [saveNow]);
 
   const updateNote = useCallback(
     (updater: (note: WorkspaceNote) => WorkspaceNote) => {
@@ -183,6 +202,10 @@ export function useJournalNote(options: {
     let cancelled = false;
 
     const load = async () => {
+      // Renaming or changing journal scope can retrigger this effect while
+      // the current editor still owns a draft.
+      if (dirtyRef.current && !(await saveNow())) return;
+      if (cancelled) return;
       if (!journalSpaceId) {
         setActiveNote(null);
         setIsLoadingNote(false);
@@ -254,7 +277,7 @@ export function useJournalNote(options: {
     return () => {
       cancelled = true;
     };
-  }, [journalSpaceId, journalName, requestedNoteId]);
+  }, [journalSpaceId, journalName, requestedNoteId, saveNow]);
 
   useEffect(() => {
     const flush = () => {
@@ -265,10 +288,16 @@ export function useJournalNote(options: {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush();
     };
-    window.addEventListener('beforeunload', flush);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+      flush();
+    };
+    window.addEventListener('beforeunload', beforeUnload);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('beforeunload', beforeUnload);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [persistNote]);
@@ -310,7 +339,7 @@ export function useJournalNote(options: {
     async (noteId: string): Promise<void> => {
       if (noteRef.current?.id === noteId) return;
       // Leaving a page must not drop its unsaved edits.
-      await saveNow();
+      if (!(await saveNow())) return;
       // The page may have been written since it was listed (a synthesis, a
       // capture), so read it fresh rather than trusting the cached copy.
       const fresh = await refreshPages();
@@ -319,6 +348,7 @@ export function useJournalNote(options: {
         setSaveError('That page is no longer here.');
         return;
       }
+      if (!(await saveNow())) return;
       openPage(target);
     },
     [openPage, refreshPages, saveNow],
@@ -326,7 +356,7 @@ export function useJournalNote(options: {
 
   const createPage = useCallback(
     async (title: string): Promise<WorkspaceNote | null> => {
-      await saveNow();
+      if (!(await saveNow())) return null;
       const created = await VaultAPI.createWorkspaceNote(title);
       if (!created.ok) {
         setSaveError(created.error);
@@ -335,6 +365,7 @@ export function useJournalNote(options: {
       const next = sortPages([...pagesRef.current, created.data]);
       setPages(next);
       pagesRef.current = next;
+      if (!(await saveNow())) return null;
       openPage(created.data);
       return created.data;
     },

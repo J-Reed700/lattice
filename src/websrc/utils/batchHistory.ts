@@ -1,6 +1,16 @@
 import { VaultAPI } from '@/lib/api';
 import type { BatchJobSummary, BatchJobStatus } from '@/types/api/batch';
 
+/** Include older unresolved failures, even after more than 100 later imports. */
+export async function listAllBatchJobs(): Promise<BatchJobSummary[]> {
+  const jobs: BatchJobSummary[] = [];
+  for (let offset = 0; ; offset += 100) {
+    const page = await listBatchJobs(100, offset);
+    jobs.push(...page);
+    if (page.length < 100) return jobs;
+  }
+}
+
 export async function listBatchJobs(
   limit?: number,
   offset?: number
@@ -19,10 +29,11 @@ export async function deleteBatchJob(jobId: string): Promise<void> {
   }
 }
 
-export async function retryFailedItems(jobId: string): Promise<string> {
-  const result = await VaultAPI.retryFailedBatchItems(jobId);
+export async function retryFailedItems(jobId: string, itemId?: string, replacementPath?: string): Promise<string> {
+  const result = await VaultAPI.retryFailedBatchItems(jobId, itemId, replacementPath);
   if (!result.ok) {
-    throw new Error(result.error);
+    const detail: unknown = result.details?.details;
+    throw new Error(typeof detail === 'string' && detail.trim() ? detail : result.error);
   }
   return result.data;
 }

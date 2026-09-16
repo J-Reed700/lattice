@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 
 import { Loader2, AlertCircle } from 'lucide-react';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { PrismSyntaxHighlighter as SyntaxHighlighter } from './prism';
+import { useEffectiveTheme } from '../../../hooks/useApplyTheme';
 import VaultAPI from '../../../lib/api';
 
 interface TextViewerProps {
@@ -42,14 +43,19 @@ const getLanguage = (filePath: string): string => {
 };
 
 export function TextViewer({ filePath, content: directContent, title: _title, language: directLanguage }: TextViewerProps) {
+  const theme = useEffectiveTheme();
   const [content, setContent] = useState<string>(directContent || '');
-  const [isLoading, setIsLoading] = useState(!directContent);
+  const [isLoading, setIsLoading] = useState(Boolean(filePath));
   const [error, setError] = useState<string | null>(null);
   const [language, setLanguage] = useState<string>(directLanguage || 'text');
 
   useEffect(() => {
+    let cancelled = false;
     if (!filePath) {
-      // Direct content mode - already set from props
+      setContent(directContent ?? '');
+      setLanguage(directLanguage ?? 'text');
+      setIsLoading(false);
+      setError(null);
       return;
     }
 
@@ -59,6 +65,7 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
 
       try {
         const result = await VaultAPI.readFileContent(filePath!);
+        if (cancelled) return;
         if (result.ok) {
           setContent(result.data);
           setLanguage(getLanguage(filePath!));
@@ -66,14 +73,16 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
           setError(result.error || 'Failed to load file');
         }
       } catch (err) {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
 
-    loadFile();
-  }, [filePath]);
+    void loadFile();
+    return () => { cancelled = true; };
+  }, [filePath, directContent, directLanguage]);
 
   if (isLoading) {
     return (
@@ -111,7 +120,7 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
       <div className="flex-1 overflow-auto">
         <SyntaxHighlighter
           language={language}
-          style={oneDark}
+          style={theme === 'dark' ? oneDark : oneLight}
           showLineNumbers
           wrapLines
           // Gives PassageHighlighter a block to attach to.
@@ -122,12 +131,12 @@ export function TextViewer({ filePath, content: directContent, title: _title, la
             fontSize: '14px',
             lineHeight: '1.6',
             minHeight: '100%',
-            background: '#282c34',
+            background: 'hsl(var(--surface))',
           }}
           lineNumberStyle={{
             minWidth: '3em',
             paddingRight: '1em',
-            color: '#5c6370',
+            color: 'hsl(var(--text-muted))',
             userSelect: 'none',
           }}
         >

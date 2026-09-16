@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { Edit3, Trash2 } from 'lucide-react';
+import { Edit3, MoreHorizontal, Trash2 } from 'lucide-react';
 
 import { metaLine } from './docMeta';
 import { FileIcon } from './FileIcon';
@@ -56,6 +56,7 @@ export function CorpusRow({
         onContextMenu(event);
       }}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter') {
           event.preventDefault();
           onDoubleClick();
@@ -105,7 +106,7 @@ export function CorpusRow({
         <span className="truncate text-xs tabular-nums text-text-muted">{metaLine(doc)}</span>
       </div>
 
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover:opacity-100">
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100">
         {onRename ? (
           <RowAction label="Rename" onClick={onRename}>
             <Edit3 className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -117,6 +118,15 @@ export function CorpusRow({
           </RowAction>
         ) : null}
       </div>
+      <button
+        type="button"
+        aria-label={`Actions for ${doc.fileName}`}
+        onClick={event => { event.stopPropagation(); onContextMenu(event); }}
+        onDoubleClick={event => event.stopPropagation()}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface-raised hover:text-text-primary"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
     </div>
   );
 }

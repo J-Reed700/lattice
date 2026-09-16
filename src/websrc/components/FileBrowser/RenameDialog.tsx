@@ -41,7 +41,6 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
     }
   }, []);
 
-  // Handle escape key
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -76,20 +75,17 @@ export function RenameDialog({ document, onClose, onSuccess }: RenameDialogProps
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate
     const validationError = validateName(newName);
     if (validationError) {
       setError(validationError);
       return;
     }
 
-    // Check if name actually changed
     if (newName.trim() === document.fileName) {
       onClose();
       return;
     }
 
-    // Save
     setIsSaving(true);
     setError(null);
 

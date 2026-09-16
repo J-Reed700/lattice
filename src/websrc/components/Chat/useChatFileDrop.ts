@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
- * Files dropped onto the chat panel (BRIEF rank 5, contract §4.5).
+ * Handles files dropped onto the chat panel.
  *
  * Uses Tauri's own webview drag-drop rather than HTML5 `dataTransfer`:
  * `dragDropEnabled` defaults to true in `tauri.conf.json`, so the OS-level

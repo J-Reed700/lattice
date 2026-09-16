@@ -31,12 +31,12 @@ describe('ModelsTab downloads folder', () => {
   it('shows the path when the backend can read it', async () => {
     vi.spyOn(VaultAPI, 'getModelDownloadPath').mockResolvedValue({
       ok: true,
-      data: '/Users/josh/.cache/lattice/models',
+      data: '/Users/example/.cache/lattice/models',
     });
 
     render(<ModelsTab />);
 
-    expect(await screen.findByText('/Users/josh/.cache/lattice/models')).toBeInTheDocument();
+    expect(await screen.findByText('/Users/example/.cache/lattice/models')).toBeInTheDocument();
   });
 
   it('offers Try again on the degraded state, and re-runs the loader', async () => {
@@ -44,7 +44,7 @@ describe('ModelsTab downloads folder', () => {
     const getPath = vi
       .spyOn(VaultAPI, 'getModelDownloadPath')
       .mockResolvedValueOnce({ ok: false, error: 'no disk access' })
-      .mockResolvedValue({ ok: true, data: '/Users/josh/.cache/lattice/models' });
+      .mockResolvedValue({ ok: true, data: '/Users/example/.cache/lattice/models' });
 
     render(<ModelsTab />);
 
@@ -57,6 +57,6 @@ describe('ModelsTab downloads folder', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }));
 
     await waitFor(() => expect(getPath).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('/Users/josh/.cache/lattice/models')).toBeInTheDocument();
+    expect(await screen.findByText('/Users/example/.cache/lattice/models')).toBeInTheDocument();
   });
 });

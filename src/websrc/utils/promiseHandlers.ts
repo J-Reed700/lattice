@@ -29,7 +29,6 @@ export const handleAsyncEvent = <T extends unknown[]>(
   onError?: (error: Error) => void
 ): ((...args: T) => void) => (...args: T): void => {
     const result = fn(...args);
-    // Check if result is actually a promise
     if (result && typeof result.catch === 'function') {
       result.catch((error) => {
         console.error('Async event handler error:', error);

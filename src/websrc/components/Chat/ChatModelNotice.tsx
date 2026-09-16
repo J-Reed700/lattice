@@ -65,9 +65,9 @@ export function ChatModelNotice({
   if (retrievalUnavailableReason) {
     return (
       <div className={ROW_CLASS}>
-        <span>Answered without your documents — {retrievalUnavailableReason}.</span>
-        <Link to="/settings" className={ACTION_CLASS}>
-          Open model settings
+        <span>Document search was unavailable for the last answer: {retrievalUnavailableReason}.</span>
+        <Link to={retrievalUnavailableReason.includes('model') ? '/settings' : '/files'} className={ACTION_CLASS}>
+          {retrievalUnavailableReason.includes('model') ? 'Open model settings' : 'Review documents'}
         </Link>
       </div>
     );

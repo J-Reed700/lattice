@@ -5,16 +5,14 @@ import { createPortal } from 'react-dom';
 import type { TextSelectionState } from './useTextSelection';
 
 /**
- * The three capture verbs that appear over a text selection (BRIEF rank 6).
+ * Capture actions shown over a text selection.
  *
  * Rendered through a portal with `position: fixed` and the raw viewport rect,
  * so it stays put whatever scroll container it happens to be over. Every button
  * cancels `mousedown` — without that the selection collapses before the click
  * handler ever sees it.
  *
- * All three verbs are always live. There is no state in which one of them is
- * unavailable, so there is no disabled variant to explain (CLAUDE.md: no
- * control that changes nothing).
+ * All three actions are always available, so there is no disabled variant.
  */
 
 export interface SelectionToolbarProps {

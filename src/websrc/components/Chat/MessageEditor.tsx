@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * Inline editor for a user turn (BRIEF rank 4).
+ * Inline editor for a user turn.
  *
  * Two ways out, and the consequence of the default one is stated rather than
  * discovered: sending replaces the turns after this message, branching leaves

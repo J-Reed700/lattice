@@ -162,7 +162,7 @@ export function EntryList({
   };
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-subtle bg-surface">
+    <aside className="journal-index flex h-full w-[256px] 2xl:w-[280px] shrink-0 flex-col border-r border-border-subtle bg-surface">
       <SidebarHeader
         title="Journal"
         actions={
@@ -181,7 +181,17 @@ export function EntryList({
         }
       />
 
-      {/* Journal picker — one line */}
+      <div className="notebook-cover mx-4 mb-4 mt-3 shrink-0 overflow-hidden rounded-xl p-5">
+        <div className="relative z-10 flex items-center justify-between text-[9px] font-medium uppercase tracking-[0.2em]">
+          <span>Personal notebook</span><span aria-hidden="true">✳</span>
+        </div>
+        <h2 className="relative z-10 mt-7 max-w-[180px] break-words font-serif text-[29px] leading-[1.12] tracking-tight">{currentJournal?.name || 'Your journal'}</h2>
+        <div className="relative z-10 mt-6 flex items-center justify-between border-t border-current/20 pt-3 text-[10px]">
+          <span>{pages.length} {pages.length === 1 ? 'page' : 'pages'} · {entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
+          <span aria-hidden="true">✳</span>
+        </div>
+      </div>
+      {/* Journal switcher */}
       <div className="shrink-0 border-b border-border-subtle px-4 py-2">
         <JournalPickerMenu
           journals={journals}
@@ -193,6 +203,9 @@ export function EntryList({
         />
       </div>
 
+      <button type="button" onClick={onNewPage} className="journal-new-page mx-4 my-4 flex shrink-0 items-center justify-between rounded-lg px-4 py-3 text-xs font-medium transition-colors">
+        Write a new page <Plus className="h-4 w-4" />
+      </button>
       <PageList
         pages={pages}
         activePageId={activePageId}
@@ -202,7 +215,7 @@ export function EntryList({
 
       <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 pb-2.5 pt-2">
         {/* Named so the two lists in this sidebar are told apart at a glance. */}
-        <h3 className="font-serif text-xs italic text-text-tertiary">Entries</h3>
+        <h3 className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-tertiary">Entries</h3>
         <SidebarSearch value={search} onChange={setSearch} placeholder="Search this journal" />
         <SidebarTabs value={filter} onChange={setFilter} options={FILTER_OPTIONS} />
       </div>
@@ -214,14 +227,18 @@ export function EntryList({
         ) : loadError ? (
           <p className="px-4 py-6 text-sm text-[hsl(var(--danger-fg))]">{loadError}</p>
         ) : entries.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-text-secondary">
-            {search.trim() || filter !== 'all' ? 'No entries match.' : 'No entries yet.'}
-          </p>
+          <div className="px-4 py-8">
+            <p className="text-sm font-medium text-text-secondary">{search.trim() || filter !== 'all' ? 'No matching entries' : 'Room for a new thought'}</p>
+            <p className="mt-2 text-xs leading-relaxed text-text-tertiary">{search.trim() || filter !== 'all' ? 'Try another search or view all entries.' : 'Start a conversation here, then bring what matters into your pages.'}</p>
+            <button type="button" onClick={search.trim() || filter !== 'all' ? () => { setSearch(''); setFilter('all'); } : onNewEntry} className="mt-4 rounded-md bg-accent-muted px-3 py-2 text-xs font-medium text-accent hover:bg-accent hover:text-accent-fg">
+              {search.trim() || filter !== 'all' ? 'Clear filters' : 'Create an entry'}
+            </button>
+          </div>
         ) : (
           <div className="pb-2">
             {groups.map((group) => (
               <div key={group.key}>
-                <h3 className="px-4 pb-1 pt-4 font-serif text-xs italic text-text-tertiary">
+                <h3 className="px-4 pb-1 pt-4 text-[10px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
                   {group.label}
                 </h3>
                 {group.entries.map((entry) => (

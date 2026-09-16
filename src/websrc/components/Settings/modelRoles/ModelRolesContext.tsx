@@ -87,6 +87,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
             await invoke('plugin:model|clear_active_embedding_model');
           } else {
             await setActiveEmbeddingModel(modelId);
+            toast.info('Embedding model prepared. Restart Lattice to use its search index.');
           }
         } else if (role === 'utility') {
           if (modelId === null) {

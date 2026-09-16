@@ -74,11 +74,11 @@ export * from './watch';
 // Statistics (Wave 4)
 export * from './stats';
 
-// Indexing status (Track D)
+// Indexing status
 export * from './indexing';
 
-// Passage references (Track C)
+// Passage references
 export * from './references';
 
-// Compare (Track C)
+// Compare
 export * from './compare';

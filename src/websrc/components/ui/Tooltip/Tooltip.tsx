@@ -119,7 +119,6 @@ export function TooltipProvider({
   );
 }
 
-// Export primitives for advanced usage
 export const TooltipTrigger = TooltipPrimitive.Trigger;
 export const TooltipContent = TooltipPrimitive.Content;
 export const TooltipPortal = TooltipPrimitive.Portal;

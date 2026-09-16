@@ -1,7 +1,7 @@
 import { useChatStartersQuery } from '@/hooks/queries/useChatStartersQuery';
 
 /**
- * Three quiet openings for the Chat empty state (BRIEF rank 11, contract §4.7).
+ * Suggested prompts for the empty chat state.
  *
  * When the backend has no model to generate them, it returns an empty list and
  * this renders one plain line. It never fabricates a question — a made-up

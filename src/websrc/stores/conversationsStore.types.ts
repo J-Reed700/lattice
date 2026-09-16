@@ -58,7 +58,7 @@ export interface ConversationsState {
   optimisticMessages: Map<string, OptimisticMessage>;
   lastMessageSources: Map<string, SourceWithMetadata[]>;
   messageVerification: Map<string, MessageVerificationSummary>;
-  /** Persisted retrieval trace per assistant message id (contract §4.6). */
+  /** Persisted retrieval trace keyed by assistant message id. */
   messageRetrieval: Map<string, RetrievalTrace>;
   /** Live retrieval trace per conversation id, while a turn is in flight. */
   liveRetrieval: Map<string, RetrievalTrace>;

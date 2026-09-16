@@ -159,6 +159,9 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
   const loadCatalogCacheStats = useCallback(async () => {
     await cacheStatsQuery.refetch();
   }, [cacheStatsQuery]);
+  const reloadSearch = useCallback(async () => {
+    await searchResultsQuery.refetch({ throwOnError: true });
+  }, [searchResultsQuery]);
 
   const capabilitiesError = capabilitiesQuery.error?.message ?? null;
   const compatibleModelsError = compatibleModelsQuery.error?.message ?? null;
@@ -184,7 +187,7 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
     capabilitiesLoading: capabilitiesQuery.isFetching,
     compatibleModelsLoading: compatibleModelsQuery.isFetching,
     allModelsLoading: allModelsQuery.isFetching,
-    searchLoading: searchResultsQuery.isFetching,
+    searchLoading: searchResultsQuery.isFetching || searchQuery.trim() !== debouncedSearchQuery,
     capabilitiesError,
     compatibleModelsError,
     allModelsError,
@@ -195,6 +198,7 @@ export function useModelCatalog(options: UseModelCatalogOptions = {}) {
     loadCompatibleModels,
     loadAllModels,
     searchCatalog,
+    reloadSearch,
     search,
     debouncedSearch,
     setFilters,

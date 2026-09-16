@@ -35,7 +35,7 @@ const THEMES = [
 ] as const;
 
 export function DisplayTab() {
-  const { data: settings, isLoading } = useSettingsQuery();
+  const { data: settings, isLoading, isError, refetch } = useSettingsQuery();
   const updateSettings = useUpdateSettingsMutation();
   const activeTheme = settings?.ui.theme ?? 'system';
 
@@ -89,7 +89,19 @@ export function DisplayTab() {
                   type="button"
                   role="radio"
                   aria-checked={isActive}
-                  disabled={isLoading}
+                  tabIndex={isActive ? 0 : -1}
+                  onKeyDown={(event) => {
+                    const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1
+                      : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+                    if (!direction) return;
+                    event.preventDefault();
+                    const index = THEMES.findIndex((item) => item.value === theme.value);
+                    const next = THEMES[(index + direction + THEMES.length) % THEMES.length];
+                    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+                    buttons?.[(index + direction + THEMES.length) % THEMES.length]?.focus();
+                    updateSettings.mutate({ category: 'ui', updates: { theme: next.value } });
+                  }}
+                  disabled={isLoading || !settings || updateSettings.isPending}
                   onClick={() =>
                     updateSettings.mutate({ category: 'ui', updates: { theme: theme.value } })
                   }
@@ -106,6 +118,15 @@ export function DisplayTab() {
             })}
           </div>
         </SettingsRow>
+        {isError && (
+          <p role="alert" className="text-sm text-danger">
+            Couldn't load your appearance settings.{' '}
+            <button type="button" className="underline" onClick={() => void refetch()}>Try again</button>
+          </p>
+        )}
+        {updateSettings.isError && (
+          <p role="alert" className="text-sm text-danger">Couldn't save your theme. Try selecting it again.</p>
+        )}
       </SettingsSection>
 
       <SettingsSection title="About">

@@ -115,6 +115,49 @@ describe('SearchTab', () => {
     expect(await screen.findByDisplayValue('42')).toBeInTheDocument();
   });
 
+  it('hides the truncation knobs until truncation is chosen, then persists them', async () => {
+    renderSearchTab();
+
+    const mode = (await screen.findByLabelText(/Vector storage/i)) as HTMLSelectElement;
+    expect(mode.value).toBe('none');
+    // Dimensions and precision describe a truncation that is not happening.
+    expect(screen.queryByLabelText(/Stored dimensions/i)).not.toBeInTheDocument();
+
+    fireEvent.change(mode, { target: { value: 'truncated' } });
+
+    await waitFor(() => {
+      expect(VaultAPI.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'search',
+          updates: expect.objectContaining({
+            vectorIndexCompression: expect.objectContaining({
+              mode: 'truncated',
+              // The remembered dims and precision ride along unchanged.
+              dims: 512,
+              quantization: 'i8',
+            }),
+          }),
+        })
+      );
+    });
+  });
+
+  it('persists the embedding strategy', async () => {
+    renderSearchTab();
+
+    const strategy = (await screen.findByLabelText(/Embedding strategy/i)) as HTMLSelectElement;
+    expect(strategy.value).toBe('chunk_first');
+
+    fireEvent.change(strategy, { target: { value: 'late_chunking' } });
+
+    await waitFor(() => {
+      expect(VaultAPI.updateSettings).toHaveBeenCalledWith({
+        category: 'search',
+        updates: { embeddingStrategy: 'late_chunking' },
+      });
+    });
+  });
+
   it('normalizes paired bounds before persisting tuning', async () => {
     renderSearchTab();
 

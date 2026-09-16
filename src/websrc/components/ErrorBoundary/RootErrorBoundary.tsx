@@ -31,7 +31,6 @@ export function RootErrorBoundary({
       console.error('=========================');
     }
 
-    // Call custom error handler
     if (onError) {
       onError(error, errorInfo);
     }
@@ -51,7 +50,6 @@ export function RootErrorBoundary({
       console.warn('Failed to clear state on reset:', e);
     }
 
-    // Call custom reset handler
     if (onReset) {
       onReset();
     }

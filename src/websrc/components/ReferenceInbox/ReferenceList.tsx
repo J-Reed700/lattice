@@ -145,7 +145,7 @@ export function ReferenceList({
   const handleOriginChange = (value: OriginFilter) => setOriginFilter(value);
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-subtle bg-surface">
+    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-subtle bg-bg">
       <SidebarHeader
         title="References"
         actions={
@@ -190,7 +190,7 @@ export function ReferenceList({
             {groups.map((group, groupIndex) => (
               <div key={group.key}>
                 {/* REFERENCE-REDESIGN-SPEC §4.3: serif italic, not an
-                    uppercase tracked label (UX-OVERHAUL-BRIEF §1). */}
+                    uppercase tracked label. */}
                 <h3
                   className={`px-4 py-2 font-serif text-xs italic text-text-tertiary ${
                     groupIndex > 0 ? 'mt-4' : ''

@@ -74,3 +74,14 @@ describe('SourceCitations', () => {
     expect(screen.getByText('notes.md')).toBeInTheDocument();
   });
 });
+
+it('opens the selected passage within a shared PDF without marking search keywords', async () => {
+  const first = source({ citationId: 1, highlights: ['patent'] });
+  const second = source({ citationId: 2, chunkId: 'chunk-2', excerpt: 'A patent application must include a written description.', highlights: ['patent'] });
+  const onViewSource = vi.fn();
+  const { container } = render(<SourceCitations sources={[first, second]} onViewSource={onViewSource} />);
+  await expand();
+  await userEvent.click(screen.getByRole('button', { name: 'View passage [2]' }));
+  expect(onViewSource).toHaveBeenCalledWith(second);
+  expect(container.querySelectorAll('mark')).toHaveLength(0);
+});

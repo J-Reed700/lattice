@@ -34,7 +34,6 @@ export function useCommandPalette() {
     recentDocuments: [],
   })
 
-  // Load recent items from localStorage on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem('lattice-command-palette')
@@ -51,7 +50,6 @@ export function useCommandPalette() {
     }
   }, [])
 
-  // Save recent items to localStorage whenever they change
   useEffect(() => {
     try {
       localStorage.setItem('lattice-command-palette', JSON.stringify({
@@ -111,7 +109,6 @@ export function useCommandPalette() {
         timestamp: Date.now(),
       }
 
-      // Remove duplicates and add to front
       const filtered = prev.recentSearches.filter(item => item.label !== search)
       const updated = [newItem, ...filtered].slice(0, MAX_RECENT_ITEMS)
 
@@ -127,7 +124,6 @@ export function useCommandPalette() {
         timestamp: Date.now(),
       }
 
-      // Remove duplicates and add to front
       const filtered = prev.recentDocuments.filter(item => item.id !== docId)
       const updated = [newItem, ...filtered].slice(0, MAX_RECENT_ITEMS)
 

@@ -54,7 +54,7 @@ export function RootLayout() {
             window.dispatchEvent(new CustomEvent(NEW_ITEM_EVENT, { detail: { pathname: here } }));
             return;
           }
-          navigate('/chat?new=1');
+          navigate(here.startsWith('/study') ? '/study?new=1' : '/chat?new=1');
         },
         global: true,
       },
@@ -66,6 +66,7 @@ export function RootLayout() {
       { id: 'navigation.journal', keys: 'Mod+3', description: 'Journal', category: 'navigation' as const, handler: () => navigate('/journals'), global: true },
       { id: 'navigation.chat', keys: 'Mod+4', description: 'Chat', category: 'navigation' as const, handler: () => navigate('/chat'), global: true },
       { id: 'navigation.references', keys: 'Mod+5', description: 'References', category: 'navigation' as const, handler: () => navigate('/references'), global: true },
+      { id: 'navigation.study', keys: 'Mod+6', description: 'Study', category: 'navigation' as const, handler: () => navigate('/study'), global: true },
       { id: 'navigation.import', keys: 'Mod+I', description: 'Import', category: 'navigation' as const, handler: () => navigate('/ingest'), global: true },
     ],
     [location.pathname, navigate, openCapture],

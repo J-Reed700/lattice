@@ -52,19 +52,28 @@ export function EntryHeader({
 }: EntryHeaderProps) {
   const dateTitle = format(date, 'EEEE, MMMM d');
   const named = pageTitle?.trim() ?? '';
-  const title = named || dateTitle;
+  const title = named || format(date, 'MMMM');
   const subline = named
     ? `${format(date, 'MMM d, yyyy')} · ${journalName}`
     : `${format(date, 'yyyy')} · ${journalName}`;
   const formattedWordCount = new Intl.NumberFormat().format(wordCount);
 
   return (
-    <header className="mb-8">
-      <h1 className="font-serif text-3xl font-semibold tracking-[-0.02em] text-[hsl(var(--text-primary))] mb-1">
+    <header className="journal-page-header mb-9 border-b border-border-subtle pb-6">
+      <div className="mb-8 flex items-center justify-between gap-3 text-[9px] font-medium uppercase tracking-[0.18em] text-text-tertiary">
+        <span>Your journal / {journalName}</span><span className="journal-page-tag">{named ? 'Notes & ideas' : format(date, 'yyyy')}</span>
+      </div>
+      <div className="flex items-center gap-6">
+        {!named && <span aria-hidden="true" className="journal-date-number font-serif text-[88px] leading-none tracking-[-0.07em] lg:text-[112px]">{format(date, 'dd')}</span>}
+        <div className="min-w-0">
+      {!named && <p className="mb-1 text-[11px] uppercase tracking-[0.2em] text-text-tertiary">{format(date, 'EEEE')}</p>}
+      <h1 aria-label={named || dateTitle} className="font-serif text-[clamp(32px,3.5vw,48px)] leading-tight font-medium tracking-[-0.035em] text-[hsl(var(--text-primary))] mb-3">
         {title}
       </h1>
-      <p className="text-sm text-[hsl(var(--text-tertiary))] mb-2">{subline}</p>
-      <div className="flex items-center gap-2 text-xs text-[hsl(var(--text-muted))]">
+      <p className="text-xs text-[hsl(var(--text-tertiary))] mb-2">{subline}</p>
+        </div>
+      </div>
+      <div className="mt-6 flex flex-wrap items-center gap-2 text-xs text-[hsl(var(--text-muted))]">
         <span>
           {formattedWordCount} word{wordCount === 1 ? '' : 's'}
         </span>

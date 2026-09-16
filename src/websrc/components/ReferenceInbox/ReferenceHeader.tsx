@@ -20,7 +20,7 @@ function formatFriendly(iso: string): string {
     : format(date, 'MMM d, yyyy');
 }
 
-function roleLabel(role: 'user' | 'assistant' | 'system'): string {
+function roleLabel(role: string): string {
   if (role === 'assistant') return 'Assistant';
   if (role === 'user') return 'You';
   return 'System';
