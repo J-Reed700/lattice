@@ -35,7 +35,7 @@ env:
   # requires a llama.cpp feature newer than this pin.
   #
   # Single source of truth: this value MUST match
-  # `src/app/src/scripts/llama-server-version.txt` so local fetch and
+  # `src/src/scripts/llama-server-version.txt` so local fetch and
   # CI build use the same tag. There's no automated check today —
   # bump both at once.
   LLAMA_CPP_TAG: 'b8981'

@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: src/app/package-lock.json
+          cache-dependency-path: src/package-lock.json
 
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
@@ -52,22 +52,22 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/app/src-tauri/target
+            src/src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install dependencies
         run: |
-          cd src/app
+          cd src
           npm ci
 
       - name: Run tests
         run: |
-          cd src/app
+          cd src
           npm test -- --run
 
       - name: Run backend tests
         run: |
-          cd src/app/src-tauri
+          cd src/src-tauri
           cargo test
 
   # ==========================================================================
@@ -100,7 +100,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: src/app/package-lock.json
+          cache-dependency-path: src/package-lock.json
 
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
@@ -125,25 +125,25 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src/app/src-tauri/target
+            src/src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install dependencies
         run: |
-          cd src/app
+          cd src
           npm ci
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
-          cd src/app
+          cd src
           chmod +x ${{ matrix.script }}
           ./${{ matrix.script }} --checksums --verbose
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: |
-          cd src/app
+          cd src
           .\${{ matrix.script }} -Checksums -Verbose
 
       - name: Upload artifacts
@@ -151,8 +151,8 @@ jobs:
         with:
           name: recall-app-${{ matrix.platform }}-${{ github.sha }}
           path: |
-            src/app/src-tauri/target/release/bundle/**/*
-            src/app/dist/checksums.txt
+            src/src-tauri/target/release/bundle/**/*
+            src/dist/checksums.txt
           retention-days: 30
 
   # ==========================================================================
@@ -217,22 +217,22 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd src/app
+          cd src
           npm ci
 
       - name: Build Intel
         run: |
-          cd src/app
+          cd src
           ./build.sh --target x86_64-apple-darwin --no-bundle --verbose
 
       - name: Build Apple Silicon
         run: |
-          cd src/app
+          cd src
           ./build.sh --target aarch64-apple-darwin --no-bundle --verbose
 
       - name: Create Universal Binary
         run: |
-          cd src/app/src-tauri
+          cd src/src-tauri
           lipo -create \
             target/x86_64-apple-darwin/release/recall-app \
             target/aarch64-apple-darwin/release/recall-app \
@@ -242,6 +242,6 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: recall-app-macos-universal-${{ github.sha }}
-          path: src/app/src-tauri/target/release/recall-app-universal
+          path: src/src-tauri/target/release/recall-app-universal
           retention-days: 30
 
