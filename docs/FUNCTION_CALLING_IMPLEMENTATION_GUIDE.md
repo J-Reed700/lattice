@@ -608,7 +608,7 @@ fn main() {
 
 ### Custom Hook
 
-Create `/src-tauri/hooks/useFunctionCalling.ts`:
+Create `/src/hooks/useFunctionCalling.ts`:
 
 ```typescript
 /**
