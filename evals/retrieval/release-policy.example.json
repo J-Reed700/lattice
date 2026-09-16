@@ -1,0 +1,5 @@
+{
+  "min_queries": 30,
+  "min_accuracy_lower_bound": 0.9,
+  "max_p95_latency_ms": 5000
+}
