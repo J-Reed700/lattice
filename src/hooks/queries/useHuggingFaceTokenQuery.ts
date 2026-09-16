@@ -23,6 +23,9 @@ export function useHuggingFaceTokenStatusQuery() {
       return result.data;
     },
     staleTime: 60_000,
+    // A rejected OS keyring request cannot succeed on an automatic retry.
+    // Retrying would show the same native permission dialog repeatedly.
+    retry: false,
   });
 }
 
@@ -44,6 +47,9 @@ export function useSetHuggingFaceTokenMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: HF_TOKEN_QUERY_KEY });
     },
+    // Secure-storage writes require an explicit user action and must not be
+    // replayed automatically after a Keychain denial.
+    retry: false,
   });
 }
 
@@ -60,5 +66,6 @@ export function useDeleteHuggingFaceTokenMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: HF_TOKEN_QUERY_KEY });
     },
+    retry: false,
   });
 }

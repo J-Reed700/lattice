@@ -29,7 +29,12 @@ import { toast } from '../../stores/toastStore';
 import { SettingsRow, SettingsSection, settingsFieldClass } from '../ui';
 
 export function HuggingFaceSettings() {
-  const { data: status, isLoading: statusLoading } = useHuggingFaceTokenStatusQuery();
+  const {
+    data: status,
+    isError: statusError,
+    isFetching: statusLoading,
+    refetch: retryStatus,
+  } = useHuggingFaceTokenStatusQuery();
   const saveToken = useSetHuggingFaceTokenMutation();
   const deleteToken = useDeleteHuggingFaceTokenMutation();
 
@@ -82,6 +87,8 @@ export function HuggingFaceSettings() {
 
   const hint = statusLoading
     ? 'Loading…'
+    : statusError
+      ? "Couldn't access Keychain. No credential was changed."
     : isSet
       ? last4
         ? `Token set · ends in …${last4}`
@@ -92,7 +99,16 @@ export function HuggingFaceSettings() {
     <SettingsSection
       title="Hugging Face"
       actions={
-        isSet ? (
+        statusError ? (
+          <button
+            type="button"
+            onClick={() => void retryStatus()}
+            disabled={statusLoading}
+            className={SECONDARY_BUTTON_CLASS}
+          >
+            Try Keychain again
+          </button>
+        ) : isSet ? (
           <button
             type="button"
             onClick={handleDelete}
