@@ -1,5 +1,7 @@
 # Function Calling API Contracts
 
+> **Note (2026-09-16):** The Python/FastAPI backend (`src/api`) has been removed. The Python sections below are kept for historical context only; the Rust desktop implementation is the one that ships.
+
 **Design Philosophy**: Bricks and Studs
 **Architecture**: Local-First with Ollama
 **Version**: 1.0
@@ -865,8 +867,8 @@ When implementing these functions:
 ## References
 
 - **Pydantic Schemas**: `/src/api/src/schemas/function_calling.py`
-- **Rust DTOs**: `/src/app/src/src/crates/recall/application/dtos/modules/function_calling_dto.rs`
-- **Security Controls**: `CLAUDE.md` - Desktop Security Best Practices
+- **Rust DTOs**: `/src/src/src/crates/recall/application/dtos/modules/function_calling_dto.rs`
+- **Security controls**: validation and policy modules under `src/src/src/infrastructure/security/`
 - **Rate Limiting**: CWE-770 (Uncontrolled Resource Consumption)
 - **Path Validation**: CWE-22 (Path Traversal)
 - **SSRF Prevention**: CWE-918 (Server-Side Request Forgery)
