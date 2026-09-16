@@ -132,6 +132,8 @@ def score(dataset, runs, k=5, abstain_threshold=None, abstain_field=None):
         raise ValueError('k must be positive')
     if abstain_threshold is not None and abstain_field is not None:
         raise ValueError('Choose one retrieval abstention predictor, a threshold or a field')
+    if abstain_threshold is not None and not math.isfinite(abstain_threshold):
+        raise ValueError('Abstention threshold must be finite')
     validate_dataset(dataset)
     expected = {q['id']: q for q in dataset['queries']}
     actual = {r['query_id']: r for r in runs}
@@ -145,8 +147,11 @@ def score(dataset, runs, k=5, abstain_threshold=None, abstain_field=None):
     records = []
     for qid, query in expected.items():
         row = actual[qid]
-        ranked = row['ranked_ids'][:k]
-        if len(set(ranked)) != len(ranked) or not set(ranked).issubset(doc_ids):
+        all_ranked = row['ranked_ids']
+        if not isinstance(all_ranked, list) or any(not isinstance(doc, str) for doc in all_ranked):
+            raise ValueError(f'{qid}: ranked_ids must be a list of document IDs')
+        ranked = all_ranked[:k]
+        if len(set(all_ranked)) != len(all_ranked) or not set(all_ranked).issubset(doc_ids):
             raise ValueError(f'{qid}: duplicate or unknown document ID')
         relevance = query['relevance']
         positives = {doc for doc, grade in relevance.items() if grade > 0}
@@ -163,7 +168,7 @@ def score(dataset, runs, k=5, abstain_threshold=None, abstain_field=None):
             record['mrr'] = next(
                 (1 / (i + 1) for i, doc in enumerate(ranked) if doc in positives), 0)
         value = row['latency_ms']
-        if not math.isfinite(value) or value < 0:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
             raise ValueError('Latency must be finite and nonnegative')
         latency.append(value)
         if abstain_threshold is not None:
@@ -177,11 +182,15 @@ def score(dataset, runs, k=5, abstain_threshold=None, abstain_field=None):
                 _retrieval_abstained(row, qid, abstain_field) == (not positives))
         records.append(record)
         if 'abstained' in row:
-            abstentions.append(bool(row['abstained']) == (not positives))
+            if type(row['abstained']) is not bool:
+                raise ValueError('abstained must be boolean')
+            abstentions.append(row['abstained'] == (not positives))
         if all(field in row for field in totals):
             for numerator, denominator in [('supported_claims', 'total_claims'), ('correct_citations', 'total_citations')]:
                 if not 0 <= row[numerator] <= row[denominator]:
                     raise ValueError('Invalid human judgment counts')
+            if any(type(row[field]) is not int for field in totals):
+                raise ValueError('Human judgment counts must be integers')
             judged += 1
             for field in totals:
                 totals[field] += row[field]

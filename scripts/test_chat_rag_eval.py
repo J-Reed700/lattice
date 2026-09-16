@@ -32,8 +32,8 @@ class ChatRagEvalTests(unittest.TestCase):
         wrong_source = chat_rag_eval.evaluate_answer(
             query, expectation, "The period is 14 days [2].", ["a", "b"], 10, "m"
         )
-        self.assertTrue(passing["answer_correct"])
-        self.assertFalse(wrong_source["answer_correct"])
+        self.assertTrue(passing["mechanical_checks_passed"])
+        self.assertFalse(wrong_source["mechanical_checks_passed"])
 
     def test_unanswerable_requires_abstention_without_citation(self):
         query = {"id": "q", "relevance": {}}
@@ -46,7 +46,7 @@ class ChatRagEvalTests(unittest.TestCase):
             10,
             "m",
         )
-        self.assertTrue(row["answer_correct"])
+        self.assertTrue(row["mechanical_checks_passed"])
 
 
 if __name__ == "__main__":
