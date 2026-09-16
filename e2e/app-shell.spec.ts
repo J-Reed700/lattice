@@ -629,7 +629,7 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   page.on('pageerror', error => errors.push(error));
   await page.goto('/study');
   await expect(page.getByRole('button', { name: 'Study', exact: true })).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByText('Put what you read into practice.')).toBeVisible();
+  await expect(page.getByText('Put what you learn into practice.')).toBeVisible();
   await page.getByRole('button', { name: 'New deck', exact: true }).click();
   await page.getByLabel('Deck title').fill('Biology review');
   await page.getByLabel(/Topic or section/).fill('photosynthesis');
@@ -641,7 +641,7 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Study', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Generating 2 questions' })).toBeVisible();
-  await expect(page.getByText('Put what you read into practice.')).toHaveCount(0);
+  await expect(page.getByText('Put what you learn into practice.')).toHaveCount(0);
   await page.screenshot({ path: '/tmp/lattice-study-background-dark.png' });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.evaluate(() => window.dispatchEvent(new Event('test:finish-generation')));
@@ -685,7 +685,7 @@ test('creates a subject-agnostic study deck, reviews, quizzes, opens sources and
   await page.screenshot({ path: '/tmp/lattice-study-deck-light.png' });
   await page.getByRole('button', { name: 'Delete deck', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Delete deck', exact: true }).click();
-  await expect(page.getByText('Put what you read into practice.')).toBeVisible();
+  await expect(page.getByText('Put what you learn into practice.')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
