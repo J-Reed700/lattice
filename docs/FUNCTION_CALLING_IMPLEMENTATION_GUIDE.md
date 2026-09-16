@@ -287,7 +287,7 @@ api_router.include_router(function_calling.router)
 
 ### 1. Service Layer
 
-Create service in `/src/src-tauri/src/services/function_calling_service.rs`:
+Create service in `/src-tauri/src/services/function_calling_service.rs`:
 
 ```rust
 //! Function calling service for LLM tools.
@@ -478,7 +478,7 @@ impl FunctionCallingService {
 
 ### 2. Tauri Commands
 
-Create commands in `/src/src-tauri/src/commands/function_calling.rs`:
+Create commands in `/src-tauri/src/commands/function_calling.rs`:
 
 ```rust
 //! Tauri commands for function calling.
@@ -581,7 +581,7 @@ pub async fn list_documents(
 
 ### 3. Register Commands
 
-Add to `/src/src-tauri/src/main.rs`:
+Add to `/src-tauri/src/main.rs`:
 
 ```rust
 mod commands {
@@ -608,7 +608,7 @@ fn main() {
 
 ### Custom Hook
 
-Create `/src/src/hooks/useFunctionCalling.ts`:
+Create `/src/hooks/useFunctionCalling.ts`:
 
 ```typescript
 /**
