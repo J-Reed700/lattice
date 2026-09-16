@@ -3,7 +3,7 @@
 ## Dependency direction
 
 The desktop application owns persistence and runtime ports under
-`src/src/src/application/ports`. Domain values do not own SQL drivers,
+`src-tauri/src/application/ports`. Domain values do not own SQL drivers,
 transport adapters, or application orchestration. Composition remains in the
 DI modules; adapters implement ports in infrastructure or existing feature
 repository modules.
@@ -14,7 +14,7 @@ belong to their respective adapters, not the sync contracts.
 
 ## Module layout
 
-- Each vertical feature under `src/src/src/features/<name>/` owns its
+- Each vertical feature under `src-tauri/src/features/<name>/` owns its
   engine, repositories, services, commands, plugin, and DI registrar. There
   are no `#[path]` aliases: every module lives at its canonical Rust location
   and has exactly one path. The former `infrastructure::{indexing,llm,qa,
@@ -113,7 +113,7 @@ belong to their respective adapters, not the sync contracts.
 - Archives omit derivable tables (embeddings, sparse terms, clusters, chat
   starters). Restore leaves `shared::constants::REEMBED_MARKER_FILE` in the app
   data directory; search startup clears it once vector coverage is complete.
-- The schema is a single migration, `src/src/migrations/20260916000000_init_schema.sql`.
+- The schema is a single migration, `src-tauri/migrations/20260916000000_init_schema.sql`.
   There is no legacy data to migrate: change that file directly and delete
   local databases when the schema changes.
 
@@ -123,10 +123,10 @@ belong to their respective adapters, not the sync contracts.
 bash scripts/check-rust-layer-boundaries.sh
 bash scripts/check-repository-barrier.sh
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
-cargo test --manifest-path src/src/Cargo.toml --lib
-cargo test --manifest-path src/src/Cargo.toml --test security_audit_logging_test
-cargo check --manifest-path src/src/Cargo.toml --all-targets
-cargo run --manifest-path src/src/Cargo.toml --bin export_bindings -- --check
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+cargo test --manifest-path src-tauri/Cargo.toml --test security_audit_logging_test
+cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+cargo run --manifest-path src-tauri/Cargo.toml --bin export_bindings -- --check
 cargo test --manifest-path api-rust/Cargo.toml --lib
 cargo test --manifest-path api-rust/Cargo.toml --test sync_persistence -- --ignored
 ```

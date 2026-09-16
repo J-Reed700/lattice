@@ -327,7 +327,7 @@ Before the market research, four facts from `/Users/josh/Code/lattice-temp` that
 
 3. **You already rolled your own auth once, in Python.** `/Users/josh/Code/lattice-temp/src/api/src/auth/` is a FastAPI JWT system (bcrypt, MFA rate limiter, token blacklist, separate access/refresh secrets). `jwt.py` signs with `settings.jwt_secret_key` — a **shared secret (HS256-style), not asymmetric**, so there is no JWKS. Any move to a hosted IdP (or to a sane self-issued scheme) means switching to RS256/ES256 + JWKS.
 
-4. **macOS signing is ad-hoc.** `src/src/tauri.conf.json` has `"signingIdentity": "-"`, `"entitlements": null`, identifier `tech.lattice.app`, and only the `shell` plugin registered. Ad-hoc signing means the macOS Keychain designated requirement changes between builds → **keychain re-prompts on every rebuild**, and no notarized distribution. You need a real Developer ID ($99/yr) before storing refresh tokens in the keyring is pleasant.
+4. **macOS signing is ad-hoc.** `src-tauri/tauri.conf.json` has `"signingIdentity": "-"`, `"entitlements": null`, identifier `tech.lattice.app`, and only the `shell` plugin registered. Ad-hoc signing means the macOS Keychain designated requirement changes between builds → **keychain re-prompts on every rebuild**, and no notarized distribution. You need a real Developer ID ($99/yr) before storing refresh tokens in the keyring is pleasant.
 
 Good news: `tauri-plugin-shell` resolves to **2.3.4** in `Cargo.lock`, past the 2.2.1 fix for CVE-2025-31477, so you are **not** exposed to that. `keyring` resolves to **3.6.3** (current is 4.2.0); `tauri` is pinned at `=2.9.5`.
 

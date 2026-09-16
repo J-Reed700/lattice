@@ -94,7 +94,7 @@ the same input preparation and query instruction the app uses. This isolates
 embedding quality; it exercises no fusion, no lexical branch, and no index.
 
 ```sh
-cd src/src
+cd src-tauri
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- /path/to/model ../../../evals/retrieval/starter.json > /tmp/model-run.jsonl
 cd ../../..
 python3 scripts/rag_eval.py evals/retrieval/starter.json /tmp/model-run.jsonl --k 3
@@ -110,7 +110,7 @@ candidate coverage and ordering separately.
 Runs the app's real retrieval path over the fixture instead of raw cosine:
 
 ```sh
-cd src/src
+cd src-tauri
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
   /path/to/model ../../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
 cd ../../..
@@ -190,7 +190,7 @@ chunking pools dense vectors over a span and reads the sparse head from the
 per-chunk texts in a second pass, exactly as `index_file` does.
 
 ```sh
-cd src/src
+cd src-tauri
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- --mode production \
   --strategy late-chunking --compression mrl256-i8 --sparse auto \
   /path/to/model ../../../evals/retrieval/synthetic-library-v2.json > /tmp/prod-run.jsonl
@@ -204,7 +204,7 @@ embedding mode it reranks the top-48 passage pool; in production mode it turns o
 pool and applies its own blend stage:
 
 ```sh
-cd src/src
+cd src-tauri
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- \
   /path/to/embedding/model ../../../evals/retrieval/starter.json \
   /path/to/reranker/model > /tmp/reranked-run.jsonl
@@ -341,7 +341,7 @@ updated conversation. The acceptance assertions currently target the MPEP
 beginner case, including the first chapter and two specific chapter searches.
 
 ```sh
-cd src/src
+cd src-tauri
 cargo test --lib live_corpus_retrieval_and_answer -- --ignored --nocapture
 ```
 

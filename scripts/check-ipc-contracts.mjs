@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /** Check IPC wire types against the Rust-generated command signatures. UI view models may differ. */
-import ts from '../src/node_modules/typescript/lib/typescript.js';
+import ts from '../node_modules/typescript/lib/typescript.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const config = ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile);
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-const probePath = path.join(root, 'websrc', '__contract_probe__.ts');
+const probePath = path.join(root, 'src', '__contract_probe__.ts');
 const host = ts.createCompilerHost(parsed.options);
 const getSourceFile = host.getSourceFile.bind(host);
 const probe = `
@@ -25,7 +25,7 @@ if (process.argv.includes('--self-test')) {
 }
 const program = ts.createProgram(parsed.fileNames, parsed.options, host), checker = program.getTypeChecker();
 function visit(node, callback) { callback(node); ts.forEachChild(node, child => visit(child, callback)); }
-const bindings = program.getSourceFile(path.join(root, 'websrc/lib/bindings.ts')), contracts = new Map();
+const bindings = program.getSourceFile(path.join(root, 'src/lib/bindings.ts')), contracts = new Map();
 visit(bindings, node => {
     if (!ts.isMethodDeclaration(node))
         return;
@@ -37,7 +37,7 @@ visit(bindings, node => {
             contracts.set(call.arguments[0].text, { type: checker.getTypeFromTypeNode(response), text: response.getText(bindings), params: node.parameters.map(p => ({ name: p.name.getText(bindings), type: checker.getTypeAtLocation(p) })) });
     });
 });
-const api = program.getSourceFile(path.join(root, 'websrc/lib/api.ts')), routes = new Map();
+const api = program.getSourceFile(path.join(root, 'src/lib/api.ts')), routes = new Map();
 visit(api, node => {
     if (!ts.isVariableDeclaration(node) || node.name.getText(api) !== 'COMMAND_DOMAIN_MAP')
         return;
@@ -77,7 +77,7 @@ function checkObject(expression, expected, context, prefix = '') {
     }
 }
 for (const source of program.getSourceFiles()) {
-    if (!source.fileName.startsWith(path.join(root, 'websrc')) || source === bindings || /(?:__tests__|__mocks__|\.test\.|\.spec\.)/.test(source.fileName))
+    if (!source.fileName.startsWith(path.join(root, 'src')) || source === bindings || /(?:__tests__|__mocks__|\.test\.|\.spec\.)/.test(source.fileName))
         continue;
     visit(source, call => {
         if (!ts.isCallExpression(call) || !['apiCall', 'invoke'].includes(call.expression.getText(source)) || !ts.isStringLiteral(call.arguments[0]))
@@ -131,7 +131,7 @@ for (const source of program.getSourceFiles()) {
     });
 }
 if (process.argv.includes('--self-test')) {
-    const isProbe = item => item.location.startsWith('websrc/__contract_probe__.ts:');
+    const isProbe = item => item.location.startsWith('src/__contract_probe__.ts:');
     if (report.mismatches.filter(isProbe).length !== 1 || report.uncovered.filter(isProbe).length !== 1
         || !report.argumentNames.some(item => isProbe(item) && item.unexpected === 'request.documentId')
         || !report.argumentNames.some(item => isProbe(item) && item.missing === 'request.document_id')

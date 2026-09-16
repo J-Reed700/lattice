@@ -26,11 +26,11 @@ def main():
     args = parser.parse_args()
     extracted = subprocess.run([
         'cargo', 'run', '--quiet', '--locked', '--manifest-path',
-        'scripts/data-contract-check/Cargo.toml', '--', 'src/src/src'
+        'scripts/data-contract-check/Cargo.toml', '--', 'src-tauri/src'
     ], cwd=ROOT, check=True, capture_output=True, text=True)
     rows = json.loads(extracted.stdout)
     connection = sqlite3.connect(':memory:')
-    migrations = sorted((ROOT / 'src/src/migrations').glob('*.sql'))
+    migrations = sorted((ROOT / 'src-tauri/migrations').glob('*.sql'))
     for migration in migrations:
         connection.executescript(migration.read_text())
     # sqlx creates its own bookkeeping table at runtime; the backup feature

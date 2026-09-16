@@ -7,16 +7,16 @@ This document audits overlap between Chat, Daily Notes, and Reference Inbox, the
 
 | Surface | Primary intent | Current actions | Overlap risk |
 | --- | --- | --- | --- |
-| `src/websrc/components/Chat/MessageBubble.tsx` | Per-message quick actions | Bookmark to Snippets, Save to Daily Notes, Copy | Duplicates capture with Sidebar and Reference Inbox |
-| `src/websrc/components/Chat/ConversationSidebar.tsx` | Conversation navigation + snippet list | Snippet filters, edit title/note, capture/re-capture, open capture, open inbox | Heavy overlap with Reference Inbox detail and batch triage |
-| `src/websrc/components/ReferenceInbox/ReferenceInbox.tsx` | Triage and process references | Search/filter, annotate, capture one, capture pending, open in chat, open captured note, copy | Strongly overlaps with Sidebar snippet details |
-| `src/websrc/components/DailyNotes/DailyNotesWorkspace.tsx` | Note authoring + snapshots | Capture active chat, capture selected chat, snapshot insert, open in chat | Overlaps with message-level capture mental model |
-| `src/websrc/components/Chat/ChatPanel.tsx` | Ask/answer composer | Turn mode, KB/Web/Wiki/Deep/custom tool controls | Not data overlap, but contributes visual crowding |
+| `src/components/Chat/MessageBubble.tsx` | Per-message quick actions | Bookmark to Snippets, Save to Daily Notes, Copy | Duplicates capture with Sidebar and Reference Inbox |
+| `src/components/Chat/ConversationSidebar.tsx` | Conversation navigation + snippet list | Snippet filters, edit title/note, capture/re-capture, open capture, open inbox | Heavy overlap with Reference Inbox detail and batch triage |
+| `src/components/ReferenceInbox/ReferenceInbox.tsx` | Triage and process references | Search/filter, annotate, capture one, capture pending, open in chat, open captured note, copy | Strongly overlaps with Sidebar snippet details |
+| `src/components/DailyNotes/DailyNotesWorkspace.tsx` | Note authoring + snapshots | Capture active chat, capture selected chat, snapshot insert, open in chat | Overlaps with message-level capture mental model |
+| `src/components/Chat/ChatPanel.tsx` | Ask/answer composer | Turn mode, KB/Web/Wiki/Deep/custom tool controls | Not data overlap, but contributes visual crowding |
 
 ## Findings
 
 1. Two places currently behave like "reference detail editors":  
-`src/websrc/components/Chat/ConversationSidebar.tsx` and `src/websrc/components/ReferenceInbox/ReferenceInbox.tsx`.
+`src/components/Chat/ConversationSidebar.tsx` and `src/components/ReferenceInbox/ReferenceInbox.tsx`.
 2. Three separate capture entry points exist for different granularity without clear hierarchy:
 message capture, snippet capture, and full-conversation snapshot capture.
 3. Language is fragmented (`Bookmark`, `Snippet`, `Capture`, `Reference`, `Snapshot`) for similar user goals.
@@ -74,7 +74,7 @@ message capture, snippet capture, and full-conversation snapshot capture.
 
 3. Phase 3 (capture hierarchy):
 - Ensure all per-message and per-snippet capture actions route through shared utility
-  (`src/websrc/utils/chatReferenceCapture.ts`), with Inbox as the primary triage destination.
+  (`src/utils/chatReferenceCapture.ts`), with Inbox as the primary triage destination.
 
 4. Phase 4 (composer density):
 - Collapse tool controls behind one compact row by default in `ChatPanel`.
