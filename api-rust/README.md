@@ -49,8 +49,22 @@ cargo run
 
 ## Suggested next steps
 
-1. Add integration tests with testcontainers/Postgres for push/pull/ack flows.
+1. Extend PostgreSQL contract coverage as conflict and delivery semantics grow.
 2. Implement full conflict resolution semantics and merged head writes.
 3. Add background outbox dispatcher and delivery retries.
 4. Add JWT auth middleware and tenant/user claims extraction.
 5. Add metrics/tracing spans per sync request and DB transaction.
+
+## Verification
+
+`cargo test --lib` runs database-free service and HTTP-error contract tests.
+`cargo test --test sync_persistence -- --ignored` runs PostgreSQL contracts when
+`DATABASE_URL` points to a disposable test server. SQLx creates isolated test
+databases. These tests cover rollback, idempotent retry, tenant isolation,
+monotonic acknowledgements and concurrent first-write conflict detection.
+CI runs both suites with PostgreSQL 16.
+
+Push transactions serialize per user with a transaction-scoped advisory lock.
+This protects absent document heads and same-user operation commit order without
+blocking pushes from other users. It deliberately trades same-user parallelism
+for correctness; do not remove it without replacing both guarantees.

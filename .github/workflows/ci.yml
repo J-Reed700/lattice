@@ -15,14 +15,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # -----------------------------------------------------------------
-  # Rust crate (Tauri desktop app)
-  # -----------------------------------------------------------------
-  # Matrix exists specifically to catch P0-1-class regressions: a
-  # macOS-only dep (objc2 via candle metal) leaking onto Windows/Linux
-  # was invisible on macOS dev machines until someone tried to build
-  # for Windows. Building on all three OSes on every PR closes that
-  # door.
+  # Build on each supported platform to catch target-specific dependencies.
   rust-check:
     name: cargo check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -57,55 +50,56 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            src/app/src/target/
-          key: cargo-${{ matrix.os }}-${{ hashFiles('src/app/src/Cargo.lock') }}
+            src/src/target/
+          key: cargo-${{ matrix.os }}-${{ hashFiles('src/src/Cargo.lock') }}
           restore-keys: |
             cargo-${{ matrix.os }}-
 
       - name: cargo check
-        working-directory: src/app/src
+        working-directory: src/src
         run: cargo check --all-targets
 
-      # Clippy runs the project-defined lints (deny unwrap/expect/panic/
-      # indexing_slicing). We do NOT add `-D warnings` here yet — the
-      # crate currently allows unused_imports/dead_code/deprecated as
-      # "Phase 2 cleanup pending" (see lib.rs). When P1-8 burns those
-      # down, flip on `-D warnings`.
+      - name: Desktop Rust unit and repository tests
+        working-directory: src/src
+        run: cargo test --lib --bin export_bindings
+
+      - name: Audit and credential backend integration tests
+        working-directory: src/src
+        run: cargo test --test security_audit_logging_test --test native_keyring_backend_test
+
+      # The crate defines additional safety lints in Cargo.toml. Existing
+      # warnings are not promoted to errors yet.
       - name: cargo clippy
-        working-directory: src/app/src
+        working-directory: src/src
         run: cargo clippy --all-targets
 
       - name: generated bindings are current
-        working-directory: src/app/src
+        working-directory: src/src
         run: cargo run --bin export_bindings -- --check
 
       - name: cargo fmt --check
-        working-directory: src/app/src
+        working-directory: src/src
         run: cargo fmt --all -- --check
 
-  # -----------------------------------------------------------------
-  # Repository Barrier rule (CLAUDE.md SSOT enforcement)
-  # -----------------------------------------------------------------
-  # The grep-based guard at scripts/check-repository-barrier.sh has
-  # existed in the tree without being wired anywhere. Running it on
-  # every PR is the bare minimum until P1-3 replaces it with
-  # module-system enforcement.
+  # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:
-    name: repository barrier check
+    name: architecture boundary checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
       - run: bash scripts/check-repository-barrier.sh
+      - run: bash scripts/check-rust-layer-boundaries.sh
+      - run: cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
+      - run: python3 scripts/check-sql-contracts.py
 
-  # -----------------------------------------------------------------
-  # Frontend (Tauri webview — React + TypeScript)
-  # -----------------------------------------------------------------
   frontend:
     name: frontend (type-check, lint, test)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: src/app
+        working-directory: src
     steps:
       - uses: actions/checkout@v4
 
@@ -114,12 +108,15 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: src/app/package-lock.json
+          cache-dependency-path: src/package-lock.json
 
       - run: npm ci
 
       - name: Type-check
         run: npm run type-check
+
+      - name: Generated IPC contract consumers
+        run: npm run contracts:check
 
       - name: Lint
         run: npm run lint
@@ -127,14 +124,30 @@ jobs:
       - name: Unit tests
         run: npm test -- --run
 
-  # -----------------------------------------------------------------
-  # Sync engine (api-rust)
-  # -----------------------------------------------------------------
-  # Separate job so api-rust failures don't block desktop work and
-  # vice versa.
+      - name: Renderer production build
+        run: npx vite build
+
+      - name: Install browser for smoke tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke tests
+        run: npm run test:e2e
+
   sync-engine:
     name: api-rust check
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -152,6 +165,14 @@ jobs:
       - name: cargo check
         working-directory: api-rust
         run: cargo check --all-targets
+      - name: unit tests
+        working-directory: api-rust
+        run: cargo test --lib
+      - name: PostgreSQL contracts
+        working-directory: api-rust
+        env:
+          DATABASE_URL: postgres://postgres:test-only@localhost:5432/postgres
+        run: cargo test --test sync_persistence -- --ignored
       - name: cargo clippy
         working-directory: api-rust
         run: cargo clippy --all-targets

@@ -1,0 +1,782 @@
+{
+  "name": "lattice-synthetic-library-v1",
+  "description": "A fictional Northstar Labs knowledge library designed to compare embedding and reranking configurations under ambiguity, temporal conflicts, multilingual queries, exact identifiers, long context, and abstention cases.",
+  "dimensions": [
+    "semantic paraphrase",
+    "near-duplicate distractors",
+    "current versus superseded policy",
+    "graded and multi-document relevance",
+    "multilingual and cross-lingual retrieval",
+    "negation and exception handling",
+    "exact identifiers and numeric distinctions",
+    "long-context tail facts",
+    "unanswerable questions"
+  ],
+  "documents": [
+    {
+      "id": "ops-rate-limit",
+      "title": "API runbook: rate limiting",
+      "kind": "runbook",
+      "language": "en",
+      "text": "API runbook: rate limiting. HTTP 429 means the caller exceeded a request quota. Retry only idempotent operations, honor Retry-After when present, and otherwise use exponential backoff with full jitter starting at two seconds. Stop after four attempts. A 429 is not an authentication failure and rotating credentials will not fix it. Record the request ID and quota bucket in the incident timeline."
+    },
+    {
+      "id": "ops-auth-failure",
+      "title": "API runbook: authentication failures",
+      "kind": "runbook",
+      "language": "en",
+      "text": "API runbook: authentication failures. HTTP 401 indicates missing, expired, or invalid credentials. Do not retry the same request with the same credential because it cannot succeed. Surface the error to the operator, verify the credential source, and rotate the secret only when compromise or expiry is confirmed. HTTP 403 means the identity is known but lacks permission; retries also do not resolve that condition."
+    },
+    {
+      "id": "ops-service-unavailable",
+      "title": "API runbook: temporary service failure",
+      "kind": "runbook",
+      "language": "en",
+      "text": "API runbook: temporary service failure. HTTP 502, 503, and 504 can be transient. Idempotent reads may be retried three times with exponential backoff and jitter. Writes require an idempotency key before any retry. When a 503 response includes Retry-After, that value takes precedence. Escalate after the retry budget is exhausted rather than looping indefinitely."
+    },
+    {
+      "id": "ops-client-timeout",
+      "title": "Client timeout guidance",
+      "kind": "runbook",
+      "language": "en",
+      "text": "Client timeout guidance. A client-side timeout does not prove that the server abandoned the operation. A read can be repeated. A write may be repeated only with an idempotency key or after checking operation status. The default interactive timeout is 30 seconds; background exports allow 180 seconds. Never convert a timeout into an unlimited retry loop."
+    },
+    {
+      "id": "backup-standard",
+      "title": "Standard workspace backup policy",
+      "kind": "policy",
+      "language": "en",
+      "effective_date": "2026-01-01",
+      "text": "Standard workspace backup policy, effective January 1, 2026. Encrypted snapshots run every night at 02:00 in the workspace region. Daily recovery points are retained for 30 days and monthly recovery points for one year. A sample restore is tested on the first Tuesday of every month. This policy covers ordinary product and operations workspaces, but excludes finance ledgers and design source archives."
+    },
+    {
+      "id": "backup-finance",
+      "title": "Finance ledger retention",
+      "kind": "policy",
+      "language": "en",
+      "effective_date": "2026-01-01",
+      "text": "Finance ledger retention. Ledger snapshots run at 23:15 UTC after the posting window closes. Immutable monthly snapshots are retained for seven years to meet audit requirements. Finance restores are exercised quarterly and require approval from the controller. The 30-day standard workspace limit does not apply to ledger records."
+    },
+    {
+      "id": "backup-design",
+      "title": "Design archive recovery",
+      "kind": "policy",
+      "language": "en",
+      "effective_date": "2026-03-15",
+      "text": "Design archive recovery. Source files receive incremental snapshots every hour while a project is active. Hourly versions are retained for 14 days, daily versions for 90 days, and the final approved package indefinitely. Designers can restore hourly versions without an administrator. This schedule applies to design source archives rather than standard workspaces."
+    },
+    {
+      "id": "security-secret-storage",
+      "title": "Provider credential storage",
+      "kind": "security standard",
+      "language": "en",
+      "text": "Provider credential storage. OpenAI, Anthropic, and other provider API secrets are stored through the operating system credential manager: Keychain on macOS, Credential Manager on Windows, and Secret Service on supported Linux desktops. Application settings contain only a provider name and model choice. Logs redact authorization headers and must never contain the secret value. Environment variables can override the stored credential for a single process."
+    },
+    {
+      "id": "security-export-boundary",
+      "title": "Settings export security boundary",
+      "kind": "security standard",
+      "language": "en",
+      "text": "Settings export security boundary. Exported settings include retrieval preferences, enabled providers, and model names. They never include API keys, refresh tokens, session cookies, or credential-manager records. Importing settings does not create a working cloud connection until the user supplies credentials on that device. Workspace content and chat transcripts are separate export choices."
+    },
+    {
+      "id": "security-key-rotation",
+      "title": "Credential rotation schedule",
+      "kind": "security standard",
+      "language": "en",
+      "text": "Credential rotation schedule. Production service-account keys rotate every 90 days. Personal development keys have no automatic schedule but must be revoked when a developer leaves a team or a device is lost. Rotation changes the secret stored in the operating system credential manager; it does not require editing exported settings. Emergency rotation takes priority over the normal calendar."
+    },
+    {
+      "id": "refund-consumer-current",
+      "title": "Consumer subscription refunds",
+      "kind": "policy",
+      "language": "en",
+      "effective_date": "2026-04-01",
+      "text": "Consumer subscription refunds, effective April 1, 2026. A new annual subscription may be refunded within 14 calendar days of the initial charge. An automatic annual renewal may be refunded within 7 calendar days of the renewal charge. Monthly plans can be canceled before the next billing date but prior monthly charges are not refunded. Approved refunds return to the original payment method."
+    },
+    {
+      "id": "refund-consumer-archive",
+      "title": "Archived consumer refund policy",
+      "kind": "superseded policy",
+      "language": "en",
+      "effective_date": "2024-01-01",
+      "text": "Archived consumer refund policy, superseded April 1, 2026. Under the former rule, both initial annual purchases and annual renewals used a 10-day request window. This document is retained for historical disputes and must not be used for charges made under the current policy."
+    },
+    {
+      "id": "refund-enterprise",
+      "title": "Enterprise contract credits",
+      "kind": "policy",
+      "language": "en",
+      "text": "Enterprise contract credits. Enterprise subscriptions are governed by the signed order form and are not covered by the consumer 14-day refund rule. Customers may request a service credit when measured availability falls below the contracted SLA. Credit requests must arrive within 30 days after the affected month and do not cancel the subscription."
+    },
+    {
+      "id": "refund-eu-withdrawal",
+      "title": "European consumer withdrawal rights",
+      "kind": "regional policy",
+      "language": "en",
+      "text": "European consumer withdrawal rights. Eligible consumers in the European Economic Area may withdraw within 14 days of purchase unless they explicitly requested immediate digital performance and acknowledged the resulting limitation. Mandatory local rights prevail over the general refund policy. Support routes uncertain regional cases to legal operations rather than denying them automatically."
+    },
+    {
+      "id": "project-aurora-current",
+      "title": "Aurora desktop launch brief",
+      "kind": "project brief",
+      "language": "en",
+      "effective_date": "2026-08-20",
+      "text": "Aurora desktop launch brief, updated August 20, 2026. The production launch is scheduled for October 12, 2026. Mira Chen is the directly responsible individual. Release readiness depends on completing the accessibility audit and resolving every critical keyboard-navigation issue. The launch may proceed with medium visual defects only when product and design sign the exception."
+    },
+    {
+      "id": "project-aurora-archive",
+      "title": "Aurora pilot plan",
+      "kind": "superseded project brief",
+      "language": "en",
+      "effective_date": "2025-11-03",
+      "text": "Aurora pilot plan, archived. The pilot was once planned for February 18, 2026, with Jonah Ruiz as coordinator. That date and owner applied only to the internal pilot and were replaced by the production launch brief. The pilot tested installation and crash reporting; it did not authorize a public release."
+    },
+    {
+      "id": "aurora-astronomy",
+      "title": "Aurora observation guide",
+      "kind": "reference",
+      "language": "en",
+      "text": "Aurora observation guide. Charged solar particles can produce northern and southern lights when they interact with a planet's magnetic field and atmosphere. Dark skies away from city light improve visibility. This astronomy reference has no connection to the Aurora desktop software project, its launch date, or its owner."
+    },
+    {
+      "id": "project-orion",
+      "title": "Orion import pipeline",
+      "kind": "engineering design",
+      "language": "en",
+      "text": "Orion import pipeline. Orion is the internal codename for the PDF and office-document ingestion rewrite. Phase two adds table extraction and is owned by Priya Nwosu. The canary begins November 4, 2026, after the parser corpus reaches 98 percent structural accuracy. Orion does not refer to the constellation in engineering planning documents."
+    },
+    {
+      "id": "orion-astronomy",
+      "title": "Orion constellation notes",
+      "kind": "reference",
+      "language": "en",
+      "text": "Orion constellation notes. Orion is a prominent constellation near the celestial equator. Three bright stars form the belt, and Betelgeuse marks a shoulder. Winter evenings are a common viewing season in the northern hemisphere. This reference does not describe the document import pipeline."
+    },
+    {
+      "id": "travel-current",
+      "title": "United States travel and mileage policy",
+      "kind": "policy",
+      "language": "en",
+      "effective_date": "2026-01-01",
+      "text": "United States travel and mileage policy, effective January 1, 2026. Approved use of a personal vehicle is reimbursed at 70 cents per business mile. Hotel receipts are required for every amount. Individual meal receipts are required when a meal exceeds 25 dollars; otherwise an itemized card record is sufficient. Economy airfare is required for flights under six hours."
+    },
+    {
+      "id": "travel-archive",
+      "title": "Archived United States travel policy",
+      "kind": "superseded policy",
+      "language": "en",
+      "effective_date": "2024-01-01",
+      "text": "Archived United States travel policy, superseded January 1, 2026. The former personal-vehicle rate was 62 cents per mile and the former meal-receipt threshold was 20 dollars. Finance retains this copy for audits of older expense reports. Current travel must use the replacement policy."
+    },
+    {
+      "id": "travel-medical-exception",
+      "title": "Travel accessibility exceptions",
+      "kind": "policy exception",
+      "language": "en",
+      "text": "Travel accessibility exceptions. A traveler who needs a different cabin, ground transport, lodging feature, or companion because of a documented accessibility or medical need may request a confidential exception through People Operations. The manager receives only the approved accommodation, not medical details. This process overrides ordinary fare limits when necessary."
+    },
+    {
+      "id": "support-spanish",
+      "title": "Horario de soporte en español",
+      "kind": "service schedule",
+      "language": "es",
+      "text": "Horario de soporte en español. El equipo responde de lunes a viernes, de 09:00 a 17:00, hora central. Los sábados y domingos no hay atención en español. Los casos críticos recibidos fuera del horario se registran de inmediato, pero un especialista bilingüe responde el siguiente día laborable."
+    },
+    {
+      "id": "support-french",
+      "title": "Horaires de l’assistance en français",
+      "kind": "service schedule",
+      "language": "fr",
+      "text": "Horaires de l’assistance en français. L’équipe est disponible du lundi au jeudi, de 08 h à 16 h, heure de l’Est. Le vendredi, le service ferme à midi. Il n’y a pas d’assistance en français pendant le week-end. Les demandes urgentes peuvent être déposées à tout moment."
+    },
+    {
+      "id": "support-japanese",
+      "title": "日本語サポート時間",
+      "kind": "service schedule",
+      "language": "ja",
+      "text": "日本語サポート時間。担当チームは日本標準時の月曜日から金曜日、午前10時から午後6時まで対応します。土曜日、日曜日、祝日は休業です。営業時間外に送信された重大な障害の報告は記録され、次の営業日に担当者が返信します。"
+    },
+    {
+      "id": "support-global",
+      "title": "Global emergency support",
+      "kind": "service schedule",
+      "language": "en",
+      "text": "Global emergency support. Enterprise severity-one incidents can be filed in English at any hour, including weekends and holidays. Around-the-clock emergency intake does not mean every language queue is staffed around the clock. Noncritical cases follow the schedule of their selected language team."
+    },
+    {
+      "id": "privacy-retention-current",
+      "title": "Workspace content retention",
+      "kind": "privacy policy",
+      "language": "en",
+      "effective_date": "2026-06-01",
+      "text": "Workspace content retention, effective June 1, 2026. Deleted workspace items remain recoverable for 30 days and are then purged from active systems. Encrypted disaster-recovery copies expire within a further 60 days. Audit events are retained for one year. A valid legal hold suspends deletion for the records named in the hold."
+    },
+    {
+      "id": "privacy-deletion-request",
+      "title": "Personal data deletion requests",
+      "kind": "privacy procedure",
+      "language": "en",
+      "text": "Personal data deletion requests. Privacy Operations verifies the requester's identity before deleting account data. The team acknowledges a request within 72 hours and targets completion within 30 days. Records required for fraud prevention, tax, or a legal hold may be retained with a documented basis. Closing a workspace is not by itself a verified personal-data request."
+    },
+    {
+      "id": "privacy-legal-hold",
+      "title": "Legal hold procedure",
+      "kind": "legal procedure",
+      "language": "en",
+      "text": "Legal hold procedure. Only Legal Operations can issue or release a hold. The notice identifies custodians, date ranges, and data sources. Normal deletion jobs must skip matching records until release. A user request, retention deadline, or workspace closure cannot override an active hold. Access remains limited to authorized legal and security personnel."
+    },
+    {
+      "id": "embedding-migration",
+      "title": "Embedding model migration",
+      "kind": "architecture decision",
+      "language": "en",
+      "text": "Embedding model migration. Every embedding artifact and preprocessing policy defines a vector-space generation. Prepare all vectors in a separate SQLite generation, validate completion, and activate it atomically. If preparation fails, keep the previous generation active. Never mix vectors across model identities, even when their numeric dimensions happen to match."
+    },
+    {
+      "id": "embedding-dimensions",
+      "title": "Vector dimensionality compatibility note",
+      "kind": "architecture note",
+      "language": "en",
+      "text": "Vector dimensionality compatibility note. Dimension count is only a storage shape. Two models that both emit 384 numbers can encode unrelated coordinate systems, so equal dimensions do not make their vectors comparable. Compatibility requires the same model artifacts, tokenizer behavior, pooling, normalization, and input policy fingerprint."
+    },
+    {
+      "id": "search-reranking",
+      "title": "Retrieval reranking design",
+      "kind": "architecture decision",
+      "language": "en",
+      "text": "Retrieval reranking design. Hybrid retrieval first gathers a wider candidate pool from lexical and vector search. A shared local reranker scores each query-passage pair, blends that score with the normalized first-stage score, and only then truncates to the requested result count. Reranking is optional because it adds latency and should be enabled only after representative evaluation shows a quality gain."
+    },
+    {
+      "id": "api-current-identifiers",
+      "title": "Document ingestion API identifiers",
+      "kind": "API reference",
+      "language": "en",
+      "text": "Document ingestion API identifiers, version 3. Create an ingestion job with POST /v3/import-jobs. Supply the request header X-Lattice-Idempotency-Key for safe write retries. Poll GET /v3/import-jobs/{job_id}. A completed response includes artifact_fingerprint and indexed_passage_count. The event emitted after activation is library.generation.activated."
+    },
+    {
+      "id": "api-deprecated-identifiers",
+      "title": "Deprecated import API",
+      "kind": "deprecated API reference",
+      "language": "en",
+      "text": "Deprecated import API, version 1. Older clients created work with POST /v1/import and used the header X-Request-Token. The completion event was import.finished. These names remain in migration logs but must not be used by new integrations. Version 1 does not expose an artifact fingerprint."
+    },
+    {
+      "id": "billing-invoice-terms",
+      "title": "Invoice payment terms",
+      "kind": "billing policy",
+      "language": "en",
+      "text": "Invoice payment terms. Standard business invoices are due net 30 from the invoice date. Approved strategic accounts may receive net 45 when that term appears on the signed order form. A purchase-order date does not restart the clock. Billing questions go to Accounts Receivable before an invoice becomes overdue."
+    },
+    {
+      "id": "billing-service-credits",
+      "title": "Applying service credits",
+      "kind": "billing procedure",
+      "language": "en",
+      "text": "Applying service credits. An approved SLA credit appears on the next invoice and cannot be exchanged for cash. The customer must submit the incident references and affected period within 30 days after the month in question. Credits do not extend the invoice due date unless Accounts Receivable issues a revised invoice."
+    },
+    {
+      "id": "sla-standard",
+      "title": "Standard service target",
+      "kind": "service policy",
+      "language": "en",
+      "text": "Standard service target. The standard plan has a monthly availability target of 99.9 percent and business-hours support. The target excludes announced maintenance, customer-controlled network failures, and preview features. The standard plan does not include a contractual service-credit schedule."
+    },
+    {
+      "id": "sla-enterprise",
+      "title": "Enterprise availability commitment",
+      "kind": "service policy",
+      "language": "en",
+      "text": "Enterprise availability commitment. The enterprise plan commits to 99.95 percent monthly availability for covered production services. Severity-one support intake operates 24 hours a day. If measured availability falls below the commitment, the order form's credit table applies after a timely claim. Preview features and customer-caused outages are excluded."
+    },
+    {
+      "id": "incident-severity",
+      "title": "Incident severity matrix",
+      "kind": "runbook",
+      "language": "en",
+      "text": "Incident severity matrix. Severity one means a widespread production outage, confirmed data loss, or active security compromise with no workaround. Severity two means major degradation with a limited workaround. Severity three covers localized defects with a practical workaround. A demanding customer alone does not raise severity; classify the observable impact."
+    },
+    {
+      "id": "accessibility-release-gate",
+      "title": "Accessibility release gate",
+      "kind": "quality standard",
+      "language": "en",
+      "text": "Accessibility release gate. A public desktop release requires keyboard access to every interactive control, visible focus, screen-reader names for controls, and no critical automated audit findings. Critical keyboard or screen-reader failures block release. Medium color-contrast defects require a documented product and design exception with a scheduled correction."
+    },
+    {
+      "id": "long-tail-recovery-code",
+      "title": "West annex recovery drill notes",
+      "kind": "drill record",
+      "language": "en",
+      "text": "West annex recovery drill notes. The morning briefing covered badge inventory, assembly zones, radio charging, visitor logs, catering delivery, elevator inspection, first-aid supplies, window locks, generator fuel, contact trees, weather monitoring, printed maps, spare batteries, water storage, and the schedule for observer interviews. The afternoon exercise repeated evacuation timing from three floors and confirmed that exterior doors failed safe. The observers recorded several minor signage improvements. For the September 2026 drill only, the sealed-controller recovery phrase is copper-otter-731."
+    },
+    {
+      "id": "long-tail-unrelated-code",
+      "title": "East annex network drill notes",
+      "kind": "drill record",
+      "language": "en",
+      "text": "East annex network drill notes. The team checked router labels, cable inventory, spare transceivers, monitoring dashboards, escalation contacts, rack temperature, battery health, maintenance windows, vendor numbers, and replacement procedures. The obsolete phrase silver-otter-317 appeared in the 2024 worksheet and is retained only to test that old notes are not mistaken for the current west annex recovery phrase."
+    }
+  ],
+  "queries": [
+    {
+      "id": "retry-transient-errors",
+      "category": "multi-document runbook",
+      "dimensions": [
+        "graded and multi-document relevance",
+        "semantic paraphrase"
+      ],
+      "text": "Which HTTP failures are candidates for a delayed retry, and what limits apply?",
+      "relevance": {
+        "ops-rate-limit": 3,
+        "ops-service-unavailable": 3,
+        "ops-client-timeout": 1
+      }
+    },
+    {
+      "id": "do-not-retry-auth",
+      "category": "negation",
+      "dimensions": [
+        "negation and exception handling"
+      ],
+      "text": "Should the client keep retrying an authentication failure with the same key?",
+      "relevance": {
+        "ops-auth-failure": 3
+      }
+    },
+    {
+      "id": "write-timeout-safety",
+      "category": "exception",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "A write timed out before the client received a response. When is repeating it safe?",
+      "relevance": {
+        "ops-client-timeout": 3,
+        "ops-service-unavailable": 1
+      }
+    },
+    {
+      "id": "ordinary-backup-retention",
+      "category": "numeric distinction",
+      "dimensions": [
+        "exact identifiers and numeric distinctions",
+        "near-duplicate distractors"
+      ],
+      "text": "How long can I recover an everyday product workspace snapshot?",
+      "relevance": {
+        "backup-standard": 3
+      }
+    },
+    {
+      "id": "finance-backup-retention",
+      "category": "near-duplicate policy",
+      "dimensions": [
+        "near-duplicate distractors",
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Are accounting ledger backups deleted after thirty days?",
+      "relevance": {
+        "backup-finance": 3,
+        "backup-standard": 1
+      }
+    },
+    {
+      "id": "design-hourly-restore",
+      "category": "numeric distinction",
+      "dimensions": [
+        "exact identifiers and numeric distinctions",
+        "near-duplicate distractors"
+      ],
+      "text": "For how many days are hour-by-hour design file versions available?",
+      "relevance": {
+        "backup-design": 3
+      }
+    },
+    {
+      "id": "provider-secret-location",
+      "category": "semantic paraphrase",
+      "dimensions": [
+        "semantic paraphrase",
+        "graded and multi-document relevance"
+      ],
+      "text": "Where does the desktop app keep credentials for external AI providers?",
+      "relevance": {
+        "security-secret-storage": 3,
+        "security-export-boundary": 1
+      }
+    },
+    {
+      "id": "settings-export-secrets",
+      "category": "negation",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Will moving an exported preferences file to another computer also move my API keys?",
+      "relevance": {
+        "security-export-boundary": 3,
+        "security-secret-storage": 2
+      }
+    },
+    {
+      "id": "annual-first-purchase-refund",
+      "category": "temporal policy",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "Under the current policy, what is the refund deadline for a newly purchased yearly plan?",
+      "relevance": {
+        "refund-consumer-current": 3
+      }
+    },
+    {
+      "id": "annual-renewal-refund",
+      "category": "near-duplicate numeric distinction",
+      "dimensions": [
+        "near-duplicate distractors",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "I was charged for another year automatically. How many calendar days do I have?",
+      "relevance": {
+        "refund-consumer-current": 3
+      }
+    },
+    {
+      "id": "historical-refund-window",
+      "category": "historical policy",
+      "dimensions": [
+        "current versus superseded policy",
+        "graded and multi-document relevance"
+      ],
+      "text": "What refund window applied to annual renewals before the April 2026 policy change?",
+      "relevance": {
+        "refund-consumer-archive": 3,
+        "refund-consumer-current": 1
+      }
+    },
+    {
+      "id": "enterprise-refund-request",
+      "category": "policy boundary",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Can an enterprise customer use the consumer fourteen-day rule to cancel its order form?",
+      "relevance": {
+        "refund-enterprise": 3,
+        "refund-consumer-current": 1
+      }
+    },
+    {
+      "id": "aurora-production-owner",
+      "category": "entity collision and temporal conflict",
+      "dimensions": [
+        "current versus superseded policy",
+        "near-duplicate distractors"
+      ],
+      "text": "Who owns the current public release of the Aurora desktop project?",
+      "relevance": {
+        "project-aurora-current": 3
+      }
+    },
+    {
+      "id": "aurora-release-blocker",
+      "category": "multi-document dependency",
+      "dimensions": [
+        "graded and multi-document relevance"
+      ],
+      "text": "What accessibility problems would prevent Aurora from shipping?",
+      "relevance": {
+        "accessibility-release-gate": 3,
+        "project-aurora-current": 3
+      }
+    },
+    {
+      "id": "aurora-pilot-coordinator",
+      "category": "historical entity",
+      "dimensions": [
+        "current versus superseded policy"
+      ],
+      "text": "Who coordinated the archived internal Aurora pilot?",
+      "relevance": {
+        "project-aurora-archive": 3
+      }
+    },
+    {
+      "id": "orion-table-extraction",
+      "category": "entity collision",
+      "dimensions": [
+        "near-duplicate distractors",
+        "semantic paraphrase"
+      ],
+      "text": "Which initiative adds table extraction to imported office documents, and who owns that phase?",
+      "relevance": {
+        "project-orion": 3
+      }
+    },
+    {
+      "id": "current-mileage-rate",
+      "category": "temporal numeric conflict",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "What is the present reimbursement rate for using my own car on a US business trip?",
+      "relevance": {
+        "travel-current": 3
+      }
+    },
+    {
+      "id": "old-mileage-rate",
+      "category": "historical numeric conflict",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions",
+        "graded and multi-document relevance"
+      ],
+      "text": "What mileage rate should Finance use when auditing a 2024 US expense report?",
+      "relevance": {
+        "travel-archive": 3,
+        "travel-current": 1
+      }
+    },
+    {
+      "id": "accessible-travel-exception",
+      "category": "policy exception",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Can an employee receive a different flight cabin because of an accessibility need?",
+      "relevance": {
+        "travel-medical-exception": 3,
+        "travel-current": 1
+      }
+    },
+    {
+      "id": "spanish-weekend",
+      "category": "cross-lingual",
+      "dimensions": [
+        "multilingual and cross-lingual retrieval",
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Can I get help from a Spanish-speaking specialist on Saturday?",
+      "relevance": {
+        "support-spanish": 3,
+        "support-global": 1
+      }
+    },
+    {
+      "id": "french-friday-hours",
+      "category": "cross-lingual",
+      "dimensions": [
+        "multilingual and cross-lingual retrieval"
+      ],
+      "text": "À quelle heure l’assistance française ferme-t-elle le vendredi?",
+      "relevance": {
+        "support-french": 3
+      }
+    },
+    {
+      "id": "japanese-hours-english-query",
+      "category": "cross-lingual",
+      "dimensions": [
+        "multilingual and cross-lingual retrieval"
+      ],
+      "text": "What are the weekday operating hours for the Japanese support team?",
+      "relevance": {
+        "support-japanese": 3
+      }
+    },
+    {
+      "id": "enterprise-weekend-emergency",
+      "category": "service exception",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Can an enterprise customer report a severity-one outage on Sunday even if its language queue is closed?",
+      "relevance": {
+        "support-global": 3,
+        "sla-enterprise": 2
+      }
+    },
+    {
+      "id": "deleted-content-lifecycle",
+      "category": "multi-stage retention",
+      "dimensions": [
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "After deleting a workspace item, when does it leave active systems and disaster-recovery copies?",
+      "relevance": {
+        "privacy-retention-current": 3
+      }
+    },
+    {
+      "id": "deletion-under-hold",
+      "category": "policy exception and multi-document",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "Can a verified privacy request erase records that are covered by an active legal hold?",
+      "relevance": {
+        "privacy-legal-hold": 3,
+        "privacy-deletion-request": 2,
+        "privacy-retention-current": 1
+      }
+    },
+    {
+      "id": "embedding-same-dimensions",
+      "category": "technical misconception",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "text": "May two unrelated 384-dimensional embedding models safely search one shared vector index?",
+      "relevance": {
+        "embedding-dimensions": 3,
+        "embedding-migration": 2
+      }
+    },
+    {
+      "id": "failed-model-migration",
+      "category": "failure behavior",
+      "dimensions": [
+        "semantic paraphrase"
+      ],
+      "text": "What happens to the active search index if preparation of a replacement embedding model fails?",
+      "relevance": {
+        "embedding-migration": 3
+      }
+    },
+    {
+      "id": "reranking-order",
+      "category": "architecture sequence",
+      "dimensions": [
+        "semantic paraphrase"
+      ],
+      "text": "Does the search system cut results to final top K before or after local pairwise reranking?",
+      "relevance": {
+        "search-reranking": 3
+      }
+    },
+    {
+      "id": "current-import-endpoint",
+      "category": "exact identifier",
+      "dimensions": [
+        "exact identifiers and numeric distinctions",
+        "near-duplicate distractors"
+      ],
+      "text": "Give me the current endpoint and request header used to create a safely retryable ingestion job.",
+      "relevance": {
+        "api-current-identifiers": 3
+      }
+    },
+    {
+      "id": "deprecated-import-event",
+      "category": "historical exact identifier",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "What completion event name appeared in the old version-one import API?",
+      "relevance": {
+        "api-deprecated-identifiers": 3
+      }
+    },
+    {
+      "id": "strategic-invoice-due-date",
+      "category": "contract exception",
+      "dimensions": [
+        "negation and exception handling",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "When may a strategic account pay forty-five days after invoicing instead of thirty?",
+      "relevance": {
+        "billing-invoice-terms": 3
+      }
+    },
+    {
+      "id": "enterprise-availability-credit",
+      "category": "multi-document procedure",
+      "dimensions": [
+        "graded and multi-document relevance",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "Our covered enterprise service missed its monthly availability promise. What was the target and how do we claim the remedy?",
+      "relevance": {
+        "sla-enterprise": 3,
+        "billing-service-credits": 3,
+        "refund-enterprise": 1
+      }
+    },
+    {
+      "id": "severity-one-definition",
+      "category": "classification",
+      "dimensions": [
+        "negation and exception handling"
+      ],
+      "text": "Is a localized bug with a usable workaround a severity-one incident?",
+      "relevance": {
+        "incident-severity": 3
+      }
+    },
+    {
+      "id": "west-annex-recovery-phrase",
+      "category": "long-context exact value",
+      "dimensions": [
+        "long-context tail facts",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "What is the sealed-controller recovery phrase for the September 2026 west annex drill?",
+      "relevance": {
+        "long-tail-recovery-code": 3
+      }
+    },
+    {
+      "id": "unanswerable-home-phone",
+      "category": "unanswerable",
+      "dimensions": [
+        "unanswerable questions"
+      ],
+      "text": "What is Mira Chen’s personal mobile phone number?",
+      "relevance": {}
+    },
+    {
+      "id": "unanswerable-office-wifi",
+      "category": "unanswerable exact secret",
+      "dimensions": [
+        "unanswerable questions",
+        "exact identifiers and numeric distinctions"
+      ],
+      "text": "What is the guest Wi-Fi password for the Northstar office?",
+      "relevance": {}
+    },
+    {
+      "id": "unanswerable-orion-budget",
+      "category": "unanswerable entity collision",
+      "dimensions": [
+        "unanswerable questions",
+        "near-duplicate distractors"
+      ],
+      "text": "What is the approved dollar budget for phase two of Orion?",
+      "relevance": {}
+    },
+    {
+      "id": "unanswerable-japanese-holiday-calendar",
+      "category": "unanswerable multilingual",
+      "dimensions": [
+        "unanswerable questions",
+        "multilingual and cross-lingual retrieval"
+      ],
+      "text": "Which specific Japanese public holidays will support observe in 2027?",
+      "relevance": {}
+    }
+  ]
+}

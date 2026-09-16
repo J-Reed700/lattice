@@ -1,0 +1,148 @@
+/**
+ * One complete `AppSettings` document for tests.
+ *
+ * The settings repository is the source of truth for every settings surface,
+ * so tests that render one need a whole document to hand back from
+ * `getSettings`. Building it here keeps the shape in one place: when the Rust
+ * DTO grows a category, exactly one fixture has to follow it.
+ */
+
+import type { AppSettings } from '../../types/api/settings';
+
+export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return {
+    indexing: {
+      chunkSize: 1000,
+      chunkOverlap: 200,
+      batchSize: 32,
+      autoIndexNewFiles: true,
+      fileTypes: ['pdf'],
+      indexedPaths: [],
+      excludePatterns: [],
+    },
+    search: {
+      maxResults: 10,
+      similarityThreshold: 0.7,
+      enableReranking: true,
+      hybridSearchAlpha: 0.5,
+      retrievalTuning: {
+        kbSearchMinLimit: 8,
+        kbSearchMaxLimit: 48,
+        docShortlistCandidateMin: 16,
+        docShortlistCandidateMax: 192,
+        docShortlistDocMin: 4,
+        docShortlistDocMax: 24,
+        shortlistGateMinCandidates: 6,
+        shortlistGateMinDocs: 2,
+        wikiSearchMaxResults: 5,
+        wikiSnippetMaxChars: 360,
+        wikiContextLimit: 5,
+        webSearchMaxResults: 5,
+        webSnippetMaxChars: 500,
+        deepResearchDepth: 3,
+        deepResearchBranchQueries: 3,
+        externalSearchMaxWikiTerms: 8,
+        externalSearchMaxWebTerms: 12,
+        externalSearchQueryMaxChars: 220,
+        rerankMaxCandidates: 12,
+        rerankQueryMaxChars: 1000,
+        sufficiencyMinTopScore: 0.35,
+        sufficiencyMinTermCoverage: 0.4,
+        sufficiencyRetryEnabled: true,
+        overlapMinHitsForMultiTerm: 2,
+        docSupportMultiHitRatioFactor: 0.35,
+        docSupportSingleHitRatioFactor: 0.65,
+        docSupportMultiHitRatioMin: 0.18,
+        docSupportMultiHitRatioMax: 0.4,
+        docSupportSingleHitRatioMin: 0.3,
+        docSupportSingleHitRatioMax: 0.55,
+      },
+      vectorIndexCompression: { mode: 'none', dims: 512, quantization: 'i8' },
+      embeddingStrategy: 'chunk_first',
+      summaryIndexEnabled: false,
+    },
+    llm: {
+      provider: 'auto',
+      llamaCpp: { url: 'http://localhost:8080', model: '', authHeaderName: '', authHeaderValue: '' },
+      model: 'gpt-oss:20b',
+      temperature: 0.7,
+      topP: 0.9,
+      topK: 40,
+      repeatPenalty: 1.1,
+      maxTokens: 2048,
+      contextWindow: 8192,
+      ollamaUrl: 'http://localhost:11434',
+      ollamaUtilityModel: '',
+      ollamaAuthHeaderName: '',
+      ollamaAuthHeaderValue: '',
+      timeoutSeconds: 30,
+      streamResponses: true,
+      prompts: {
+        systemPrompt: '',
+        greetingPromptTemplate: '',
+        ragPromptTemplate: '',
+        noContextPromptTemplate: '',
+        toolFollowupPromptTemplate: '',
+      },
+      verification: { enabled: false },
+      toolOutput: {
+        maxChars: 2000,
+        excerptChars: 220,
+        maxResults: 5,
+        highlightTermsMax: 6,
+        templates: {
+          defaultTemplate: '',
+          getDocumentTemplate: '',
+          semanticSearchTemplate: '',
+        },
+      },
+      router: {
+        enabled: false,
+        model: 'phi',
+        timeoutMs: 7000,
+        maxTokens: 256,
+        temperature: 0.1,
+        ambiguityThreshold: 0.5,
+        preferLastDocument: false,
+        promptTemplate: '',
+        clarifyPromptTemplate: '',
+      },
+      externalModelDirectories: [],
+      customTools: [],
+    },
+    ui: {
+      theme: 'system',
+      fontSize: 14,
+      showPreview: true,
+      resultsPerPage: 20,
+      enableAnimations: true,
+    },
+    sync: {
+      syncEnabled: false,
+      syncUrl: '',
+      syncIntervalMinutes: 5,
+      autoSync: false,
+      syncOnStartup: false,
+    },
+    backup: {
+      autoBackupEnabled: false,
+      backupFrequency: 'daily',
+      backupRetentionDays: 7,
+      backupPath: '',
+      compressBackups: true,
+    },
+    privacy: {
+      telemetryEnabled: false,
+      crashReporting: false,
+    },
+    vault: {
+      vaultPath: '',
+      enabled: false,
+      watchExternalChanges: false,
+    },
+    onboarding: {
+      firstRunDismissed: false,
+    },
+    ...overrides,
+  };
+}

@@ -1,5 +1,7 @@
 # Function Calling Implementation Guide
 
+> **Note (2026-09-16):** The Python/FastAPI backend (`src/api`) has been removed. The Python sections below are kept for historical context only; the Rust desktop implementation is the one that ships.
+
 This guide shows how to implement the 5 function calling tools in both **Python (Backend)** and **Rust (Desktop)**.
 
 **Architecture**: Local-first with Ollama for privacy-preserving AI. All processing happens on-device except optional web search.
@@ -285,7 +287,7 @@ api_router.include_router(function_calling.router)
 
 ### 1. Service Layer
 
-Create service in `/src/app/src-tauri/src/services/function_calling_service.rs`:
+Create service in `/src/src-tauri/src/services/function_calling_service.rs`:
 
 ```rust
 //! Function calling service for LLM tools.
@@ -476,7 +478,7 @@ impl FunctionCallingService {
 
 ### 2. Tauri Commands
 
-Create commands in `/src/app/src-tauri/src/commands/function_calling.rs`:
+Create commands in `/src/src-tauri/src/commands/function_calling.rs`:
 
 ```rust
 //! Tauri commands for function calling.
@@ -579,7 +581,7 @@ pub async fn list_documents(
 
 ### 3. Register Commands
 
-Add to `/src/app/src-tauri/src/main.rs`:
+Add to `/src/src-tauri/src/main.rs`:
 
 ```rust
 mod commands {
@@ -606,7 +608,7 @@ fn main() {
 
 ### Custom Hook
 
-Create `/src/app/src/hooks/useFunctionCalling.ts`:
+Create `/src/src/hooks/useFunctionCalling.ts`:
 
 ```typescript
 /**

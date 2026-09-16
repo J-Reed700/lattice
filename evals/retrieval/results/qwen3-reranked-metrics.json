@@ -1,0 +1,13 @@
+{
+  "queries": 11,
+  "retrieval_queries": 10,
+  "k": 3,
+  "recall_at_k": 1.0,
+  "ndcg_at_k": 1.0,
+  "mrr_at_k": 1.0,
+  "p95_latency_ms": 351.772,
+  "answer_judgments": 0,
+  "grounded_claim_fraction": null,
+  "citation_precision": null,
+  "abstention_accuracy": null
+}

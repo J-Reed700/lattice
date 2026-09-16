@@ -1,0 +1,188 @@
+{
+  "name": "Northstar synthetic answer expectations v1",
+  "queries": [
+    {
+      "id": "retry-transient-errors",
+      "required_patterns": [["\\b429\\b"], ["\\b502\\b"], ["\\b503\\b"], ["\\b504\\b"], ["idempoten"], ["Retry-After"], ["(?:three|3) (?:times|attempts|retries)"], ["(?:four|4) attempts"]],
+      "required_citation_docs": ["ops-rate-limit", "ops-service-unavailable", "ops-client-timeout"]
+    },
+    {
+      "id": "do-not-retry-auth",
+      "required_patterns": [["\\b(?:no|do not|don't|should not)\\b"], ["\\b401\\b"], ["same (?:key|credential)"]],
+      "required_citation_docs": ["ops-auth-failure"],
+      "forbidden_patterns": ["retry (?:the )?same request with (?:the )?same credential"]
+    },
+    {
+      "id": "write-timeout-safety",
+      "required_patterns": [["idempotency key"], ["(?:check|checking|verify|verifying).{0,40}(?:operation )?status|(?:operation )?status.{0,40}(?:check|verify)"]],
+      "required_citation_docs": ["ops-client-timeout", "ops-service-unavailable"]
+    },
+    {
+      "id": "ordinary-backup-retention",
+      "required_patterns": [["30 days"], ["monthly.{0,30}(?:one|1) year|(?:one|1) year.{0,30}monthly"]],
+      "required_citation_docs": ["backup-standard"]
+    },
+    {
+      "id": "finance-backup-retention",
+      "required_patterns": [["\\b(?:no|not)\\b"], ["seven|7"], ["year"]],
+      "required_citation_docs": ["backup-finance"]
+    },
+    {
+      "id": "design-hourly-restore",
+      "required_patterns": [["14 days"]],
+      "required_citation_docs": ["backup-design"]
+    },
+    {
+      "id": "provider-secret-location",
+      "required_patterns": [["credential manager|Keychain"], ["Keychain"], ["Credential Manager"], ["Secret Service"]],
+      "required_citation_docs": ["security-secret-storage"]
+    },
+    {
+      "id": "settings-export-secrets",
+      "required_patterns": [["\\b(?:no|not|never|does not|won't|will not)\\b"], ["API key|credential"], ["(?:supply|provide|enter|add).{0,35}credential|credential.{0,35}(?:supply|provide|enter|add)"]],
+      "required_citation_docs": ["security-export-boundary", "security-secret-storage"]
+    },
+    {
+      "id": "annual-first-purchase-refund",
+      "required_patterns": [["14 calendar days"]],
+      "required_citation_docs": ["refund-consumer-current"],
+      "forbidden_patterns": ["10[- ]day"]
+    },
+    {
+      "id": "annual-renewal-refund",
+      "required_patterns": [["7 calendar days"]],
+      "required_citation_docs": ["refund-consumer-current"],
+      "forbidden_patterns": ["14 calendar days"]
+    },
+    {
+      "id": "historical-refund-window",
+      "required_patterns": [["10[- ]day|10 days"], ["(?:former|previous|before|superseded|archived)"]],
+      "required_citation_docs": ["refund-consumer-archive"]
+    },
+    {
+      "id": "enterprise-refund-request",
+      "required_patterns": [["\\b(?:no|not)\\b"], ["signed order form|order form"], ["30 days"], ["service credit"]],
+      "required_citation_docs": ["refund-enterprise"]
+    },
+    {
+      "id": "aurora-production-owner",
+      "required_patterns": [["Mira Chen"]],
+      "required_citation_docs": ["project-aurora-current"],
+      "forbidden_patterns": ["Jonah Ruiz"]
+    },
+    {
+      "id": "aurora-release-blocker",
+      "required_patterns": [["keyboard"], ["screen.reader"], ["critical"], ["block"]],
+      "required_citation_docs": ["accessibility-release-gate"]
+    },
+    {
+      "id": "aurora-pilot-coordinator",
+      "required_patterns": [["Jonah Ruiz"], ["pilot|archived"]],
+      "required_citation_docs": ["project-aurora-archive"],
+      "forbidden_patterns": ["Mira Chen"]
+    },
+    {
+      "id": "orion-table-extraction",
+      "required_patterns": [["Orion"], ["phase two|phase 2"], ["Priya Nwosu"]],
+      "required_citation_docs": ["project-orion"]
+    },
+    {
+      "id": "current-mileage-rate",
+      "required_patterns": [["70 cents|\\$0\\.70"]],
+      "required_citation_docs": ["travel-current"],
+      "forbidden_patterns": ["62 cents|\\$0\\.62"]
+    },
+    {
+      "id": "old-mileage-rate",
+      "required_patterns": [["62 cents|\\$0\\.62"], ["2024|former|archived"]],
+      "required_citation_docs": ["travel-archive"]
+    },
+    {
+      "id": "accessible-travel-exception",
+      "required_patterns": [["\\byes\\b|may request|can receive"], ["People Operations"], ["confidential"], ["documented.{0,30}(?:accessibility|medical)|(?:accessibility|medical).{0,30}documented"]],
+      "required_citation_docs": ["travel-medical-exception"]
+    },
+    {
+      "id": "spanish-weekend",
+      "required_patterns": [["\\b(?:no|not)\\b"], ["(?:next|following).{0,20}(?:business|working) day|siguiente d[ií]a laborable"], ["critical|cr[ií]tico"]],
+      "required_citation_docs": ["support-spanish"]
+    },
+    {
+      "id": "french-friday-hours",
+      "required_patterns": [["midi|noon|12(?::00)?"]],
+      "required_citation_docs": ["support-french"]
+    },
+    {
+      "id": "japanese-hours-english-query",
+      "required_patterns": [["10(?::00)?.{0,20}(?:18(?::00)?|6(?::00)? ?p\\.?m\\.?)"], ["(?:Monday|Mon).{0,30}(?:Friday|Fri)|weekdays"], ["Japan Standard Time|JST"]],
+      "required_citation_docs": ["support-japanese"]
+    },
+    {
+      "id": "enterprise-weekend-emergency",
+      "required_patterns": [["\\byes\\b|can (?:be )?filed"], ["severity.one|severity 1"], ["English"], ["24|any hour|around.the.clock"]],
+      "required_citation_docs": ["support-global"]
+    },
+    {
+      "id": "deleted-content-lifecycle",
+      "required_patterns": [["30 days"], ["(?:further|additional|another) 60 days|60 days.{0,35}(?:after|further|additional)"], ["active systems"], ["disaster.recovery"]],
+      "required_citation_docs": ["privacy-retention-current"]
+    },
+    {
+      "id": "deletion-under-hold",
+      "required_patterns": [["\\b(?:no|cannot|can't)\\b"], ["legal hold"], ["suspend|skip|retain|override"]],
+      "required_citation_docs": ["privacy-legal-hold"]
+    },
+    {
+      "id": "embedding-same-dimensions",
+      "required_patterns": [["\\b(?:no|cannot|can't|not safely)\\b"], ["384"], ["(?:coordinate|vector) space|not.{0,20}comparable"], ["model artifacts|tokenizer|pooling|normalization|input policy"]],
+      "required_citation_docs": ["embedding-dimensions", "embedding-migration"]
+    },
+    {
+      "id": "failed-model-migration",
+      "required_patterns": [["previous|existing|current"], ["remain|keep|stays"], ["active"], ["separate.{0,20}generation|atomic"]],
+      "required_citation_docs": ["embedding-migration"]
+    },
+    {
+      "id": "reranking-order",
+      "required_patterns": [["before.{0,80}truncat|rerank.{0,80}(?:then|before).{0,30}(?:truncat|top)"], ["wider candidate pool"], ["blend"]],
+      "required_citation_docs": ["search-reranking"]
+    },
+    {
+      "id": "current-import-endpoint",
+      "required_patterns": [["POST /v3/import-jobs"], ["X-Lattice-Idempotency-Key"]],
+      "required_citation_docs": ["api-current-identifiers"],
+      "forbidden_patterns": ["POST /v1/import", "X-Request-Token"]
+    },
+    {
+      "id": "deprecated-import-event",
+      "required_patterns": [["import\\.finished"]],
+      "required_citation_docs": ["api-deprecated-identifiers"],
+      "forbidden_patterns": ["library\\.generation\\.activated"]
+    },
+    {
+      "id": "strategic-invoice-due-date",
+      "required_patterns": [["net 45|45 days"], ["signed order form"], ["approved strategic"]],
+      "required_citation_docs": ["billing-invoice-terms"]
+    },
+    {
+      "id": "enterprise-availability-credit",
+      "required_patterns": [["99\\.95"], ["30 days"], ["incident references"], ["affected (?:period|month)"], ["order form|credit table"]],
+      "required_citation_docs": ["sla-enterprise", "billing-service-credits"]
+    },
+    {
+      "id": "severity-one-definition",
+      "required_patterns": [["\\b(?:no|not)\\b"], ["severity three|severity 3"], ["localized"], ["workaround"]],
+      "required_citation_docs": ["incident-severity"]
+    },
+    {
+      "id": "west-annex-recovery-phrase",
+      "required_patterns": [["copper-otter-731"]],
+      "required_citation_docs": ["long-tail-recovery-code"],
+      "forbidden_patterns": ["copper-otter-713"]
+    },
+    {"id": "unanswerable-home-phone", "expected_abstain": true},
+    {"id": "unanswerable-office-wifi", "expected_abstain": true},
+    {"id": "unanswerable-orion-budget", "expected_abstain": true},
+    {"id": "unanswerable-japanese-holiday-calendar", "expected_abstain": true}
+  ]
+}

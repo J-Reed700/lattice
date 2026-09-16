@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/src/app/src/src/features"
+SRC="$ROOT/src/src/src/features"
 
 if [[ ! -d "$SRC" ]]; then
   echo "error: features dir not found at $SRC" >&2
@@ -32,7 +32,11 @@ is_high_level_file() {
   local base
   base="$(basename "$file")"
   [[ "$file" == */use_cases/* ]] ||
+    [[ "$file" == */commands/* ]] ||
+    [[ "$file" == */plugin/* ]] ||
+    [[ "$file" == */repository/* ]] ||
     [[ "$base" == commands*.rs ]] ||
+    [[ "$base" == plugin*.rs ]] ||
     [[ "$base" == watcher*.rs ]] ||
     [[ "$base" == service*.rs ]] ||
     [[ "$base" == repository*.rs ]]
@@ -43,7 +47,10 @@ owns_no_sql() {
   local base
   base="$(basename "$file")"
   [[ "$file" == */use_cases/* ]] ||
+    [[ "$file" == */commands/* ]] ||
+    [[ "$file" == */plugin/* ]] ||
     [[ "$base" == commands*.rs ]] ||
+    [[ "$base" == plugin*.rs ]] ||
     [[ "$base" == watcher*.rs ]] ||
     [[ "$base" == service*.rs ]]
 }
@@ -98,7 +105,7 @@ done < <(find "$SRC" -type f -name '*.rs' -print0)
 if ((violations > 0)); then
   echo
   echo "Found $violations Repository Barrier violation(s) across $checked_files production feature files."
-  echo "See CLAUDE.md 'ARCHITECTURAL RULE: Repository Barrier (SSOT)'."
+  echo "See CONTRIBUTING.md for the repository boundary rules."
   exit 1
 fi
 

@@ -1,0 +1,517 @@
+// Production code denies these lints in Cargo.toml. Tests may use panics and
+// unwraps as assertion failure signals.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::unwrap_in_result))]
+#![cfg_attr(test, allow(clippy::indexing_slicing))]
+#![cfg_attr(test, allow(clippy::panic))]
+
+//! # Lattice Desktop - Personal Knowledge Management System
+//!
+//! A local-first knowledge management system with semantic search capabilities,
+//! built with Domain-Driven Design (DDD) principles.
+//!
+//! ## Architecture
+//!
+//! This library follows **Domain-Driven Design (DDD)** with clear layer separation:
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  Interfaces Layer (External Boundaries)                  │
+//! │  - Tauri Commands (IPC)                                  │
+//! │  - Event Handlers                                        │
+//! │  - Dependency Injection Container                        │
+//! └────────────────────┬─────────────────────────────────────┘
+//!                      ↓ depends on
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  Application Layer (Use Cases & Orchestration)           │
+//! │  - Use Cases (workflows)                                 │
+//! │  - DTOs (data transfer objects)                          │
+//! │  - Ports (interface definitions for infrastructure)      │
+//! │  - Mappers (domain ↔ DTO conversion)                     │
+//! └────────────────────┬─────────────────────────────────────┘
+//!                      ↓ depends on
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  Domain Layer (Pure Business Logic)                      │
+//! │  - Entities (Document, Chunk, SearchResult)              │
+//! │  - Value Objects (FileMetadata, Checksum)                │
+//! │  - Services (ChunkingService)                            │
+//! │  ⚠️  ZERO external dependencies (only std + serde)       │
+//! └──────────────────────────────────────────────────────────┘
+//!                      ↑ implements
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  Infrastructure Layer (Technical Implementations)        │
+//! │  - Persistence (SQLite repositories)                     │
+//! │  - Search (USearch HNSW, BM25, Hybrid)                    │
+//! │  - ML (ONNX embeddings)                                  │
+//! │  - LLM (Ollama, Anthropic)                               │
+//! │  - File System (secure storage, watching)                │
+//! │  - Security (keyring, validation, rate limiting)         │
+//! └──────────────────────────────────────────────────────────┘
+//!
+//!          ┌──────────────────────────────────┐
+//!          │  Shared Kernel (Foundation)      │
+//!          │  - Error types                   │
+//!          │  - Domain primitives (IDs)       │
+//!          │  - Constants                     │
+//!          │  - Utilities                     │
+//!          └──────────────────────────────────┘
+//! ```
+//!
+//! ## Dependency Rule
+//!
+//! Dependencies point **inward** only:
+//!
+//! - **Interfaces** depends on → Application, Domain, Infrastructure
+//! - **Application** depends on → Domain (via ports)
+//! - **Domain** depends on → NOTHING (pure business logic)
+//! - **Infrastructure** depends on → Application (implements ports), Domain
+//! - **Shared** is used by ALL layers
+//!
+//! The **Domain layer has ZERO external dependencies** and contains only pure business logic.
+//!
+//! ## Quick Start
+//!
+//! ### Using Domain Models
+//!
+//! ```rust,no_run
+//! use lattice_desktop::domain::{Document, ChunkingStrategy};
+//! use lattice_desktop::shared::{ValidatedFilePath, Result};
+//! use std::path::PathBuf;
+//!
+//! # async fn example() -> Result<()> {
+//! // Create a validated file path (prevents directory traversal)
+//! let path = ValidatedFilePath::new(PathBuf::from("document.txt"))?;
+//!
+//! // Read file content
+//! let content = std::fs::read_to_string(path.as_path())?;
+//!
+//! // Create document with chunking
+//! let strategy = ChunkingStrategy::FixedSize { size: 512 };
+//! let document = Document::from_file(path, content, strategy)?;
+//!
+//! // Access chunks
+//! assert!(!document.chunks().is_empty());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Using Application Layer
+//!
+//! ```rust,no_run
+//! use lattice_desktop::application::{
+//!     SearchRequestDto, SearchResponseDto,
+//!     SemanticSearchUseCase,
+//! };
+//! use lattice_desktop::shared::Result;
+//!
+//! # async fn example(use_case: SemanticSearchUseCase) -> Result<SearchResponseDto> {
+//! let request = SearchRequestDto {
+//!     query: "machine learning".to_string(),
+//!     limit: Some(10),
+//!     ..Default::default()
+//! };
+//!
+//! let response = use_case.execute(request).await?;
+//! # Ok(response)
+//! # }
+//! ```
+//!
+//! ## Public API Overview
+//!
+//! ### Shared Kernel (Foundation)
+//!
+//! ```rust
+//! use lattice_desktop::{
+//!     AppError, Result,           // Error handling
+//!     DocumentId, ChunkId,        // Type-safe IDs
+//!     TagId, MentionId,           // More type-safe IDs
+//!     ValidatedFilePath,          // Security-validated paths
+//! };
+//! ```
+//!
+//! ### Domain Layer (Pure Business Logic)
+//!
+//! ```rust
+//! use lattice_desktop::domain::{
+//!     // Entities
+//!     Document, DocumentStatus, Chunk, SearchResult, Embedding,
+//!
+//!     // Value Objects
+//!     FileMetadata, Checksum, ChunkingStrategy,
+//!     SearchQuery, SearchMode,
+//!
+//!     // Services
+//!     ChunkingService,
+//! };
+//! ```
+//!
+//! ### Application Layer (Use Cases & DTOs)
+//!
+//! ```rust
+//! use lattice_desktop::application::{
+//!     // Use Cases
+//!     SemanticSearchUseCase, HybridSearchUseCase,
+//!     IndexFileUseCase, IndexDirectoryUseCase,
+//!     AskQuestionUseCase,
+//!
+//!     // DTOs
+//!     SearchRequestDto, SearchResponseDto, SearchResultDto,
+//!     IndexFileRequestDto, IndexFileResponseDto,
+//!     QARequestDto, QAResponseDto,
+//!     TagDto, CreateTagRequestDto, DocumentDto,
+//!
+//!     // Ports (interfaces for infrastructure)
+//!     EmbeddingPort, VectorSearchPort, TextSearchPort,
+//!     LLMPort, FileStoragePort, RepositoryPort,
+//!     NotificationPort,
+//! };
+//! ```
+//!
+//! ### Infrastructure Layer (Concrete Implementations)
+//!
+//! ```rust
+//! use lattice_desktop::infrastructure::{
+//!     // ML
+//!     OnnxEmbeddingService,
+//!
+//!     // Search
+//!     USearchVectorIndex, BM25Search,
+//!
+//!     // LLM
+//!     OllamaClient,
+//!
+//!     // File System
+//!     SecureFileStorage,
+//!
+//!     // Persistence
+//!     DatabaseConnection, DocumentRepository, ChunkRepository,
+//! };
+//! ```
+//!
+//! ### Interfaces Layer (Commands & DI)
+//!
+//! ```rust
+//! use lattice_desktop::interfaces::{
+//!     Container,          // Dependency injection container
+//!     commands,           // Tauri command handlers
+//!     event_handlers,     // Event handling
+//! };
+//! ```
+//!
+//! ## Feature Flags
+//!
+//! - `search`: Enable semantic search and embedding generation (default)
+//! - `indexing`: Enable document processing and chunking (default)
+//! - `qa`: Enable question-answering and LLM integration
+//! - `extraction`: Enable content extraction from documents
+//!
+//! ## SOLID Principles
+//!
+//! This library strictly follows SOLID principles:
+//!
+//! - **Single Responsibility**: Each module has one clear purpose
+//! - **Open/Closed**: Extend via ports/traits, not modification
+//! - **Liskov Substitution**: All implementations respect port contracts
+//! - **Interface Segregation**: Small, focused port traits
+//! - **Dependency Inversion**: Depend on abstractions (ports), not concretions
+//!
+//! ## Security
+//!
+//! Security controls are layered throughout the architecture:
+//!
+//! - **Input Validation**: All inputs validated at command layer
+//! - **Path Validation**: `ValidatedFilePath` prevents directory traversal (CWE-22)
+//! - **Rate Limiting**: Resource-intensive operations protected (CWE-770)
+//! - **Audit Logging**: Security events logged (CWE-778)
+//! - **Secure Storage**: Credentials stored in OS keyring
+//!
+//! ## Testing
+//!
+//! - **Domain**: Pure unit tests (no mocks needed)
+//! - **Application**: Use case tests with port mocks
+//! - **Infrastructure**: Integration tests with real implementations
+//! - **Interfaces**: Command tests with full DI container
+//!
+//! ## Version
+//!
+//! - Library: v0.2.0 (DDD architecture)
+
+#![deny(unsafe_code)]
+// Note: unused_crate_dependencies disabled - many crates are build/dev dependencies
+// #![cfg_attr(test, deny(unused_crate_dependencies))]
+
+/// Shared kernel module containing foundation types, errors, and utilities.
+///
+/// The shared kernel is used by ALL layers and has zero dependencies on
+/// other application layers.
+///
+/// # Contents
+///
+/// - [`error`](shared::error) - Application error types
+/// - [`domain_types`](shared::domain_types) - Type-safe domain primitives
+/// - [`constants`](shared::constants) - Application-wide constants
+/// - [`utils`](shared::utils) - Shared utilities
+pub mod shared;
+
+/// Vertical feature slices. New code should live here rather than in the
+/// legacy horizontal layers (application, infrastructure, interfaces, plugins).
+pub mod features;
+
+// Re-export commonly used shared types for convenience
+pub use shared::{
+    constants::*,
+    domain_types::{ChunkId, DocumentId, MentionId, TagId, ValidatedFilePath},
+    error::{AppError, ErrorResponse, Result, ResultExt},
+    utils::{alignment, retry},
+};
+
+/// Domain layer containing pure business logic with zero external dependencies.
+///
+/// # Architecture
+///
+/// The domain layer follows DDD patterns:
+/// - **Aggregates**: Aggregate roots with business invariants
+/// - **Entities**: Domain entities with identity
+/// - **Value Objects**: Immutable, validated domain primitives
+/// - **Services**: Pure business logic that doesn't fit in entities
+///
+/// # Zero Dependencies Rule
+///
+/// The domain layer depends ONLY on:
+/// - Rust std library
+/// - Common serialization (serde)
+/// - Time handling (chrono)
+///
+/// NO infrastructure dependencies (database, HTTP, ML, etc.)
+///
+/// # Public API
+///
+/// ```rust
+/// use lattice_desktop::domain::{
+///     DocumentAggregate, Document, DocumentStatus,
+///     Chunk, SearchResult, Embedding,
+///     FileMetadata, Checksum, ChunkingStrategy,
+///     SearchQuery, SearchMode,
+///     ChunkingService,
+/// };
+/// ```
+pub mod domain;
+
+pub use domain::{
+    entities::{Chunk, SearchResult},
+    services::ChunkingService,
+    value_objects::{
+        Checksum, ChunkingStrategy, FileMetadata, IndexingOutcome, SearchMode, SearchQuery,
+    },
+    Document, DocumentStatus,
+};
+
+/// Application layer containing use cases, DTOs, and port interfaces.
+///
+/// # Responsibilities
+///
+/// - **Use Case Orchestration**: Coordinate domain operations for workflows
+/// - **DTO Management**: Define data structures for crossing boundaries
+/// - **Mapping**: Convert between domain models and DTOs
+/// - **Port Definitions**: Define interfaces for infrastructure (Hexagonal Architecture)
+///
+/// # Public API
+///
+/// ```rust
+/// use lattice_desktop::application::{
+///     // Use Cases
+///     SemanticSearchUseCase, HybridSearchUseCase,
+///     IndexFileUseCase, IndexDirectoryUseCase,
+///     AskQuestionUseCase,
+///
+///     // DTOs
+///     SearchRequestDto, SearchResponseDto,
+///     IndexFileRequestDto, QARequestDto,
+///
+///     // Ports
+///     EmbeddingPort, VectorSearchPort, LLMPort,
+/// };
+/// ```
+#[cfg(feature = "indexing")]
+pub mod application;
+
+#[cfg(feature = "indexing")]
+pub use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
+#[cfg(feature = "indexing")]
+pub use application::{
+    mappers,
+    ports::{
+        EmbeddingPort, FileStoragePort, LLMPort, NotificationPort, RepositoryPort, TextSearchPort,
+        VectorSearchPort,
+    },
+};
+
+/// Infrastructure layer containing technical implementations of application ports.
+///
+/// # Implementations
+///
+/// - **Persistence**: SQLite repositories
+/// - **Search**: HNSW vector search, BM25 text search, hybrid fusion
+/// - **ML**: ONNX embedding generation
+/// - **LLM**: Ollama and Anthropic clients
+/// - **File System**: Secure file storage with validation
+/// - **Security**: Keyring storage, rate limiting
+/// - **Observability**: Tracing and monitoring
+///
+/// # Dependency Direction
+///
+/// Infrastructure implements Application ports and uses Domain entities.
+/// Infrastructure should NOT be imported by Domain or Application layers.
+///
+/// # Public API
+///
+/// ```rust
+/// use lattice_desktop::infrastructure::{
+///     OnnxEmbeddingService,
+///     USearchVectorIndex, BM25Search,
+///     OllamaClient,
+///     SecureFileStorage,
+///     DatabaseConnection, DocumentRepository,
+/// };
+/// ```
+pub mod infrastructure;
+
+pub use infrastructure::{
+    audit, extraction, file_system, ml, observability, persistence, security, services,
+};
+
+/// Interfaces layer containing external boundaries and dependency injection.
+///
+/// # Responsibilities
+///
+/// - **Tauri Commands**: Thin controllers for IPC
+/// - **Event Handlers**: Process domain and file system events
+/// - **Dependency Injection**: Wire all layers together
+///
+/// # Command Pattern
+///
+/// Commands are thin controllers (< 50 lines) that:
+/// 1. Apply rate limiting
+/// 2. Validate inputs
+/// 3. Delegate to use cases
+/// 4. Log audit events
+/// 5. Return responses
+///
+/// # Public API
+///
+/// ```rust
+/// use lattice_desktop::interfaces::{
+///     Container,          // DI container
+///     commands,           // Tauri commands
+///     event_handlers,     // Event processing
+/// };
+/// ```
+pub mod interfaces;
+
+pub use interfaces::di::Container;
+
+/// IPC (Inter-Process Communication) Layer
+///
+/// Provides the transport boundary between Rust backend and TypeScript frontend.
+/// Acts as an anti-corruption layer preventing transport concerns (Specta, Serde, Tauri)
+/// from polluting domain and application layers.
+///
+/// # Key Types
+///
+/// - `ApiError`: Transport error contract with Specta bindings
+///
+/// # Architecture
+///
+/// ```text
+/// TypeScript Frontend
+///        ↕ Tauri IPC
+///   Plugin Layer (ApiError) ← Transport boundary
+///        ↕ From<AppError>
+/// Shared Layer (AppError)  ← Unified error handling
+///        ↕ From<DomainError>
+/// Domain Layer             ← Pure business logic
+/// ```
+///
+/// Tauri plugin infrastructure.
+///
+/// Domain-sharded plugins using tauri-specta v2 for type-safe IPC.
+/// Plugins are split by domain and use tauri-specta for typed IPC.
+///
+/// # Plugins
+/// - **model**: 13 commands for model management
+/// - **search**: 6 commands for search operations
+/// - **file**: 12 commands for file operations
+///
+/// Plugins remain thin wrappers; business logic belongs in use cases and
+/// domain services.
+pub mod plugins;
+
+use std::path::PathBuf;
+use tauri::{AppHandle, Manager};
+
+/// Get the directory where ML models are stored.
+///
+/// Returns the application data directory joined with "models".
+///
+/// # Errors
+///
+/// Returns an error if the app data directory cannot be determined.
+pub fn get_model_dir(app: &AppHandle) -> Result<PathBuf> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Other(format!("Failed to get app data directory: {}", e)))?;
+    Ok(app_data.join("models"))
+}
+
+/// Get the path to the ONNX model file.
+///
+/// Returns the model directory joined with "model.onnx".
+///
+/// # Errors
+///
+/// Returns an error if the model directory cannot be determined.
+pub fn get_model_path(app: &AppHandle) -> Result<PathBuf> {
+    Ok(get_model_dir(app)?.join("model.onnx"))
+}
+
+/// Get the path to the tokenizer file.
+///
+/// Returns the model directory joined with "tokenizer.json".
+///
+/// # Errors
+///
+/// Returns an error if the model directory cannot be determined.
+pub fn get_tokenizer_path(app: &AppHandle) -> Result<PathBuf> {
+    Ok(get_model_dir(app)?.join("tokenizer.json"))
+}
+
+/// Library version
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Library name
+pub const NAME: &str = env!("CARGO_PKG_NAME");
+
+// Test modules (public for test utilities)
+#[cfg(test)]
+pub mod tests;
+
+// Unit tests for lib.rs metadata
+#[cfg(test)]
+mod lib_tests {
+    use super::*;
+
+    #[test]
+    fn test_version_exists() {
+        assert!(!VERSION.is_empty());
+        assert_eq!(NAME, "lattice-desktop");
+    }
+
+    #[test]
+    fn test_public_api_re_exports() {
+        // Test that commonly used types are re-exported at crate root
+        let _: Result<()> = Ok(());
+        let _: AppError = AppError::Other("test".to_string());
+    }
+}

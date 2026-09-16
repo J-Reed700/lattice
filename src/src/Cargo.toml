@@ -1,0 +1,258 @@
+[package]
+name = "lattice-desktop"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+default-run = "lattice-desktop"
+
+[lints.rust]
+# Public APIs are not fully documented yet.
+missing_docs = "allow"
+
+[lints.clippy]
+# Error handling - prevent panics in production
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"                 # Deny explicit panic!()
+
+# Additional safety lints
+unwrap_in_result = "deny"      # Deny unwrap inside Result-returning functions
+indexing_slicing = "deny"      # Deny array indexing without bounds check
+
+# Code quality
+missing_errors_doc = "allow"
+
+[lib]
+name = "lattice"
+# The documentation contains architectural and usage pseudocode with omitted
+# setup (mock repositories, async runtimes, application state). It is not an
+# executable doctest corpus; unit and integration targets provide the test gate.
+doctest = false
+
+[[bin]]
+name = "lattice-desktop"
+
+[[bin]]
+name = "export_bindings"
+path = "src/export_bindings.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+tauri-specta = { version = "2.0.0-rc.14", features = ["derive"] }
+
+[dependencies]
+tauri = { version = "=2.9.5", features = ["protocol-asset"] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-dialog = "2.6.0"
+
+# Type-safe IPC code generation
+specta = { version = "=2.0.0-rc.20", features = ["derive", "serde", "chrono", "uuid", "serde_json"] }
+specta-typescript = "0.0.7"
+tauri-specta = { version = "2.0.0-rc.14", features = ["derive", "typescript"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+semver = "1.0"
+jsonschema = { version = "0.17", default-features = false }
+tokio = { version = "1.35", features = ["full"] }
+notify = "6.1"
+# Sibling of `notify` (same maintainers) that handles the editor-temp-file-
+# swap insanity natively. Without it we'd hand-roll a sweep loop that
+# misclassifies macOS FSEvents Any/Other variants and atomic-rename
+# sequences. The debouncer batches into clean DebouncedEvent groups
+# keyed per-path with backend-tracked metadata.
+notify-debouncer-full = "0.3"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+# The reranker and embeddings both use Candle; the chat LLM runs in the
+# bundled llama-server sidecar.
+# (cross-encoder/ms-marco-MiniLM-L-6-v2). Embeddings already use Candle
+# (see features/embedding/candle_service.rs). With this removal Lattice
+# ships exactly one tensor framework — Candle — for both embedding and
+# reranker inference, with the bundled llama-server sidecar handling
+# the chat LLM. ~50MB removed from the binary; no more two-allocator
+# split between ORT's C++ runtime and Candle's pure-Rust runtime.
+# Drop tokenizers' default features to avoid `esaxx_fast`, which builds esaxx-rs
+# with `.static_crt(true)` (/MT). That collides with cxx/usearch using /MD on
+# Windows MSVC and the linker fails with LNK1319 "RuntimeLibrary mismatch".
+# `esaxx_fast` is a SentencePiece training optimization we don't use — we only
+# run pretrained tokenizers for inference.
+tokenizers = { version = "0.15", default-features = false, features = ["progressbar", "onig"] }
+ndarray = "0.16.1"
+anyhow = "1.0"
+thiserror = "1.0"
+rayon = "1.10"
+memmap2 = "0.9.11"
+usearch = "2.23"
+bytemuck = "1.14"
+lru = "0.16.3"
+sha2 = "0.10"
+futures = "0.3"
+async-stream = "0.3"
+reqwest = { version = "0.12", features = ["stream", "json", "cookies", "gzip", "deflate", "brotli"] }
+hex = "0.4"
+lopdf = { version = "0.44", default-features = false }
+docx-rs = "0.4"
+zip = "0.6"
+unicode-segmentation = "1.10"
+urlencoding = "2.1.3"  # URL decoding for path validation (CWE-22)
+dirs = "5.0"
+opener = "0.7"
+md5 = "0.7"
+# Native persistent stores must be explicitly enabled; keyring otherwise uses a mock.
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+infer = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "0.2"
+opentelemetry = "0.31"
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.32"
+once_cell = "1.19"
+regex = "1.10"
+lazy-regex = "3"
+rust-stemmers = "1.2"
+async-trait = "0.1"
+ollama-rs = "0.2"
+tokio-stream = "0.1"
+# CancellationToken for graceful shutdown signaling. Sagas race their
+# `recv()` against the token so app-wide shutdown can preempt a pending
+# event-bus poll instead of waiting for RecvError::Closed.
+tokio-util = "0.7"
+# fastembed removed: see ORT note above.
+# Candle — pure-Rust ML framework for embedding model inference.
+# CPU baseline here; the `metal` feature is enabled in the macOS-only
+# target stanza below. Enabling `metal` on Windows/Linux pulls in
+# objc2-foundation/objc2-metal, which fail to compile off Apple targets.
+# Pinned to 0.10.2. 0.10.x adds qwen3, qwen3_moe, qwen3_vl, and
+# nomic_bert which 0.8/0.9 lack. 0.10.2 is on crates.io but lacks a
+# matching Git tag; this is a known upstream quirk.
+candle-core = "=0.10.2"
+candle-nn = "=0.10.2"
+candle-transformers = "=0.10.2"
+safetensors = "0.4"
+# Rust modernization dependencies
+derive_more = { version = "1.0", features = ["from", "into", "display", "deref"] }
+parking_lot = "0.12"
+fs4 = "0.8"
+rand = "0.8"
+
+# LLM and web ingestion dependencies
+sysinfo = "0.30"
+scraper = "0.18"
+url = "2.5"
+html5ever = "0.26"
+ego-tree = "0.6"
+select = "0.6"
+readability-js = "0.1"  # Mozilla's Readability.js algorithm for article extraction
+
+# Audio ingest. Symphonia decodes the container and codec; Rubato
+# resamples to the 16 kHz mono f32 whisper expects. default-features = false
+# drops mkv/adpcm we do not need; `ogg` is the container for `vorbis` and
+# `pcm` is the codec for `wav`, so both must be listed explicitly.
+symphonia = { version = "=0.5.5", default-features = false, features = [
+    "mp3", "aac", "isomp4", "flac", "ogg", "vorbis", "wav", "pcm",
+] }
+rubato = "=0.15.0"
+
+# HDBSCAN over per-document embeddings for `features/corpus_shape`.
+petal-clustering = "0.12"
+petal-neighbors = "0.13"
+chacha20poly1305 = "0.11"
+aead-stream = "0.6"
+argon2 = "0.6"
+hkdf = "0.13"
+# `hkdf` 0.13 is on the `digest` 0.11 track, which the root `sha2 = "0.10"`
+# (digest 0.10, used by the rest of the app) does not satisfy. The backup
+# archive crypto imports this renamed copy; nothing else should.
+sha2_v011 = { package = "sha2", version = "0.11" }
+zeroize = "1.9"
+bip39 = "2.2"
+tar = "0.4"
+zstd = "0.14"
+walkdir = "2.5"
+base64 = "0.23"
+
+# Platform-specific Metal GPU support for macOS (M-series chips).
+# Cargo unifies feature flags across the dep graph, so re-declaring
+# candle-* here with `metal` enables the feature on macOS without
+# affecting Windows/Linux builds (which would fail compiling objc2-*).
+# Candle runs embedding and reranker inference. Local LLM inference is
+# handled by the bundled `llama-server`
+# sidecar (see binaries/, scripts/fetch-llama-binaries.sh, and the
+# llama-build.yml CI workflow) — no Rust-side LLM crate is needed.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "=0.10.2", features = ["metal"] }
+candle-nn = { version = "=0.10.2", features = ["metal"] }
+candle-transformers = { version = "=0.10.2", features = ["metal"] }
+
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.52", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_Foundation",
+    # Job Objects provide cascading sidecar termination.
+    # Without this, a hard-killed Lattice main process leaves
+    # orphaned llama-server children running. The Job Object kernel
+    # primitive guarantees they die with us — even on segfault.
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+winreg = "0.52"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+proptest = "1.5"
+insta = { version = "1.45", features = ["json", "redactions"] }
+mockall = "0.13"
+rand = "0.8"
+futures = "0.3"
+mockito = "1.0"
+wiremock = "0.6"
+hound = "=3.5.1"   # generates WAV fixtures for the audio-decode unit tests
+
+
+[features]
+default = ["custom-protocol", "search", "indexing", "qa", "extraction"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# Feature flags for optional functionality
+search = []       # Semantic search and embedding generation
+indexing = []     # Document processing and chunking
+qa = []           # Question-answering and LLM integration
+extraction = []   # Content extraction from documents
+test-utils = []   # Testing utilities and mocks
+
+
+# Quarantine features for temporarily disabled tests
+quarantine_download_tests = []  # Download command tests requiring refactoring
+quarantine_function_tests = []  # Function calling integration tests requiring refactoring
+
+
+# Profile configurations for stack size optimization
+# Increases stack size to prevent overflow with heavy ML dependencies (ONNX, candle)
+# and complex HTML parsing (e.g., Reddit pages)
+[profile.dev]
+# Increase stack size to 8MB for development (default is ~2MB)
+# This prevents stack overflow during:
+# - ONNX Runtime model initialization
+# - Deep async call chains in tokio workers
+# - Complex HTML parsing with scraper/html5ever
+# - Recursive content extraction algorithms
+split-debuginfo = "unpacked"
+
+[profile.release]
+# Production optimizations with 8MB stack
+# LTO improves binary size and performance
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.test]
+# Test profile - includes dev dependencies and cfg(test) code
+# This profile is used for `cargo test`
+inherits = "dev"

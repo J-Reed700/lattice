@@ -1,0 +1,1198 @@
+//! Domain Modules - Modular Replacement for ServiceContainer
+//!
+//! This module replaces the monolithic ServiceContainer (102 fields) with 7 focused
+//! domain modules. Each module contains only the use cases and services relevant to
+//! its bounded context.
+//!
+//! **Approved Architecture** (2026-01-21):
+//! - Fixes stack overflow caused by God Object anti-pattern
+//! - Aligns with DDD Bounded Contexts
+//! - Follows Tauri 2.0 best practices (multiple State objects)
+//! - Reduces command context from 102 pointers to ~5-15 per module
+//!
+//! ## Modules:
+//! 1. **CoreModule** - Shared infrastructure (DB, security, runtime)
+//! 2. **SearchModule** - All search functionality
+//! 3. **IndexingModule** - Document ingestion and processing
+//! 4. **AIModule** - LLM, Q&A, conversations
+//! 5. **LibraryModule** - Tags, favorites, mentions
+//! 6. **FileOpsModule** - File system operations
+//! 7. **SystemModule** - Settings, health, backup, cache
+
+use sqlx::SqlitePool;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
+
+// Application Use Cases - Search
+use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
+
+// Application Use Cases - Indexing
+use crate::features::indexing::use_cases::{
+    DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
+    RenameDocumentUseCase,
+};
+
+// Application Use Cases - Web
+use crate::features::web::use_cases::{GetUrlPreviewUseCase, IngestWebUrlUseCase};
+
+// Application Use Cases - Batch
+use crate::features::batch::use_cases::{
+    CancelBatchJobUseCase, DeleteBatchJobUseCase, GetBatchJobStatusUseCase, ListBatchJobsUseCase,
+    RetryFailedItemsUseCase, StartBatchFileImportUseCase, StartBatchUrlImportUseCase,
+};
+
+// Application Use Cases - Conversation
+use crate::features::conversation::use_cases::CreateConversationUseCase;
+
+// Application Use Cases - LLM
+use crate::features::llm::use_cases::{
+    CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
+    GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
+    GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
+};
+
+// Application Use Cases - Tags
+use crate::features::tags::use_cases::{
+    ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
+    GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
+    UpdateTagUseCase,
+};
+
+// (Favorites and Recent: no use cases — Tauri commands route through
+// raw sqlx in commands.rs. Repository ports are still wired below for
+// the function-calling executor.)
+
+// Application Use Cases - Mentions
+use crate::features::mentions::use_cases::{
+    CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
+    GetMentionsByTypeUseCase, GetMentionsForDocumentUseCase, SearchMentionsUseCase,
+};
+
+// Application Use Cases - File Operations
+use crate::features::file::use_cases::{
+    GetFileMetadataUseCase, GetFilePathByIdUseCase, ListCitingConversationsUseCase,
+    OpenFileByIdUseCase, OpenFileUseCase, ReadFileBytesUseCase, ReadFileContentUseCase,
+    ShowInFolderUseCase, UpdateFileMetadataUseCase,
+};
+
+// Application Use Cases - Extraction
+use crate::features::extraction::use_cases::{
+    ExtractAndResolveLinksUseCase, ExtractDocumentTitleUseCase, ParseWikilinksUseCase,
+    ResolveWikilinkUseCase,
+};
+
+// Application Use Cases - Health
+use crate::features::health::use_cases::HealthCheckUseCase;
+use crate::features::initialization::use_cases::{
+    InitializeDatabaseUseCase, InitializeModelsUseCase,
+};
+
+// Application Use Cases - Settings
+use crate::features::settings::use_cases::{
+    ExportSettingsUseCase, GetSettingsUseCase, ImportSettingsUseCase, ResetSettingsUseCase,
+    UpdateSettingsUseCase, ValidateSettingsUseCase,
+};
+
+// (Cache: no use cases — commands operate on the global QUERY_CACHE
+// singleton directly.)
+
+// Application Use Cases - Backup
+use crate::features::backup::use_cases::{
+    CreateBackupUseCase, RestoreBackupUseCase, StartAutoBackupUseCase, StartupAutoBackupUseCase,
+    StopAutoBackupUseCase,
+};
+
+// Application Use Cases - Updates
+use crate::features::updates::use_cases::{CheckForUpdatesUseCase, GetCurrentVersionUseCase};
+
+// Application Use Cases - Metrics
+use crate::features::metrics::use_cases::GetMetricsUseCase;
+
+// Application Use Cases - Stats
+use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUseCase};
+use crate::infrastructure::observability::metrics::Metrics;
+
+// Application Use Cases - Credentials
+use crate::features::credentials::use_cases::{
+    DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
+};
+
+// Application Ports
+use crate::application::ports::{
+    BackupPort, BatchJobRepositoryPort, ChunkRepositoryPort, CredentialsPort, DocumentRepository,
+    FavoritesRepositoryPort, FileStoragePort, FileSystemPort, MentionRepositoryPort,
+    ModelCatalogPort, RecentDocumentsRepositoryPort, RepositoryPort, SettingsRepositoryPort,
+    SystemInfoPort, VectorSearchPort,
+};
+
+// Service Traits
+use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
+use crate::features::conversation::ConversationServiceTrait;
+use crate::features::indexing::IndexingServiceTrait;
+use crate::features::qa::ConversationalQAServiceTrait;
+use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::tags::TagServiceTrait;
+use crate::features::web::{
+    WebArchiveServiceTrait, WebCaptureServiceTrait, WebIngestionServiceTrait,
+};
+use crate::infrastructure::services::traits::{
+    ArticleExtractorServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
+};
+
+use crate::application::ports::LoadedChatModelPort;
+use crate::infrastructure::services::model_manager::ModelManager;
+
+/// Core shared infrastructure used by all modules
+///
+/// **Fields**: ~10
+/// - Database connection pool
+/// - Security context and file access config
+/// - Application data directory
+/// - Credentials port for API keys
+#[derive(Clone)]
+pub struct CoreModule {
+    // Cross-cutting shared infrastructure — not owned by any feature slice.
+    db_pool: SqlitePool,
+    db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
+    security_context: Arc<SecurityContext>,
+    file_access_config: Arc<FileAccessConfig>,
+    data_dir: PathBuf,
+
+    // Feature slice
+    credentials: crate::features::credentials::di::CredentialsDi,
+}
+
+impl CoreModule {
+    /// Build shared Layer-1 infrastructure plus the credentials feature slice.
+    pub async fn new(
+        db_pool: SqlitePool,
+        db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
+        data_dir: PathBuf,
+    ) -> crate::shared::error::Result<Self> {
+        let security_context = Arc::new(SecurityContext::new());
+
+        // Imported documents live outside data_dir. Create their root before
+        // canonicalizing the policy, including on the first launch before any
+        // import. Otherwise a policy refresh would discard the missing root.
+        let library_root =
+            crate::infrastructure::storage::ContentAddressedStorage::default_library_root()?;
+        tokio::fs::create_dir_all(&library_root)
+            .await
+            .map_err(|error| {
+                crate::shared::error::AppError::FileStorage(format!(
+                    "Failed to create library directory: {error}"
+                ))
+            })?;
+        // The user's vault and indexed folders are added by refresh_allowed_roots.
+        let file_access_config =
+            Arc::new(FileAccessConfig::new(vec![data_dir.clone(), library_root]));
+
+        let credentials_path = data_dir.join("credentials.json");
+        let credentials = crate::features::credentials::di::build(credentials_path);
+
+        Ok(Self {
+            db_pool,
+            db_conn,
+            security_context,
+            file_access_config,
+            data_dir,
+            credentials,
+        })
+    }
+
+    // Infrastructure getters
+    pub fn db_pool(&self) -> &SqlitePool {
+        &self.db_pool
+    }
+
+    pub fn db_conn(
+        &self,
+    ) -> &Arc<crate::infrastructure::persistence::database::DatabaseConnection> {
+        &self.db_conn
+    }
+
+    pub fn security_context(&self) -> &Arc<SecurityContext> {
+        &self.security_context
+    }
+
+    pub fn file_access_config(&self) -> &Arc<FileAccessConfig> {
+        &self.file_access_config
+    }
+
+    pub fn data_dir(&self) -> &PathBuf {
+        &self.data_dir
+    }
+
+    // Credentials feature getters
+    pub fn credentials(&self) -> &Arc<dyn CredentialsPort> {
+        &self.credentials.credentials
+    }
+
+    pub fn set_api_key_use_case(&self) -> &Arc<SetApiKeyUseCase> {
+        &self.credentials.set_api_key_use_case
+    }
+
+    pub fn get_api_key_use_case(&self) -> &Arc<GetApiKeyUseCase> {
+        &self.credentials.get_api_key_use_case
+    }
+
+    pub fn delete_api_key_use_case(&self) -> &Arc<DeleteApiKeyUseCase> {
+        &self.credentials.delete_api_key_use_case
+    }
+
+    pub fn set_custom_endpoint_use_case(&self) -> &Arc<SetCustomEndpointUseCase> {
+        &self.credentials.set_custom_endpoint_use_case
+    }
+}
+
+/// Search module for semantic, hybrid, and file search
+///
+/// **Fields**: ~15
+/// - 4 search use cases
+/// - 3 search services
+/// - Vector and text search ports
+/// - Embedding cache (read-only)
+/// - Document and recent docs repositories
+#[derive(Clone)]
+pub struct SearchModule {
+    search: crate::features::search::di::SearchDi,
+    /// The strategy the index was opened for. The embedding loader reads it so
+    /// the model it publishes produces vectors in the same space the index was
+    /// keyed on — anything else silently mixes two generations.
+    embedding_strategy: crate::features::embedding::late_chunking::EmbeddingStrategy,
+}
+
+impl SearchModule {
+    /// Build SearchModule by composing the search feature builder.
+    ///
+    /// Resolves the active embedding model's expected dimension (from its
+    /// `config.json::hidden_size`) before opening the USearch index, so the
+    /// dimension sidecar can wipe a stale index *once*, ahead of the
+    /// container's model load — avoiding a startup loop where each restart
+    /// wipes-then-fails.
+    pub async fn new(
+        db_pool: SqlitePool,
+        core: Arc<CoreModule>,
+        model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+    ) -> crate::shared::error::Result<Self> {
+        let usearch_index_path = core.data_dir().join("usearch_index.usearch");
+        let models_path = core.data_dir().join("models");
+        let active_dim = resolve_active_embedding_dimension(&db_pool).await;
+        let search_settings = read_search_settings(core.data_dir()).await;
+        let embedding_strategy = resolve_embedding_strategy(&search_settings);
+        let compression = resolve_vector_compression(&db_pool, &search_settings, active_dim).await;
+        let search = crate::features::search::di::build_with_compression(
+            db_pool,
+            usearch_index_path,
+            models_path,
+            model_provider,
+            active_dim,
+            compression,
+            embedding_strategy,
+        )
+        .await?;
+        Ok(Self {
+            search,
+            embedding_strategy,
+        })
+    }
+
+    /// The embedding strategy this index's vector space was keyed on.
+    pub fn embedding_strategy(
+        &self,
+    ) -> crate::features::embedding::late_chunking::EmbeddingStrategy {
+        self.embedding_strategy
+    }
+
+    pub fn embedding_identity(&self) -> Option<&str> {
+        self.search.embedding_identity.as_deref()
+    }
+
+    pub fn semantic_search_use_case(&self) -> &Arc<SemanticSearchUseCase> {
+        &self.search.semantic_search_use_case
+    }
+
+    pub fn hybrid_search_use_case(&self) -> &Arc<HybridSearchUseCase> {
+        &self.search.hybrid_search_use_case
+    }
+
+    pub fn search_service(&self) -> &Arc<dyn SearchServiceTrait> {
+        &self.search.search_service
+    }
+
+    pub fn bm25_search_service(&self) -> &Arc<dyn BM25SearchTrait> {
+        &self.search.bm25_search
+    }
+
+    pub fn hybrid_search_service(&self) -> &Arc<dyn HybridSearchTrait> {
+        &self.search.hybrid_search_service
+    }
+
+    pub fn reranker(&self) -> &Arc<dyn crate::features::search::engine::reranker::Reranker> {
+        &self.search.reranker
+    }
+
+    pub fn search_enrichment_service(&self) -> &Arc<dyn SearchEnrichmentServiceTrait> {
+        &self.search.search_enrichment_service
+    }
+
+    pub fn vector_search(&self) -> &Arc<dyn VectorSearchPort> {
+        &self.search.vector_search
+    }
+
+    pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
+        &self.search.document_repo
+    }
+}
+
+/// Read the stored search settings, or fall back to the defaults.
+///
+/// Opening the index is a startup step that must not be blocked by a settings
+/// file this process cannot read: the defaults reproduce the historical
+/// behaviour exactly, so falling back costs nothing but a log line.
+async fn read_search_settings(
+    data_dir: &std::path::Path,
+) -> crate::features::settings::dto::SearchSettingsDto {
+    use crate::application::ports::SettingsRepositoryPort;
+    use crate::infrastructure::persistence::repositories::SettingsRepository;
+
+    match SettingsRepository::new(data_dir.to_path_buf()).await {
+        Ok(repository) => match repository.get_all().await {
+            Ok(settings) => settings.search,
+            Err(e) => {
+                tracing::warn!(error = %e, "Could not read search settings; opening the vector index with defaults");
+                Default::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "Could not open the settings repository; opening the vector index with defaults");
+            Default::default()
+        }
+    }
+}
+
+fn resolve_embedding_strategy(
+    settings: &crate::features::settings::dto::SearchSettingsDto,
+) -> crate::features::embedding::late_chunking::EmbeddingStrategy {
+    use crate::features::embedding::late_chunking::EmbeddingStrategy;
+    use crate::features::settings::dto::EmbeddingStrategySettingDto;
+
+    match settings.embedding_strategy {
+        EmbeddingStrategySettingDto::ChunkFirst => EmbeddingStrategy::ChunkFirst,
+        EmbeddingStrategySettingDto::LateChunking => EmbeddingStrategy::LateChunking,
+    }
+}
+
+/// Map the stored compression setting onto the index configuration, refusing
+/// truncation the active model cannot survive.
+///
+/// Matryoshka truncation is only meaningful for a model trained for it. Asking
+/// for it on any other model does not fail loudly — it quietly produces a worse
+/// index — so the request is logged and dropped rather than honoured. Same for
+/// a `dims` the model cannot satisfy: the setting is a preference, and a
+/// preference must never leave the app unable to open its index.
+async fn resolve_vector_compression(
+    db_pool: &SqlitePool,
+    settings: &crate::features::settings::dto::SearchSettingsDto,
+    active_embedding_dimension: Option<usize>,
+) -> crate::features::search::engine::vector_search::VectorIndexCompression {
+    use crate::features::search::engine::vector_search::{
+        VectorIndexCompression, VectorQuantization,
+    };
+    use crate::features::settings::dto::{VectorIndexCompressionModeDto, VectorQuantizationDto};
+
+    let requested = settings.vector_index_compression;
+    if requested.mode == VectorIndexCompressionModeDto::None {
+        return VectorIndexCompression::None;
+    }
+
+    let Some(model_id) = active_embedding_model_id(db_pool).await else {
+        tracing::info!(
+            "Vector compression is set to truncated but no embedding model is active; \
+             storing full-precision vectors until one is"
+        );
+        return VectorIndexCompression::None;
+    };
+    if !crate::domain::curated_models::embedding_model_supports_matryoshka(&model_id) {
+        tracing::warn!(
+            model_id = %model_id,
+            "Ignoring truncated vector compression: this embedding model does not advertise \
+             Matryoshka support, and truncating it would degrade search without any error"
+        );
+        return VectorIndexCompression::None;
+    }
+
+    let quantization = match requested.quantization {
+        VectorQuantizationDto::F32 => VectorQuantization::F32,
+        VectorQuantizationDto::I8 => VectorQuantization::I8,
+    };
+    let compression = VectorIndexCompression::truncated(requested.dims as usize, quantization);
+    let Some(dimension) = active_embedding_dimension else {
+        // Without a known dimension there is nothing to validate against, and
+        // guessing one would either wipe a good index or accept a bad config.
+        tracing::info!(
+            "Vector compression is set to truncated but the active model's dimension is unknown; \
+             storing full-precision vectors until it is"
+        );
+        return VectorIndexCompression::None;
+    };
+    if let Err(e) = compression.validate(dimension) {
+        tracing::warn!(error = %e, "Ignoring truncated vector compression: invalid for the active model");
+        return VectorIndexCompression::None;
+    }
+    compression
+}
+
+/// The catalog id of the active embedding model, when there is one.
+async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
+    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+
+    let repo = DownloadedModelRepository::new(db_pool.clone());
+    let active = repo.get_active_embedding_model().await.ok().flatten()?;
+    Some(active.model_id().to_owned())
+}
+
+/// Read the active embedding model's expected output dimension from disk.
+///
+/// Path: DB → active downloaded embedding model → file_path's parent dir
+/// → `config.json::hidden_size`. Returns `None` if any step is missing
+/// (no active model, file moved, malformed config) — the caller treats
+/// `None` as "leave the existing index dimension alone".
+///
+/// Why this matters: the USearch index sidecar (`.dim`) is checked at
+/// SearchDi::build() time. If we passed the legacy `DEFAULT_EMBEDDING_DIM`
+/// here while the active model was actually 1024-dim, every restart would
+/// wipe the user's index back to 384, then the container would fail to
+/// load the model at the wrong dim, cycle forever.
+async fn resolve_active_embedding_dimension(db_pool: &SqlitePool) -> Option<usize> {
+    use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
+
+    let repo = DownloadedModelRepository::new(db_pool.clone());
+    let active = repo.get_active_embedding_model().await.ok().flatten()?;
+    let model_dir = active.location().enclosing_dir()?;
+    let config_path = model_dir.join("config.json");
+    let bytes = std::fs::read(&config_path).ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    json.get("hidden_size")?.as_u64().map(|n| n as usize)
+}
+
+/// Indexing module — hollow composition root over the indexing, web, and
+/// batch feature slices. Shares `vector_search` with [`SearchModule`] so
+/// index-time writes reach the same USearch instance queried at search time.
+#[derive(Clone)]
+pub struct IndexingModule {
+    indexing: crate::features::indexing::di::IndexingDi,
+    web: crate::features::web::di::WebDi,
+    batch: crate::features::batch::di::BatchDi,
+    /// Page OCR for scanned PDFs. `NoopOcr` until a vision adapter exists:
+    /// scanned pages are reported in `ExtractedContent::needs_ocr` and the
+    /// rest of every document is still indexed. Swap this one binding for a
+    /// real provider to turn OCR on everywhere it is consumed.
+    ocr: Arc<dyn crate::application::ports::OcrPort>,
+}
+
+impl IndexingModule {
+    /// Build IndexingModule by composing indexing + web + batch features.
+    pub async fn new(
+        db_pool: SqlitePool,
+        core: Arc<CoreModule>,
+        model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
+        vector_search: Arc<dyn VectorSearchPort>,
+    ) -> crate::shared::error::Result<Self> {
+        let indexing = crate::features::indexing::di::build(
+            db_pool.clone(),
+            model_provider.clone(),
+            vector_search,
+        )?;
+        let model_dir = core.data_dir().join("models");
+        let web = crate::features::web::di::build(db_pool.clone(), &model_dir, model_provider)?;
+        let batch = crate::features::batch::di::build(
+            indexing.batch_job_repo.clone(),
+            indexing.index_file_use_case.clone(),
+            web.ingest_web_url_use_case.clone(),
+            web.web_ingestion_service.clone(),
+            indexing.uow_factory.clone(),
+            Arc::new(crate::infrastructure::document_scope::SqliteDocumentScope::new(db_pool)),
+        );
+
+        Ok(Self {
+            indexing,
+            web,
+            batch,
+            ocr: Arc::new(crate::application::ports::NoopOcr),
+        })
+    }
+
+    // Indexing use case getters
+    pub fn index_file_use_case(&self) -> &Arc<IndexFileUseCase> {
+        &self.indexing.index_file_use_case
+    }
+
+    pub fn index_directory_use_case(&self) -> &Arc<IndexDirectoryUseCase> {
+        &self.indexing.index_directory_use_case
+    }
+
+    pub fn reindex_document_use_case(&self) -> &Arc<ReindexDocumentUseCase> {
+        &self.indexing.reindex_document_use_case
+    }
+
+    pub fn delete_document_use_case(&self) -> &Arc<DeleteDocumentUseCase> {
+        &self.indexing.delete_document_use_case
+    }
+
+    pub fn rename_document_use_case(&self) -> &Arc<RenameDocumentUseCase> {
+        &self.indexing.rename_document_use_case
+    }
+
+    /// On-device speech-to-text, shared with the content-extraction adapter.
+    pub fn transcription_port(&self) -> &Arc<dyn crate::application::ports::TranscriptionPort> {
+        &self.indexing.transcription
+    }
+
+    /// Page OCR for scanned PDFs. Hand this to
+    /// `ContentExtractor::with_ocr` once a vision adapter replaces `NoopOcr`.
+    pub fn ocr_port(&self) -> &Arc<dyn crate::application::ports::OcrPort> {
+        &self.ocr
+    }
+
+    // Web use case getters
+    pub fn ingest_web_url_use_case(&self) -> &Arc<IngestWebUrlUseCase> {
+        &self.web.ingest_web_url_use_case
+    }
+
+    pub fn get_url_preview_use_case(&self) -> &Arc<GetUrlPreviewUseCase> {
+        &self.web.get_url_preview_use_case
+    }
+
+    // Batch use case getters
+    pub fn start_batch_file_import_use_case(&self) -> &Arc<StartBatchFileImportUseCase> {
+        &self.batch.start_batch_file_import_use_case
+    }
+
+    pub fn start_batch_url_import_use_case(&self) -> &Arc<StartBatchUrlImportUseCase> {
+        &self.batch.start_batch_url_import_use_case
+    }
+
+    pub fn get_batch_job_status_use_case(&self) -> &Arc<GetBatchJobStatusUseCase> {
+        &self.batch.get_batch_job_status_use_case
+    }
+
+    pub fn cancel_batch_job_use_case(&self) -> &Arc<CancelBatchJobUseCase> {
+        &self.batch.cancel_batch_job_use_case
+    }
+
+    pub fn list_batch_jobs_use_case(&self) -> &Arc<ListBatchJobsUseCase> {
+        &self.batch.list_batch_jobs_use_case
+    }
+
+    pub fn delete_batch_job_use_case(&self) -> &Arc<DeleteBatchJobUseCase> {
+        &self.batch.delete_batch_job_use_case
+    }
+
+    pub fn retry_failed_items_use_case(&self) -> &Arc<RetryFailedItemsUseCase> {
+        &self.batch.retry_failed_items_use_case
+    }
+
+    // Service getters
+    pub fn indexing_state(&self) -> &Arc<crate::features::indexing::engine::IndexingState> {
+        &self.indexing.indexing_state
+    }
+
+    pub fn indexing_service(&self) -> &Arc<dyn IndexingServiceTrait> {
+        &self.indexing.indexing_service
+    }
+
+    pub fn web_ingestion_service(&self) -> &Arc<dyn WebIngestionServiceTrait> {
+        &self.web.web_ingestion_service
+    }
+
+    pub fn web_capture_service(&self) -> &Arc<dyn WebCaptureServiceTrait> {
+        &self.web.web_capture_service
+    }
+
+    pub fn article_extractor_service(&self) -> &Arc<dyn ArticleExtractorServiceTrait> {
+        &self.web.article_extractor_service
+    }
+
+    pub fn web_archive(&self) -> &Arc<dyn WebArchiveServiceTrait> {
+        &self.web.web_archive
+    }
+
+    pub fn batch_file_import_service(&self) -> &Arc<dyn BatchFileImportServiceTrait> {
+        &self.batch.batch_file_import_service
+    }
+
+    pub fn batch_url_import_service(&self) -> &Arc<dyn BatchUrlImportServiceTrait> {
+        &self.batch.batch_url_import_service
+    }
+
+    pub fn file_storage(&self) -> &Arc<dyn FileStoragePort> {
+        &self.indexing.file_storage
+    }
+
+    pub fn chunk_repository(&self) -> &Arc<dyn ChunkRepositoryPort> {
+        &self.indexing.chunk_repo
+    }
+
+    pub fn batch_job_repo(&self) -> &Arc<dyn BatchJobRepositoryPort> {
+        &self.indexing.batch_job_repo
+    }
+}
+
+/// AI module for LLM operations, Q&A, and conversations
+///
+/// **Fields**: ~25
+/// - 17 use cases (conversation, LLM, AI-powered tags)
+/// - 4 services
+/// - LLM cache and inference engine
+/// - Downloaded model repository
+/// - Model catalog and credentials
+#[derive(Clone)]
+pub struct AIModule {
+    conversation: crate::features::conversation::di::ConversationDi,
+    qa: crate::features::qa::di::QaDi,
+    llm: crate::features::llm::di::LlmDi,
+    ai_tags: crate::features::tags::di::AiTagsDi,
+
+    // Credentials handle echoed from CoreModule for legacy Container API.
+    credentials: Arc<dyn CredentialsPort>,
+}
+
+impl AIModule {
+    /// Build AIModule by composing conversation + qa + llm + ai-tags features.
+    pub async fn new(
+        db_pool: SqlitePool,
+        core: Arc<CoreModule>,
+        model_provider: Arc<dyn LoadedChatModelPort>,
+        _llm_endpoint: &str,
+        _llm_model: &str,
+    ) -> crate::shared::error::Result<Self> {
+        let conversation = crate::features::conversation::di::build(db_pool.clone());
+        let qa = crate::features::qa::di::build(conversation.conversation_service.clone());
+        let llm = crate::features::llm::di::build(
+            db_pool.clone(),
+            core.db_conn().clone(),
+            core.data_dir().clone(),
+            core.credentials().clone(),
+        )
+        .await?;
+        let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);
+
+        Ok(Self {
+            conversation,
+            qa,
+            llm,
+            ai_tags,
+            credentials: core.credentials().clone(),
+        })
+    }
+
+    // Conversation use case getters
+    pub fn create_conversation_use_case(&self) -> &Arc<CreateConversationUseCase> {
+        &self.conversation.create_conversation_use_case
+    }
+
+    // LLM/model use case getters
+    pub fn get_system_capabilities_use_case(&self) -> &Arc<GetSystemCapabilitiesUseCase> {
+        &self.llm.get_system_capabilities_use_case
+    }
+
+    pub fn get_available_models_use_case(&self) -> &Arc<GetAvailableModelsUseCase> {
+        &self.llm.get_available_models_use_case
+    }
+
+    pub fn get_recommended_models_use_case(&self) -> &Arc<GetRecommendedModelsUseCase> {
+        &self.llm.get_recommended_models_use_case
+    }
+
+    pub fn get_best_model_use_case(&self) -> &Arc<GetBestModelUseCase> {
+        &self.llm.get_best_model_use_case
+    }
+
+    pub fn check_model_downloaded_use_case(&self) -> &Arc<CheckModelDownloadedUseCase> {
+        &self.llm.check_model_downloaded_use_case
+    }
+
+    pub fn get_model_path_use_case(&self) -> &Arc<GetModelPathUseCase> {
+        &self.llm.get_model_path_use_case
+    }
+
+    pub fn download_model_use_case(&self) -> &Arc<DownloadModelUseCase> {
+        &self.llm.download_model_use_case
+    }
+
+    pub fn delete_model_use_case(&self) -> &Arc<DeleteModelUseCase> {
+        &self.llm.delete_model_use_case
+    }
+
+    pub fn list_models_use_case(&self) -> &Arc<ListDownloadedModelsUseCase> {
+        &self.llm.list_models_use_case
+    }
+
+    // AI-powered tag use case getters
+    pub fn generate_tags_use_case(&self) -> &Arc<GenerateTagsUseCase> {
+        &self.ai_tags.generate_tags_use_case
+    }
+
+    pub fn auto_tag_all_documents_use_case(&self) -> &Arc<AutoTagAllDocumentsUseCase> {
+        &self.ai_tags.auto_tag_all_documents_use_case
+    }
+
+    // Service getters
+    pub fn conversation_service(&self) -> &Arc<dyn ConversationServiceTrait> {
+        &self.conversation.conversation_service
+    }
+
+    pub fn document_scope(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
+        &self.conversation.document_scope
+    }
+
+    pub fn conversation_history(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::ConversationHistoryPort> {
+        &self.conversation.conversation_history
+    }
+
+    pub fn conversation_context(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::conversation_context::ConversationContextPort> {
+        &self.conversation.conversation_context
+    }
+
+    pub fn conversational_qa_service(&self) -> &Arc<dyn ConversationalQAServiceTrait> {
+        &self.qa.conversational_qa_service
+    }
+
+    pub fn downloaded_model_repo(
+        &self,
+    ) -> &Arc<crate::infrastructure::persistence::repositories::DownloadedModelRepository> {
+        &self.llm.downloaded_model_repo
+    }
+
+    pub fn model_catalog(&self) -> &Arc<dyn ModelCatalogPort> {
+        &self.llm.model_catalog
+    }
+
+    pub fn model_catalog_cache(
+        &self,
+    ) -> &Arc<crate::features::model_management::cache_adapter::ModelCacheAdapter> {
+        &self.llm.model_catalog_cache
+    }
+
+    pub fn download_manager(
+        &self,
+    ) -> &Arc<dyn crate::features::download::manager::DownloadManager> {
+        &self.llm.download_manager
+    }
+
+    #[allow(dead_code)]
+    pub fn credentials(&self) -> &Arc<dyn CredentialsPort> {
+        &self.credentials
+    }
+}
+
+/// Library module for document organization (tags, favorites, mentions)
+///
+/// **Fields**: ~20
+/// - 18 use cases (tags, favorites, recent, mentions)
+/// - 1 service (tag service)
+/// - 4 repositories
+#[derive(Clone)]
+pub struct LibraryModule {
+    tags: crate::features::tags::di::TagsDi,
+    favorites: crate::features::favorites::di::FavoritesDi,
+    recent: crate::features::recent::di::RecentDi,
+    mentions: crate::features::mentions::di::MentionsDi,
+}
+
+impl LibraryModule {
+    /// Build LibraryModule by composing feature-local DI builders.
+    pub async fn new(
+        db_pool: SqlitePool,
+        _core: Arc<CoreModule>,
+    ) -> crate::shared::error::Result<Self> {
+        Ok(Self {
+            tags: crate::features::tags::di::build(db_pool.clone()),
+            favorites: crate::features::favorites::di::build(db_pool.clone()),
+            recent: crate::features::recent::di::build(db_pool.clone()),
+            mentions: crate::features::mentions::di::build(db_pool),
+        })
+    }
+
+    // Tag use case getters
+    pub fn create_tag_use_case(&self) -> &Arc<CreateTagUseCase> {
+        &self.tags.create_tag_use_case
+    }
+
+    pub fn update_tag_use_case(&self) -> &Arc<UpdateTagUseCase> {
+        &self.tags.update_tag_use_case
+    }
+
+    pub fn delete_tag_use_case(&self) -> &Arc<DeleteTagUseCase> {
+        &self.tags.delete_tag_use_case
+    }
+
+    pub fn remove_tag_from_document_use_case(&self) -> &Arc<RemoveTagFromDocumentUseCase> {
+        &self.tags.remove_tag_from_document_use_case
+    }
+
+    pub fn get_tags_use_case(&self) -> &Arc<GetTagsUseCase> {
+        &self.tags.get_tags_use_case
+    }
+
+    pub fn apply_tags_use_case(&self) -> &Arc<ApplyTagsUseCase> {
+        &self.tags.apply_tags_use_case
+    }
+
+    pub fn search_by_tag_use_case(&self) -> &Arc<SearchByTagUseCase> {
+        &self.tags.search_by_tag_use_case
+    }
+
+    // (Favorites + Recent: no use case getters — Tauri commands route
+    // through raw sqlx in their respective commands.rs files. The
+    // repository ports are exposed below for the function-calling
+    // executor.)
+
+    // Mentions use case getters
+    pub fn extract_mentions_use_case(&self) -> &Arc<ExtractMentionsUseCase> {
+        &self.mentions.extract_mentions_use_case
+    }
+
+    pub fn search_mentions_use_case(&self) -> &Arc<SearchMentionsUseCase> {
+        &self.mentions.search_mentions_use_case
+    }
+
+    pub fn get_backlinks_use_case(&self) -> &Arc<GetBacklinksUseCase> {
+        &self.mentions.get_backlinks_use_case
+    }
+
+    pub fn get_mentions_by_type_use_case(&self) -> &Arc<GetMentionsByTypeUseCase> {
+        &self.mentions.get_mentions_by_type_use_case
+    }
+
+    pub fn get_mentions_for_document_use_case(&self) -> &Arc<GetMentionsForDocumentUseCase> {
+        &self.mentions.get_mentions_for_document_use_case
+    }
+
+    pub fn favorites_repo(&self) -> &Arc<dyn FavoritesRepositoryPort> {
+        &self.favorites.favorites_repo
+    }
+
+    pub fn recent_docs_repo(&self) -> &Arc<dyn RecentDocumentsRepositoryPort> {
+        &self.recent.recent_docs_repo
+    }
+
+    pub fn create_mention_use_case(&self) -> &Arc<CreateMentionUseCase> {
+        &self.mentions.create_mention_use_case
+    }
+
+    pub fn delete_mention_use_case(&self) -> &Arc<DeleteMentionUseCase> {
+        &self.mentions.delete_mention_use_case
+    }
+
+    // Service getters
+    pub fn tag_service(&self) -> &Arc<dyn TagServiceTrait> {
+        &self.tags.tag_service
+    }
+
+    // Repository getters needed by Container
+    pub fn mention_repo(&self) -> &Arc<dyn MentionRepositoryPort> {
+        &self.mentions.mention_repo
+    }
+}
+
+/// File operations module for opening files, metadata, wikilinks
+///
+/// **Fields**: ~10
+/// - 9 use cases (file operations, extraction)
+/// - File system adapter
+/// - Document repository (read-only for paths)
+#[derive(Clone)]
+pub struct FileOpsModule {
+    library: Arc<dyn crate::application::ports::file_library::FileLibraryPort>,
+    file: crate::features::file::di::FileDi,
+    extraction: crate::features::extraction::di::ExtractionDi,
+}
+
+impl FileOpsModule {
+    pub fn library(&self) -> &Arc<dyn crate::application::ports::file_library::FileLibraryPort> {
+        &self.library
+    }
+    /// Build FileOpsModule by composing the file + extraction feature builders.
+    pub async fn new(
+        db_pool: SqlitePool,
+        core: Arc<CoreModule>,
+    ) -> crate::shared::error::Result<Self> {
+        use crate::features::tags::service::TagService;
+        use crate::infrastructure::file_system::file_storage::SecureFileStorage;
+        use crate::infrastructure::file_system::FileSystemAdapter;
+        use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
+
+        let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
+        let file_storage = Arc::new(SecureFileStorage::new()) as Arc<dyn FileStoragePort>;
+        let file_access_config = Arc::clone(core.file_access_config());
+        let vault_path = core
+            .data_dir()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| core.data_dir().clone());
+
+        let document_repo =
+            Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
+        let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
+
+        let library = Arc::new(crate::infrastructure::file_library::SqliteFileLibrary::new(
+            db_pool.clone(),
+        ));
+        let file = crate::features::file::di::build(
+            document_repo.clone(),
+            file_system,
+            file_storage,
+            tag_service,
+            file_access_config,
+            vault_path,
+            db_pool,
+        );
+        let extraction = crate::features::extraction::di::build(
+            document_repo as Arc<dyn RepositoryPort<crate::domain::entities::Document>>,
+        );
+
+        Ok(Self {
+            file,
+            extraction,
+            library,
+        })
+    }
+
+    // File operation use case getters
+    pub fn open_file_use_case(&self) -> &Arc<OpenFileUseCase> {
+        &self.file.open_file_use_case
+    }
+
+    pub fn open_file_by_id_use_case(&self) -> &Arc<OpenFileByIdUseCase> {
+        &self.file.open_file_by_id_use_case
+    }
+
+    pub fn get_file_path_by_id_use_case(&self) -> &Arc<GetFilePathByIdUseCase> {
+        &self.file.get_file_path_by_id_use_case
+    }
+
+    pub fn show_in_folder_use_case(&self) -> &Arc<ShowInFolderUseCase> {
+        &self.file.show_in_folder_use_case
+    }
+
+    pub fn get_file_metadata_use_case(&self) -> &Arc<GetFileMetadataUseCase> {
+        &self.file.get_file_metadata_use_case
+    }
+
+    pub fn read_file_content_use_case(&self) -> &Arc<ReadFileContentUseCase> {
+        &self.file.read_file_content_use_case
+    }
+
+    pub fn read_file_bytes_use_case(&self) -> &Arc<ReadFileBytesUseCase> {
+        &self.file.read_file_bytes_use_case
+    }
+
+    pub fn update_file_metadata_use_case(&self) -> &Arc<UpdateFileMetadataUseCase> {
+        &self.file.update_file_metadata_use_case
+    }
+
+    pub fn list_citing_conversations_use_case(&self) -> &Arc<ListCitingConversationsUseCase> {
+        &self.file.list_citing_conversations_use_case
+    }
+
+    // Extraction use case getters
+    pub fn parse_wikilinks_use_case(&self) -> &Arc<ParseWikilinksUseCase> {
+        &self.extraction.parse_wikilinks_use_case
+    }
+
+    pub fn extract_document_title_use_case(&self) -> &Arc<ExtractDocumentTitleUseCase> {
+        &self.extraction.extract_document_title_use_case
+    }
+
+    pub fn resolve_wikilink_use_case(&self) -> &Arc<ResolveWikilinkUseCase> {
+        &self.extraction.resolve_wikilink_use_case
+    }
+
+    pub fn extract_and_resolve_links_use_case(&self) -> &Arc<ExtractAndResolveLinksUseCase> {
+        &self.extraction.extract_and_resolve_links_use_case
+    }
+}
+
+/// System module for application-wide operations
+///
+/// Cache used to live here as a feature DI; it has been removed because
+/// Tauri commands operate on the global `QUERY_CACHE` singleton
+/// directly (no DI needed).
+#[derive(Clone)]
+pub struct SystemModule {
+    settings: crate::features::settings::di::SettingsDi,
+    backup: crate::features::backup::di::BackupDi,
+    updates: crate::features::updates::di::UpdatesDi,
+    metrics: crate::features::metrics::di::MetricsDi,
+    health: crate::features::health::di::HealthDi,
+    stats: crate::features::stats::di::StatsDi,
+    initialization: crate::features::initialization::di::InitializationDi,
+
+    // System-info adapter stays here — it's a shared infra concern
+    // with no dedicated feature slice.
+    system_info: Arc<dyn SystemInfoPort>,
+}
+
+impl SystemModule {
+    /// Build SystemModule by composing system-level feature builders.
+    pub async fn new(
+        db_pool: SqlitePool,
+        core: Arc<CoreModule>,
+    ) -> crate::shared::error::Result<Self> {
+        use crate::infrastructure::system_info_adapter::SystemInfoAdapter;
+
+        let settings = crate::features::settings::di::build(core.data_dir()).await?;
+
+        let db_path = core.data_dir().join("lattice.db");
+        let backup = crate::features::backup::di::build(
+            db_pool.clone(),
+            db_path,
+            core.data_dir().to_path_buf(),
+            settings.settings_repo.clone(),
+        );
+
+        let models_path = core.data_dir().join("models");
+        let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
+        let initialization =
+            crate::features::initialization::di::build(db_pool.clone(), model_manager);
+
+        Ok(Self {
+            settings,
+            backup,
+            updates: crate::features::updates::di::build(),
+            metrics: crate::features::metrics::di::build(),
+            health: crate::features::health::di::build(db_pool.clone()),
+            stats: crate::features::stats::di::build(db_pool),
+            initialization,
+            system_info: Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>,
+        })
+    }
+
+    // Health use case getters
+    pub fn health_check_use_case(&self) -> &Arc<HealthCheckUseCase> {
+        &self.health.health_check_use_case
+    }
+
+    pub fn initialize_database_use_case(&self) -> &Arc<InitializeDatabaseUseCase> {
+        &self.initialization.initialize_database_use_case
+    }
+
+    pub fn initialize_models_use_case(&self) -> &Arc<InitializeModelsUseCase> {
+        &self.initialization.initialize_models_use_case
+    }
+
+    // Settings use case getters
+    pub fn get_settings_use_case(&self) -> &Arc<GetSettingsUseCase> {
+        &self.settings.get_settings_use_case
+    }
+
+    pub fn update_settings_use_case(&self) -> &Arc<UpdateSettingsUseCase> {
+        &self.settings.update_settings_use_case
+    }
+
+    pub fn reset_settings_use_case(&self) -> &Arc<ResetSettingsUseCase> {
+        &self.settings.reset_settings_use_case
+    }
+
+    pub fn export_settings_use_case(&self) -> &Arc<ExportSettingsUseCase> {
+        &self.settings.export_settings_use_case
+    }
+
+    pub fn import_settings_use_case(&self) -> &Arc<ImportSettingsUseCase> {
+        &self.settings.import_settings_use_case
+    }
+
+    pub fn validate_settings_use_case(&self) -> &Arc<ValidateSettingsUseCase> {
+        &self.settings.validate_settings_use_case
+    }
+
+    /// Settings repository access. Used by Container to wire the
+    /// settings-side-effects port (audit P0-3).
+    pub fn settings_repo(&self) -> &Arc<dyn SettingsRepositoryPort> {
+        &self.settings.settings_repo
+    }
+
+    // (Cache: no use cases — commands operate on the global QUERY_CACHE
+    // singleton directly.)
+
+    // Backup use case getters
+    pub fn create_backup_use_case(&self) -> &Arc<CreateBackupUseCase> {
+        &self.backup.create_backup_use_case
+    }
+
+    pub fn restore_backup_use_case(&self) -> &Arc<RestoreBackupUseCase> {
+        &self.backup.restore_backup_use_case
+    }
+
+    pub fn start_auto_backup_use_case(&self) -> &Arc<StartAutoBackupUseCase> {
+        &self.backup.start_auto_backup_use_case
+    }
+
+    pub fn stop_auto_backup_use_case(&self) -> &Arc<StopAutoBackupUseCase> {
+        &self.backup.stop_auto_backup_use_case
+    }
+
+    pub fn startup_auto_backup_use_case(&self) -> &Arc<StartupAutoBackupUseCase> {
+        &self.backup.startup_auto_backup_use_case
+    }
+
+    pub fn backup_scheduler(&self) -> &Arc<crate::features::backup::scheduler::BackupScheduler> {
+        &self.backup.backup_scheduler
+    }
+
+    /// The backup port itself, for reads that have no use case
+    /// (`plugin_list_backups`).
+    pub fn backup_port(&self) -> &Arc<dyn BackupPort> {
+        &self.backup.backup
+    }
+
+    /// Encrypted off-device archive orchestration. Single instance: it holds
+    /// the setup wizard's in-memory key until the user confirms it.
+    pub fn archive_service(
+        &self,
+    ) -> &Arc<crate::features::backup::archive::service::ArchiveService> {
+        &self.backup.archive_service
+    }
+
+    // Updates use case getters
+    pub fn check_for_updates_use_case(&self) -> &Arc<CheckForUpdatesUseCase> {
+        &self.updates.check_for_updates_use_case
+    }
+
+    pub fn get_current_version_use_case(&self) -> &Arc<GetCurrentVersionUseCase> {
+        &self.updates.get_current_version_use_case
+    }
+
+    // Metrics use case getters
+    pub fn get_metrics_use_case(&self) -> &Arc<GetMetricsUseCase> {
+        &self.metrics.get_metrics_use_case
+    }
+
+    // Stats use case getters
+    pub fn get_system_stats_use_case(&self) -> &Arc<GetSystemStatsUseCase> {
+        &self.stats.get_system_stats_use_case
+    }
+
+    pub fn get_corpus_shape_use_case(&self) -> &Arc<GetCorpusShapeUseCase> {
+        &self.stats.get_corpus_shape_use_case
+    }
+
+    // Adapter getters needed by Container
+    pub fn system_info(&self) -> &Arc<dyn SystemInfoPort> {
+        &self.system_info
+    }
+
+    pub fn metrics_service(&self) -> &Arc<Metrics> {
+        &self.metrics.metrics_service
+    }
+}

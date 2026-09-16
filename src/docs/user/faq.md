@@ -200,16 +200,34 @@ Yes! Tag system features:
 
 Not currently. Cloud sync is planned for future releases.
 
-**Workaround:**
-- Store database on cloud drive (Dropbox, OneDrive)
-- **WARNING:** Don't run app simultaneously on multiple devices
-- Risk of database corruption with concurrent access
+**Do not put Lattice's data folder inside Dropbox, iCloud Drive, OneDrive, or Google Drive.**
+Sync clients copy the live database while Lattice is writing to it, which corrupts it.
+Lattice warns you in Settings > Vault > Backups if its data folder is inside a synced folder.
+
+To keep an off-device copy, use encrypted backup instead (see below).
+
+### How do I protect my library if my drive fails?
+
+Turn on **Off-device backup** in Settings > Vault > Backups:
+
+1. Write down the 24-word recovery code Lattice shows you, and confirm three of the words.
+   The recovery code is the only way back in if you forget your passphrase. Lattice cannot reset it.
+2. Optionally set a passphrase.
+3. Choose a folder. Pick a folder your cloud storage app syncs, a NAS, or a USB drive.
+
+Lattice then writes one encrypted `.lattice-backup` file per scheduled backup into a `Lattice Backups` subfolder and keeps the newest few.
+Each file contains your notes, conversations, tags, study decks, imported source files, vault, and settings.
+Search vectors are left out and rebuilt after a restore.
+
+To restore on a new computer, open Settings > Vault > Backups, choose **Restore from file**, and enter your passphrase or recovery code.
+If the backup file is still only in the cloud, Lattice asks your sync app to download it first.
 
 ### Can I export my data?
 
 Yes! Export options:
 - **Search results:** CSV, JSON, Markdown
-- **Full database:** SQLite backup
+- **Full library:** encrypted backup archive (`.lattice-backup`)
+- **Local database snapshot:** Settings > Vault > Backups > Back up now
 - **Settings:** JSON export
 
 ### Can I share search results?
