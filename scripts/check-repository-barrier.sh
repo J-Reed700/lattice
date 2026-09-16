@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/src/src/src/features"
+SRC="$ROOT/src-tauri/src/features"
 
 if [[ ! -d "$SRC" ]]; then
   echo "error: features dir not found at $SRC" >&2
