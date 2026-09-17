@@ -1,137 +1,186 @@
 #!/usr/bin/env bash
-# Download the llama-server sidecar binaries from a Lattice GitHub
-# Release into src-tauri/binaries/.
+# Install the pinned llama-server sidecar binaries into src-tauri/binaries/.
 #
-# This script is for local dev and CI. The binaries are produced by
-# .github/workflows/llama-build.yml (separate, manual workflow) and
-# attached to a release tag like `llama/b8981`.
+# Everything comes from scripts/llama-server.lock: the release to download,
+# the repository that owns it, and the SHA-256 of every file. A file is only
+# installed if its hash matches the lock AND verify_llama_binaries.py proves it
+# is self-contained (and, for this machine's platform, that it actually runs).
+# Installed files that already match the lock are not downloaded again; files
+# that don't match are replaced, never kept.
 #
 # Usage:
-#   bash scripts/fetch-llama-binaries.sh [<release-tag>]
+#   bash scripts/fetch-llama-binaries.sh               install / repair
+#   bash scripts/fetch-llama-binaries.sh --check       verify what is installed, download nothing
+#   bash scripts/fetch-llama-binaries.sh --update-lock after publishing a release: pin its hashes
+#   add --no-run to skip executing the host binary
 #
-# If no tag is given, the script reads the pinned tag from
-# scripts/llama-server-version.txt.
+# Downloads use `gh` when it is installed and authenticated, otherwise curl
+# (the release repository is public).
 #
-# Auth strategy:
-#   - If `gh` (GitHub CLI) is installed and authenticated, use it via
-#     `gh release download`. Works for both public and private repos.
-#   - Otherwise fall back to `curl`, which works for public repos only.
-#
-# The `gh` path is preferred because Lattice's release repo is currently
-# private — anonymous curl gets a 404 even for valid asset URLs.
-#
-# Requires: gh OR curl, plus shasum (or sha256sum on Linux).
+# Requires: bash, python >= 3.9, gh or curl.
 
 set -euo pipefail
 
-# --------------------------------------------------------------------
-# Resolve repo root (two levels up from this script's directory).
-# --------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAURI_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BINARIES_DIR="$TAURI_ROOT/binaries"
-VERSION_FILE="$SCRIPT_DIR/llama-server-version.txt"
+LOCK="$SCRIPT_DIR/llama-server.lock"
+VERIFY="$SCRIPT_DIR/verify_llama_binaries.py"
 
-# --------------------------------------------------------------------
-# Resolve which tag to fetch.
-# --------------------------------------------------------------------
-if [[ $# -ge 1 ]]; then
-  LLAMA_TAG="$1"
-elif [[ -f "$VERSION_FILE" ]]; then
-  LLAMA_TAG="$(tr -d '[:space:]' < "$VERSION_FILE")"
-else
-  echo "error: no tag argument and $VERSION_FILE missing" >&2
-  exit 1
-fi
-
-# Owner/repo containing the llama-build.yml workflow's releases. Default
-# matches the active Lattice org; override via env if you fork.
-GH_REPO="${LATTICE_LLAMA_REPO:-posh-industries/lattice}"
-RELEASE_TAG="llama/${LLAMA_TAG}"
-BASE_URL="https://github.com/$GH_REPO/releases/download/$RELEASE_TAG"
-
-echo "Fetching llama-server $LLAMA_TAG from $GH_REPO"
-mkdir -p "$BINARIES_DIR"
-
-# --------------------------------------------------------------------
-# Files to fetch. Each is uploaded by a job in llama-build.yml.
-# --------------------------------------------------------------------
 FILES=(
-  "llama-server-aarch64-apple-darwin"
-  "llama-server-x86_64-pc-windows-msvc.exe"
-  "llama-server-cpu-x86_64-pc-windows-msvc.exe"
-  "llama-server-x86_64-unknown-linux-gnu"
-  "SHA256SUMS.txt"
+  llama-server-aarch64-apple-darwin
+  llama-server-x86_64-pc-windows-msvc.exe
+  llama-server-cpu-x86_64-pc-windows-msvc.exe
+  llama-server-x86_64-unknown-linux-gnu
+  llama-server-cpu-x86_64-unknown-linux-gnu
 )
 
-# --------------------------------------------------------------------
-# Pick a download backend. `gh release download` handles both public
-# and private repos via the user's existing auth; bare curl works only
-# for public repos. We prefer gh whenever it's installed AND authed.
-# --------------------------------------------------------------------
-USE_GH=0
+MODE=install
+RUN_FLAG=--run
+for arg in "$@"; do
+  case "$arg" in
+    --check) MODE=check ;;
+    --update-lock) MODE=update-lock ;;
+    --no-run) RUN_FLAG= ;;
+    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "error: unknown argument '$arg' (see --help)" >&2; exit 2 ;;
+  esac
+done
+
+die() { echo "error: $*" >&2; exit 1; }
+
+lock_value() {
+  awk -v key="$1" '$1 == key { print $2; n++ } END { exit n == 1 ? 0 : 1 }' "$LOCK" \
+    || die "$LOCK must contain exactly one '$1' line"
+}
+
+# Prints the pinned hash of a file, or nothing when the lock has none.
+lock_hash() {
+  awk -v file="$1" '$1 == "sha256" && $3 == file { print $2 }' "$LOCK"
+}
+
+file_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+PYTHON=
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 \
+    && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+[[ -n "$PYTHON" ]] || die "python >= 3.9 is required to verify the binaries"
+
+verify() {
+  # shellcheck disable=SC2086 # RUN_FLAG is intentionally empty or one word
+  "$PYTHON" "$VERIFY" --lock "$LOCK" --expect-all $RUN_FLAG "$@"
+}
+
+RELEASE="$(lock_value release)"
+REPO="$(lock_value repo)"
+
+hashes_pinned=1
+for file in "${FILES[@]}"; do
+  [[ -n "$(lock_hash "$file")" ]] || hashes_pinned=0
+done
+
+if [[ "$MODE" == check ]]; then
+  [[ $hashes_pinned -eq 1 ]] || die "the lock has no checksums for $RELEASE (run --update-lock after publishing it)"
+  verify --require-hashes "$BINARIES_DIR"
+  echo "Installed sidecar binaries match $RELEASE."
+  exit 0
+fi
+
+if [[ "$MODE" == install ]]; then
+  [[ $hashes_pinned -eq 1 ]] \
+    || die "the lock has no checksums for $RELEASE. If the release is published, run: bash $0 --update-lock"
+  up_to_date=1
+  for file in "${FILES[@]}"; do
+    if [[ ! -f "$BINARIES_DIR/$file" || "$(file_hash "$BINARIES_DIR/$file")" != "$(lock_hash "$file")" ]]; then
+      up_to_date=0
+    fi
+  done
+  if [[ $up_to_date -eq 1 ]]; then
+    verify --require-hashes "$BINARIES_DIR"
+    echo "Sidecar binaries already match $RELEASE."
+    exit 0
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Download the whole release into a staging directory next to the install
+# location, so the final moves are atomic renames on the same filesystem.
+# ---------------------------------------------------------------------------
+mkdir -p "$BINARIES_DIR"
+STAGING="$(mktemp -d "$BINARIES_DIR/.fetch-XXXXXX")"
+trap 'rm -rf "$STAGING"' EXIT
+
+echo "Fetching $RELEASE from $REPO"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  USE_GH=1
-  echo "  using: gh CLI (handles private repos)"
-else
-  echo "  using: curl (public-repo only — install/auth gh CLI for private)"
-fi
-
-if [[ $USE_GH -eq 1 ]]; then
-  # `gh release download` accepts --pattern to filter assets and
-  # downloads to --dir. Skip files that already exist by checking
-  # before each call.
-  cd "$BINARIES_DIR"
-  for file in "${FILES[@]}"; do
-    if [[ -f "$file" ]]; then
-      echo "  skip (exists): $file"
-      continue
-    fi
-    echo "  download: $file"
-    gh release download "$RELEASE_TAG" \
-      --repo "$GH_REPO" \
-      --pattern "$file" \
-      --dir . \
-      --clobber
+  for file in "${FILES[@]}" SHA256SUMS.txt; do
+    gh release download "$RELEASE" --repo "$REPO" --pattern "$file" --dir "$STAGING"
   done
-  cd - >/dev/null
 else
-  for file in "${FILES[@]}"; do
-    dest="$BINARIES_DIR/$file"
-    if [[ -f "$dest" ]]; then
-      echo "  skip (exists): $file"
-      continue
-    fi
-    echo "  download: $file"
-    curl --fail --location --silent --show-error \
-      --output "$dest" \
-      "$BASE_URL/$file"
+  command -v curl >/dev/null 2>&1 || die "install gh or curl to download the binaries"
+  for file in "${FILES[@]}" SHA256SUMS.txt; do
+    curl --fail --location --silent --show-error --retry 3 \
+      --output "$STAGING/$file" \
+      "https://github.com/$REPO/releases/download/$RELEASE/$file"
   done
 fi
 
-# --------------------------------------------------------------------
-# Verify checksums. The SHA256SUMS.txt was generated on Ubuntu (shasum)
-# so we accept either sha256sum or shasum.
-# --------------------------------------------------------------------
-if command -v sha256sum >/dev/null 2>&1; then
-  HASH_TOOL="sha256sum"
-elif command -v shasum >/dev/null 2>&1; then
-  HASH_TOOL="shasum -a 256"
+# The release's own checksum list catches a truncated or corrupted download.
+for file in "${FILES[@]}"; do
+  published="$(awk -v file="$file" '$2 == file || $2 == "*" file { print $1 }' "$STAGING/SHA256SUMS.txt")"
+  [[ -n "$published" ]] || die "$RELEASE's SHA256SUMS.txt does not list $file"
+  [[ "$(file_hash "$STAGING/$file")" == "$published" ]] || die "$file does not match $RELEASE's SHA256SUMS.txt"
+done
+rm "$STAGING/SHA256SUMS.txt"
+chmod +x "$STAGING"/llama-server-*
+
+if [[ "$MODE" == update-lock ]]; then
+  # Prove the published files are sound before pinning them.
+  unhashed_lock="$STAGING/unhashed.lock"
+  grep -v '^sha256 ' "$LOCK" > "$unhashed_lock"
+  # shellcheck disable=SC2086
+  "$PYTHON" "$VERIFY" --lock "$unhashed_lock" --expect-all $RUN_FLAG "$STAGING"
+  rm "$unhashed_lock"
+  {
+    grep -v '^sha256 ' "$LOCK"
+    for file in "${FILES[@]}"; do
+      echo "sha256 $(file_hash "$STAGING/$file") $file"
+    done
+  } > "$LOCK.tmp"
+  mv "$LOCK.tmp" "$LOCK"
+  echo "Pinned $RELEASE checksums in $LOCK (commit this change)."
 else
-  echo "warning: no sha256sum/shasum found; skipping checksum verification" >&2
-  HASH_TOOL=""
+  for file in "${FILES[@]}"; do
+    actual="$(file_hash "$STAGING/$file")"
+    [[ "$actual" == "$(lock_hash "$file")" ]] \
+      || die "$file from $RELEASE has sha256 $actual, but the lock pins $(lock_hash "$file"). Published releases must not change; investigate before trusting it."
+  done
+  verify --require-hashes "$STAGING"
 fi
 
-if [[ -n "$HASH_TOOL" ]]; then
-  cd "$BINARIES_DIR"
-  $HASH_TOOL --check SHA256SUMS.txt
-  cd - >/dev/null
-fi
+# ---------------------------------------------------------------------------
+# Install: replace the sidecars and drop anything stale.
+# ---------------------------------------------------------------------------
+for stale in "$BINARIES_DIR"/llama-server-* "$BINARIES_DIR"/SHA256SUMS.txt; do
+  [[ -e "$stale" ]] || continue
+  keep=0
+  for file in "${FILES[@]}"; do
+    [[ "$(basename "$stale")" == "$file" ]] && keep=1
+  done
+  [[ $keep -eq 1 ]] || rm -f "$stale"
+done
+for file in "${FILES[@]}"; do
+  mv -f "$STAGING/$file" "$BINARIES_DIR/$file"
+done
 
-# --------------------------------------------------------------------
-# chmod +x for the unix binaries (they've been downloaded as 644).
-# --------------------------------------------------------------------
-chmod +x "$BINARIES_DIR/llama-server-aarch64-apple-darwin" 2>/dev/null || true
-chmod +x "$BINARIES_DIR/llama-server-x86_64-unknown-linux-gnu" 2>/dev/null || true
-
-echo "Done. Binaries in $BINARIES_DIR"
+echo "Installed $RELEASE into $BINARIES_DIR"

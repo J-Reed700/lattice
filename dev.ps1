@@ -621,14 +621,15 @@ function Invoke-HealthCheck {
         'llama-server-aarch64-apple-darwin',
         'llama-server-x86_64-pc-windows-msvc.exe',
         'llama-server-cpu-x86_64-pc-windows-msvc.exe',
-        'llama-server-x86_64-unknown-linux-gnu'
+        'llama-server-x86_64-unknown-linux-gnu',
+        'llama-server-cpu-x86_64-unknown-linux-gnu'
     )
     $missing = $expected | Where-Object { -not (Test-Path (Join-Path $binaries $_)) }
     if ($missing.Count -eq 0) {
-        Show-Success 'Sidecar binaries: all 4 present'
+        Show-Success "Sidecar binaries: all $($expected.Count) present (verify with: bash src-tauri/scripts/fetch-llama-binaries.sh --check)"
     } else {
         Show-Warn "Sidecar binaries missing: $($missing -join ', ')"
-        Show-Info 'Fetch with: bash src-tauri/scripts/fetch-llama-binaries.sh (or gh release download)'
+        Show-Info 'Install with: bash src-tauri/scripts/fetch-llama-binaries.sh'
     }
 }
 

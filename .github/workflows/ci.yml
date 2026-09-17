@@ -55,14 +55,18 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.os }}-
 
+      # Debug builds accept empty sidecars; the sidecar-binaries job checks
+      # the real ones.
       - name: Create build placeholders for source checks
         shell: bash
         run: |
           mkdir -p dist
           case "${{ runner.os }}" in
-            Linux) touch src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu ;;
+            Linux) touch src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu \
+                         src-tauri/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
             macOS) touch src-tauri/binaries/llama-server-aarch64-apple-darwin ;;
-            Windows) touch src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe ;;
+            Windows) touch src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe \
+                           src-tauri/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
           esac
 
       - name: cargo check
@@ -90,6 +94,34 @@ jobs:
       - name: cargo fmt --check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
+
+  # The pinned llama-server release must exist, match the lock's checksums, be
+  # self-contained, and start on every platform we ship.
+  sidecar-binaries:
+    name: sidecar binaries (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verifier unit tests
+        run: python -m unittest src-tauri/scripts/test_verify_llama_binaries.py
+
+      # Users' machines provide the Vulkan loader system-wide.
+      - name: Install Vulkan loader
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1
+
+      - name: Fetch, verify and run the pinned binaries
+        shell: bash
+        run: bash src-tauri/scripts/fetch-llama-binaries.sh
 
   # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:

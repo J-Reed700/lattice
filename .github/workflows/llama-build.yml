@@ -1,144 +1,141 @@
 name: Build llama-server sidecar binaries
 
-# This workflow compiles llama.cpp's `llama-server` binary for the three
-# target platforms Lattice supports, with the appropriate GPU backend
-# enabled for each. The compiled binaries are uploaded as artifacts on
-# the resulting GitHub Release; the main Lattice build pulls them via
-# the fetch-binaries script (see src-tauri/scripts/fetch-binaries.sh).
+# Compiles llama.cpp's `llama-server` for every platform Lattice ships and,
+# on a `llama/*` tag, publishes the binaries as an immutable GitHub Release.
+# The app build downloads them with src-tauri/scripts/fetch-llama-binaries.sh.
 #
-# Why a separate workflow? Compiling llama.cpp takes 8-15 minutes per
-# target on GitHub-hosted runners. Doing this on every Lattice PR would
-# make CI miserable. Instead, the binaries are produced deliberately
-# (manual dispatch or version tag), uploaded to a Release, and consumed
-# by the main app build as opaque artifacts.
+# Everything is driven by src-tauri/scripts/llama-server.lock:
+#   llama_cpp_tag  upstream tag to compile
+#   release        release tag to publish (must equal the pushed tag)
+#   macos_min      deployment target for the macOS binary
+#   glibc_max      newest glibc the Linux binaries may require
 #
-# To bump the pinned llama.cpp version, change LLAMA_CPP_TAG below and
-# either trigger this workflow manually (Actions tab → Run workflow) or
-# push a tag like `llama/b8981` matching the new pin.
+# Every binary must be a single self-contained file: Tauri bundles exactly one
+# file per sidecar, so anything it links dynamically must already exist on a
+# stock user machine. A 2026 release shipped a macOS binary that linked the CI
+# runner's build directory and Homebrew OpenSSL; its `--help` smoke test passed
+# only because those files existed on the runner. Hence:
+#   * static llama/ggml, static C++ runtime, no OpenMP, no OpenSSL, no curl;
+#   * portable x86 baseline (GGML_NATIVE=OFF) instead of the runner's CPU;
+#   * verify_llama_binaries.py checks every dynamic dependency, rpath and
+#     minimum OS, then runs the binary from a clean directory after the build
+#     tree is deleted;
+#   * releases are never overwritten, so a published tag always means the same
+#     bytes, and the lock pins those bytes by SHA-256.
+#
+# Bump procedure: src-tauri/binaries/README.md.
 
 on:
+  # Build and verify without publishing (use this to try a new llama.cpp tag).
   workflow_dispatch:
-    inputs:
-      llama_cpp_tag:
-        description: 'llama.cpp release tag (e.g. b8981). Defaults to repo-pinned tag.'
-        required: false
-        type: string
+  # Exercise the pipeline whenever it changes.
+  pull_request:
+    paths:
+      - .github/workflows/llama-build.yml
+      - src-tauri/scripts/llama-server.lock
+      - src-tauri/scripts/verify_llama_binaries.py
+  # Build, verify and publish.
   push:
     tags:
       - 'llama/**'
 
-env:
-  # Pinned llama.cpp release. Bump this deliberately. See
-  # https://github.com/ggerganov/llama.cpp/releases for the tag list.
-  # llama.cpp tags `master`-quality releases roughly daily; we don't
-  # need to track that frequency. Bump when a model we want to ship
-  # requires a llama.cpp feature newer than this pin.
-  #
-  # Single source of truth: this value MUST match
-  # `src-tauri/scripts/llama-server-version.txt` so local fetch and
-  # CI build use the same tag. There's no automated check today —
-  # bump both at once.
-  LLAMA_CPP_TAG: 'b8981'
-
 permissions:
-  contents: write  # Required to attach artifacts to a GitHub Release.
+  contents: read
+
+concurrency:
+  group: llama-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  LOCK: src-tauri/scripts/llama-server.lock
+  VERIFY: src-tauri/scripts/verify_llama_binaries.py
 
 jobs:
-  # -----------------------------------------------------------------
-  # macOS (Apple Silicon) — Metal backend
-  # -----------------------------------------------------------------
-  # We don't build for x86_64-apple-darwin (Intel Mac). Intel Macs are
-  # phasing out, Metal performance is meaningfully better on Apple
-  # Silicon, and adding Intel Mac would mean shipping a CPU-only binary
-  # for Mac (since Metal-on-Intel-Mac is deprecated by Apple). Track as
-  # a v1.1 question if Intel Mac demand surfaces.
-  build-macos:
-    name: macOS aarch64 + Metal
-    runs-on: macos-14  # M1 hosted runner
+  pin:
+    name: Read pin
+    runs-on: ubuntu-latest
+    outputs:
+      llama_cpp_tag: ${{ steps.lock.outputs.llama_cpp_tag }}
+      release: ${{ steps.lock.outputs.release }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve llama.cpp tag
-        id: tag
+      - name: Read lock
+        id: lock
         shell: bash
         run: |
-          tag="${{ inputs.llama_cpp_tag }}"
-          if [[ -z "$tag" ]]; then
-            tag="${{ env.LLAMA_CPP_TAG }}"
+          value() {
+            awk -v key="$1" '$1 == key { print $2; n++ } END { exit n == 1 ? 0 : 1 }' "$LOCK" \
+              || { echo "::error::$LOCK must contain exactly one '$1' line"; exit 1; }
+          }
+          llama_cpp_tag="$(value llama_cpp_tag)"
+          release="$(value release)"
+          [[ "$llama_cpp_tag" =~ ^b[0-9]+$ ]] || { echo "::error::bad llama_cpp_tag '$llama_cpp_tag'"; exit 1; }
+          [[ "$release" =~ ^llama/${llama_cpp_tag}-r[0-9]+$ ]] \
+            || { echo "::error::release '$release' must be llama/${llama_cpp_tag}-r<N>"; exit 1; }
+          echo "llama_cpp_tag=$llama_cpp_tag" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "Pinned llama.cpp $llama_cpp_tag, release $release"
+
+      - name: Check the tag matches the lock and is unpublished
+        if: startsWith(github.ref, 'refs/tags/llama/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ steps.lock.outputs.release }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" != "$RELEASE" ]]; then
+            echo "::error::Pushed tag $GITHUB_REF_NAME does not match lock release $RELEASE"
+            exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Building llama.cpp tag: $tag"
+          if gh release view "$RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE already exists; published releases are immutable. Bump the -rN suffix."
+            exit 1
+          fi
 
-      - name: Clone llama.cpp
-        run: |
-          git clone --depth 1 --branch "${{ steps.tag.outputs.tag }}" \
-            https://github.com/ggerganov/llama.cpp.git llama.cpp
+  build:
+    name: ${{ matrix.name }}
+    needs: pin
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon only: Intel Macs would need a CPU-only binary.
+          - name: macOS arm64 (Metal)
+            os: macos-14
+            file: llama-server-aarch64-apple-darwin
+            backend: -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_METAL_USE_BF16=ON
+          # Vulkan covers NVIDIA, AMD and Intel GPUs without the CUDA toolchain.
+          - name: Windows x64 (Vulkan)
+            os: windows-2022
+            file: llama-server-x86_64-pc-windows-msvc.exe
+            vulkan: true
+            backend: -DGGML_VULKAN=ON
+          # Spawned when the Vulkan binary cannot start or initialise.
+          - name: Windows x64 (CPU)
+            os: windows-2022
+            file: llama-server-cpu-x86_64-pc-windows-msvc.exe
+            backend: ''
+          # ubuntu-22.04 keeps the glibc requirement at 2.35 (lock glibc_max).
+          - name: Linux x64 (Vulkan)
+            os: ubuntu-22.04
+            file: llama-server-x86_64-unknown-linux-gnu
+            vulkan: true
+            backend: -DGGML_VULKAN=ON
+          - name: Linux x64 (CPU)
+            os: ubuntu-22.04
+            file: llama-server-cpu-x86_64-unknown-linux-gnu
+            backend: ''
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Configure (Metal)
-        working-directory: llama.cpp
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DLLAMA_CURL=OFF \
-            -DLLAMA_OPENSSL=OFF \
-            -DGGML_METAL=ON \
-            -DGGML_METAL_EMBED_LIBRARY=ON \
-            -DLLAMA_BUILD_SERVER=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF
-
-      - name: Build llama-server
-        working-directory: llama.cpp
-        run: |
-          # Cap parallelism at 2. Standard GitHub-hosted runners have
-          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
-          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
-          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
-          # parallel g++ processes which collectively OOM the linker
-          # mid-build, killing the job with exit 143. `-j 2` is slower
-          # (~2x build time) but reliable. Bump to `-j 4` once we
-          # migrate to larger runners.
-          cmake --build build --config Release --target llama-server -j 2
-
-      - name: Stage binary
-        run: |
-          mkdir -p staging
-          cp llama.cpp/build/bin/llama-server staging/llama-server-aarch64-apple-darwin
-          chmod +x staging/llama-server-aarch64-apple-darwin
-          # Quick sanity: binary should run --help without exploding.
-          staging/llama-server-aarch64-apple-darwin --help > /dev/null
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: llama-server-aarch64-apple-darwin
-          path: staging/llama-server-aarch64-apple-darwin
-          if-no-files-found: error
-
-  # -----------------------------------------------------------------
-  # Windows x86_64 — Vulkan backend
-  # -----------------------------------------------------------------
-  # Vulkan covers NVIDIA, AMD, and Intel GPUs with a single binary,
-  # avoiding the CUDA toolchain nightmare. ~85% of Windows hardware.
-  # The CPU fallback binary (built in build-windows-cpu) covers the
-  # rest.
-  build-windows-vulkan:
-    name: Windows x86_64 + Vulkan
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve llama.cpp tag
-        id: tag
-        shell: bash
-        run: |
-          tag="${{ inputs.llama_cpp_tag }}"
-          if [[ -z "$tag" ]]; then
-            tag="${{ env.LLAMA_CPP_TAG }}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          python-version: '3.12'
 
       - name: Install Vulkan SDK
+        if: matrix.vulkan
         uses: jakoch/install-vulkan-sdk-action@v1.2.0
         with:
           vulkan_version: 1.3.290.0
@@ -146,259 +143,157 @@ jobs:
           cache: true
           stripdown: true
 
+      # The smoke test runs with a scrubbed environment, so the loader must be
+      # installed system-wide as it is on users' machines.
+      - name: Install Vulkan loader
+        if: matrix.vulkan && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1
+
+      # Full commit history without file contents, so the binary reports the
+      # real build number instead of `1`.
       - name: Clone llama.cpp
         shell: bash
+        env:
+          TAG: ${{ needs.pin.outputs.llama_cpp_tag }}
         run: |
-          git clone --depth 1 --branch "${{ steps.tag.outputs.tag }}" \
-            https://github.com/ggerganov/llama.cpp.git llama.cpp
+          git clone --filter=blob:none --branch "$TAG" https://github.com/ggml-org/llama.cpp.git llama.cpp
+          git -C llama.cpp rev-parse HEAD
 
-      - name: Configure (Vulkan)
-        working-directory: llama.cpp
+      - name: Configure
         shell: bash
+        working-directory: llama.cpp
+        env:
+          BACKEND: ${{ matrix.backend }}
         run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DLLAMA_CURL=OFF \
-            -DLLAMA_OPENSSL=OFF \
-            -DGGML_VULKAN=ON \
-            -DLLAMA_BUILD_SERVER=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
+          macos_min="$(awk '$1 == "macos_min" { print $2 }' "../$LOCK")"
+          args=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_SHARED_LIBS=OFF
+            -DGGML_NATIVE=OFF
+            -DGGML_OPENMP=OFF
+            -DLLAMA_CURL=OFF
+            -DLLAMA_OPENSSL=OFF
+            -DLLAMA_BUILD_SERVER=ON
+            -DLLAMA_BUILD_TESTS=OFF
             -DLLAMA_BUILD_EXAMPLES=OFF
+          )
+          case "$RUNNER_OS" in
+            macOS)
+              args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_min") ;;
+            Windows)
+              # Static MSVC runtime: no VCRUNTIME140.dll / MSVCP140.dll needed.
+              args+=(-DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded) ;;
+            Linux)
+              args+=("-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc") ;;
+          esac
+          # shellcheck disable=SC2206 # backend flags are space-separated on purpose
+          args+=($BACKEND)
+          cmake -B build "${args[@]}"
 
-      - name: Build llama-server
+      - name: Build
+        shell: bash
         working-directory: llama.cpp
-        shell: bash
-        run: |
-          # Cap parallelism at 2. Standard GitHub-hosted runners have
-          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
-          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
-          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
-          # parallel g++ processes which collectively OOM the linker
-          # mid-build, killing the job with exit 143. `-j 2` is slower
-          # (~2x build time) but reliable. Bump to `-j 4` once we
-          # migrate to larger runners.
-          cmake --build build --config Release --target llama-server -j 2
+        # Two jobs: a single compile of ggml-vulkan.cpp peaks near 2 GB, and
+        # unbounded parallelism has OOM-killed the linker on hosted runners.
+        run: cmake --build build --config Release --target llama-server -j 2
 
-      - name: Stage binary
+      - name: Stage and remove the build tree
         shell: bash
+        env:
+          FILE: ${{ matrix.file }}
         run: |
           mkdir -p staging
-          cp llama.cpp/build/bin/Release/llama-server.exe staging/llama-server-x86_64-pc-windows-msvc.exe
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: llama-server-x86_64-pc-windows-msvc
-          path: staging/llama-server-x86_64-pc-windows-msvc.exe
-          if-no-files-found: error
-
-  # -----------------------------------------------------------------
-  # Windows x86_64 — CPU (AVX2) fallback
-  # -----------------------------------------------------------------
-  # Spawned when Vulkan init fails (driver bug, VM, ancient hardware).
-  # AVX2 is 99%+ of Windows desktops sold in the last decade. If we
-  # need broader coverage later, build a second SSE-only binary.
-  build-windows-cpu:
-    name: Windows x86_64 + CPU (AVX2)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve llama.cpp tag
-        id: tag
-        shell: bash
-        run: |
-          tag="${{ inputs.llama_cpp_tag }}"
-          if [[ -z "$tag" ]]; then
-            tag="${{ env.LLAMA_CPP_TAG }}"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cp llama.cpp/build/bin/Release/llama-server.exe "staging/$FILE"
+          else
+            cp llama.cpp/build/bin/llama-server "staging/$FILE"
+            chmod +x "staging/$FILE"
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "file $FILE"
+            echo "llama_cpp_tag ${{ needs.pin.outputs.llama_cpp_tag }}"
+            echo "llama_cpp_commit $(git -C llama.cpp rev-parse HEAD)"
+            echo "runner ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "backend ${{ matrix.backend }}"
+          } > "staging/$FILE.build-info"
+          # Nothing the binary could have linked against survives this step.
+          rm -rf llama.cpp
 
-      - name: Clone llama.cpp
+      # Checksums in the lock belong to the previous release, not this build.
+      - name: Verify self-contained and runnable
         shell: bash
         run: |
-          git clone --depth 1 --branch "${{ steps.tag.outputs.tag }}" \
-            https://github.com/ggerganov/llama.cpp.git llama.cpp
-
-      - name: Configure (CPU + AVX2)
-        working-directory: llama.cpp
-        shell: bash
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DLLAMA_CURL=OFF \
-            -DLLAMA_OPENSSL=OFF \
-            -DGGML_NATIVE=OFF \
-            -DGGML_AVX=ON \
-            -DGGML_AVX2=ON \
-            -DGGML_FMA=ON \
-            -DGGML_F16C=ON \
-            -DLLAMA_BUILD_SERVER=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF
-
-      - name: Build llama-server
-        working-directory: llama.cpp
-        shell: bash
-        run: |
-          # Cap parallelism at 2. Standard GitHub-hosted runners have
-          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
-          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
-          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
-          # parallel g++ processes which collectively OOM the linker
-          # mid-build, killing the job with exit 143. `-j 2` is slower
-          # (~2x build time) but reliable. Bump to `-j 4` once we
-          # migrate to larger runners.
-          cmake --build build --config Release --target llama-server -j 2
-
-      - name: Stage binary
-        shell: bash
-        run: |
-          mkdir -p staging
-          cp llama.cpp/build/bin/Release/llama-server.exe staging/llama-server-cpu-x86_64-pc-windows-msvc.exe
+          grep -v '^sha256 ' "$LOCK" > "$RUNNER_TEMP/unhashed.lock"
+          python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --run "staging/${{ matrix.file }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: llama-server-cpu-x86_64-pc-windows-msvc
-          path: staging/llama-server-cpu-x86_64-pc-windows-msvc.exe
+          name: ${{ matrix.file }}
+          path: staging/
           if-no-files-found: error
+          retention-days: 30
 
-  # -----------------------------------------------------------------
-  # Linux x86_64 — Vulkan backend
-  # -----------------------------------------------------------------
-  # Same rationale as Windows Vulkan: covers NVIDIA, AMD, Intel without
-  # CUDA pain. We don't ship a Linux CPU fallback yet — Linux users
-  # who need pure CPU can install the linux+vulkan binary on a system
-  # with software-rasterized Vulkan (lavapipe), or fall back to Ollama.
-  # Track as v1.1 if the data shows demand.
-  build-linux:
-    name: Linux x86_64 + Vulkan
-    runs-on: ubuntu-22.04  # Pinned for glibc compat with older distros.
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve llama.cpp tag
-        id: tag
-        shell: bash
-        run: |
-          tag="${{ inputs.llama_cpp_tag }}"
-          if [[ -z "$tag" ]]; then
-            tag="${{ env.LLAMA_CPP_TAG }}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.2.0
-        with:
-          vulkan_version: 1.3.290.0
-          install_runtime: true
-          cache: true
-          stripdown: true
-
-      - name: Clone llama.cpp
-        run: |
-          git clone --depth 1 --branch "${{ steps.tag.outputs.tag }}" \
-            https://github.com/ggerganov/llama.cpp.git llama.cpp
-
-      - name: Configure (Vulkan)
-        working-directory: llama.cpp
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DLLAMA_CURL=OFF \
-            -DLLAMA_OPENSSL=OFF \
-            -DGGML_VULKAN=ON \
-            -DLLAMA_BUILD_SERVER=ON \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF
-
-      - name: Build llama-server
-        working-directory: llama.cpp
-        run: |
-          # Cap parallelism at 2. Standard GitHub-hosted runners have
-          # 4 cores but only 7-16 GB of RAM, and a single g++ compiling
-          # llama.cpp's `llama.cpp` (~25 MB source) or `ggml-vulkan.cpp`
-          # peaks at 1.5-2 GB resident. `-j` (unbounded) spawns 4
-          # parallel g++ processes which collectively OOM the linker
-          # mid-build, killing the job with exit 143. `-j 2` is slower
-          # (~2x build time) but reliable. Bump to `-j 4` once we
-          # migrate to larger runners.
-          cmake --build build --config Release --target llama-server -j 2
-
-      - name: Stage binary
-        run: |
-          mkdir -p staging
-          cp llama.cpp/build/bin/llama-server staging/llama-server-x86_64-unknown-linux-gnu
-          chmod +x staging/llama-server-x86_64-unknown-linux-gnu
-          staging/llama-server-x86_64-unknown-linux-gnu --help > /dev/null
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: llama-server-x86_64-unknown-linux-gnu
-          path: staging/llama-server-x86_64-unknown-linux-gnu
-          if-no-files-found: error
-
-  # -----------------------------------------------------------------
-  # Release: bundle all four binaries into a GitHub Release
-  # -----------------------------------------------------------------
-  # Only runs on tag pushes. Manual dispatch produces artifacts that
-  # can be downloaded from the workflow run summary, but no Release.
   release:
-    name: Publish GitHub Release
-    needs: [build-macos, build-windows-vulkan, build-windows-cpu, build-linux]
+    name: Publish release
+    needs: [pin, build]
     if: startsWith(github.ref, 'refs/tags/llama/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: release
+          merge-multiple: true
 
-      - name: Compute checksums
+      - name: Collect build info
+        working-directory: release
         run: |
-          mkdir -p release
-          find artifacts -type f -exec cp {} release/ \;
-          cd release
-          shasum -a 256 * > SHA256SUMS.txt
+          cat ./*.build-info > BUILD-INFO.txt
+          rm ./*.build-info
+          cat BUILD-INFO.txt
 
-      # Extract the actual llama.cpp tag from the git ref. The pushed
-      # tag is `llama/<llama-cpp-tag>` (e.g. `llama/b8981`); strip the
-      # prefix to get the upstream tag for the release notes. Falls
-      # back to the workflow_dispatch input or env default for non-tag
-      # invocations (which won't reach this job anyway because of the
-      # `if: startsWith(github.ref, 'refs/tags/llama/')` guard above,
-      # but defensive default keeps the body sensible if that gate
-      # ever changes).
-      - name: Resolve llama.cpp tag for release notes
-        id: notes_tag
-        shell: bash
+      - name: Verify the complete set
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/llama/* ]]; then
-            tag="${GITHUB_REF#refs/tags/llama/}"
-          else
-            tag="${{ inputs.llama_cpp_tag }}"
-            if [[ -z "$tag" ]]; then
-              tag="${{ env.LLAMA_CPP_TAG }}"
-            fi
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          grep -v '^sha256 ' "$LOCK" > "$RUNNER_TEMP/unhashed.lock"
+          python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --expect-all release
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/*
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          body: |
-            llama-server sidecar binaries for Lattice.
+      - name: Checksums
+        working-directory: release
+        run: |
+          sha256sum llama-server-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-            Built from llama.cpp tag: `${{ steps.notes_tag.outputs.tag }}`
+      - name: Publish (never overwrites)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ needs.pin.outputs.release }}
+          LLAMA_CPP_TAG: ${{ needs.pin.outputs.llama_cpp_tag }}
+        run: |
+          cat > notes.md <<EOF
+          llama-server sidecar binaries for Lattice, built from llama.cpp \`$LLAMA_CPP_TAG\`.
 
-            Targets:
-            - `aarch64-apple-darwin` — macOS Apple Silicon, Metal backend
-            - `x86_64-pc-windows-msvc` — Windows, Vulkan backend
-            - `x86_64-pc-windows-msvc` (CPU variant) — Windows, AVX2 fallback
-            - `x86_64-unknown-linux-gnu` — Linux, Vulkan backend
+          | File | Platform | Backend |
+          |---|---|---|
+          | \`llama-server-aarch64-apple-darwin\` | macOS Apple Silicon | Metal |
+          | \`llama-server-x86_64-pc-windows-msvc.exe\` | Windows x64 | Vulkan |
+          | \`llama-server-cpu-x86_64-pc-windows-msvc.exe\` | Windows x64 | CPU (AVX2) |
+          | \`llama-server-x86_64-unknown-linux-gnu\` | Linux x64 | Vulkan |
+          | \`llama-server-cpu-x86_64-unknown-linux-gnu\` | Linux x64 | CPU (AVX2) |
 
-            Verify with `shasum -a 256 -c SHA256SUMS.txt`.
+          Each file is self-contained and was verified by \`verify_llama_binaries.py\`.
+          Pin these checksums with \`bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock\`.
+          EOF
+          # `gh release create` fails if the release exists, so a tag can never
+          # be republished with different bytes.
+          gh release create "$RELEASE" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "llama-server $LLAMA_CPP_TAG (${RELEASE##*-})" \
+            --notes-file notes.md

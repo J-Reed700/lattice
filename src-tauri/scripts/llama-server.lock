@@ -1,0 +1,22 @@
+# llama-server sidecar pin: the single source of truth for building,
+# publishing, fetching, verifying and bundling the sidecar binaries.
+# See src-tauri/binaries/README.md for the bump procedure.
+#
+# Format: one `key value` pair per line; `sha256 <hex> <file>` lines are
+# written by `scripts/fetch-llama-binaries.sh --update-lock` after the
+# release is published, and are authoritative over the release's own
+# SHA256SUMS.txt.
+
+# Upstream llama.cpp tag compiled by .github/workflows/llama-build.yml.
+llama_cpp_tag b8981
+# GitHub release holding the binaries. Bump the -rN suffix to rebuild the
+# same llama.cpp tag; published releases are never overwritten.
+release llama/b8981-r1
+# Repository that owns the release (public, so anonymous download works).
+repo J-Reed700/lattice
+# Oldest macOS the binary may require. Keep equal to
+# bundle.macOS.minimumSystemVersion in tauri.conf.json.
+macos_min 13.3
+# Newest glibc symbol version the Linux binaries may require
+# (ubuntu-22.04 build image).
+glibc_max 2.35
