@@ -729,6 +729,16 @@ class RunCheckTests(TempDirTestCase):
         report, _ = self.run_check(LINUX, result, ("linux", "x86_64"))
         self.assertEqual(report.status, "FAIL")
 
+    def test_signal_names_do_not_depend_on_the_host(self):
+        # Windows numbers SIGABRT 22, so the host's signal table cannot be used
+        # to describe a return code that came from a Unix-style target.
+        self.assertEqual(vb.describe_returncode(-6), "killed by signal 6 (SIGABRT)")
+        self.assertEqual(vb.describe_returncode(-11), "killed by signal 11 (SIGSEGV)")
+        self.assertEqual(vb.describe_returncode(-99), "killed by signal 99 (unknown signal)")
+        self.assertEqual(vb.describe_returncode(3221225781),
+                         "exit code 3221225781 (0xc0000135)")
+        self.assertEqual(vb.describe_returncode(1), "exit code 1")
+
     def test_failure_output(self):
         output = "".join(f"line {i}\n" for i in range(1, 31))
         report, _ = self.run_check(LINUX_CPU, vb.RunResult(-6, output), ("linux", "x86_64"))

@@ -42,7 +42,6 @@ import os
 import platform
 import re
 import shutil
-import signal
 import struct
 import subprocess
 import sys
@@ -996,12 +995,18 @@ def run_isolated(path: Path, timeout: float = RUN_TIMEOUT_SECONDS) -> RunResult:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+# A negative return code always comes from a Unix-style target, so the names are
+# fixed here: Windows numbers its own signals differently (SIGABRT is 22 there)
+# and `signal.Signals` would not recognise them.
+POSIX_SIGNAL_NAMES = {
+    2: "SIGINT", 4: "SIGILL", 6: "SIGABRT", 7: "SIGBUS", 8: "SIGFPE", 9: "SIGKILL",
+    11: "SIGSEGV", 13: "SIGPIPE", 15: "SIGTERM", 24: "SIGXCPU", 25: "SIGXFSZ",
+}
+
+
 def describe_returncode(returncode: int) -> str:
     if returncode < 0:
-        try:
-            name = signal.Signals(-returncode).name
-        except ValueError:
-            name = "unknown signal"
+        name = POSIX_SIGNAL_NAMES.get(-returncode, "unknown signal")
         return f"killed by signal {-returncode} ({name})"
     if returncode > 255:
         return f"exit code {returncode} ({returncode & 0xFFFFFFFF:#010x})"
