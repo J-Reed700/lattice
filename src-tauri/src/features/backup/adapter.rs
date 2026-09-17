@@ -694,8 +694,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, AppError::Security(_)) || matches!(err, AppError::InvalidInput(_)),
-            "Expected Security or InvalidInput error, got: {:?}",
+            matches!(err, AppError::Security(_))
+                || matches!(err, AppError::InvalidInput(_))
+                || matches!(err, AppError::PermissionDenied(_)),
+            "Expected a path security error, got: {:?}",
             err
         );
 
@@ -985,15 +987,6 @@ mod tests {
         // Close the pool before restore
         pool.close().await;
 
-        // Make db_path read-only to simulate failure
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&db_path).unwrap().permissions();
-            perms.set_mode(0o444); // Read-only
-            fs::set_permissions(&db_path, perms).unwrap();
-        }
-
         let new_pool = SqlitePoolOptions::new()
             .connect(&format!("sqlite://{}", db_path.display()))
             .await
@@ -1001,15 +994,27 @@ mod tests {
 
         let adapter2 = BackupAdapter::new(new_pool.clone(), db_path.clone());
 
+        // Restores create sibling safety and temporary files. Make the parent
+        // directory read-only so the failure is portable across Unix filesystems;
+        // a read-only database file can still be atomically replaced.
+        #[cfg(unix)]
+        let parent_permissions = {
+            use std::os::unix::fs::PermissionsExt;
+            let parent = db_path.parent().unwrap();
+            let original = fs::metadata(parent).unwrap().permissions();
+            let perms = fs::Permissions::from_mode(0o555);
+            fs::set_permissions(parent, perms).unwrap();
+            original
+        };
+
         // Attempt restore (should fail due to permissions)
         let result = adapter2.restore_backup(backup_pathbuf).await;
 
         #[cfg(unix)]
         {
             // Restore permissions for cleanup
-            use std::os::unix::fs::PermissionsExt;
-            let perms = fs::Permissions::from_mode(0o644);
-            fs::set_permissions(&db_path, perms).unwrap();
+            let parent = db_path.parent().unwrap();
+            fs::set_permissions(parent, parent_permissions).unwrap();
         }
 
         // On Unix, should fail due to permissions

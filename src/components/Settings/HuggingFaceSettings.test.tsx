@@ -26,7 +26,10 @@ const TOKEN = 'hf_abcdefghijklmnopqrstuvwxyz0123456789';
 
 function renderSection() {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: 3, retryDelay: 1 },
+      mutations: { retry: 1, retryDelay: 1 },
+    },
   });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -59,6 +62,23 @@ describe('HuggingFaceSettings', () => {
     expect(await screen.findByText('Replace token')).toBeInTheDocument();
     expect(screen.getByText('Token set.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove token' })).toBeInTheDocument();
+  });
+
+  it('waits for an explicit retry after the OS keyring denies access', async () => {
+    const user = userEvent.setup();
+    mockGetStatus
+      .mockResolvedValueOnce({ ok: false, error: 'Keychain access denied' })
+      .mockResolvedValueOnce({ ok: true, data: { isSet: true } });
+    renderSection();
+
+    expect(await screen.findByText("Couldn't access Keychain. No credential was changed.")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Try Keychain again' }));
+
+    expect(await screen.findByText('Token set.')).toBeInTheDocument();
+    expect(mockGetStatus).toHaveBeenCalledTimes(2);
   });
 
   it('hides the token by default and reveals it only on request', async () => {

@@ -174,25 +174,20 @@ impl SystemInfoAdapter {
             .ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = output_str.trim().split(',').collect();
+        let mut parts = output_str.trim().splitn(2, ',');
+        let name = parts.next()?.trim().to_string();
+        let vram_str = parts.next()?.trim();
+        let vram_gb = vram_str
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|mb| mb / 1024.0);
 
-        if parts.len() >= 2 {
-            let name = parts[0].trim().to_string();
-            let vram_str = parts[1].trim();
-            let vram_gb = vram_str
-                .split_whitespace()
-                .next()
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|mb| mb / 1024.0);
-
-            Some(GpuInfo {
-                name,
-                vram_gb,
-                compute_type: ComputeType::Cuda,
-            })
-        } else {
-            None
-        }
+        Some(GpuInfo {
+            name,
+            vram_gb,
+            compute_type: ComputeType::Cuda,
+        })
     }
 
     /// Detect AMD GPU on Linux via lspci.
