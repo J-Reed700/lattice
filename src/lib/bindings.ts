@@ -1045,6 +1045,22 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Compact a conversation's oldest messages into an LLM summary.
+ *
+ * The oldest messages (everything except the most recent
+ * `keepRecentMessages`, default 4) are summarized by the LLM and folded into
+ * a single context note. The original messages stay in the history for
+ * display; only the LLM context switches to the summary.
+ */
+async compactConversation(request: CompactConversationRequestDto) : Promise<Result<CompactConversationResponseDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compact_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getSystemTheme() : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_system_theme") };
@@ -3730,6 +3746,70 @@ memberDocumentIds: string[] }
  * Summary of a cluster run for UI consumption.
  */
 export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; clusterCount: number; noiseCount: number; durationMs: number; llmCalls: number }
+/**
+ * Request to compact a conversation's oldest messages into an LLM summary.
+ *
+ * The oldest messages are folded into a summary so the LLM context window
+ * carries the distilled past instead of the raw history. The most recent
+ * `keep_recent_messages` messages stay raw.
+ */
+export type CompactConversationRequestDto = {
+/**
+ * Conversation identifier
+ */
+conversationId: string;
+/**
+ * Number of most-recent messages to keep raw (default 4).
+ */
+keepRecentMessages: number | null }
+/**
+ * Response from compacting a conversation.
+ */
+export type CompactConversationResponseDto = {
+/**
+ * The compaction that was applied
+ */
+compaction: CompactionRecordDto }
+/**
+ * A compaction record as returned to the client.
+ */
+export type CompactionRecordDto = {
+/**
+ * Stable identifier for this compaction
+ */
+id: string;
+/**
+ * Conversation this compaction belongs to
+ */
+conversationId: string;
+/**
+ * The LLM-produced summary of the compacted messages
+ */
+summaryText: string;
+/**
+ * Id of the last message folded into the summary (inclusive boundary)
+ */
+upToMessageId: string;
+/**
+ * How many messages were folded into the summary
+ */
+originalMessageCount: number;
+/**
+ * Total tokens of the folded messages before summarization
+ */
+originalTokens: number;
+/**
+ * Token count of the summary itself
+ */
+summaryTokens: number;
+/**
+ * `summary_tokens / original_tokens`, clamped to `(0.0, 1.0]`
+ */
+compressionRatio: number;
+/**
+ * When the compaction was created (ISO 8601)
+ */
+createdAt: string }
 export type CompareCellDto = { value: string | null; citation: CompareCitationDto | null }
 export type CompareCitationDto = { chunkId: string; excerpt: string }
 export type CompareDocumentsRequestDto = { documentIds: string[]; columns: string[] }
@@ -3887,7 +3967,12 @@ archivedAt: string | null;
 /**
  * Optional preview of the most recent message content
  */
-lastMessagePreview: string | null }
+lastMessagePreview: string | null;
+/**
+ * Active compaction summary, if the conversation's older messages have
+ * been folded into one (see `conversation_summaries`).
+ */
+compaction: CompactionRecordDto | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number }
@@ -4818,7 +4903,12 @@ ollamaAuthHeaderValue: string;
  */
 llamaCpp: LlamaCppSettingsDto;
 /**
- * Request timeout in seconds
+ * Longest silence tolerated inside a response, in seconds.
+ *
+ * The clock resets on every chunk the backend sends, so this bounds how
+ * long a request may produce *nothing* before it is treated as dead. It
+ * does not cap how long an answer may take — total generation time is
+ * governed by the per-turn time budget.
  */
 timeoutSeconds: number;
 /**
@@ -5452,7 +5542,16 @@ kbSufficient: boolean | null;
  * True when a short follow-up reused the previous turn's topic and the
  * planner LLM call was skipped.
  */
-kbPlannerSkipped: boolean; kbBuildSourcesMs: number; kbPersistReferencesMs: number; externalHydeInterpretationMs: number; wikiSearchMs: number; webSearchMs: number; totalMs: number }
+kbPlannerSkipped: boolean; kbBuildSourcesMs: number; kbPersistReferencesMs: number;
+/**
+ * Wall-clock of external query preparation: the utility model's
+ * interpretation and the web-query rewrite, which run concurrently.
+ */
+externalHydeInterpretationMs: number; wikiSearchMs: number;
+/**
+ * The web search itself. Query rewriting is counted above, not here.
+ */
+webSearchMs: number; totalMs: number }
 /**
  * Retrieval trace for one turn.
  *
