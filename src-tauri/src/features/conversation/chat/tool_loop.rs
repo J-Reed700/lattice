@@ -146,6 +146,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     sources: &mut Vec<SourceDto>,
     retrieval_trace: &mut Option<super::RetrievalTraceDto>,
     tools_ref: Option<&[crate::application::ports::ToolDefinition]>,
+    time_budget: Duration,
 ) -> Result<ToolLoopOutcome> {
     use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
@@ -154,7 +155,22 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     const CANCEL_POLL_INTERVAL_MS: u64 = 200;
     const EMPTY_RESPONSE_RETRY_HINT: &str =
         "Previous generation produced no text. Respond directly to the user query.";
-    let timeout_duration = Duration::from_secs(300);
+    // One deadline for the whole turn: tool rounds and provider retries share it.
+    let deadline = Instant::now() + time_budget;
+    let budget_minutes = time_budget.as_secs().div_ceil(60);
+    let budget_exhausted = || {
+        AppError::ServiceNotAvailable(format!(
+            "Generation exceeded this turn's {budget_minutes}-minute time budget."
+        ))
+    };
+    // Each bounded await gets what is left of the turn, never a fresh window.
+    let remaining_budget = || {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(budget_exhausted());
+        }
+        Ok(remaining)
+    };
 
     let tool_loop_start = Instant::now();
     let mut timings = ToolLoopTimingMetrics::default();
@@ -195,6 +211,8 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
         );
 
         let llm_iteration_start = Instant::now();
+        let remaining = remaining_budget()?;
+        native_request.time_budget = Some(remaining);
         let native_progress = llm.supports_typed_completions()
             && (llm.provider_name() == "llamacpp"
                 || tools_ref.is_some_and(|tools| !tools.is_empty()));
@@ -215,15 +233,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                 };
                 let on_retry = |attempt| emitter.status("retrying", attempt);
                 let completion = timeout(
-                    timeout_duration,
+                    remaining,
                     llm.complete_with_retry_progress(&native_request, &on_text, &on_retry),
                 );
                 tokio::pin!(completion);
                 loop {
                     tokio::select! {
-                        result = &mut completion => break result.map_err(|_| AppError::ServiceNotAvailable(
-                            "LLM generation timed out. The model may be overloaded.".into(),
-                        ))?,
+                        result = &mut completion => break result.map_err(|_| budget_exhausted())?,
                         _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
                             if is_cancel_requested(request_id) { return Err(cancellation_error()); }
                         }
@@ -287,8 +303,21 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     dyn futures::Stream<Item = Result<StreamChunk>> + Send + Unpin,
                 >)
         } else {
-            llm.generate_streaming_with_tools(&current_prompt, &tool_context, None, tools_ref)
-                .await
+            // A provider that stalls before sending headers must not outlive the
+            // budget or ignore the Stop button.
+            let creation = timeout(
+                remaining_budget()?,
+                llm.generate_streaming_with_tools(&current_prompt, &tool_context, None, tools_ref),
+            );
+            tokio::pin!(creation);
+            loop {
+                tokio::select! {
+                    result = &mut creation => break result.unwrap_or_else(|_| Err(budget_exhausted())),
+                    _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
+                        if is_cancel_requested(request_id) { return Err(cancellation_error()); }
+                    }
+                }
+            }
         };
 
         match stream_result {
@@ -342,7 +371,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     Ok((full_response, pending_tool_calls))
                 };
 
-                match timeout(timeout_duration, stream_future).await {
+                match timeout(remaining_budget()?, stream_future).await {
                     Ok(Ok((response_text, tool_calls))) => {
                         timings.llm_stream_ms = timings
                             .llm_stream_ms
@@ -588,10 +617,11 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                         let llm_stream_ms = timings
                             .llm_stream_ms
                             .saturating_add(elapsed_ms(llm_iteration_start));
-                        error!(llm_stream_ms, "LLM generation timed out after 5 minutes");
-                        return Err(AppError::ServiceNotAvailable(
-                            "LLM generation timed out. The model may be overloaded.".into(),
-                        ));
+                        error!(
+                            llm_stream_ms,
+                            budget_minutes, "LLM generation exceeded the turn time budget"
+                        );
+                        return Err(budget_exhausted());
                     }
                 }
             }

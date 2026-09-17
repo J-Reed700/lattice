@@ -19,6 +19,8 @@ pub struct LlamaCppLlm {
     client: reqwest::Client,
     base_url: String,
     settings: LLMSettingsDto,
+    /// Longest silence tolerated once a response has started streaming.
+    stall_timeout: Duration,
 }
 
 impl LlamaCppLlm {
@@ -31,17 +33,20 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(connection, settings.timeout_seconds)?,
+            client: http_client(connection)?,
             base_url,
             settings: settings.clone(),
+            stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
         })
     }
 
     pub async fn test_connection(connection: &LlamaCppSettingsDto) -> Result<Vec<String>> {
         let base_url = validate_connection(connection)?;
-        let client = http_client(connection, 30)?;
+        let client = http_client(connection)?;
+        let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
+            .timeout(probe_timeout)
             .send()
             .await
             .map_err(network_error)?;
@@ -66,6 +71,7 @@ impl LlamaCppLlm {
         })?;
         // A model list alone does not prove that the generation route works.
         let response = client.post(format!("{base_url}/chat/completions"))
+            .timeout(probe_timeout)
             .json(&json!({"model": model, "messages":[{"role":"user","content":"Reply with OK."}],
                 "max_tokens": 32, "stream": false, "chat_template_kwargs":{"enable_thinking":false}}))
             .send().await.map_err(network_error)?;
@@ -98,6 +104,10 @@ impl LlamaCppLlm {
         ]);
         if stream {
             body.insert("stream_options".into(), json!({"include_usage": true}));
+            // Prompt-processing events keep a long or queued prompt exempt from
+            // stall detection rather than arming it, so a slow first batch is not
+            // mistaken for a stalled server. Servers without support ignore the field.
+            body.insert("return_progress".into(), json!(true));
         }
         if let Some(effort) = &request.reasoning_effort {
             body.insert("reasoning_effort".into(), json!(effort));
@@ -218,6 +228,7 @@ impl LLMPort for LlamaCppLlm {
         let response = self
             .client
             .get(format!("{}/models", self.base_url))
+            .timeout(self.stall_timeout)
             .send()
             .await
             .map_err(network_error)?;
@@ -329,7 +340,9 @@ pub fn validate_connection(connection: &LlamaCppSettingsDto) -> Result<String> {
     })
 }
 
-fn http_client(connection: &LlamaCppSettingsDto, timeout: u32) -> Result<reqwest::Client> {
+/// No client-wide read or total timeout: generations are bounded by their time
+/// budget and stall detection, probes by per-request timeouts.
+fn http_client(connection: &LlamaCppSettingsDto) -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
     if !connection.auth_header_name.trim().is_empty() {
         let name = HeaderName::from_bytes(connection.auth_header_name.trim().as_bytes())
@@ -343,7 +356,6 @@ fn http_client(connection: &LlamaCppSettingsDto, timeout: u32) -> Result<reqwest
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
-        .read_timeout(Duration::from_secs(u64::from(timeout.max(1))))
         .build()
         .map_err(network_error)
 }

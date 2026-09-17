@@ -42,7 +42,7 @@ use crate::shared::text_utils::extract_highlight_terms;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tracing::{info, warn};
 
@@ -654,6 +654,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             &mut sources,
             &mut retrieval_trace,
             tools_ref,
+            generation_time_budget(search_flags),
         )
         .await
         {
@@ -865,6 +866,18 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Generation allowance for one turn, shared by tool rounds and provider retries.
+/// Deep research reads many sources and reasons for much longer than a reply.
+fn generation_time_budget(search_flags: SearchFlags) -> Duration {
+    const CHAT: Duration = Duration::from_secs(30 * 60);
+    const DEEP_RESEARCH: Duration = Duration::from_secs(2 * 60 * 60);
+    if search_flags.deep_research_mode {
+        DEEP_RESEARCH
+    } else {
+        CHAT
+    }
 }
 
 fn retrieval_subtimings_or_default(
@@ -1342,6 +1355,24 @@ mod tests {
         assert!(!flags.force_kb_search);
         assert!(!flags.force_web_search);
         assert!(flags.force_followup_mode);
+    }
+
+    #[test]
+    fn test_deep_research_gets_a_longer_generation_budget() {
+        let mut prefs = ToolPreferences {
+            knowledge_base: false,
+            web_search: true,
+            deep_research_mode: false,
+            followup_mode: false,
+            turn_mode: None,
+            enabled_tools: None,
+        };
+        let chat = generation_time_budget(SearchFlags::from_preferences(Some(&prefs)));
+        prefs.deep_research_mode = true;
+        let research = generation_time_budget(SearchFlags::from_preferences(Some(&prefs)));
+        assert!(chat >= Duration::from_secs(30 * 60));
+        assert!(research >= Duration::from_secs(2 * 60 * 60));
+        assert!(research > chat);
     }
 
     #[test]

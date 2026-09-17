@@ -483,38 +483,42 @@ fn incomplete_or_invalid_streamed_tool_calls_fail() {
     assert!(decoder.into_response().is_err());
 }
 
+async fn read_request_body(socket: &mut tokio::net::TcpStream) -> Value {
+    use tokio::io::AsyncReadExt;
+    let mut request = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let count = socket.read(&mut buffer).await.unwrap();
+        assert!(count > 0);
+        request.extend_from_slice(&buffer[..count]);
+        if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&request[..end]);
+            let length: usize = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().unwrap())
+                })
+                .unwrap();
+            if request.len() >= end + 4 + length {
+                return serde_json::from_slice(&request[end + 4..end + 4 + length]).unwrap();
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn active_completion_can_outlast_the_read_timeout() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let mut request = Vec::new();
-        let mut buffer = [0u8; 4096];
-        loop {
-            let count = socket.read(&mut buffer).await.unwrap();
-            assert!(count > 0);
-            request.extend_from_slice(&buffer[..count]);
-            if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&request[..end]);
-                let length: usize = headers
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse().unwrap())
-                    })
-                    .unwrap();
-                if request.len() >= end + 4 + length {
-                    let body: Value =
-                        serde_json::from_slice(&request[end + 4..end + 4 + length]).unwrap();
-                    assert_eq!(body["stream"], true);
-                    assert_eq!(body["stream_options"]["include_usage"], true);
-                    break;
-                }
-            }
-        }
+        let body = read_request_body(&mut socket).await;
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
+        assert_eq!(body["return_progress"], true);
         let chunks = [
             "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Thinking\"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\n",
@@ -536,6 +540,151 @@ async fn active_completion_can_outlast_the_read_timeout() {
         .unwrap();
     assert_eq!(response.text, "Hello");
     server.await.unwrap();
+}
+
+const PROMPT_PROGRESS_EVENT: &str = "data: {\"choices\":[{\"finish_reason\":null,\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null}}],\"prompt_progress\":{\"total\":10,\"cache\":0,\"processed\":0,\"time_ms\":1}}\n\n";
+
+#[tokio::test]
+async fn stream_that_goes_silent_after_starting_is_retried() {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        // First attempt: an answer starts, then silence with the body unfinished.
+        let (mut stalled, _) = listener.accept().await.unwrap();
+        read_request_body(&mut stalled).await;
+        let started = format!(
+            "{PROMPT_PROGRESS_EVENT}data: {{\"choices\":[{{\"delta\":{{\"content\":\"Partial\"}}}}]}}\n\n"
+        );
+        stalled.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{started}", started.len() + 1024).as_bytes()).await.unwrap();
+        let (mut healthy, _) = listener.accept().await.unwrap();
+        read_request_body(&mut healthy).await;
+        let body = format!(
+            "{PROMPT_PROGRESS_EVENT}{}",
+            stream_reply(json!({"content":"Recovered"}), "stop")
+        );
+        healthy.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        drop(stalled);
+    });
+    let mut config = settings(format!("http://{address}"));
+    config.timeout_seconds = 1;
+    let client = LlamaCppLlm::new(&config).unwrap();
+    let retries = std::sync::atomic::AtomicUsize::new(0);
+    let response = client
+        .complete_with_retry_progress(&CompletionRequest::default(), &|_| Ok(()), &|_| {
+            retries.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Recovered");
+    assert_eq!(retries.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// Prompt processing can outlast the stall timeout on a large prompt; the events
+/// that report it must not make the request less patient than silence would.
+#[tokio::test]
+async fn prompt_progress_alone_does_not_arm_the_stall_timer() {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        read_request_body(&mut socket).await;
+        let answer = stream_reply(json!({"content":"Processed"}), "stop");
+        let size = PROMPT_PROGRESS_EVENT.len() + answer.len();
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n{PROMPT_PROGRESS_EVENT}").as_bytes()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        socket.write_all(answer.as_bytes()).await.unwrap();
+    });
+    let mut config = settings(format!("http://{address}"));
+    config.timeout_seconds = 1;
+    let client = LlamaCppLlm::new(&config).unwrap();
+    let response = client
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Processed");
+    server.await.unwrap();
+}
+
+/// A second full budget would let the retry finish; a shared one must not.
+#[tokio::test]
+async fn a_retry_shares_the_budget_instead_of_restarting_it() {
+    let server = MockServer::start().await;
+    let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(move |_: &wiremock::Request| {
+            let delay = Duration::from_millis(400);
+            if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(503)
+                    .insert_header("Retry-After", "0")
+                    .set_delay(delay)
+            } else {
+                sse_response(json!({"content":"Too late"})).set_delay(delay)
+            }
+        })
+        .mount(&server)
+        .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let error = client
+        .complete(&CompletionRequest {
+            time_budget: Some(Duration::from_millis(600)),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("time budget"), "{error}");
+}
+
+#[tokio::test]
+async fn queued_request_may_wait_longer_than_the_stall_timeout() {
+    let server = sequence_server(vec![
+        sse_response(json!({"content":"Served"})).set_delay(Duration::from_millis(1500))
+    ])
+    .await;
+    let mut config = settings(server.uri());
+    config.timeout_seconds = 1;
+    let client = LlamaCppLlm::new(&config).unwrap();
+    let response = client
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(response.text, "Served");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn time_budget_bounds_the_whole_generation() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(json!({"content":"Late"})).set_delay(Duration::from_secs(5)))
+        .mount(&server)
+        .await;
+    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let error = client
+        .complete(&CompletionRequest {
+            time_budget: Some(Duration::from_millis(300)),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("time budget"), "{error}");
+}
+
+#[test]
+fn prompt_progress_events_are_not_answer_text() {
+    let mut decoder = streaming::Decoder::for_completion();
+    assert!(decoder
+        .push(PROMPT_PROGRESS_EVENT.as_bytes())
+        .unwrap()
+        .is_empty());
+    decoder
+        .push(stream_reply(json!({"content":"Answer"}), "stop").as_bytes())
+        .unwrap();
+    assert_eq!(decoder.into_response().unwrap().text, "Answer");
 }
 
 #[tokio::test]
