@@ -298,6 +298,12 @@ pub struct SidecarHandle {
     /// `127.0.0.1:<port>` — the HTTP base URL the LLM client posts to.
     endpoint: String,
 
+    /// Bearer token this server was launched with. Loopback is not a trust
+    /// boundary: without it any local process — including a page in the user's
+    /// browser, which can reach 127.0.0.1 — could generate on the user's GPU
+    /// and read back the model path. Never logged.
+    api_token: String,
+
     /// Process handle. Sync `Mutex` because `CommandChild::kill()` is
     /// itself synchronous (a syscall, no `.await`) and the shutdown
     /// path runs from a sync Tauri callback. `Option` so the kill
@@ -354,6 +360,12 @@ impl SidecarHandle {
     /// `http://127.0.0.1:53412`. Pass to `SidecarLLMClient`.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// Bearer token every request to this sidecar must carry, `/health`
+    /// included. Treat as a secret: it must not reach a log or an error body.
+    pub fn api_token(&self) -> &str {
+        &self.api_token
     }
 
     /// Context window, in tokens, that this sidecar was launched with.
@@ -439,12 +451,17 @@ impl SpawnedChild {
         binary: SidecarBinary,
         args: Vec<String>,
         endpoint: &str,
+        api_token: &str,
     ) -> Result<(Receiver<CommandEvent>, Self), AttemptError> {
+        // The key goes in the environment, not `--api-key`: argv is world-
+        // readable through `ps` to every process on the machine, which is the
+        // same set of processes the key exists to keep off the port.
         let (rx, child) = app
             .shell()
             .sidecar(binary.label())
             .map_err(|err| spawn_failure(binary, &err))?
             .args(args)
+            .env("LLAMA_API_KEY", api_token)
             .spawn()
             .map_err(|err| spawn_failure(binary, &err))?;
 
@@ -489,10 +506,12 @@ impl SpawnedChild {
         config: &SidecarConfig,
         binary: SidecarBinary,
         port: PortReservation,
+        api_token: String,
     ) -> SidecarHandle {
         self.armed = false;
         SidecarHandle {
             endpoint: self.endpoint.clone(),
+            api_token,
             child: Arc::clone(&self.child),
             context_size: config.context_size,
             binary,
@@ -1193,7 +1212,9 @@ impl SidecarManager {
         let port = reservation.port();
         let endpoint = format!("http://127.0.0.1:{port}");
 
-        // 4. Build the args. Order doesn't matter to llama-server.
+        // 4. Build the args. Order doesn't matter to llama-server. The token is
+        //    minted per spawn, so a leaked one dies with its process.
+        let api_token = new_api_token();
         let args = build_server_args(&config, port);
         tracing::info!(
             "Spawning llama-server sidecar: binary={} model={} port={} ngl={} ctx={}",
@@ -1210,7 +1231,7 @@ impl SidecarManager {
         //    binary cannot run at all. The guard returned owns the child:
         //    every path out of this function from here on either kills it
         //    or converts it into a handle.
-        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint)?;
+        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint, &api_token)?;
 
         // 6. Spawn the long-lived event drain task.
         //    The drain owns the receiver for the rest of the sidecar's
@@ -1230,7 +1251,7 @@ impl SidecarManager {
 
         // 7. Await readiness: `/health` answering 200, or the readiness line.
         //    On failure the guard's Drop kills the child.
-        if let Err(end) = await_ready(ready_rx, &endpoint, &signals, deadline).await {
+        if let Err(end) = await_ready(ready_rx, &endpoint, &api_token, &signals, deadline).await {
             tracing::warn!(
                 endpoint = %endpoint,
                 binary = binary.label(),
@@ -1251,7 +1272,7 @@ impl SidecarManager {
             "llama-server ready; prompt budgeting will use this context window"
         );
 
-        Ok(spawned.into_handle(&config, binary, reservation))
+        Ok(spawned.into_handle(&config, binary, reservation, api_token))
     }
 }
 
@@ -2204,11 +2225,36 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
         port.to_string(),
         "--host".to_string(),
         "127.0.0.1".to_string(), // explicit — never bind public iface
+        // Binding loopback keeps the port off the network but not away from
+        // other software on the machine: any local process, and any page the
+        // user has open, can reach 127.0.0.1. The key makes the port ours
+        // (passed as `LLAMA_API_KEY`, never argv — see `SpawnedChild::spawn`),
+        // and dropping the bundled web UI removes a whole HTML surface we
+        // neither ship on purpose nor audit.
+        "--no-webui".to_string(),
         "-ngl".to_string(),
         config.n_gpu_layers.to_string(),
         "--ctx-size".to_string(),
         config.context_size.to_string(),
     ]
+}
+
+/// Mint a bearer token for one sidecar process.
+///
+/// 128 bits from the OS entropy source, hex-encoded so it can be spliced into
+/// an `Authorization` header and an environment variable without escaping. A new
+/// one per spawn means the window in which a leaked token is worth anything
+/// closes when the process does.
+fn new_api_token() -> String {
+    use std::fmt::Write;
+
+    let mut bytes = [0u8; 16];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    bytes.iter().fold(String::with_capacity(32), |mut out, b| {
+        // Writing into a String cannot fail.
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Spawn a long-lived event-drain task for a sidecar. Returns once the
@@ -2376,8 +2422,14 @@ enum HealthProbe {
     Unreachable,
 }
 
-async fn probe_health(http: &reqwest::Client, endpoint: &str) -> HealthProbe {
-    let request = http.get(format!("{endpoint}/health")).send();
+async fn probe_health(http: &reqwest::Client, endpoint: &str, api_token: &str) -> HealthProbe {
+    // Current llama.cpp exempts `/health` from the API-key check, but an
+    // unauthenticated probe would turn any future tightening of that list into a
+    // model load that never finishes starting.
+    let request = http
+        .get(format!("{endpoint}/health"))
+        .bearer_auth(api_token)
+        .send();
     match timeout(HEALTH_PROBE_TIMEOUT, request).await {
         Ok(Ok(response)) if response.status().is_success() => HealthProbe::Ready,
         Ok(Ok(_)) => HealthProbe::Loading,
@@ -2399,6 +2451,7 @@ async fn probe_health(http: &reqwest::Client, endpoint: &str) -> HealthProbe {
 async fn await_ready(
     ready_rx: tokio::sync::oneshot::Receiver<Result<(), StartupEnd>>,
     endpoint: &str,
+    api_token: &str,
     signals: &StartupSignals,
     deadline: Instant,
 ) -> Result<(), StartupEnd> {
@@ -2435,7 +2488,7 @@ async fn await_ready(
         }
 
         if let Some(http) = http.as_ref() {
-            match probe_health(http, endpoint).await {
+            match probe_health(http, endpoint, api_token).await {
                 HealthProbe::Ready => {
                     tracing::info!("llama-server sidecar answered /health on {endpoint}");
                     return Ok(());
@@ -3249,6 +3302,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         await_ready(
             rx,
             DEAD_ENDPOINT,
+            "token",
             &signals,
             Instant::now() + Duration::from_secs(30),
         )
@@ -3289,7 +3343,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
     async fn await_ready_stops_at_the_shared_budget() {
         let (_tx, rx) = tokio::sync::oneshot::channel::<Result<(), StartupEnd>>();
         let signals = StartupSignals::default();
-        let end = await_ready(rx, DEAD_ENDPOINT, &signals, Instant::now()).await;
+        let end = await_ready(rx, DEAD_ENDPOINT, "token", &signals, Instant::now()).await;
         assert!(
             matches!(end, Err(StartupEnd::TimedOut(TimeoutKind::Budget(_)))),
             "{end:?}"
@@ -3506,5 +3560,31 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         assert!(args.iter().any(|a| a == "127.0.0.1"));
         assert!(args.iter().any(|a| a == "-ngl"));
         assert!(args.iter().any(|a| a == "99"));
+    }
+
+    /// An unauthenticated loopback port is reachable from every other process
+    /// on the machine, browsers included, and the bundled web UI is an HTML
+    /// surface we never meant to serve. The key authenticates the port, so it
+    /// must not travel in argv, where `ps` hands it to those same processes.
+    #[test]
+    fn build_server_args_drop_the_web_ui_and_keep_the_key_out_of_argv() {
+        let cfg = SidecarConfig::for_model(PathBuf::from("/models/llama.gguf"));
+        let args = build_server_args(&cfg, 12345);
+
+        assert!(args.iter().any(|a| a == "--no-webui"));
+        assert!(
+            !args.iter().any(|a| a == "--api-key"),
+            "the key belongs in LLAMA_API_KEY, not on the command line"
+        );
+    }
+
+    #[test]
+    fn api_tokens_are_unguessable_and_never_repeat() {
+        let first = new_api_token();
+        let second = new_api_token();
+
+        assert_eq!(first.len(), 32, "128 bits of entropy, hex-encoded");
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second, "a token is minted per spawn");
     }
 }
