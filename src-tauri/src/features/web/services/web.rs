@@ -42,15 +42,155 @@ use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::stealth;
 use async_trait::async_trait;
+use futures::future::join_all;
 use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
 use scraper::{Html, Selector};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 use url::{form_urlencoded, Url};
+
+/// Results requested per search-engine page.
+const PROVIDER_PAGE_SIZE: usize = 10;
+/// Most pages fetched from one provider for one query.
+const MAX_PROVIDER_PAGES: usize = 5;
+/// Least time between the starts of two requests to the same site.
+const MIN_SITE_REQUEST_INTERVAL: Duration = Duration::from_millis(900);
+/// Longest wait for a site's slot. A wedged holder must not queue the rest of
+/// the search behind it, so past this the request goes out unpaced.
+const SITE_SLOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Sites tracked at once before idle entries are dropped. `WebService` is a
+/// container singleton, so the map would otherwise live for the whole process.
+const MAX_TRACKED_SITES: usize = 64;
+/// Hosts that queue with the site they mirror rather than on their own.
+const SITE_ALIASES: &[(&str, &str)] = &[
+    ("html.duckduckgo.com", "duckduckgo.com"),
+    ("lite.duckduckgo.com", "duckduckgo.com"),
+];
+
+/// Paces requests per site.
+///
+/// Guarantees two things per site: one request in flight at a time, and at
+/// least [`MIN_SITE_REQUEST_INTERVAL`] between the starts of consecutive
+/// requests. A slot covers a single request, never a retry sequence or a
+/// FlareSolverr round trip, so a slow site delays its own next request instead
+/// of every request queued behind it. Waiting is capped by
+/// [`SITE_SLOT_WAIT_TIMEOUT`]; past that the request is sent unpaced. Different
+/// sites never wait on each other.
+struct SitePacer {
+    /// Per-site slot, holding when that site's last request started.
+    sites: parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<Option<Instant>>>>>,
+    min_interval: Duration,
+}
+
+impl Default for SitePacer {
+    fn default() -> Self {
+        Self {
+            sites: parking_lot::Mutex::new(HashMap::new()),
+            min_interval: MIN_SITE_REQUEST_INTERVAL,
+        }
+    }
+}
+
+impl SitePacer {
+    #[cfg(test)]
+    fn with_interval(min_interval: Duration) -> Self {
+        Self {
+            min_interval,
+            ..Self::default()
+        }
+    }
+
+    /// Queue key for `url`: its full host, with the mirror hosts above folded
+    /// onto the site they mirror. Keying on a public suffix instead would put
+    /// unrelated sites in one queue. `None` when there is no host to pace,
+    /// which leaves the request unpaced rather than inventing a per-URL queue.
+    fn site_key(url: &str) -> Option<String> {
+        let host = Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+        let host = host.trim_start_matches("www.");
+        Some(
+            SITE_ALIASES
+                .iter()
+                .find(|(mirror, _)| *mirror == host)
+                .map_or_else(|| host.to_string(), |(_, site)| (*site).to_string()),
+        )
+    }
+
+    /// Take `url`'s site slot, then wait out whatever is left of that site's
+    /// minimum interval. Dropping the guard releases the slot; `None` means the
+    /// request is not paced at all — it has no host, or the wait timed out.
+    async fn acquire(&self, url: &str) -> Option<OwnedMutexGuard<Option<Instant>>> {
+        let key = Self::site_key(url)?;
+        let min_interval = self.min_interval;
+        let slot = {
+            let mut sites = self.sites.lock();
+            if sites.len() >= MAX_TRACKED_SITES {
+                // Drop only entries nobody holds whose interval has already
+                // elapsed: their next request has nothing left to wait for.
+                sites.retain(|_, slot| {
+                    Arc::strong_count(slot) > 1
+                        || slot.try_lock().map_or(true, |last| {
+                            last.is_some_and(|started| started.elapsed() < min_interval)
+                        })
+                });
+            }
+            Arc::clone(sites.entry(key).or_default())
+        };
+
+        let mut last_request =
+            match tokio::time::timeout(SITE_SLOT_WAIT_TIMEOUT, slot.lock_owned()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    warn!(url, "Site slot wait timed out; sending the request unpaced");
+                    return None;
+                }
+            };
+        if let Some(remaining) =
+            last_request.and_then(|started| min_interval.checked_sub(started.elapsed()))
+        {
+            sleep(remaining).await;
+        }
+        *last_request = Some(Instant::now());
+        Some(last_request)
+    }
+}
+
+/// What one paced request to a search URL produced.
+enum SearchPage {
+    /// A successful response's body.
+    Html(String),
+    /// A non-success status, which decides retrying on its own.
+    Status(StatusCode),
+    /// The request or the body read failed, with the message for `last_error`.
+    Failed(String),
+}
+
+/// What one provider page (or the single Wikipedia lookup) produced for a query.
+///
+/// Results stay un-deduplicated so pages can be fetched concurrently and then
+/// merged in the serial provider/page order.
+#[derive(Default)]
+struct ProviderPage {
+    results: Vec<WebSearchResult>,
+    /// The provider returned results (Wikipedia: a parseable payload).
+    used: bool,
+    /// Last failure seen while fetching this page.
+    last_error: Option<String>,
+}
+
+/// One query's results across providers, merged in provider order.
+#[derive(Default)]
+struct QueryResults {
+    results: Vec<WebSearchResult>,
+    seen_urls: HashSet<String>,
+    providers_used: HashSet<String>,
+    last_error: Option<String>,
+}
 
 /// Web service implementation
 ///
@@ -59,17 +199,14 @@ use url::{form_urlencoded, Url};
 pub struct WebService {
     /// HTTP client with cookie jar and optional proxy
     client: Client,
+    /// Per-site request queue shared by every search on this service.
+    pacer: SitePacer,
 }
 
 impl WebService {
     /// Create a new web service with stealth features (cookie jar, proxy rotation).
     pub fn new() -> Result<Self> {
-        let client = stealth::stealth_client_builder()
-            .timeout(WEB_REQUEST_TIMEOUT)
-            .build()
-            .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
-
-        Ok(Self { client })
+        Self::with_timeout(WEB_REQUEST_TIMEOUT)
     }
 
     /// Create with custom timeout
@@ -79,7 +216,10 @@ impl WebService {
             .build()
             .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            pacer: SitePacer::default(),
+        })
     }
 
     /// Extract main text content from HTML
@@ -653,240 +793,282 @@ impl WebService {
         queries
     }
 
+    /// Search one query across `providers`.
+    ///
+    /// Every provider's first page is always requested, so those run
+    /// concurrently (the site pacer still serializes same-site requests).
+    /// Whether a provider needs further pages depends on how many results the
+    /// providers before it contributed, so those are fetched afterwards in
+    /// provider order. Pages are merged in the same provider/page order as a
+    /// fully serial search, which keeps dedup and ordering deterministic.
     async fn search_single_query(
         &self,
         query: &str,
         providers: &[String],
         requested_total: usize,
-    ) -> (Vec<WebSearchResult>, HashSet<String>, Option<String>) {
+    ) -> QueryResults {
         let encoded_query = urlencoding::encode(query).into_owned();
-        let mut merged_results: Vec<WebSearchResult> = Vec::new();
-        let mut seen_urls = HashSet::new();
-        let mut providers_used = HashSet::new();
-        let mut last_error: Option<String> = None;
+        let required_pages = requested_total
+            .div_ceil(PROVIDER_PAGE_SIZE)
+            .clamp(1, MAX_PROVIDER_PAGES);
+
+        let first_pages = join_all(providers.iter().map(|provider| {
+            self.fetch_provider_page(provider, &encoded_query, 0, requested_total)
+        }))
+        .await;
+
+        let mut merged = QueryResults::default();
+        for (provider, first_page) in providers.iter().zip(first_pages) {
+            self.absorb_provider_page(&mut merged, provider, first_page);
+            if provider == "wikipedia" {
+                continue;
+            }
+
+            for page_idx in 1..required_pages {
+                if merged.results.len() >= requested_total {
+                    break;
+                }
+                let page = self
+                    .fetch_provider_page(provider, &encoded_query, page_idx, requested_total)
+                    .await;
+                self.absorb_provider_page(&mut merged, provider, page);
+            }
+        }
+
+        merged
+    }
+
+    /// Fold one provider page into a query's results. Earlier providers and
+    /// pages win URL dedup; the latest error overwrites earlier ones.
+    fn absorb_provider_page(&self, merged: &mut QueryResults, provider: &str, page: ProviderPage) {
+        for result in page.results {
+            let canonical = self.canonicalize_url_for_dedup(&result.url);
+            if merged.seen_urls.insert(canonical) {
+                merged.results.push(result);
+            }
+        }
+        if page.used {
+            merged.providers_used.insert(provider.to_string());
+        }
+        if page.last_error.is_some() {
+            merged.last_error = page.last_error;
+        }
+    }
+
+    /// Fetch one result page from `provider`.
+    ///
+    /// Wikipedia is a single lookup and ignores `page_idx`. HTML providers try
+    /// their fallback URLs in order until one yields results; every attempt
+    /// takes the site's pacing slot on its own, so backoff sleeps and bot
+    /// challenges never hold the site against other queries.
+    async fn fetch_provider_page(
+        &self,
+        provider: &str,
+        encoded_query: &str,
+        page_idx: usize,
+        requested_total: usize,
+    ) -> ProviderPage {
+        if provider == "wikipedia" {
+            return self
+                .fetch_wikipedia_page(encoded_query, requested_total)
+                .await;
+        }
 
         const MAX_RETRIES_PER_PROVIDER: usize = 3;
         const BASE_RETRY_DELAY_MS: u64 = 250;
-        const PROVIDER_PAGE_SIZE: usize = 10;
-        const MAX_PROVIDER_PAGES: usize = 5;
 
         let should_retry_status = |status: StatusCode| {
             status == StatusCode::FORBIDDEN
                 || status == StatusCode::TOO_MANY_REQUESTS
                 || status.is_server_error()
         };
+        let backoff = |attempt: usize| {
+            Duration::from_millis(BASE_RETRY_DELAY_MS.saturating_mul(1_u64 << (attempt - 1)))
+        };
 
-        for provider in providers {
-            if provider == "wikipedia" {
-                let wiki_limit = requested_total.clamp(1, 20);
-                let wiki_url = self.wikipedia_search_url(&encoded_query, wiki_limit, 0);
-                let response = self
-                    .build_search_request(&wiki_url)
-                    .header(ACCEPT, "application/json")
-                    .send()
-                    .await;
+        let mut page = ProviderPage::default();
+        let provider_offset = page_idx.saturating_mul(PROVIDER_PAGE_SIZE);
+        let search_urls = self.build_provider_search_urls(provider, encoded_query, provider_offset);
 
-                match response {
-                    Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<serde_json::Value>().await {
-                            Ok(payload) => {
-                                for result in self.parse_wikipedia_results(&payload, wiki_limit) {
-                                    let canonical = self.canonicalize_url_for_dedup(&result.url);
-                                    if seen_urls.insert(canonical) {
-                                        merged_results.push(result);
-                                    }
-                                }
-                                providers_used.insert("wikipedia".to_string());
-                            }
-                            Err(e) => {
-                                warn!("Failed to parse Wikipedia search response: {}", e);
-                                last_error = Some(format!("Wikipedia parse failed: {}", e));
-                            }
-                        }
-                    }
-                    Ok(resp) => {
-                        let status = resp.status();
-                        warn!("Wikipedia search returned status {}", status);
-                        last_error = Some(format!("Wikipedia search HTTP {}", status));
-                    }
-                    Err(e) => {
-                        warn!("Wikipedia search request failed: {}", e);
-                        last_error = Some(format!("Wikipedia search request failed: {}", e));
-                    }
-                }
-                continue;
-            }
+        for search_url in &search_urls {
+            for attempt in 1..=MAX_RETRIES_PER_PROVIDER {
+                debug!(
+                    "Web search attempt via {} provider={} (try {}/{})",
+                    search_url, provider, attempt, MAX_RETRIES_PER_PROVIDER
+                );
 
-            let required_pages = requested_total
-                .div_ceil(PROVIDER_PAGE_SIZE)
-                .clamp(1, MAX_PROVIDER_PAGES);
-
-            for page_idx in 0..required_pages {
-                let provider_offset = page_idx.saturating_mul(PROVIDER_PAGE_SIZE);
-                let search_urls =
-                    self.build_provider_search_urls(provider, &encoded_query, provider_offset);
-
-                if search_urls.is_empty() {
-                    continue;
-                }
-
-                let mut page_has_results = false;
-
-                for search_url in &search_urls {
-                    stealth::random_delay(300, 1500).await;
-
-                    for attempt in 1..=MAX_RETRIES_PER_PROVIDER {
-                        debug!(
-                            "Web search attempt via {} provider={} (try {}/{})",
-                            search_url, provider, attempt, MAX_RETRIES_PER_PROVIDER
+                let html = match self.fetch_search_page(search_url, attempt).await {
+                    SearchPage::Html(html) => html,
+                    SearchPage::Status(status) => {
+                        warn!(
+                            "Web search provider returned status {} for {} on attempt {}",
+                            status, search_url, attempt
                         );
+                        page.last_error = Some(format!(
+                            "Web search failed with status {} from {} (attempt {})",
+                            status, search_url, attempt
+                        ));
 
-                        let response = match self.build_search_request(search_url).send().await {
-                            Ok(resp) => resp,
-                            Err(e) => {
-                                warn!(
-                                    "Web search request failed for {} on attempt {}: {}",
-                                    search_url, attempt, e
-                                );
-                                last_error = Some(format!(
-                                    "Request failed for {} (attempt {}): {}",
-                                    search_url, attempt, e
-                                ));
-
-                                if attempt < MAX_RETRIES_PER_PROVIDER {
-                                    let delay = Duration::from_millis(
-                                        BASE_RETRY_DELAY_MS * (1_u64 << (attempt - 1)),
-                                    );
-                                    sleep(delay).await;
-                                    continue;
-                                }
-                                break;
-                            }
-                        };
-
-                        let status = response.status();
-                        if !status.is_success() {
-                            warn!(
-                                "Web search provider returned status {} for {} on attempt {}",
-                                status, search_url, attempt
-                            );
-                            last_error = Some(format!(
-                                "Web search failed with status {} from {} (attempt {})",
-                                status, search_url, attempt
-                            ));
-
-                            if attempt < MAX_RETRIES_PER_PROVIDER && should_retry_status(status) {
-                                let delay = Duration::from_millis(
-                                    BASE_RETRY_DELAY_MS * (1_u64 << (attempt - 1)),
-                                );
-                                sleep(delay).await;
-                                continue;
-                            }
-                            break;
-                        }
-
-                        let html = match response.text().await {
-                            Ok(body) => body,
-                            Err(e) => {
-                                warn!(
-                                    "Failed to read search response from {} on attempt {}: {}",
-                                    search_url, attempt, e
-                                );
-                                last_error = Some(format!(
-                                    "Failed reading search response from {} (attempt {}): {}",
-                                    search_url, attempt, e
-                                ));
-
-                                if attempt < MAX_RETRIES_PER_PROVIDER {
-                                    let delay = Duration::from_millis(
-                                        BASE_RETRY_DELAY_MS * (1_u64 << (attempt - 1)),
-                                    );
-                                    sleep(delay).await;
-                                    continue;
-                                }
-                                break;
-                            }
-                        };
-
-                        if self.is_bot_challenge_page(&html) {
-                            warn!(
-                                "Web search provider {} returned anti-bot challenge page on attempt {}",
-                                search_url, attempt
-                            );
-
-                            if let Some(solver) = stealth::flaresolverr() {
-                                info!("Attempting FlareSolverr bypass for {}", search_url);
-                                match solver.solve(search_url).await {
-                                    Ok(solved_html) => {
-                                        let mut results = self
-                                            .parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
-                                        for result in &mut results {
-                                            result.source = Some(provider.to_string());
-                                        }
-                                        if !results.is_empty() {
-                                            providers_used.insert(provider.to_string());
-                                            page_has_results = true;
-                                            for result in results {
-                                                let canonical =
-                                                    self.canonicalize_url_for_dedup(&result.url);
-                                                if seen_urls.insert(canonical) {
-                                                    merged_results.push(result);
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("FlareSolverr failed for {}: {}", search_url, e);
-                                    }
-                                }
-                            }
-
-                            last_error = Some(format!(
-                                "Search provider challenge page from {} (attempt {})",
-                                search_url, attempt
-                            ));
-                            break;
-                        }
-
-                        let mut results = self.parse_search_results(&html, PROVIDER_PAGE_SIZE);
-                        for result in &mut results {
-                            result.source = Some(provider.to_string());
-                        }
-
-                        if !results.is_empty() {
-                            providers_used.insert(provider.to_string());
-                            page_has_results = true;
-                            for result in results {
-                                let canonical = self.canonicalize_url_for_dedup(&result.url);
-                                if seen_urls.insert(canonical) {
-                                    merged_results.push(result);
-                                }
-                            }
-                            break;
-                        }
-
-                        if attempt < MAX_RETRIES_PER_PROVIDER {
-                            let delay = Duration::from_millis(
-                                BASE_RETRY_DELAY_MS * (1_u64 << (attempt - 1)),
-                            );
-                            sleep(delay).await;
+                        if attempt < MAX_RETRIES_PER_PROVIDER && should_retry_status(status) {
+                            sleep(backoff(attempt)).await;
                             continue;
                         }
-                    }
-
-                    if page_has_results {
                         break;
                     }
-                }
+                    SearchPage::Failed(error) => {
+                        page.last_error = Some(error);
 
-                if merged_results.len() >= requested_total {
+                        if attempt < MAX_RETRIES_PER_PROVIDER {
+                            sleep(backoff(attempt)).await;
+                            continue;
+                        }
+                        break;
+                    }
+                };
+
+                if self.is_bot_challenge_page(&html) {
+                    warn!(
+                        "Web search provider {} returned anti-bot challenge page on attempt {}",
+                        search_url, attempt
+                    );
+
+                    if let Some(solver) = stealth::flaresolverr() {
+                        info!("Attempting FlareSolverr bypass for {}", search_url);
+                        match solver.solve(search_url).await {
+                            Ok(solved_html) => {
+                                let mut results =
+                                    self.parse_search_results(&solved_html, PROVIDER_PAGE_SIZE);
+                                for result in &mut results {
+                                    result.source = Some(provider.to_string());
+                                }
+                                if !results.is_empty() {
+                                    page.used = true;
+                                    page.results = results;
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("FlareSolverr failed for {}: {}", search_url, e);
+                            }
+                        }
+                    }
+
+                    page.last_error = Some(format!(
+                        "Search provider challenge page from {} (attempt {})",
+                        search_url, attempt
+                    ));
                     break;
                 }
+
+                let mut results = self.parse_search_results(&html, PROVIDER_PAGE_SIZE);
+                for result in &mut results {
+                    result.source = Some(provider.to_string());
+                }
+
+                if !results.is_empty() {
+                    page.used = true;
+                    page.results = results;
+                    break;
+                }
+
+                if attempt < MAX_RETRIES_PER_PROVIDER {
+                    sleep(backoff(attempt)).await;
+                    continue;
+                }
+            }
+
+            // A fallback URL that returned results completes the page.
+            if page.used {
+                break;
             }
         }
 
-        (merged_results, providers_used, last_error)
+        page
+    }
+
+    /// One paced request to `search_url`.
+    ///
+    /// The site's slot is held for the request and its body read, and released
+    /// before the caller's backoff sleep or FlareSolverr bypass.
+    async fn fetch_search_page(&self, search_url: &str, attempt: usize) -> SearchPage {
+        let _site_slot = self.pacer.acquire(search_url).await;
+
+        let response = match self.build_search_request(search_url).send().await {
+            Ok(response) => response,
+            Err(e) => {
+                warn!(
+                    "Web search request failed for {} on attempt {}: {}",
+                    search_url, attempt, e
+                );
+                return SearchPage::Failed(format!(
+                    "Request failed for {} (attempt {}): {}",
+                    search_url, attempt, e
+                ));
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            return SearchPage::Status(status);
+        }
+
+        match response.text().await {
+            Ok(body) => SearchPage::Html(body),
+            Err(e) => {
+                warn!(
+                    "Failed to read search response from {} on attempt {}: {}",
+                    search_url, attempt, e
+                );
+                SearchPage::Failed(format!(
+                    "Failed reading search response from {} (attempt {}): {}",
+                    search_url, attempt, e
+                ))
+            }
+        }
+    }
+
+    /// Run the Wikipedia search lookup for one query.
+    async fn fetch_wikipedia_page(
+        &self,
+        encoded_query: &str,
+        requested_total: usize,
+    ) -> ProviderPage {
+        let mut page = ProviderPage::default();
+        let wiki_limit = requested_total.clamp(1, 20);
+        let wiki_url = self.wikipedia_search_url(encoded_query, wiki_limit, 0);
+
+        let _site_slot = self.pacer.acquire(&wiki_url).await;
+        let response = self
+            .build_search_request(&wiki_url)
+            .header(ACCEPT, "application/json")
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(payload) => {
+                        page.results = self.parse_wikipedia_results(&payload, wiki_limit);
+                        page.used = true;
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse Wikipedia search response: {}", e);
+                        page.last_error = Some(format!("Wikipedia parse failed: {}", e));
+                    }
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                warn!("Wikipedia search returned status {}", status);
+                page.last_error = Some(format!("Wikipedia search HTTP {}", status));
+            }
+            Err(e) => {
+                warn!("Wikipedia search request failed: {}", e);
+                page.last_error = Some(format!("Wikipedia search request failed: {}", e));
+            }
+        }
+
+        page
     }
 
     fn build_search_request(&self, url: &str) -> reqwest::RequestBuilder {
@@ -1035,17 +1217,39 @@ impl WebServiceTrait for WebService {
             if frontier.is_empty() {
                 break;
             }
-            let mut next_frontier = Vec::new();
-            for frontier_query in frontier.into_iter().take(branch_queries) {
-                let normalized_query = frontier_query.trim().to_ascii_lowercase();
-                if normalized_query.is_empty() || !seen_queries.insert(normalized_query) {
-                    continue;
-                }
-                executed_queries.push(frontier_query.clone());
+            let level_queries: Vec<String> = frontier
+                .into_iter()
+                .take(branch_queries)
+                .filter(|frontier_query| {
+                    let normalized_query = frontier_query.trim().to_ascii_lowercase();
+                    !normalized_query.is_empty() && seen_queries.insert(normalized_query)
+                })
+                .collect();
+            executed_queries.extend(level_queries.iter().cloned());
 
-                let (results, used_by_query, maybe_error) = self
-                    .search_single_query(&frontier_query, &providers, requested_total)
-                    .await;
+            // Search the level's queries concurrently (the site pacer keeps
+            // same-site requests spaced), then merge in frontier order so dedup,
+            // telemetry and follow-ups match a serial run. No extra concurrency
+            // limit: `branch_queries` already bounds a level to four queries.
+            // The futures are collected up front because holding the borrowing
+            // `map` closure across the await fails this `async_trait` future's
+            // `Send` check.
+            let searches: Vec<_> = level_queries
+                .iter()
+                .map(|frontier_query| {
+                    self.search_single_query(frontier_query, &providers, requested_total)
+                })
+                .collect();
+            let level_results: Vec<QueryResults> = join_all(searches).await;
+
+            let mut next_frontier = Vec::new();
+            for (frontier_query, query_results) in level_queries.iter().zip(level_results) {
+                let QueryResults {
+                    results,
+                    providers_used: used_by_query,
+                    last_error: maybe_error,
+                    ..
+                } = query_results;
                 if let Some(err) = maybe_error {
                     last_error = Some(err);
                 }
@@ -1068,7 +1272,7 @@ impl WebServiceTrait for WebService {
 
                 if depth > 1 {
                     for followup in self
-                        .derive_followup_queries(&frontier_query, &results, branch_queries)
+                        .derive_followup_queries(frontier_query, &results, branch_queries)
                         .into_iter()
                         .take(branch_queries)
                     {
@@ -1389,5 +1593,162 @@ mod tests {
         let results = service.parse_search_results(html, 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://www.bing.com/ck/a?!&&p=abc123");
+    }
+
+    fn search_result(url: &str, source: &str) -> WebSearchResult {
+        WebSearchResult {
+            title: url.to_string(),
+            url: url.to_string(),
+            snippet: String::new(),
+            published_date: None,
+            source: Some(source.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_site_key_aliases_mirrors_without_collapsing_public_suffixes() {
+        for url in [
+            "https://html.duckduckgo.com/html/?q=a&s=0",
+            "https://duckduckgo.com/html/?q=a&s=0",
+            "https://lite.duckduckgo.com/lite/?q=a&s=0",
+        ] {
+            assert_eq!(SitePacer::site_key(url).as_deref(), Some("duckduckgo.com"));
+        }
+        assert_eq!(
+            SitePacer::site_key("https://www.bing.com/search?q=a").as_deref(),
+            Some("bing.com")
+        );
+        assert_eq!(
+            SitePacer::site_key("https://en.wikipedia.org/w/api.php?action=query").as_deref(),
+            Some("en.wikipedia.org")
+        );
+        // Unrelated sites sharing a public suffix must not share a queue.
+        assert_ne!(
+            SitePacer::site_key("https://www.bbc.co.uk/news"),
+            SitePacer::site_key("https://www.theguardian.co.uk/news")
+        );
+        assert_eq!(SitePacer::site_key("not a url"), None);
+    }
+
+    #[tokio::test]
+    async fn test_site_pacer_spaces_same_site_requests() {
+        let interval = Duration::from_millis(120);
+        let pacer = SitePacer::with_interval(interval);
+
+        // The first request to a site has nothing to pace against.
+        let start = Instant::now();
+        drop(pacer.acquire("https://html.duckduckgo.com/html/?q=a").await);
+        assert!(
+            start.elapsed() < interval,
+            "first request to a site must not wait"
+        );
+
+        // A mirror of that site waits out the rest of the interval.
+        let start = Instant::now();
+        drop(pacer.acquire("https://lite.duckduckgo.com/lite/?q=b").await);
+        let waited = start.elapsed();
+        assert!(
+            waited >= interval / 2,
+            "same site must wait out the interval, waited {waited:?}"
+        );
+
+        // Another site is paced independently.
+        let start = Instant::now();
+        drop(pacer.acquire("https://www.bing.com/search?q=a").await);
+        assert!(
+            start.elapsed() < interval,
+            "another site must not inherit the wait"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_site_pacer_serializes_same_site_only() {
+        // A short interval keeps the assertions about the slot itself, not
+        // about the pacing wait, which the test above covers.
+        let pacer = SitePacer::with_interval(Duration::from_millis(1));
+        let wait = Duration::from_millis(50);
+        let ddg_slot = pacer.acquire("https://html.duckduckgo.com/html/?q=a").await;
+
+        let bing_slot =
+            tokio::time::timeout(wait, pacer.acquire("https://www.bing.com/search?q=a")).await;
+        assert!(bing_slot.is_ok(), "another site must not wait");
+
+        let mirror_slot =
+            tokio::time::timeout(wait, pacer.acquire("https://lite.duckduckgo.com/lite/?q=b"))
+                .await;
+        assert!(
+            mirror_slot.is_err(),
+            "same site must wait for the held slot"
+        );
+
+        drop(ddg_slot);
+        let mirror_slot =
+            tokio::time::timeout(wait, pacer.acquire("https://lite.duckduckgo.com/lite/?q=b"))
+                .await;
+        assert!(mirror_slot.is_ok(), "released slot must be handed on");
+    }
+
+    #[test]
+    fn test_absorb_provider_page_merges_in_provider_order() {
+        let service = WebService::new().unwrap();
+        let mut merged = QueryResults::default();
+
+        service.absorb_provider_page(
+            &mut merged,
+            "duckduckgo",
+            ProviderPage {
+                results: vec![
+                    search_result("https://a.example/x", "duckduckgo"),
+                    search_result("https://b.example/", "duckduckgo"),
+                ],
+                used: true,
+                last_error: Some("duckduckgo retry".to_string()),
+            },
+        );
+        service.absorb_provider_page(
+            &mut merged,
+            "bing",
+            ProviderPage {
+                results: vec![
+                    search_result("https://b.example", "bing"),
+                    search_result("https://c.example/", "bing"),
+                ],
+                used: true,
+                last_error: None,
+            },
+        );
+        assert_eq!(merged.last_error.as_deref(), Some("duckduckgo retry"));
+
+        service.absorb_provider_page(
+            &mut merged,
+            "wikipedia",
+            ProviderPage {
+                results: Vec::new(),
+                used: false,
+                last_error: Some("Wikipedia search HTTP 503".to_string()),
+            },
+        );
+
+        let merged_urls: Vec<_> = merged
+            .results
+            .iter()
+            .map(|result| (result.url.as_str(), result.source.as_deref()))
+            .collect();
+        assert_eq!(
+            merged_urls,
+            vec![
+                ("https://a.example/x", Some("duckduckgo")),
+                ("https://b.example/", Some("duckduckgo")),
+                ("https://c.example/", Some("bing")),
+            ]
+        );
+        assert_eq!(
+            merged.providers_used,
+            HashSet::from(["duckduckgo".to_string(), "bing".to_string()])
+        );
+        assert_eq!(
+            merged.last_error.as_deref(),
+            Some("Wikipedia search HTTP 503")
+        );
     }
 }

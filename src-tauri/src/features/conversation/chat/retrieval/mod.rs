@@ -53,7 +53,8 @@ use self::keyword::{extract_phrase_terms, normalize_keyword_token, tokenize_keyw
 use self::overlap::tokenize_overlap_terms;
 use self::pipeline::run_retrieval_pipeline as run_retrieval_pipeline_impl;
 use self::policy::{
-    empty_search_response, should_execute_external_lookup, should_use_external_as_fallback,
+    empty_search_response, kb_can_run_alongside_external, should_execute_external_lookup,
+    should_use_external_as_fallback,
 };
 use self::rerank::apply_rerank_stage as apply_rerank_stage_impl;
 use self::source_citations::{
@@ -185,8 +186,11 @@ pub struct RetrievalSubTimingMetrics {
     pub kb_planner_skipped: bool,
     pub kb_build_sources_ms: u64,
     pub kb_persist_references_ms: u64,
+    /// Wall-clock of external query preparation: the utility model's
+    /// interpretation and the web-query rewrite, which run concurrently.
     pub external_hyde_interpretation_ms: u64,
     pub wiki_search_ms: u64,
+    /// The web search itself. Query rewriting is counted above, not here.
     pub web_search_ms: u64,
     pub total_ms: u64,
 }

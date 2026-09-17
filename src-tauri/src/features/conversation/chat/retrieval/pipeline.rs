@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::domain::qa::hyde::HyDEInterpretation;
+
 fn overlap_ratio(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
@@ -96,7 +98,7 @@ pub(super) async fn run_retrieval_pipeline(
 
     let mut outcome = RetrievalPipelineOutcome {
         short_circuit_response: None,
-        interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+        interpretation: HyDEInterpretation::raw_only(
             validated_message.to_string(),
             QueryType::Question,
         ),
@@ -124,7 +126,6 @@ pub(super) async fn run_retrieval_pipeline(
         validated_message,
         search_flags,
     );
-    let mut external_hyde_context: Option<String> = None;
     let mut kb_attempted = false;
     let mut kb_has_results = false;
     let mut kb_low_confidence = true;
@@ -150,8 +151,20 @@ pub(super) async fn run_retrieval_pipeline(
         );
     }
 
-    if outcome.short_circuit_response.is_none() && retrieval_plan.should_search_kb {
-        kb_attempted = true;
+    let external = ExternalLookup {
+        container,
+        conv_service,
+        conversation_id,
+        validated_message,
+        utility_llm: &utility_llm,
+        search_flags,
+        highlight_terms,
+        excerpt_chars: tool_output_settings.excerpt_chars as usize,
+        tuning,
+        wiki_planned: retrieval_plan.should_search_wiki,
+        web_planned: retrieval_plan.should_search_web,
+    };
+    let kb_search = async {
         let kb_retrieval_start = Instant::now();
         let kb_search_limit = derive_kb_search_limit(tool_output_settings, tuning);
         let kb_outcome = run_kb_retrieval(
@@ -168,6 +181,36 @@ pub(super) async fn run_retrieval_pipeline(
             tuning,
         )
         .await;
+        (kb_outcome, elapsed_ms(kb_retrieval_start))
+    };
+
+    let run_kb = outcome.short_circuit_response.is_none() && retrieval_plan.should_search_kb;
+    // KB and the external phase overlap only when no KB result can close the
+    // external-lookup gate. The low-confidence clarify below needs no wiki or
+    // web search planned, so it never applies to a turn that takes this path.
+    let kb_alongside_external =
+        run_kb && external.is_planned() && kb_can_run_alongside_external(search_flags);
+    let mut external_phase: Option<ExternalPhaseOutcome> = None;
+    let kb_result = if kb_alongside_external {
+        // The external phase interprets the turn itself instead of waiting on
+        // KB's interpretation, so it starts from the raw message. `allow_lookup`
+        // is true on the promise of `kb_can_run_alongside_external`: no KB
+        // result can close the gate on a turn that takes this path. The merge
+        // below re-checks the gate and complains if that promise ever breaks.
+        let external_base = outcome.interpretation.clone();
+        let interpret = external_base.hyde_text.is_none();
+        let (kb_result, phase) =
+            tokio::join!(kb_search, external.run(&external_base, interpret, true));
+        external_phase = Some(phase);
+        Some(kb_result)
+    } else if run_kb {
+        Some(kb_search.await)
+    } else {
+        None
+    };
+
+    if let Some((kb_outcome, kb_total_ms)) = kb_result {
+        kb_attempted = true;
         outcome.interpretation = kb_outcome.interpretation;
         outcome.search_response = kb_outcome.search_response;
         outcome.sources = kb_outcome.sources;
@@ -176,7 +219,7 @@ pub(super) async fn run_retrieval_pipeline(
         outcome.searched_documents = kb_outcome.searched_documents;
         outcome.scope_is_linked = kb_outcome.scope_is_linked;
         outcome.sufficiency = kb_outcome.sufficiency;
-        outcome.sub_timings.kb_total_ms = elapsed_ms(kb_retrieval_start);
+        outcome.sub_timings.kb_total_ms = kb_total_ms;
         kb_has_results = !outcome.search_response.results.is_empty();
         kb_low_confidence = kb_outcome.low_confidence;
 
@@ -231,52 +274,319 @@ pub(super) async fn run_retrieval_pipeline(
         );
     }
 
-    if outcome.short_circuit_response.is_none()
-        && (retrieval_plan.should_search_web || retrieval_plan.should_search_wiki)
-        && outcome.interpretation.hyde_text.is_none()
+    if external_phase.is_none() && outcome.short_circuit_response.is_none() && external.is_planned()
     {
-        let external_hyde_start = Instant::now();
-        // HyDE runs on the utility LLM (small, fast, local) when set,
-        // not the chat LLM. See utility_llm resolution above.
-        let hyde_service = crate::features::qa::hyde::HyDEService::new(Arc::clone(&utility_llm));
-        let hyde_context =
-            build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
-        external_hyde_context = hyde_context.clone();
-        if let Ok(interpretation) = hyde_service
-            .interpret_query_with_context(validated_message, hyde_context.as_deref())
-            .await
-        {
-            outcome.interpretation = interpretation;
-        }
-        outcome.sub_timings.external_hyde_interpretation_ms = elapsed_ms(external_hyde_start);
+        let interpret = outcome.interpretation.hyde_text.is_none();
+        external_phase = Some(
+            external
+                .run(&outcome.interpretation, interpret, allow_external_lookup)
+                .await,
+        );
     }
 
-    let external_followup_anchor_terms = if search_flags.force_followup_mode
-        || matches!(outcome.interpretation.query_type, QueryType::Followup)
-    {
-        let terms = load_followup_turn_anchor_terms(conv_service, conversation_id).await;
-        if terms.is_empty() {
-            None
-        } else {
-            Some(terms)
+    if let Some(phase) = external_phase {
+        outcome.sub_timings.external_hyde_interpretation_ms = phase.query_prep_ms;
+        // The utility model's interpretation replaces KB's unless KB produced
+        // HyDE text of its own, which is when the sequential order skipped the
+        // external interpretation. KB retrieval never does today, so both
+        // orders hand chat the external interpretation whenever it succeeded.
+        if outcome.interpretation.hyde_text.is_none() {
+            if let Some(interpretation) = phase.interpretation {
+                outcome.interpretation = interpretation;
+            }
         }
-    } else {
-        None
-    };
+        // Rechecked because a concurrent phase started before KB's
+        // interpretation existed. Wiki before web whatever finished first, so
+        // the merged sources and context match the sequential order.
+        let fetched_anything = phase.wiki.is_some() || phase.web.is_some();
+        debug_assert!(
+            allow_external_lookup || !fetched_anything,
+            "a concurrent external phase fetched results the gate then closed on"
+        );
+        if !allow_external_lookup && fetched_anything {
+            warn!(
+                conversation_id = conversation_id,
+                "Discarding external results the gate closed on after they were fetched"
+            );
+        }
+        // The short-circuit answer is the whole turn: merging searches onto it
+        // would cite sources the reply never used.
+        if allow_external_lookup && outcome.short_circuit_response.is_none() {
+            if let Some(wiki) = phase.wiki {
+                attach_wiki_results(&mut outcome, wiki);
+            }
+            if let Some(web) = phase.web {
+                attach_web_results(&mut outcome, web);
+            }
+        }
+    }
+    outcome.sub_timings.total_ms = elapsed_ms(retrieval_start);
+    info!(
+        kb_total_ms = outcome.sub_timings.kb_total_ms,
+        kb_scope_load_ms = outcome.sub_timings.kb_scope_load_ms,
+        kb_hyde_interpretation_ms = outcome.sub_timings.kb_hyde_interpretation_ms,
+        kb_search_plan_ms = outcome.sub_timings.kb_search_plan_ms,
+        kb_shortlist_planning_ms = outcome.sub_timings.kb_shortlist_planning_ms,
+        kb_query_execution_ms = outcome.sub_timings.kb_query_execution_ms,
+        kb_merge_shortlist_gate_ms = outcome.sub_timings.kb_merge_shortlist_gate_ms,
+        kb_post_filters_ms = outcome.sub_timings.kb_post_filters_ms,
+        kb_rerank_ms = outcome.sub_timings.kb_rerank_ms,
+        kb_sufficiency_ms = outcome.sub_timings.kb_sufficiency_ms,
+        kb_corrective_retry_ms = outcome.sub_timings.kb_corrective_retry_ms,
+        kb_corrective_retries = outcome.sub_timings.kb_corrective_retries,
+        kb_sufficient = ?outcome.sub_timings.kb_sufficient,
+        kb_planner_skipped = outcome.sub_timings.kb_planner_skipped,
+        kb_build_sources_ms = outcome.sub_timings.kb_build_sources_ms,
+        kb_persist_references_ms = outcome.sub_timings.kb_persist_references_ms,
+        external_hyde_interpretation_ms = outcome.sub_timings.external_hyde_interpretation_ms,
+        wiki_search_ms = outcome.sub_timings.wiki_search_ms,
+        web_search_ms = outcome.sub_timings.web_search_ms,
+        kb_alongside_external = kb_alongside_external,
+        total_ms = outcome.sub_timings.total_ms,
+        "retrieval: sub timing metrics"
+    );
+    outcome
+}
 
-    if outcome.short_circuit_response.is_none()
-        && retrieval_plan.should_search_wiki
-        && allow_external_lookup
-    {
-        let wiki_search_start = Instant::now();
-        let wiki_query = select_wiki_search_query_with_tuning(
+/// Borrowed inputs of the wiki/web phase, shared so the phase can run beside
+/// KB retrieval without copying turn state.
+struct ExternalLookup<'a> {
+    container: &'a Container,
+    conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &'a str,
+    validated_message: &'a str,
+    utility_llm: &'a Arc<dyn crate::application::ports::LLMPort>,
+    search_flags: SearchFlags,
+    highlight_terms: &'a [String],
+    excerpt_chars: usize,
+    tuning: &'a RetrievalTuningSettingsDto,
+    wiki_planned: bool,
+    web_planned: bool,
+}
+
+/// What the wiki/web phase produced, merged into the outcome by the caller.
+struct ExternalPhaseOutcome {
+    /// The utility model's reading of the turn. `None` when it was not
+    /// requested or failed.
+    interpretation: Option<HyDEInterpretation>,
+    /// Wall-clock of query preparation, during which the interpretation and
+    /// the web-query rewrite run concurrently.
+    query_prep_ms: u64,
+    wiki: Option<ExternalSearchResult>,
+    web: Option<ExternalSearchResult>,
+}
+
+/// One external search, ready to merge into the outcome.
+#[derive(Debug, Default)]
+pub(super) struct ExternalSearchResult {
+    pub(super) sources: Vec<SourceDto>,
+    /// Prompt context. `None` when the search returned nothing usable.
+    pub(super) context: Option<String>,
+    /// Surfaced to the prompt. Web search only: wiki failures are just logged.
+    pub(super) error: Option<String>,
+    pub(super) elapsed_ms: u64,
+}
+
+impl ExternalLookup<'_> {
+    fn is_planned(&self) -> bool {
+        self.wiki_planned || self.web_planned
+    }
+
+    /// Interpret the turn and rewrite the web query side by side, then run the
+    /// wiki and web searches side by side. `allow_lookup` false still runs the
+    /// interpretation, as the sequential pipeline always did.
+    async fn run(
+        &self,
+        base_interpretation: &HyDEInterpretation,
+        interpret: bool,
+        allow_lookup: bool,
+    ) -> ExternalPhaseOutcome {
+        let prep_start = Instant::now();
+        let search_wiki = self.wiki_planned && allow_lookup;
+        let search_web = self.web_planned && allow_lookup;
+        // HyDE and web-query rewriting run on the utility LLM (small, fast,
+        // local) when set, not the chat LLM. See utility_llm resolution above.
+        let hyde_service =
+            crate::features::qa::hyde::HyDEService::new(Arc::clone(self.utility_llm));
+        let hyde_context = if interpret || search_web {
+            build_hyde_context_window_for_conversation(self.conv_service, self.conversation_id)
+                .await
+        } else {
+            None
+        };
+        let (interpretation, generated_web_query) = tokio::join!(
+            async {
+                if !interpret {
+                    return None;
+                }
+                hyde_service
+                    .interpret_query_with_context(self.validated_message, hyde_context.as_deref())
+                    .await
+                    .ok()
+            },
+            async {
+                if !search_web {
+                    return None;
+                }
+                Some(
+                    hyde_service
+                        .generate_web_search_query_with_context(
+                            self.validated_message,
+                            hyde_context.as_deref(),
+                        )
+                        .await,
+                )
+            },
+        );
+        let effective_interpretation = interpretation.as_ref().unwrap_or(base_interpretation);
+
+        let followup_anchor_terms = if (search_wiki || search_web)
+            && (self.search_flags.force_followup_mode
+                || matches!(effective_interpretation.query_type, QueryType::Followup))
+        {
+            let terms =
+                load_followup_turn_anchor_terms(self.conv_service, self.conversation_id).await;
+            if terms.is_empty() {
+                None
+            } else {
+                Some(terms)
+            }
+        } else {
+            None
+        };
+        let web_query = generated_web_query.map(|generated| {
+            self.choose_web_query(
+                generated,
+                effective_interpretation,
+                followup_anchor_terms.as_ref(),
+            )
+        });
+        let query_prep_ms = elapsed_ms(prep_start);
+
+        let (wiki, web) = tokio::join!(
+            async {
+                if !search_wiki {
+                    return None;
+                }
+                Some(
+                    self.wiki_search(effective_interpretation, followup_anchor_terms.as_ref())
+                        .await,
+                )
+            },
+            async {
+                let query = web_query.as_deref()?;
+                Some(self.web_search(query).await)
+            },
+        );
+
+        ExternalPhaseOutcome {
+            interpretation,
+            query_prep_ms,
+            wiki,
+            web,
+        }
+    }
+
+    /// The rewritten web query, or the lexical query when the rewrite came
+    /// back empty or failed.
+    fn choose_web_query(
+        &self,
+        generated: Result<String>,
+        interpretation: &HyDEInterpretation,
+        followup_anchor_terms: Option<&HashSet<String>>,
+    ) -> String {
+        let validated_message = self.validated_message;
+        let tuning = self.tuning;
+        let lexical_web_query = select_web_search_query_with_tuning(
             validated_message,
-            &outcome.interpretation,
-            external_followup_anchor_terms.as_ref(),
+            interpretation,
+            followup_anchor_terms,
+            tuning,
+        );
+        let mut generated_web_query: Option<String> = None;
+        let mut web_query_source = "hyde_generated";
+        let web_query = match generated {
+            Ok(query) if !query.trim().is_empty() => {
+                generated_web_query = Some(query.trim().to_string());
+                safe_truncate(
+                    query.trim(),
+                    tuning.external_search_query_max_chars as usize,
+                )
+            }
+            Ok(_) => {
+                web_query_source = "lexical_fallback_empty_hyde";
+                lexical_web_query.clone()
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "Web-specific HyDE query generation failed; falling back to lexical web query builder"
+                );
+                web_query_source = "lexical_fallback_hyde_error";
+                lexical_web_query.clone()
+            }
+        };
+        let raw_terms = tokenize_keyword_terms(validated_message)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let hyde_terms = interpretation
+            .hyde_text
+            .as_deref()
+            .map(tokenize_keyword_terms)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let generated_terms = generated_web_query
+            .as_deref()
+            .map(tokenize_keyword_terms)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let lexical_terms = tokenize_keyword_terms(&lexical_web_query)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let final_terms = tokenize_keyword_terms(&web_query)
+            .into_iter()
+            .collect::<HashSet<_>>();
+
+        debug!(
+            source = web_query_source,
+            raw_query_preview = %safe_truncate(validated_message, 160),
+            hyde_expansion_preview = %safe_truncate(
+                interpretation.hyde_text.as_deref().unwrap_or(""),
+                180
+            ),
+            generated_query_preview = %safe_truncate(generated_web_query.as_deref().unwrap_or(""), 180),
+            lexical_query_preview = %safe_truncate(&lexical_web_query, 180),
+            final_query_preview = %safe_truncate(&web_query, 180),
+            generated_term_count = generated_terms.len(),
+            lexical_term_count = lexical_terms.len(),
+            final_term_count = final_terms.len(),
+            generated_overlap_with_hyde = overlap_ratio(&generated_terms, &hyde_terms),
+            lexical_overlap_with_hyde = overlap_ratio(&lexical_terms, &hyde_terms),
+            final_overlap_with_hyde = overlap_ratio(&final_terms, &hyde_terms),
+            final_overlap_with_raw = overlap_ratio(&final_terms, &raw_terms),
+            "Web query selection diagnostics"
+        );
+        web_query
+    }
+
+    async fn wiki_search(
+        &self,
+        interpretation: &HyDEInterpretation,
+        followup_anchor_terms: Option<&HashSet<String>>,
+    ) -> ExternalSearchResult {
+        let wiki_search_start = Instant::now();
+        let tuning = self.tuning;
+        let mut searched = ExternalSearchResult::default();
+        let wiki_query = select_wiki_search_query_with_tuning(
+            self.validated_message,
+            interpretation,
+            followup_anchor_terms,
             tuning,
         );
 
-        let executor = container.function_executor();
+        let executor = self.container.function_executor();
         let call = crate::features::function_calling::domain::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "wiki_search",
@@ -308,46 +618,34 @@ pub(super) async fn run_retrieval_pipeline(
                                     })
                                     .collect::<Vec<_>>();
 
-                                let wiki_sources = build_web_source_citations(
+                                searched.sources = build_web_source_citations(
                                     &web_like_results,
-                                    highlight_terms,
-                                    tool_output_settings.excerpt_chars as usize,
+                                    self.highlight_terms,
+                                    self.excerpt_chars,
                                 );
-                                if !wiki_sources.is_empty() {
-                                    let wiki_source_count = wiki_sources.len();
-                                    outcome.sources.extend(wiki_sources);
-                                    outcome.sources = deduplicate_sources(outcome.sources);
-                                    info!(
-                                        wiki_source_count = wiki_source_count,
-                                        merged_source_count = outcome.sources.len(),
-                                        "Forced wiki citations attached"
-                                    );
-                                }
 
-                                if outcome.web_context.is_none() {
-                                    let wiki_context = output
-                                        .results
-                                        .iter()
-                                        .take(tuning.wiki_context_limit as usize)
-                                        .enumerate()
-                                        .map(|(idx, item)| {
-                                            let snippet = safe_truncate(
-                                                &item.snippet,
-                                                tuning.wiki_snippet_max_chars as usize,
-                                            );
-                                            format!(
-                                                "[{}] {}\nURL: {}\nSnippet: {}",
-                                                idx + 1,
-                                                item.title,
-                                                item.url,
-                                                snippet
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n\n");
-                                    if !wiki_context.trim().is_empty() {
-                                        outcome.web_context = Some(wiki_context);
-                                    }
+                                let wiki_context = output
+                                    .results
+                                    .iter()
+                                    .take(tuning.wiki_context_limit as usize)
+                                    .enumerate()
+                                    .map(|(idx, item)| {
+                                        let snippet = safe_truncate(
+                                            &item.snippet,
+                                            tuning.wiki_snippet_max_chars as usize,
+                                        );
+                                        format!(
+                                            "[{}] {}\nURL: {}\nSnippet: {}",
+                                            idx + 1,
+                                            item.title,
+                                            item.url,
+                                            snippet
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n");
+                                if !wiki_context.trim().is_empty() {
+                                    searched.context = Some(wiki_context);
                                 }
                             }
                         }
@@ -368,107 +666,16 @@ pub(super) async fn run_retrieval_pipeline(
                 warn!(error = %error, "Wiki search failed");
             }
         }
-        outcome.sub_timings.wiki_search_ms = elapsed_ms(wiki_search_start);
+        searched.elapsed_ms = elapsed_ms(wiki_search_start);
+        searched
     }
 
-    if outcome.short_circuit_response.is_none()
-        && retrieval_plan.should_search_web
-        && allow_external_lookup
-    {
+    async fn web_search(&self, web_query: &str) -> ExternalSearchResult {
         let web_search_start = Instant::now();
-        let web_query_generation_start = Instant::now();
-        if external_hyde_context.is_none() {
-            external_hyde_context =
-                build_hyde_context_window_for_conversation(conv_service, conversation_id).await;
-        }
-        let lexical_web_query = select_web_search_query_with_tuning(
-            validated_message,
-            &outcome.interpretation,
-            external_followup_anchor_terms.as_ref(),
-            tuning,
-        );
-        let mut generated_web_query: Option<String> = None;
-        let mut web_query_source = "hyde_generated";
-        // Web-query rewriting also runs on the utility LLM, not chat.
-        let hyde_service = crate::features::qa::hyde::HyDEService::new(Arc::clone(&utility_llm));
-        let web_query = match hyde_service
-            .generate_web_search_query_with_context(
-                validated_message,
-                external_hyde_context.as_deref(),
-            )
-            .await
-        {
-            Ok(query) if !query.trim().is_empty() => {
-                generated_web_query = Some(query.trim().to_string());
-                safe_truncate(
-                    query.trim(),
-                    tuning.external_search_query_max_chars as usize,
-                )
-            }
-            Ok(_) => {
-                web_query_source = "lexical_fallback_empty_hyde";
-                lexical_web_query.clone()
-            }
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "Web-specific HyDE query generation failed; falling back to lexical web query builder"
-                );
-                web_query_source = "lexical_fallback_hyde_error";
-                lexical_web_query.clone()
-            }
-        };
-        let raw_terms = tokenize_keyword_terms(validated_message)
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let hyde_terms = outcome
-            .interpretation
-            .hyde_text
-            .as_deref()
-            .map(tokenize_keyword_terms)
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let generated_terms = generated_web_query
-            .as_deref()
-            .map(tokenize_keyword_terms)
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let lexical_terms = tokenize_keyword_terms(&lexical_web_query)
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let final_terms = tokenize_keyword_terms(&web_query)
-            .into_iter()
-            .collect::<HashSet<_>>();
+        let tuning = self.tuning;
+        let mut searched = ExternalSearchResult::default();
 
-        debug!(
-            source = web_query_source,
-            raw_query_preview = %safe_truncate(validated_message, 160),
-            hyde_expansion_preview = %safe_truncate(
-                outcome
-                    .interpretation
-                    .hyde_text
-                    .as_deref()
-                    .unwrap_or(""),
-                180
-            ),
-            generated_query_preview = %safe_truncate(generated_web_query.as_deref().unwrap_or(""), 180),
-            lexical_query_preview = %safe_truncate(&lexical_web_query, 180),
-            final_query_preview = %safe_truncate(&web_query, 180),
-            generated_term_count = generated_terms.len(),
-            lexical_term_count = lexical_terms.len(),
-            final_term_count = final_terms.len(),
-            generated_overlap_with_hyde = overlap_ratio(&generated_terms, &hyde_terms),
-            lexical_overlap_with_hyde = overlap_ratio(&lexical_terms, &hyde_terms),
-            final_overlap_with_hyde = overlap_ratio(&final_terms, &hyde_terms),
-            final_overlap_with_raw = overlap_ratio(&final_terms, &raw_terms),
-            "Web query selection diagnostics"
-        );
-        outcome.sub_timings.external_hyde_interpretation_ms +=
-            elapsed_ms(web_query_generation_start);
-
-        let deep_research_enabled = search_flags.deep_research_mode;
+        let deep_research_enabled = self.search_flags.deep_research_mode;
         let web_depth = if deep_research_enabled {
             tuning.deep_research_depth.clamp(1, 4)
         } else {
@@ -484,14 +691,18 @@ pub(super) async fn run_retrieval_pipeline(
         } else {
             tuning.web_search_max_results
         };
-        let include_wikipedia = retrieval_plan.should_search_wiki || deep_research_enabled;
+        // Deep research wants Wikipedia in the provider mix, but the wiki branch
+        // runs beside this one whenever it is planned and reaches wikipedia.org
+        // through its own client, which this service's pacer never sees. Asking
+        // for it here too would hit the same host twice at the same moment.
+        let include_wikipedia = deep_research_enabled && !self.wiki_planned;
         let providers = if include_wikipedia {
             serde_json::json!(["duckduckgo", "bing", "wikipedia"])
         } else {
             serde_json::json!(["duckduckgo", "bing"])
         };
 
-        let executor = container.function_executor();
+        let executor = self.container.function_executor();
         let call = crate::features::function_calling::domain::FunctionCall::new(
             uuid::Uuid::new_v4().to_string(),
             "web_search",
@@ -562,26 +773,16 @@ pub(super) async fn run_retrieval_pipeline(
                                         warn!(
                                             top_term = top_term.as_str(),
                                             concentration = concentration,
-                                            query_preview = %safe_truncate(&web_query, 180),
+                                            query_preview = %safe_truncate(web_query, 180),
                                             "Web results appear topically concentrated; consider query diagnostics above"
                                         );
                                     }
                                 }
-                                let web_sources = build_web_source_citations(
+                                searched.sources = build_web_source_citations(
                                     &output.results,
-                                    highlight_terms,
-                                    tool_output_settings.excerpt_chars as usize,
+                                    self.highlight_terms,
+                                    self.excerpt_chars,
                                 );
-                                if !web_sources.is_empty() {
-                                    let web_source_count = web_sources.len();
-                                    outcome.sources.extend(web_sources);
-                                    outcome.sources = deduplicate_sources(outcome.sources);
-                                    info!(
-                                        web_source_count = web_source_count,
-                                        merged_source_count = outcome.sources.len(),
-                                        "Forced web search citations attached"
-                                    );
-                                }
 
                                 let context_text = output
                                     .results
@@ -610,12 +811,7 @@ pub(super) async fn run_retrieval_pipeline(
                                     .collect::<Vec<_>>()
                                     .join("\n\n");
                                 if !context_text.trim().is_empty() {
-                                    outcome.web_context = match outcome.web_context.take() {
-                                        Some(existing) if !existing.trim().is_empty() => {
-                                            Some(format!("{}\n\n{}", existing, context_text))
-                                        }
-                                        _ => Some(context_text),
-                                    };
+                                    searched.context = Some(context_text);
                                 }
                             }
                         }
@@ -630,39 +826,67 @@ pub(super) async fn run_retrieval_pipeline(
                     .error_message
                     .clone()
                     .unwrap_or_else(|| "Web search tool execution failed".to_string());
-                outcome.web_search_error = Some(reason.clone());
                 warn!(error = reason.as_str(), "Web search failed");
+                searched.error = Some(reason);
             }
             Err(e) => {
-                outcome.web_search_error = Some(e.to_string());
                 warn!(error = %e, "Web search failed");
+                searched.error = Some(e.to_string());
             }
         }
-        outcome.sub_timings.web_search_ms = elapsed_ms(web_search_start);
+        searched.elapsed_ms = elapsed_ms(web_search_start);
+        searched
     }
-    outcome.sub_timings.total_ms = elapsed_ms(retrieval_start);
-    info!(
-        kb_total_ms = outcome.sub_timings.kb_total_ms,
-        kb_scope_load_ms = outcome.sub_timings.kb_scope_load_ms,
-        kb_hyde_interpretation_ms = outcome.sub_timings.kb_hyde_interpretation_ms,
-        kb_search_plan_ms = outcome.sub_timings.kb_search_plan_ms,
-        kb_shortlist_planning_ms = outcome.sub_timings.kb_shortlist_planning_ms,
-        kb_query_execution_ms = outcome.sub_timings.kb_query_execution_ms,
-        kb_merge_shortlist_gate_ms = outcome.sub_timings.kb_merge_shortlist_gate_ms,
-        kb_post_filters_ms = outcome.sub_timings.kb_post_filters_ms,
-        kb_rerank_ms = outcome.sub_timings.kb_rerank_ms,
-        kb_sufficiency_ms = outcome.sub_timings.kb_sufficiency_ms,
-        kb_corrective_retry_ms = outcome.sub_timings.kb_corrective_retry_ms,
-        kb_corrective_retries = outcome.sub_timings.kb_corrective_retries,
-        kb_sufficient = ?outcome.sub_timings.kb_sufficient,
-        kb_planner_skipped = outcome.sub_timings.kb_planner_skipped,
-        kb_build_sources_ms = outcome.sub_timings.kb_build_sources_ms,
-        kb_persist_references_ms = outcome.sub_timings.kb_persist_references_ms,
-        external_hyde_interpretation_ms = outcome.sub_timings.external_hyde_interpretation_ms,
-        wiki_search_ms = outcome.sub_timings.wiki_search_ms,
-        web_search_ms = outcome.sub_timings.web_search_ms,
-        total_ms = outcome.sub_timings.total_ms,
-        "retrieval: sub timing metrics"
-    );
-    outcome
+}
+
+/// Merge wiki results first: citations are appended, and the wiki context is
+/// used only while no web context exists.
+pub(super) fn attach_wiki_results(
+    outcome: &mut RetrievalPipelineOutcome,
+    wiki: ExternalSearchResult,
+) {
+    outcome.sub_timings.wiki_search_ms = wiki.elapsed_ms;
+    if !wiki.sources.is_empty() {
+        let wiki_source_count = wiki.sources.len();
+        outcome.sources.extend(wiki.sources);
+        outcome.sources = deduplicate_sources(std::mem::take(&mut outcome.sources));
+        info!(
+            wiki_source_count = wiki_source_count,
+            merged_source_count = outcome.sources.len(),
+            "Forced wiki citations attached"
+        );
+    }
+    if outcome.web_context.is_none() {
+        outcome.web_context = wiki.context;
+    }
+}
+
+/// Merge web results after any wiki results: citations are appended, and the
+/// web context follows whatever context is already there.
+pub(super) fn attach_web_results(
+    outcome: &mut RetrievalPipelineOutcome,
+    web: ExternalSearchResult,
+) {
+    outcome.sub_timings.web_search_ms = web.elapsed_ms;
+    if web.error.is_some() {
+        outcome.web_search_error = web.error;
+    }
+    if !web.sources.is_empty() {
+        let web_source_count = web.sources.len();
+        outcome.sources.extend(web.sources);
+        outcome.sources = deduplicate_sources(std::mem::take(&mut outcome.sources));
+        info!(
+            web_source_count = web_source_count,
+            merged_source_count = outcome.sources.len(),
+            "Forced web search citations attached"
+        );
+    }
+    if let Some(context_text) = web.context {
+        outcome.web_context = match outcome.web_context.take() {
+            Some(existing) if !existing.trim().is_empty() => {
+                Some(format!("{}\n\n{}", existing, context_text))
+            }
+            _ => Some(context_text),
+        };
+    }
 }
