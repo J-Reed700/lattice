@@ -276,8 +276,99 @@ struct SidecarPortAdapter {
     client: crate::features::llm::engine::sidecar_client::SidecarLLMClient,
 }
 
+/// Flatten a typed request into the role/content pairs the OpenAI-compat
+/// endpoint accepts.
+///
+/// Tool traffic cannot legitimately arrive here — the adapter reports no tool
+/// support — so a tool item is a caller bug and is refused rather than dropped
+/// into the prompt as untagged text.
+fn sidecar_messages(
+    input: &[crate::application::ports::llm_port::CompletionInput],
+) -> Result<Vec<(&'static str, String)>> {
+    use crate::application::ports::llm_port::CompletionInput;
+
+    fn role_of(role: &str) -> &'static str {
+        match role {
+            "system" | "developer" => "system",
+            "assistant" => "assistant",
+            _ => "user",
+        }
+    }
+
+    input
+        .iter()
+        .map(|item| match item {
+            CompletionInput::Message { role, content } => Ok((role_of(role), content.to_string())),
+            CompletionInput::Native { value } => {
+                let role = value
+                    .get("role")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("user");
+                let content = value
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::InvalidInput(
+                            "The bundled local model accepts text messages only".into(),
+                        )
+                    })?;
+                Ok((role_of(role), content.to_string()))
+            }
+            CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. } => {
+                Err(AppError::InvalidConfig(
+                    "The bundled local model does not support tool calling".into(),
+                ))
+            }
+        })
+        .collect()
+}
+
 #[async_trait]
 impl LLMPort for SidecarPortAdapter {
+    /// Without this the utility paths fall back to `generate()`, which carries
+    /// neither a reasoning effort nor a response schema — so a reasoning GGUF
+    /// picked as the utility model thought its way through every query rewrite.
+    fn supports_typed_completions(&self) -> bool {
+        true
+    }
+
+    async fn complete(
+        &self,
+        request: &crate::application::ports::llm_port::CompletionRequest,
+    ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+        use crate::application::ports::llm_port::CompletionResponse;
+        use crate::features::llm::engine::sidecar_client::RequestTuning;
+
+        if !request.tools.is_empty() {
+            return Err(AppError::InvalidConfig(
+                "The bundled local model does not support tool calling".into(),
+            ));
+        }
+
+        let messages = sidecar_messages(&request.input)?;
+        let outcome = self
+            .client
+            .complete_messages(
+                &messages,
+                RequestTuning {
+                    reasoning_effort: request.reasoning_effort.as_deref(),
+                    json_schema: request.json_schema.as_ref(),
+                    time_budget: Some(request.effective_time_budget()),
+                },
+            )
+            .await
+            .map_err(|e| AppError::Other(format!("LLM completion failed: {e}")))?;
+
+        Ok(CompletionResponse {
+            text: outcome.text,
+            tool_calls: Vec::new(),
+            input_tokens: outcome.input_tokens,
+            output_tokens: outcome.output_tokens,
+            finish_reason: outcome.finish_reason,
+            provider_output: serde_json::Value::Null,
+        })
+    }
+
     async fn generate(
         &self,
         prompt: &str,
