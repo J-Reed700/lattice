@@ -11,7 +11,7 @@
 llama_cpp_tag b8981
 # GitHub release holding the binaries. Bump the -rN suffix to rebuild the
 # same llama.cpp tag; published releases are never overwritten.
-release llama/b8981-r1
+release llama/b8981-r2
 # Repository that owns the release (public, so anonymous download works).
 repo J-Reed700/lattice
 # Oldest macOS the binary may require. Keep equal to
