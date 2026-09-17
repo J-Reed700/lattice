@@ -272,19 +272,18 @@ impl Container {
                         .await
                 } else {
                     self.model_loader()
-                        .try_load_ollama_with_model(
+                        .load_utility_remote(
                             &settings.llm,
                             &ollama_utility_tag,
                             generation_config,
                         )
                         .await
-                        .map(Some)
                         .or_else(|e| {
                             tracing::warn!(
                                 model_id = %active.model_id(),
-                                ollama_tag = %ollama_utility_tag,
+                                utility_model = %ollama_utility_tag,
                                 error = %e,
-                                "Failed to reach Ollama for utility role — falling back to chat LLM"
+                                "Failed to reach the remote utility model — falling back to chat LLM"
                             );
                             Ok(None)
                         })
@@ -312,8 +311,13 @@ impl Container {
     /// Fire-and-forget per-role warmup at boot. Emits
     /// `model:warmup-status { role, phase, error? }` events with phases
     /// `started → ready | skipped | failed`. Errors never propagate.
+    ///
+    /// Also preflights the bundled llama-server builds, whether or not a
+    /// local model is active, so every log says whether local models can
+    /// run on this machine.
     pub fn prewarm_active_models(&self, app_handle: tauri::AppHandle) {
         use tauri::Manager;
+        crate::features::llm::engine::sidecar_manager::spawn_binary_preflight(&app_handle);
         for role in ["chat", "utility", "embedding"] {
             let handle = app_handle.clone();
             tokio::spawn(async move {
@@ -400,11 +404,16 @@ enum Outcome {
 /// First-run state (`AiModelsNotInstalled`) and router opt-out
 /// (`InvalidConfig("...not configured...")`) are Skipped, not Failed —
 /// the chat input mask shouldn't treat them as load errors.
+///
+/// `ServiceNotAvailable` carries an unusable llama-server binary; its
+/// message is already user-facing, so it goes out without the prefix.
 fn classify_load_error(e: AppError) -> Outcome {
     match &e {
         AppError::AiModelsNotInstalled(_) => Outcome::Skipped,
         AppError::InvalidConfig(msg) if msg.contains("not configured") => Outcome::Skipped,
-        AppError::ModelLoadFailed(msg) => Outcome::Failed(msg.clone()),
+        AppError::ModelLoadFailed(msg) | AppError::ServiceNotAvailable(msg) => {
+            Outcome::Failed(msg.clone())
+        }
         _ => Outcome::Failed(e.to_string()),
     }
 }

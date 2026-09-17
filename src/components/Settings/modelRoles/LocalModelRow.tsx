@@ -10,7 +10,7 @@
  * {@link OllamaMetaRow}.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { formatDistanceToNow } from 'date-fns';
 import { Flame, Trash2 } from 'lucide-react';
@@ -20,10 +20,12 @@ import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
 import { useDownloadedModels } from '../../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../../lib/api';
+import { useModelWarmupStore } from '../../../stores/modelWarmupStore';
 import { toast } from '../../../stores/toastStore';
 import { ConfirmDialog } from '../../ConfirmDialog';
 import { IconButton } from '../../ui';
 
+import type { RoleWarmupState } from '../../../stores/modelWarmupStore';
 import type { DownloadedModel } from '../../../types/downloadedModels';
 
 function formatFileSize(bytes: number): string {
@@ -51,6 +53,28 @@ export function LocalModelRow({ model }: Props) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isWarming, setIsWarming] = useState(false);
+  const chatWarmup = useModelWarmupStore((state) => state.chat);
+  const utilityWarmup = useModelWarmupStore((state) => state.utility);
+  const setRolePhase = useModelWarmupStore((state) => state.setRolePhase);
+  const claimRole = useModelWarmupStore((state) => state.claimRole);
+
+  // Stamp this model onto the roles it holds, which drops state left by
+  // whichever model held them before. A role's failure belongs to the model
+  // that failed, not to the next one assigned to the slot.
+  useEffect(() => {
+    if (model.is_active_for_chat) claimRole('chat', model.id);
+    if (model.is_active_for_utility) claimRole('utility', model.id);
+  }, [claimRole, model.id, model.is_active_for_chat, model.is_active_for_utility]);
+
+  // The backend's own reason this model didn't load for a role it holds
+  // (boot prewarm or the warm-up button). Chat first: it blocks more.
+  const failedFor = (role: RoleWarmupState) =>
+    role.phase === 'failed' && (role.modelId === null || role.modelId === model.id)
+      ? role.error
+      : null;
+  const loadError =
+    (model.is_active_for_chat ? failedFor(chatWarmup) : null) ??
+    (model.is_active_for_utility ? failedFor(utilityWarmup) : null);
 
   // Warm up whichever roles this model is currently active for. Each
   // role has its own LLM cache on the backend (chat / utility), so a
@@ -60,13 +84,15 @@ export function LocalModelRow({ model }: Props) {
   const handleWarmUp = async () => {
     setIsWarming(true);
     try {
-      const targets: Array<{ label: string; call: () => Promise<{ ok: boolean; error?: string }> }> =
-        [];
+      const targets: Array<{
+        role: 'chat' | 'utility';
+        call: () => Promise<{ ok: boolean; error?: string }>;
+      }> = [];
       if (model.is_active_for_chat) {
-        targets.push({ label: 'chat', call: VaultAPI.warmUpActiveChatModel });
+        targets.push({ role: 'chat', call: VaultAPI.warmUpActiveChatModel });
       }
       if (model.is_active_for_utility) {
-        targets.push({ label: 'utility', call: VaultAPI.warmUpActiveUtilityModel });
+        targets.push({ role: 'utility', call: VaultAPI.warmUpActiveUtilityModel });
       }
       if (targets.length === 0) {
         toast.error('Nothing to warm up', {
@@ -75,10 +101,12 @@ export function LocalModelRow({ model }: Props) {
         return;
       }
       for (const target of targets) {
+        setRolePhase(target.role, 'started', null, model.id);
         const result = await target.call();
-        if (!result.ok) throw new Error(`${target.label}: ${result.error}`);
+        setRolePhase(target.role, result.ok ? 'ready' : 'failed', result.error ?? null, model.id);
+        if (!result.ok) throw new Error(`${target.role}: ${result.error}`);
       }
-      const roleSummary = targets.map((t) => t.label).join(' + ');
+      const roleSummary = targets.map((t) => t.role).join(' + ');
       toast.success(`${model.model_name} warmed up (${roleSummary})`, {
         message: 'Loaded into memory and ready for a fast first response.',
       });
@@ -125,6 +153,15 @@ export function LocalModelRow({ model }: Props) {
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-text-primary">{model.model_name}</div>
           <div className="truncate font-mono text-xs text-text-muted">{model.model_id}</div>
+          {loadError ? (
+            <div
+              role="alert"
+              title={loadError}
+              className="mt-0.5 line-clamp-3 break-words text-xs text-danger-fg"
+            >
+              Didn&apos;t load: {loadError.split('\n')[0]}
+            </div>
+          ) : null}
         </div>
 
         <div className="hidden shrink-0 text-xs text-text-muted tabular-nums lg:block">{meta}</div>

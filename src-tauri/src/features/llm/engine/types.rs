@@ -222,6 +222,14 @@ pub enum LLMError {
     #[error("Local LLM inference is not supported in this context: {0}")]
     PlatformNotSupported(String),
 
+    /// The bundled `llama-server` executable cannot run on this machine
+    /// (a missing or mismatched shared library, the wrong architecture,
+    /// CPU instructions it lacks). Unlike a model or GPU startup failure,
+    /// no model or setting change helps: the install is broken. The
+    /// message is complete and user-facing.
+    #[error("{0}")]
+    SidecarBinaryUnusable(String),
+
     #[error(transparent)]
     #[serde(serialize_with = "serialize_io_error")]
     Io(#[from] std::io::Error),

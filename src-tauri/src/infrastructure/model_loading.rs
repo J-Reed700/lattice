@@ -3,8 +3,21 @@ use std::sync::Arc;
 
 use crate::application::contracts::settings::LLMSettingsDto;
 use crate::application::ports::LLMPort;
+use crate::features::llm::engine::types::LLMError;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::{AppError, Result};
+
+/// A bundled llama-server that cannot execute is an install problem, not a
+/// model problem. It must not be reported as a corrupt model (a failed chat
+/// warmup deactivates such models) nor quietly replaced by another model.
+fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
+    match error {
+        LLMError::SidecarBinaryUnusable(message) => {
+            Some(AppError::ServiceNotAvailable(message.clone()))
+        }
+        _ => None,
+    }
+}
 
 pub(crate) struct ModelLoader {
     downloaded_models: Arc<DownloadedModelRepository>,
@@ -199,11 +212,13 @@ impl ModelLoader {
 
         match create_llm(llm_config).await {
             Ok(llm) => Ok(Some(llm)),
-            Err(e) => Err(AppError::ModelLoadFailed(format!(
-                "Failed to load router model '{}': {}",
-                model.model_name(),
-                e
-            ))),
+            Err(e) => Err(unusable_sidecar(&e).unwrap_or_else(|| {
+                AppError::ModelLoadFailed(format!(
+                    "Failed to load router model '{}': {}",
+                    model.model_name(),
+                    e
+                ))
+            })),
         }
     }
 
@@ -247,13 +262,76 @@ impl ModelLoader {
 
         match crate::features::llm::engine::factory::create_llm(llm_config).await {
             Ok(llm) => Ok(Some(llm)),
-            Err(e) => {
-                tracing::warn!(
-                    model_id = %model_id,
-                    error = %e,
-                    "Failed to load utility LLM — falling back to chat LLM"
-                );
-                Ok(None)
+            Err(e) => match unusable_sidecar(&e) {
+                // Surfaced as an error so warmup reports it on the model's
+                // row; HyDE and the other utility callers still fall back to
+                // the chat LLM on `Err`.
+                Some(error) => {
+                    tracing::error!(
+                        model_id = %model_id,
+                        error = %e,
+                        "Utility LLM cannot start: the bundled llama-server is unusable; \
+                         utility work falls back to the chat LLM"
+                    );
+                    Err(error)
+                }
+                None => {
+                    tracing::warn!(
+                        model_id = %model_id,
+                        error = %e,
+                        "Failed to load utility LLM — falling back to chat LLM"
+                    );
+                    Ok(None)
+                }
+            },
+        }
+    }
+
+    /// Resolve a remote utility assignment the way the chat role resolves:
+    /// the configured provider decides the wire protocol, not the label on
+    /// the assigned row. Under `Auto` a configured llama.cpp connection is
+    /// tried before Ollama, exactly like `load`, so the same host is never
+    /// spoken to with two different protocols.
+    pub(crate) async fn load_utility_remote(
+        &self,
+        settings: &LLMSettingsDto,
+        model: &str,
+        generation_config: crate::features::llm::engine::GenerationConfig,
+    ) -> Result<Option<Arc<dyn LLMPort>>> {
+        use crate::application::contracts::settings::LLMProvider;
+
+        let mut utility = settings.clone();
+        utility.model = model.to_owned();
+        utility.llama_cpp.model = model.to_owned();
+        utility.max_tokens = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
+
+        match settings.provider {
+            LLMProvider::Local => Ok(None),
+            LLMProvider::Llamacpp | LLMProvider::Openai | LLMProvider::Anthropic => {
+                self.load(&utility).await.map(Some)
+            }
+            LLMProvider::Ollama => self
+                .try_load_ollama_with_model(settings, model, generation_config)
+                .await
+                .map(Some),
+            LLMProvider::Auto => {
+                if !settings.llama_cpp.model.trim().is_empty() {
+                    match self.try_load_llama_cpp(&utility).await {
+                        Ok(Some(llm)) => return Ok(Some(llm)),
+                        Ok(None) => tracing::debug!(
+                            model,
+                            "llama.cpp server does not list the utility model, trying Ollama"
+                        ),
+                        Err(error) => tracing::warn!(
+                            model,
+                            %error,
+                            "llama.cpp not available for the utility role, trying Ollama"
+                        ),
+                    }
+                }
+                self.try_load_ollama_with_model(settings, model, generation_config)
+                    .await
+                    .map(Some)
             }
         }
     }
@@ -334,6 +412,9 @@ impl ModelLoader {
                     e
                 );
 
+                if let Some(error) = unusable_sidecar(&e) {
+                    return Err(error);
+                }
                 Err(AppError::ModelLoadFailed(format!(
                     "Failed to load model '{}': {}. \
                      The model file may be corrupted or incompatible. \
@@ -463,6 +544,14 @@ mod tests {
         assert_eq!(config.repeat_penalty, settings.repeat_penalty);
     }
 
+    #[test]
+    fn unusable_sidecar_is_not_reported_as_a_model_failure() {
+        let mapped = unusable_sidecar(&LLMError::SidecarBinaryUnusable("broken".into()));
+        assert!(matches!(mapped, Some(AppError::ServiceNotAvailable(m)) if m == "broken"));
+        assert!(unusable_sidecar(&LLMError::GenerationFailed("bad gguf".into())).is_none());
+        assert!(unusable_sidecar(&LLMError::Timeout).is_none());
+    }
+
     #[tokio::test]
     async fn auto_and_explicit_llamacpp_use_their_connection_despite_stale_ollama_and_local_selections(
     ) {
@@ -535,6 +624,112 @@ mod tests {
                 if provider == LLMProvider::Auto { 2 } else { 1 }
             );
         }
+    }
+
+    #[tokio::test]
+    async fn utility_role_follows_the_chat_provider_policy_on_a_shared_host() {
+        // One llama.cpp server is configured both as the llama.cpp connection
+        // and as the "Ollama" URL. Under Auto the utility role must speak the
+        // protocol chat speaks; llama.cpp serves none of Ollama's routes.
+        use crate::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"data":[{"id":"chat-model"},{"id":"utility-model"}]}),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        for route in ["/api/tags", "/api/generate", "/api/chat"] {
+            Mock::given(path(route))
+                .respond_with(ResponseTemplate::new(404))
+                .expect(0)
+                .mount(&server)
+                .await;
+        }
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Auto,
+            ollama_url: server.uri(),
+            model: "chat-model".into(),
+            max_tokens: 512,
+            llama_cpp: LlamaCppSettingsDto {
+                url: server.uri(),
+                model: "chat-model".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let llm = loader
+            .load_utility_remote(
+                &settings,
+                "utility-model",
+                ModelLoader::generation_config_from_settings(&settings),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(llm.provider_name(), "llamacpp");
+        assert_eq!(llm.model_name(), "utility-model");
+    }
+
+    #[tokio::test]
+    async fn utility_role_uses_ollama_only_when_ollama_is_the_provider() {
+        use crate::application::contracts::settings::{LLMProvider, LlamaCppSettingsDto};
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"models":[]})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let loader = ModelLoader::new(Arc::new(DownloadedModelRepository::new(pool)), None);
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Ollama,
+            ollama_url: server.uri(),
+            model: "chat-model".into(),
+            llama_cpp: LlamaCppSettingsDto {
+                url: server.uri(),
+                model: "chat-model".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let llm = loader
+            .load_utility_remote(
+                &settings,
+                "utility-model",
+                ModelLoader::generation_config_from_settings(&settings),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(llm.provider_name(), "llamacpp");
+        assert_eq!(llm.model_name(), "utility-model");
     }
 
     #[tokio::test]
