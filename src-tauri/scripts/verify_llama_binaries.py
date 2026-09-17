@@ -1267,7 +1267,13 @@ def _say(line: str) -> None:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")
+        # newline="\n" because `--print-targets` output is parsed, not just
+        # read: on Windows the default translates every "\n" to "\r\n", so
+        # `--print-targets files` handed the fetch script filenames with a
+        # trailing carriage return and its exact-match lock lookup found no
+        # checksum for any of them. LF-only keeps the contract identical on
+        # every host.
+        sys.stdout.reconfigure(errors="replace", newline="\n")
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.print_targets:
