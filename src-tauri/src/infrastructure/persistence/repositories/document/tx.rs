@@ -250,6 +250,24 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
         Ok(count.0)
     }
 
+    async fn count_by_checksum(&self, checksum: &str) -> Result<u64> {
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::count_by_checksum(&mut tx, checksum).await
+    }
+
+    async fn list_checksums(&self) -> Result<Vec<String>> {
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::list_checksums(&mut tx).await
+    }
+
+    async fn find_checksum_by_id(&self, document_id: &str) -> Result<String> {
+        let tx_arc = self.get_transaction()?;
+        let mut tx = tx_arc.lock().await;
+        ops::find_checksum_by_id(&mut tx, document_id).await
+    }
+
     async fn find_all_paginated(&self, limit: usize) -> Result<Vec<DocumentEntity>> {
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;

@@ -1,0 +1,133 @@
+{
+  "scope": "Production GroundingVerifier and LlamaCppLlm with synthetic adversarial claims; not a full desktop chat run",
+  "cases": [
+    {
+      "case": "supported",
+      "report": {
+        "claimVerdicts": [
+          {
+            "citationIds": [
+              7
+            ],
+            "evidenceQuote": "The design workspace retains hourly file versions for 14 days before expiration.",
+            "method": "judge",
+            "sentence": "The design workspace retains hourly file versions for 14 days before expiration [7].",
+            "verdict": "supported"
+          }
+        ],
+        "claimsEvaluated": 1,
+        "contradictedClaims": [],
+        "enabled": true,
+        "groundedRatio": 1.0,
+        "judgeUsed": true,
+        "supportedClaimNotes": [
+          "The design workspace retains hourly file versions for 14 days before expiration [7]."
+        ],
+        "supportedClaims": 1,
+        "unsupportedClaims": [],
+        "verdictCounts": {
+          "contradicted": 0,
+          "supported": 1,
+          "unsupported": 0
+        }
+      }
+    },
+    {
+      "case": "wrong_number",
+      "report": {
+        "claimVerdicts": [
+          {
+            "citationIds": [
+              7
+            ],
+            "evidenceQuote": "The design workspace retains hourly file versions for 14 days before expiration.",
+            "method": "judge",
+            "sentence": "The design workspace retains hourly file versions for 30 days before expiration [7].",
+            "verdict": "contradicted"
+          }
+        ],
+        "claimsEvaluated": 1,
+        "contradictedClaims": [
+          "The design workspace retains hourly file versions for 30 days before expiration [7]."
+        ],
+        "enabled": true,
+        "groundedRatio": 0.0,
+        "judgeUsed": true,
+        "supportedClaimNotes": [],
+        "supportedClaims": 0,
+        "unsupportedClaims": [
+          "The design workspace retains hourly file versions for 30 days before expiration [7]."
+        ],
+        "verdictCounts": {
+          "contradicted": 1,
+          "supported": 0,
+          "unsupported": 0
+        }
+      }
+    },
+    {
+      "case": "negation",
+      "report": {
+        "claimVerdicts": [
+          {
+            "citationIds": [
+              7
+            ],
+            "evidenceQuote": "The design workspace retains hourly file versions for 14 days before expiration.",
+            "method": "judge",
+            "sentence": "The design workspace does not retain hourly file versions for 14 days before expiration [7].",
+            "verdict": "contradicted"
+          }
+        ],
+        "claimsEvaluated": 1,
+        "contradictedClaims": [
+          "The design workspace does not retain hourly file versions for 14 days before expiration [7]."
+        ],
+        "enabled": true,
+        "groundedRatio": 0.0,
+        "judgeUsed": true,
+        "supportedClaimNotes": [],
+        "supportedClaims": 0,
+        "unsupportedClaims": [
+          "The design workspace does not retain hourly file versions for 14 days before expiration [7]."
+        ],
+        "verdictCounts": {
+          "contradicted": 1,
+          "supported": 0,
+          "unsupported": 0
+        }
+      }
+    },
+    {
+      "case": "invented_citation",
+      "report": {
+        "claimVerdicts": [
+          {
+            "citationIds": [
+              99
+            ],
+            "evidenceQuote": null,
+            "method": "lexical",
+            "sentence": "The design workspace retains hourly file versions for 14 days before expiration [99].",
+            "verdict": "unsupported"
+          }
+        ],
+        "claimsEvaluated": 1,
+        "contradictedClaims": [],
+        "enabled": true,
+        "groundedRatio": 0.0,
+        "judgeUsed": false,
+        "supportedClaimNotes": [],
+        "supportedClaims": 0,
+        "unsupportedClaims": [
+          "The design workspace retains hourly file versions for 14 days before expiration [99]."
+        ],
+        "verdictCounts": {
+          "contradicted": 0,
+          "supported": 0,
+          "unsupported": 1
+        }
+      }
+    }
+  ]
+}

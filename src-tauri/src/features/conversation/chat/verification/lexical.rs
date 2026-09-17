@@ -63,19 +63,30 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
             continue;
         }
 
-        let citation_ids = extract_sentence_citation_ids(&sentence, sources.len());
+        let citation_ids = extract_sentence_citation_ids(&sentence);
         let cited_source_indices: Vec<usize> = citation_ids
             .iter()
-            .filter_map(|id| (*id as usize).checked_sub(1))
-            .filter(|idx| *idx < source_token_sets.len())
+            .filter_map(|id| {
+                let mut matches = sources
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, source)| source.citation_id.unwrap_or((*idx + 1) as u32) == *id);
+                let (idx, _) = matches.next()?;
+                matches.next().is_none().then_some(idx)
+            })
             .collect();
         let claim_text = strip_citation_markers(&sentence);
         let claim_tokens = extract_normalized_tokens(&claim_text);
-        if claim_tokens.len() < MIN_CLAIM_TOKENS {
+        if claim_tokens.is_empty()
+            || (citation_ids.is_empty() && claim_tokens.len() < MIN_CLAIM_TOKENS)
+        {
             continue;
         }
 
-        let (overlap_ratio, matching_tokens) = if cited_source_indices.is_empty() {
+        let citations_valid = citation_ids.len() == cited_source_indices.len();
+        let (overlap_ratio, matching_tokens) = if !citations_valid {
+            (0.0, 0)
+        } else if citation_ids.is_empty() {
             compute_best_overlap_ratio(&claim_tokens, source_token_sets.iter())
         } else {
             compute_best_overlap_ratio(
@@ -198,7 +209,7 @@ fn split_sentences(text: &str) -> Vec<String> {
 
 fn is_claim_candidate(sentence: &str) -> bool {
     let s = sentence.trim();
-    if s.len() < MIN_CLAIM_CHARS {
+    if s.len() < MIN_CLAIM_CHARS && extract_sentence_citation_ids(s).is_empty() {
         return false;
     }
     if s.ends_with('?') {
@@ -250,12 +261,9 @@ fn strip_citation_markers(sentence: &str) -> String {
     out
 }
 
-/// Citation numbers in the sentence, as written, restricted to real sources.
-fn extract_sentence_citation_ids(sentence: &str, source_count: usize) -> Vec<u32> {
-    if source_count == 0 {
-        return Vec::new();
-    }
-
+/// Preserve invalid numbers: silently dropping them would turn a fabricated
+/// citation into an uncited claim and let it borrow evidence from other sources.
+fn extract_sentence_citation_ids(sentence: &str) -> Vec<u32> {
     let chars: Vec<char> = sentence.chars().collect();
     let mut idx = 0usize;
     let mut seen = HashSet::new();
@@ -279,10 +287,9 @@ fn extract_sentence_citation_ids(sentence: &str, source_count: usize) -> Vec<u32
             continue;
         }
 
-        if let Ok(raw_index) = digits.parse::<usize>() {
-            if (1..=source_count).contains(&raw_index) && seen.insert(raw_index) {
-                out.push(raw_index as u32);
-            }
+        let raw_index = digits.parse::<u32>().unwrap_or(0);
+        if seen.insert(raw_index) {
+            out.push(raw_index);
         }
 
         idx = j + 1;
@@ -317,9 +324,8 @@ fn collect_source_token_sets(sources: &[SourceDto]) -> Vec<HashSet<String>> {
         }
 
         let tokens = extract_normalized_tokens(&text);
-        if !tokens.is_empty() {
-            sets.push(tokens);
-        }
+        // Keep one entry per source; dropping an empty passage shifts citation indices.
+        sets.push(tokens);
     }
     sets
 }
@@ -457,6 +463,62 @@ mod tests {
 
         assert_eq!(claims.len(), 1);
         assert!(!claims[0].supported);
+    }
+
+    #[test]
+    fn short_cited_numeric_answers_are_not_skipped() {
+        let claims = lexical_pass(
+            "Retention is 14 days [1].",
+            &[source("Retention is 30 days.")],
+        );
+        assert_eq!(claims.len(), 1);
+        assert!(needs_judge(&claims[0]));
+    }
+
+    #[test]
+    fn invalid_citation_cannot_borrow_support_from_another_source() {
+        for citation in ["[99]", "[0]", "[1][99]"] {
+            let claims = lexical_pass(
+                &format!("Blueberry plants showed improved cold tolerance after salicylic acid treatment {citation}."),
+                &[source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.")],
+            );
+            assert_eq!(claims.len(), 1);
+            assert!(
+                !claims[0].supported,
+                "invalid citation {citation} must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_source_does_not_shift_citation_evidence() {
+        let mut empty = source("");
+        empty.file_name.clear();
+        empty.file_path.clear();
+        let claims = lexical_pass(
+            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [2].",
+            &[empty, source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.")],
+        );
+        assert_eq!(claims[0].cited_source_indices, vec![1]);
+        assert!(claims[0].supported);
+    }
+
+    #[test]
+    fn assigned_citation_ids_survive_source_reordering() {
+        let mut matching = source(
+            "Blueberry plants showed improved cold tolerance after salicylic acid treatment.",
+        );
+        matching.citation_id = Some(7);
+        let mut unrelated =
+            source("Irrigation protocol and frost timing notes for greenhouse control.");
+        unrelated.citation_id = Some(2);
+        let claims = lexical_pass(
+            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [7].",
+            &[unrelated, matching],
+        );
+        assert_eq!(claims[0].citation_ids, vec![7]);
+        assert_eq!(claims[0].cited_source_indices, vec![1]);
+        assert!(claims[0].supported);
     }
 
     #[test]

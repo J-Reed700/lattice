@@ -1,0 +1,1671 @@
+{
+  "scope": "Fresh real inference using saved retrieval rankings and full-document context; not a fresh retrieval or full desktop benchmark",
+  "collection_runner": "legacy chat_rag_eval.py before schema restoration; no completion metadata was captured",
+  "model": "Qwen3.8-27B-Q5_K_S.gguf",
+  "model_revision": null,
+  "dataset_sha256": "2740b85ef277eaa3c40a558e8c09dbbb7a88b6446adfb8a16e1cdcd7f3a8e54a",
+  "retrieval_sha256": "e38aacf5425df9d2770bad7c04453e5c03f2c9729badb19e3082bfae721dd785",
+  "max_tokens": 2048,
+  "summary": {
+    "queries": 38,
+    "expected_queries": 38,
+    "coverage": 1.0,
+    "reviewed_queries": 0,
+    "review_coverage": 0.0,
+    "answer_accuracy": null,
+    "answer_accuracy_95ci": null,
+    "mechanical_pass_rate": 0.6842105263157895,
+    "mean_latency_ms": 2447.3441908485256,
+    "p95_latency_ms": 5883.704416104592,
+    "failed_query_ids": [],
+    "unreviewed_query_ids": [
+      "retry-transient-errors",
+      "do-not-retry-auth",
+      "write-timeout-safety",
+      "ordinary-backup-retention",
+      "finance-backup-retention",
+      "design-hourly-restore",
+      "provider-secret-location",
+      "settings-export-secrets",
+      "annual-first-purchase-refund",
+      "annual-renewal-refund",
+      "historical-refund-window",
+      "enterprise-refund-request",
+      "aurora-production-owner",
+      "aurora-release-blocker",
+      "aurora-pilot-coordinator",
+      "orion-table-extraction",
+      "current-mileage-rate",
+      "old-mileage-rate",
+      "accessible-travel-exception",
+      "spanish-weekend",
+      "french-friday-hours",
+      "japanese-hours-english-query",
+      "enterprise-weekend-emergency",
+      "deleted-content-lifecycle",
+      "deletion-under-hold",
+      "embedding-same-dimensions",
+      "failed-model-migration",
+      "reranking-order",
+      "current-import-endpoint",
+      "deprecated-import-event",
+      "strategic-invoice-due-date",
+      "enterprise-availability-credit",
+      "severity-one-definition",
+      "west-annex-recovery-phrase",
+      "unanswerable-home-phone",
+      "unanswerable-office-wifi",
+      "unanswerable-orion-budget",
+      "unanswerable-japanese-holiday-calendar"
+    ]
+  },
+  "rows": [
+    {
+      "query_id": "retry-transient-errors",
+      "answer": "Based on the provided documents, the following HTTP failures are candidates for a delayed retry, subject to specific limits and conditions:\n\n**HTTP 502, 503, and 504 (Temporary Service Failures)**\n*   **Conditions:** These errors are considered transient. Idempotent reads may be retried. Writes require an idempotency key before any retry [1].\n*   **Limits:**\n    *   Retry up to three times using exponential backoff and jitter [1].\n    *   If a 503 response includes a `Retry-After` header, that value takes precedence over the standard backoff [1].\n    *   Escalate the issue if the retry budget is exhausted rather than looping indefinitely [1].\n\n**HTTP 429 (Rate Limiting)**\n*   **Conditions:** Only idempotent operations may be retried [2].\n*   **Limits:**\n    *   Honor the `Retry-After` header if present [2].\n    *   If `Retry-After` is not present, use exponential backoff with full jitter starting at two seconds [2].\n    *   Stop retrying after four attempts [2].\n    *   Record the request ID and quota bucket in the incident timeline [2].\n\n**Client-Side Timeouts**\n*   **Conditions:** A client-side timeout does not prove the server abandoned the operation. Reads can be repeated. Writes may be repeated only if an idempotency key is used or after checking the operation status [4].\n*   **Limits:**\n    *   Default interactive timeout is 30 seconds; background exports allow 180 seconds [4].\n    *   Never convert a timeout into an unlimited retry loop [4].\n\n**HTTP 401 and 403 (Authentication/Permission Failures)**\n*   **Conditions:** These are **not** candidates for retry. HTTP 401 indicates missing, expired, or invalid credentials, and retrying with the same credentials will not succeed. HTTP 403 indicates the identity lacks permission, and retries will not resolve the condition [3].\n\n**References:**\n[1] Document: API runbook: temporary service failure\n[2] Document: API runbook: rate limiting\n[3] Document: API runbook: authentication failures\n[4] Document: Client timeout guidance",
+      "ranked_ids": [
+        "ops-service-unavailable",
+        "ops-rate-limit",
+        "ops-auth-failure",
+        "ops-client-timeout",
+        "refund-consumer-archive"
+      ],
+      "citation_map": {
+        "1": "ops-service-unavailable",
+        "2": "ops-rate-limit",
+        "3": "ops-auth-failure",
+        "4": "ops-client-timeout",
+        "5": "refund-consumer-archive"
+      },
+      "cited_ids": [
+        1,
+        2,
+        4,
+        3
+      ],
+      "cited_document_ids": [
+        "ops-service-unavailable",
+        "ops-rate-limit",
+        "ops-client-timeout",
+        "ops-auth-failure"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 8,
+      "total_required_fact_groups": 8,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": false,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "e27732e3e11bef6ca13a8582beab7ddb9360453a13ba8f75870de5879125e075",
+      "dimensions": [
+        "graded and multi-document relevance",
+        "semantic paraphrase"
+      ],
+      "latency_ms": 14989.11379207857,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "do-not-retry-auth",
+      "answer": "No, the client should not keep retrying an authentication failure with the same key. According to the API runbook for authentication failures, retrying the same request with the same credential cannot succeed [1]. Instead, the error should be surfaced to the operator, the credential source verified, and the secret rotated only when compromise or expiry is confirmed [1].",
+      "ranked_ids": [
+        "ops-auth-failure",
+        "security-key-rotation",
+        "ops-service-unavailable",
+        "ops-rate-limit",
+        "ops-client-timeout"
+      ],
+      "citation_map": {
+        "1": "ops-auth-failure",
+        "2": "security-key-rotation",
+        "3": "ops-service-unavailable",
+        "4": "ops-rate-limit",
+        "5": "ops-client-timeout"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "ops-auth-failure"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "238dc70b88b82a10be1464adfddfefbbad11f81214cb3a5827b79e25acc988b7",
+      "dimensions": [
+        "negation and exception handling"
+      ],
+      "latency_ms": 2851.610334008001,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "write-timeout-safety",
+      "answer": "A write that timed out may be repeated only if it uses an idempotency key or after checking the operation status [1].",
+      "ranked_ids": [
+        "ops-client-timeout",
+        "ops-service-unavailable",
+        "ops-rate-limit",
+        "ops-auth-failure",
+        "billing-service-credits"
+      ],
+      "citation_map": {
+        "1": "ops-client-timeout",
+        "2": "ops-service-unavailable",
+        "3": "ops-rate-limit",
+        "4": "ops-auth-failure",
+        "5": "billing-service-credits"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "ops-client-timeout"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 2,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": false,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "b83a97f1454a819176055d6600f2f86b197c901dc33bb7e8ab6f9b62203183ed",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 1549.9210830312222,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "ordinary-backup-retention",
+      "answer": "For an everyday product workspace, you can recover a snapshot for up to one year [2].\n\nSpecifically:\n- Daily recovery points are retained for 30 days [2].\n- Monthly recovery points are retained for one year [2].\n- This policy covers ordinary product workspaces [2].\n\nNote: Deleted workspace items remain recoverable for 30 days before being purged from active systems, but encrypted disaster-recovery copies (snapshots) follow the backup policy retention schedule [1][2].",
+      "ranked_ids": [
+        "privacy-retention-current",
+        "backup-standard",
+        "backup-finance",
+        "backup-design",
+        "privacy-deletion-request"
+      ],
+      "citation_map": {
+        "1": "privacy-retention-current",
+        "2": "backup-standard",
+        "3": "backup-finance",
+        "4": "backup-design",
+        "5": "privacy-deletion-request"
+      },
+      "cited_ids": [
+        2,
+        1
+      ],
+      "cited_document_ids": [
+        "backup-standard",
+        "privacy-retention-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 2,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": false,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "8a044a6de073f8dc4ce39204f1e971b690e81d04da774359bdfeb3f588c75fba",
+      "dimensions": [
+        "exact identifiers and numeric distinctions",
+        "near-duplicate distractors"
+      ],
+      "latency_ms": 3725.7554579991847,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "finance-backup-retention",
+      "answer": "No, accounting ledger backups are not deleted after thirty days. Ledger records are excluded from the standard 30-day workspace retention limit [1]. Instead, immutable monthly snapshots of finance ledgers are retained for seven years to meet audit requirements [1]. Additionally, the standard workspace backup policy, which retains daily recovery points for 30 days, explicitly excludes finance ledgers [3].",
+      "ranked_ids": [
+        "backup-finance",
+        "privacy-retention-current",
+        "backup-standard",
+        "privacy-deletion-request",
+        "security-key-rotation"
+      ],
+      "citation_map": {
+        "1": "backup-finance",
+        "2": "privacy-retention-current",
+        "3": "backup-standard",
+        "4": "privacy-deletion-request",
+        "5": "security-key-rotation"
+      },
+      "cited_ids": [
+        1,
+        3
+      ],
+      "cited_document_ids": [
+        "backup-finance",
+        "backup-standard"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 3,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "5d8b6d3a91469d4d7270e1f62ebb597faa765502073720714dec59ee63502d22",
+      "dimensions": [
+        "near-duplicate distractors",
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 2596.9654580112547,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "design-hourly-restore",
+      "answer": "Hourly design file versions are retained for 14 days [1].",
+      "ranked_ids": [
+        "backup-design",
+        "privacy-retention-current",
+        "security-key-rotation",
+        "backup-finance",
+        "backup-standard"
+      ],
+      "citation_map": {
+        "1": "backup-design",
+        "2": "privacy-retention-current",
+        "3": "security-key-rotation",
+        "4": "backup-finance",
+        "5": "backup-standard"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "backup-design"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "43b6508a4aee432a465968d43171ac177e3c590b3ecd49f566ace2e1f383966c",
+      "dimensions": [
+        "exact identifiers and numeric distinctions",
+        "near-duplicate distractors"
+      ],
+      "latency_ms": 1216.6299170348793,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "provider-secret-location",
+      "answer": "The desktop app stores credentials for external AI providers through the operating system's credential manager, which is Keychain on macOS, Credential Manager on Windows, and Secret Service on supported Linux desktops [1]. Application settings only store the provider name and model choice, not the secrets themselves [1].",
+      "ranked_ids": [
+        "security-secret-storage",
+        "security-export-boundary",
+        "security-key-rotation",
+        "privacy-deletion-request",
+        "api-current-identifiers"
+      ],
+      "citation_map": {
+        "1": "security-secret-storage",
+        "2": "security-export-boundary",
+        "3": "security-key-rotation",
+        "4": "privacy-deletion-request",
+        "5": "api-current-identifiers"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "security-secret-storage"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "458ed1b1cc7dd995d4e94fe6b8fe7201e81739d5d1627488aec8f9d42d01b596",
+      "dimensions": [
+        "semantic paraphrase",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 2449.5448330417275,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "settings-export-secrets",
+      "answer": "No, moving an exported preferences file to another computer will not move your API keys. Exported settings explicitly never include API keys, refresh tokens, session cookies, or credential-manager records [1]. Additionally, importing settings does not create a working cloud connection until the user supplies credentials on that specific device [1].",
+      "ranked_ids": [
+        "security-export-boundary",
+        "security-secret-storage",
+        "api-deprecated-identifiers",
+        "security-key-rotation",
+        "privacy-deletion-request"
+      ],
+      "citation_map": {
+        "1": "security-export-boundary",
+        "2": "security-secret-storage",
+        "3": "api-deprecated-identifiers",
+        "4": "security-key-rotation",
+        "5": "privacy-deletion-request"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "security-export-boundary"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 3,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": false,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "8130d9bd3ced9cd40f3b9e2bbc8d0c6a55ea3ffceec1cd0679f190dd532745f7",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 2560.8248750213534,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "annual-first-purchase-refund",
+      "answer": "Under the current consumer subscription refund policy, a new annual subscription may be refunded within 14 calendar days of the initial charge [1].",
+      "ranked_ids": [
+        "refund-consumer-current",
+        "refund-consumer-archive",
+        "travel-archive",
+        "refund-enterprise",
+        "refund-eu-withdrawal"
+      ],
+      "citation_map": {
+        "1": "refund-consumer-current",
+        "2": "refund-consumer-archive",
+        "3": "travel-archive",
+        "4": "refund-enterprise",
+        "5": "refund-eu-withdrawal"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "refund-consumer-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "5d4e96f501f031ad4b058ed6ea4cafd42a4d1a76ffa9455242be554e4321cb40",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1599.4100830284879,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "annual-renewal-refund",
+      "answer": "You have 7 calendar days to request a refund for an automatic annual renewal [1].",
+      "ranked_ids": [
+        "refund-consumer-current",
+        "refund-consumer-archive",
+        "billing-service-credits",
+        "backup-finance",
+        "security-key-rotation"
+      ],
+      "citation_map": {
+        "1": "refund-consumer-current",
+        "2": "refund-consumer-archive",
+        "3": "billing-service-credits",
+        "4": "backup-finance",
+        "5": "security-key-rotation"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "refund-consumer-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "b0db5e42dab0c611b7725c06e01c614439334d00f144208d51905332692607e2",
+      "dimensions": [
+        "near-duplicate distractors",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1072.0982910133898,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "historical-refund-window",
+      "answer": "Before the April 2026 policy change, annual renewals had a 10-day request window [1].",
+      "ranked_ids": [
+        "refund-consumer-archive",
+        "refund-consumer-current",
+        "travel-archive",
+        "backup-standard",
+        "backup-finance"
+      ],
+      "citation_map": {
+        "1": "refund-consumer-archive",
+        "2": "refund-consumer-current",
+        "3": "travel-archive",
+        "4": "backup-standard",
+        "5": "backup-finance"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "refund-consumer-archive"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 2,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "362bc6b3a20d763b20f23bb28c4eea139d876c81cac751c27d3d251d3f5a1f6b",
+      "dimensions": [
+        "current versus superseded policy",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 1105.22858297918,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "enterprise-refund-request",
+      "answer": "No, enterprise customers cannot use the consumer fourteen-day rule to cancel their order form. Enterprise subscriptions are governed by the signed order form and are not covered by the consumer 14-day refund rule [1].",
+      "ranked_ids": [
+        "refund-enterprise",
+        "refund-consumer-archive",
+        "refund-eu-withdrawal",
+        "refund-consumer-current",
+        "billing-service-credits"
+      ],
+      "citation_map": {
+        "1": "refund-enterprise",
+        "2": "refund-consumer-archive",
+        "3": "refund-eu-withdrawal",
+        "4": "refund-consumer-current",
+        "5": "billing-service-credits"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "refund-enterprise"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "bc28fcbb4c7d62051ffd4c03cd503ee1f88f46967bd21b71200ee4056c24f5e5",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 1964.2234590137377,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "aurora-production-owner",
+      "answer": "Mira Chen is the directly responsible individual for the current public release of the Aurora desktop project [1].",
+      "ranked_ids": [
+        "project-aurora-current",
+        "project-aurora-archive",
+        "accessibility-release-gate",
+        "backup-design",
+        "project-orion"
+      ],
+      "citation_map": {
+        "1": "project-aurora-current",
+        "2": "project-aurora-archive",
+        "3": "accessibility-release-gate",
+        "4": "backup-design",
+        "5": "project-orion"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "project-aurora-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "0ed8b0e1dda21eb0ef49485f05b3b467de389462db5fc0800fbc1e28f910bf97",
+      "dimensions": [
+        "current versus superseded policy",
+        "near-duplicate distractors"
+      ],
+      "latency_ms": 1377.9799999902025,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "aurora-release-blocker",
+      "answer": "Based on the provided documents, the accessibility problems that would prevent Aurora from shipping are:\n\n*   **Critical keyboard or screen-reader failures** [1][5].\n*   **Critical automated audit findings** [5].\n*   Specifically, the release requires **keyboard access to every interactive control**, **visible focus**, and **screen-reader names for controls**; failures in these areas block the release [5].\n\nWhile medium color-contrast defects do not automatically block the release, they require a documented exception from product and design along with a scheduled correction to proceed [1][5].",
+      "ranked_ids": [
+        "project-aurora-current",
+        "project-aurora-archive",
+        "travel-medical-exception",
+        "aurora-astronomy",
+        "accessibility-release-gate"
+      ],
+      "citation_map": {
+        "1": "project-aurora-current",
+        "2": "project-aurora-archive",
+        "3": "travel-medical-exception",
+        "4": "aurora-astronomy",
+        "5": "accessibility-release-gate"
+      },
+      "cited_ids": [
+        1,
+        5
+      ],
+      "cited_document_ids": [
+        "project-aurora-current",
+        "accessibility-release-gate"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "5d1f72dfd5faa89275eb561efbc1103515d59ea8916c01f6b517b6f39e3a0699",
+      "dimensions": [
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 3850.0500000081956,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "aurora-pilot-coordinator",
+      "answer": "Jonah Ruiz coordinated the archived internal Aurora pilot [1].",
+      "ranked_ids": [
+        "project-aurora-archive",
+        "project-aurora-current",
+        "project-orion",
+        "aurora-astronomy",
+        "long-tail-recovery-code"
+      ],
+      "citation_map": {
+        "1": "project-aurora-archive",
+        "2": "project-aurora-current",
+        "3": "project-orion",
+        "4": "aurora-astronomy",
+        "5": "long-tail-recovery-code"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "project-aurora-archive"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 2,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "1248208911621a7689348501790501b2ac8e11635968bbb8652820aed7dee865",
+      "dimensions": [
+        "current versus superseded policy"
+      ],
+      "latency_ms": 1206.8873329553753,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "orion-table-extraction",
+      "answer": "The initiative that adds table extraction to imported office documents is the Orion import pipeline, specifically in Phase two [1]. This phase is owned by Priya Nwosu [1].",
+      "ranked_ids": [
+        "project-orion",
+        "api-current-identifiers",
+        "api-deprecated-identifiers",
+        "backup-design",
+        "security-export-boundary"
+      ],
+      "citation_map": {
+        "1": "project-orion",
+        "2": "api-current-identifiers",
+        "3": "api-deprecated-identifiers",
+        "4": "backup-design",
+        "5": "security-export-boundary"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "project-orion"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 3,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "65b6103d94d422d987a392f247628f9ffefe4e123c8728c532f9840ce7a11600",
+      "dimensions": [
+        "near-duplicate distractors",
+        "semantic paraphrase"
+      ],
+      "latency_ms": 1873.0367500102147,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "current-mileage-rate",
+      "answer": "The current reimbursement rate for using a personal vehicle on a US business trip is 70 cents per business mile [1].",
+      "ranked_ids": [
+        "travel-current",
+        "travel-archive",
+        "travel-medical-exception",
+        "refund-consumer-archive",
+        "refund-enterprise"
+      ],
+      "citation_map": {
+        "1": "travel-current",
+        "2": "travel-archive",
+        "3": "travel-medical-exception",
+        "4": "refund-consumer-archive",
+        "5": "refund-enterprise"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "travel-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "35170d935195bf63654dd10421bb66e93cda1b679e920be167d5e5d21b378763",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1543.3082919334993,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "old-mileage-rate",
+      "answer": "Finance should use the former personal-vehicle rate of 62 cents per mile when auditing a 2024 US expense report, as the archived policy applies to older expense reports while the current policy took effect on January 1, 2026 [1].",
+      "ranked_ids": [
+        "travel-archive",
+        "backup-finance",
+        "travel-current",
+        "billing-invoice-terms",
+        "api-deprecated-identifiers"
+      ],
+      "citation_map": {
+        "1": "travel-archive",
+        "2": "backup-finance",
+        "3": "travel-current",
+        "4": "billing-invoice-terms",
+        "5": "api-deprecated-identifiers"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "travel-archive"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 2,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "0d5c1d51a47d5a52086410dea31c3405ec4fb1783c6e9f3801e34383ba2ad8fd",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 2373.4441669657826,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "accessible-travel-exception",
+      "answer": "Yes, a traveler who needs a different cabin due to a documented accessibility or medical need may request a confidential exception through People Operations [1]. This process can override ordinary fare limits when necessary [1].",
+      "ranked_ids": [
+        "travel-medical-exception",
+        "accessibility-release-gate",
+        "travel-current",
+        "travel-archive",
+        "support-global"
+      ],
+      "citation_map": {
+        "1": "travel-medical-exception",
+        "2": "accessibility-release-gate",
+        "3": "travel-current",
+        "4": "travel-archive",
+        "5": "support-global"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "travel-medical-exception"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "ac5008dc1b29237f1020e0f5cd518bc2669025a99b9159fa8218f6b9cb8ab781",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 1936.2419589888304,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "spanish-weekend",
+      "answer": "No, you cannot get help from a Spanish-speaking specialist on Saturday. The Spanish support team does not provide service on Saturdays or Sundays [1].",
+      "ranked_ids": [
+        "support-spanish",
+        "support-french",
+        "support-global",
+        "support-japanese",
+        "travel-medical-exception"
+      ],
+      "citation_map": {
+        "1": "support-spanish",
+        "2": "support-french",
+        "3": "support-global",
+        "4": "support-japanese",
+        "5": "travel-medical-exception"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "support-spanish"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": true,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "2c5337991f65b12e3c2b0c587ded75382fda29ce7eb6ca2b5a8d4b8ea96ad2b9",
+      "dimensions": [
+        "multilingual and cross-lingual retrieval",
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 1601.547709084116,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "french-friday-hours",
+      "answer": "L’assistance en français ferme à midi le vendredi [1].",
+      "ranked_ids": [
+        "support-french",
+        "support-japanese",
+        "support-spanish",
+        "support-global",
+        "backup-finance"
+      ],
+      "citation_map": {
+        "1": "support-french",
+        "2": "support-japanese",
+        "3": "support-spanish",
+        "4": "support-global",
+        "5": "backup-finance"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "support-french"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "ac81bf0ce71f6f6b70c48bab30af9ebc59fb5826c74958883c398f1658bd6888",
+      "dimensions": [
+        "multilingual and cross-lingual retrieval"
+      ],
+      "latency_ms": 1164.2001669388264,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "japanese-hours-english-query",
+      "answer": "The Japanese support team operates from 10:00 AM to 6:00 PM Japan Standard Time, Monday through Friday [1].",
+      "ranked_ids": [
+        "support-japanese",
+        "support-spanish",
+        "support-french",
+        "support-global",
+        "sla-enterprise"
+      ],
+      "citation_map": {
+        "1": "support-japanese",
+        "2": "support-spanish",
+        "3": "support-french",
+        "4": "support-global",
+        "5": "sla-enterprise"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "support-japanese"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 3,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "f7ccb7b19493348efd3e12fe50b11e6e6f507359beae5d75e1da17cd89ea63c0",
+      "dimensions": [
+        "multilingual and cross-lingual retrieval"
+      ],
+      "latency_ms": 1640.670666936785,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "enterprise-weekend-emergency",
+      "answer": "Yes, an enterprise customer can report a severity-one outage on Sunday [1]. Enterprise severity-one incidents can be filed in English at any hour, including weekends and holidays [1]. The enterprise plan specifically states that severity-one support intake operates 24 hours a day [3]. However, this around-the-clock emergency intake does not mean every language queue is staffed around the clock [1]. Noncritical cases, or cases in languages where the team is not staffed for emergency intake, follow the schedule of their selected language team [1]. For example, the Japanese support team is closed on Saturdays, Sundays, and holidays [4], and the Spanish support team does not provide service on Saturdays and Sundays [5]. Therefore, while the incident can be reported and logged for severity-one priority, the response time for non-English or non-critical queues will depend on the specific language team's availability [1].",
+      "ranked_ids": [
+        "support-global",
+        "incident-severity",
+        "sla-enterprise",
+        "support-japanese",
+        "support-spanish"
+      ],
+      "citation_map": {
+        "1": "support-global",
+        "2": "incident-severity",
+        "3": "sla-enterprise",
+        "4": "support-japanese",
+        "5": "support-spanish"
+      },
+      "cited_ids": [
+        1,
+        3,
+        4,
+        5
+      ],
+      "cited_document_ids": [
+        "support-global",
+        "sla-enterprise",
+        "support-japanese",
+        "support-spanish"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": false,
+      "abstained": true,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "13718960357ece47632941e74347021a308ab4c21f2bbb8dfe3595b4b2e19235",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 5883.704416104592,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "deleted-content-lifecycle",
+      "answer": "After deleting a workspace item, it remains recoverable for 30 days before being purged from active systems [1]. Encrypted disaster-recovery copies expire within a further 60 days after that [1].",
+      "ranked_ids": [
+        "privacy-retention-current",
+        "backup-standard",
+        "privacy-deletion-request",
+        "backup-design",
+        "privacy-legal-hold"
+      ],
+      "citation_map": {
+        "1": "privacy-retention-current",
+        "2": "backup-standard",
+        "3": "privacy-deletion-request",
+        "4": "backup-design",
+        "5": "privacy-legal-hold"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "privacy-retention-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "e467b5f8b3e4e359367fc8965712ea4bc05a34fd9203bab916cc525840f4c900",
+      "dimensions": [
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 2088.103499962017,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "deletion-under-hold",
+      "answer": "No. A user request, such as a verified privacy request, cannot override an active legal hold [1]. Furthermore, records required for a legal hold may be retained even when processing personal data deletion requests, provided there is a documented basis for the retention [2]. A valid legal hold specifically suspends deletion for the records named in the hold [3].",
+      "ranked_ids": [
+        "privacy-legal-hold",
+        "privacy-deletion-request",
+        "privacy-retention-current",
+        "refund-eu-withdrawal",
+        "refund-consumer-archive"
+      ],
+      "citation_map": {
+        "1": "privacy-legal-hold",
+        "2": "privacy-deletion-request",
+        "3": "privacy-retention-current",
+        "4": "refund-eu-withdrawal",
+        "5": "refund-consumer-archive"
+      },
+      "cited_ids": [
+        1,
+        2,
+        3
+      ],
+      "cited_document_ids": [
+        "privacy-legal-hold",
+        "privacy-deletion-request",
+        "privacy-retention-current"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 3,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "f1eb03eba091529ec1ccfb30220a87cefc979c8e0aa8e02e05fafaa0e8e6a2c2",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 2769.890708033927,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "embedding-same-dimensions",
+      "answer": "No, two unrelated 384-dimensional embedding models may not safely search one shared vector index.\n\n*   Equal dimensions do not make vectors comparable because different models can encode unrelated coordinate systems [1].\n*   Vectors should never be mixed across different model identities, even if their numeric dimensions match [2].\n*   Compatibility requires the same model artifacts, tokenizer behavior, pooling, normalization, and input policy fingerprint [1].",
+      "ranked_ids": [
+        "embedding-dimensions",
+        "embedding-migration",
+        "search-reranking",
+        "api-current-identifiers",
+        "security-export-boundary"
+      ],
+      "citation_map": {
+        "1": "embedding-dimensions",
+        "2": "embedding-migration",
+        "3": "search-reranking",
+        "4": "api-current-identifiers",
+        "5": "security-export-boundary"
+      },
+      "cited_ids": [
+        1,
+        2
+      ],
+      "cited_document_ids": [
+        "embedding-dimensions",
+        "embedding-migration"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "c66d31a17c181b1d620ceb479f71c00a8f4a0c2f2ffe8b6785c3375e1320d3a6",
+      "dimensions": [
+        "negation and exception handling",
+        "graded and multi-document relevance"
+      ],
+      "latency_ms": 2862.8232500050217,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "failed-model-migration",
+      "answer": "If the preparation of a new embedding model fails, the system keeps the previous generation active [1].",
+      "ranked_ids": [
+        "embedding-migration",
+        "api-current-identifiers",
+        "search-reranking",
+        "embedding-dimensions",
+        "api-deprecated-identifiers"
+      ],
+      "citation_map": {
+        "1": "embedding-migration",
+        "2": "api-current-identifiers",
+        "3": "search-reranking",
+        "4": "embedding-dimensions",
+        "5": "api-deprecated-identifiers"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "embedding-migration"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 3,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "b9906df1da3cf01a6751f869856d0ad6b32f5992c8b1a68e6830030c385dd803",
+      "dimensions": [
+        "semantic paraphrase"
+      ],
+      "latency_ms": 946.5997921070084,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "reranking-order",
+      "answer": "The search system cuts results to the final top K after local pairwise reranking. Specifically, a shared local reranker scores each query-passage pair, blends that score with the normalized first-stage score, and only then truncates to the requested result count [1].",
+      "ranked_ids": [
+        "search-reranking",
+        "api-current-identifiers",
+        "embedding-dimensions",
+        "security-secret-storage",
+        "security-key-rotation"
+      ],
+      "citation_map": {
+        "1": "search-reranking",
+        "2": "api-current-identifiers",
+        "3": "embedding-dimensions",
+        "4": "security-secret-storage",
+        "5": "security-key-rotation"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "search-reranking"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "88920e7ccd5d8f6fcc0b3ee86347f30d188408536137e5754c41f57c03436424",
+      "dimensions": [
+        "semantic paraphrase"
+      ],
+      "latency_ms": 2318.8820000505075,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "current-import-endpoint",
+      "answer": "To create a safely retryable ingestion job, use the endpoint `POST /v3/import-jobs` and supply the request header `X-Lattice-Idempotency-Key` [1].",
+      "ranked_ids": [
+        "api-current-identifiers",
+        "ops-service-unavailable",
+        "ops-rate-limit",
+        "api-deprecated-identifiers",
+        "ops-auth-failure"
+      ],
+      "citation_map": {
+        "1": "api-current-identifiers",
+        "2": "ops-service-unavailable",
+        "3": "ops-rate-limit",
+        "4": "api-deprecated-identifiers",
+        "5": "ops-auth-failure"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "api-current-identifiers"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 2,
+      "total_required_fact_groups": 2,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "dd016ed1a740e7ee557a9c81b83bd2b8c25a654f3f499962e7f820982e32e26d",
+      "dimensions": [
+        "exact identifiers and numeric distinctions",
+        "near-duplicate distractors"
+      ],
+      "latency_ms": 2010.0777079351246,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "deprecated-import-event",
+      "answer": "The completion event name in the old version-one import API was `import.finished` [1].",
+      "ranked_ids": [
+        "api-deprecated-identifiers",
+        "api-current-identifiers",
+        "project-orion",
+        "backup-design",
+        "security-export-boundary"
+      ],
+      "citation_map": {
+        "1": "api-deprecated-identifiers",
+        "2": "api-current-identifiers",
+        "3": "project-orion",
+        "4": "backup-design",
+        "5": "security-export-boundary"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "api-deprecated-identifiers"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "c4e7b0c2e4bd7c05caea1c3d4544fca8387cff320b8596f0b7d11522a244fd7c",
+      "dimensions": [
+        "current versus superseded policy",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1329.954250017181,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "strategic-invoice-due-date",
+      "answer": "A strategic account may pay forty-five days after invoicing instead of thirty when that term appears on the signed order form [1].",
+      "ranked_ids": [
+        "billing-invoice-terms",
+        "billing-service-credits",
+        "refund-enterprise",
+        "backup-finance",
+        "refund-consumer-archive"
+      ],
+      "citation_map": {
+        "1": "billing-invoice-terms",
+        "2": "billing-service-credits",
+        "3": "refund-enterprise",
+        "4": "backup-finance",
+        "5": "refund-consumer-archive"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "billing-invoice-terms"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 3,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "27b81e2094019e3412e41536f9bed36b4aeec91fd7a0d200982a2891f804dafc",
+      "dimensions": [
+        "negation and exception handling",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1515.0373340584338,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "enterprise-availability-credit",
+      "answer": "The target monthly availability for covered enterprise production services is 99.95 percent [1]. To claim the remedy, you must submit a request for a service credit, which must arrive within 30 days after the affected month [2]. The request must include incident references and the affected period [4]. If the measured availability falls below the commitment, the credit table specified in the order form applies [1]. An approved credit will appear on the next invoice and cannot be exchanged for cash [4].",
+      "ranked_ids": [
+        "sla-enterprise",
+        "refund-enterprise",
+        "sla-standard",
+        "billing-service-credits",
+        "refund-consumer-archive"
+      ],
+      "citation_map": {
+        "1": "sla-enterprise",
+        "2": "refund-enterprise",
+        "3": "sla-standard",
+        "4": "billing-service-credits",
+        "5": "refund-consumer-archive"
+      },
+      "cited_ids": [
+        1,
+        2,
+        4
+      ],
+      "cited_document_ids": [
+        "sla-enterprise",
+        "refund-enterprise",
+        "billing-service-credits"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 5,
+      "total_required_fact_groups": 5,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "21bbb1eb4729eeb10ade55a906f0d59d5d4519d8fc4a84db292ed976e58a1996",
+      "dimensions": [
+        "graded and multi-document relevance",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 3639.2249170457944,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "severity-one-definition",
+      "answer": "No, a localized bug with a usable workaround is not a severity-one incident. According to the incident severity matrix, severity one is defined as a widespread production outage, confirmed data loss, or an active security compromise with no workaround [1]. A localized defect with a practical workaround is classified as severity three [1].",
+      "ranked_ids": [
+        "incident-severity",
+        "support-global",
+        "sla-enterprise",
+        "accessibility-release-gate",
+        "ops-service-unavailable"
+      ],
+      "citation_map": {
+        "1": "incident-severity",
+        "2": "support-global",
+        "3": "sla-enterprise",
+        "4": "accessibility-release-gate",
+        "5": "ops-service-unavailable"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "incident-severity"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 4,
+      "total_required_fact_groups": 4,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "b32724c8648340ca4ff5ae282eb890a8b83771d696caac9bcdfa338b629eca89",
+      "dimensions": [
+        "negation and exception handling"
+      ],
+      "latency_ms": 2557.861916953698,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "west-annex-recovery-phrase",
+      "answer": "The sealed-controller recovery phrase for the September 2026 West annex drill is copper-otter-731 [1].",
+      "ranked_ids": [
+        "long-tail-recovery-code",
+        "long-tail-unrelated-code",
+        "security-export-boundary",
+        "backup-standard",
+        "project-orion"
+      ],
+      "citation_map": {
+        "1": "long-tail-recovery-code",
+        "2": "long-tail-unrelated-code",
+        "3": "security-export-boundary",
+        "4": "backup-standard",
+        "5": "project-orion"
+      },
+      "cited_ids": [
+        1
+      ],
+      "cited_document_ids": [
+        "long-tail-recovery-code"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 1,
+      "total_required_fact_groups": 1,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": true,
+      "citation_structure_passed": true,
+      "abstained": false,
+      "expected_abstain": false,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "4da9c86df0f2817884c7346480bbe21b1cca860d1cb65cf1e75acb96d4766f02",
+      "dimensions": [
+        "long-context tail facts",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1658.7331250775605,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "unanswerable-home-phone",
+      "answer": "The answer is not available in the provided documents.",
+      "ranked_ids": [
+        "project-aurora-current",
+        "privacy-deletion-request",
+        "security-export-boundary",
+        "security-key-rotation",
+        "api-current-identifiers"
+      ],
+      "citation_map": {
+        "1": "project-aurora-current",
+        "2": "privacy-deletion-request",
+        "3": "security-export-boundary",
+        "4": "security-key-rotation",
+        "5": "api-current-identifiers"
+      },
+      "cited_ids": [],
+      "cited_document_ids": [],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 0,
+      "total_required_fact_groups": 0,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": true,
+      "expected_abstain": true,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "050477139fb025c34c17611420ad353dabe5f5e608c15b822fa7158a5dc96932",
+      "dimensions": [
+        "unanswerable questions"
+      ],
+      "latency_ms": 1241.0282499622554,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "unanswerable-office-wifi",
+      "answer": "The answer is not available in the provided documents.",
+      "ranked_ids": [
+        "security-export-boundary",
+        "long-tail-unrelated-code",
+        "security-secret-storage",
+        "privacy-deletion-request",
+        "long-tail-recovery-code"
+      ],
+      "citation_map": {
+        "1": "security-export-boundary",
+        "2": "long-tail-unrelated-code",
+        "3": "security-secret-storage",
+        "4": "privacy-deletion-request",
+        "5": "long-tail-recovery-code"
+      },
+      "cited_ids": [],
+      "cited_document_ids": [],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 0,
+      "total_required_fact_groups": 0,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": true,
+      "expected_abstain": true,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "050477139fb025c34c17611420ad353dabe5f5e608c15b822fa7158a5dc96932",
+      "dimensions": [
+        "unanswerable questions",
+        "exact identifiers and numeric distinctions"
+      ],
+      "latency_ms": 1216.5680419420823,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "unanswerable-orion-budget",
+      "answer": "The answer is not available in the provided documents.",
+      "ranked_ids": [
+        "project-orion",
+        "project-aurora-archive",
+        "project-aurora-current",
+        "orion-astronomy",
+        "travel-archive"
+      ],
+      "citation_map": {
+        "1": "project-orion",
+        "2": "project-aurora-archive",
+        "3": "project-aurora-current",
+        "4": "orion-astronomy",
+        "5": "travel-archive"
+      },
+      "cited_ids": [],
+      "cited_document_ids": [],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 0,
+      "total_required_fact_groups": 0,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": true,
+      "abstained": true,
+      "expected_abstain": true,
+      "mechanical_checks_passed": true,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "050477139fb025c34c17611420ad353dabe5f5e608c15b822fa7158a5dc96932",
+      "dimensions": [
+        "unanswerable questions",
+        "near-duplicate distractors"
+      ],
+      "latency_ms": 1160.440041916445,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    },
+    {
+      "query_id": "unanswerable-japanese-holiday-calendar",
+      "answer": "The provided documents do not list the specific Japanese public holidays that support will observe in 2027. Document [1] states that support is closed on \"Saturdays, Sundays, and holidays\" (祝日) [1], and Document [5] notes that noncritical cases follow the schedule of the selected language team [5], but neither document provides a specific list of holidays for 2027.\n\nTherefore, the answer is not available in the provided documents.",
+      "ranked_ids": [
+        "support-japanese",
+        "project-aurora-current",
+        "accessibility-release-gate",
+        "project-aurora-archive",
+        "support-global"
+      ],
+      "citation_map": {
+        "1": "support-japanese",
+        "2": "project-aurora-current",
+        "3": "accessibility-release-gate",
+        "4": "project-aurora-archive",
+        "5": "support-global"
+      },
+      "cited_ids": [
+        1,
+        5
+      ],
+      "cited_document_ids": [
+        "support-japanese",
+        "support-global"
+      ],
+      "invalid_citations": [],
+      "required_fact_groups_matched": 0,
+      "total_required_fact_groups": 0,
+      "forbidden_pattern_hits": [],
+      "pattern_checks_passed": false,
+      "citation_structure_passed": false,
+      "abstained": true,
+      "expected_abstain": true,
+      "mechanical_checks_passed": false,
+      "answer_correct": null,
+      "review_status": "unreviewed",
+      "answer_sha256": "98210c9458aaf7cd65dc5c3a6a35aad6bc536a94d740daaec1cd9a45fcbcefc9",
+      "dimensions": [
+        "unanswerable questions",
+        "multilingual and cross-lingual retrieval"
+      ],
+      "latency_ms": 3551.4567909995094,
+      "model": "Qwen3.8-27B-Q5_K_S.gguf"
+    }
+  ]
+}

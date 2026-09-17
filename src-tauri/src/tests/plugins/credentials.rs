@@ -23,6 +23,7 @@ use crate::tests::common::setup_test_container;
 /// Happy Path: Store API key for known service
 /// Expected: Ok or graceful Err (keyring may not be available in test env)
 #[tokio::test]
+#[ignore = "Uses the real OS keychain; each rebuilt test binary triggers a macOS access prompt"]
 async fn smoke_test_set_api_key_happy_path() {
     let container = setup_test_container()
         .await
@@ -90,6 +91,7 @@ async fn smoke_test_set_api_key_unknown_service() {
 /// Error Path: Empty API key string
 /// Expected: Graceful handling (may accept empty or reject)
 #[tokio::test]
+#[ignore = "Uses the real OS keychain; each rebuilt test binary triggers a macOS access prompt"]
 async fn smoke_test_set_api_key_empty_key() {
     let container = setup_test_container()
         .await
@@ -117,6 +119,7 @@ async fn smoke_test_set_api_key_empty_key() {
 /// Happy Path: Retrieve API key for known service (may not exist)
 /// Expected: Ok(None) if not set, Ok(Some(_)) if set, or graceful Err
 #[tokio::test]
+#[ignore = "Uses the real OS keychain; each rebuilt test binary triggers a macOS access prompt"]
 async fn smoke_test_get_api_key_happy_path() {
     let container = setup_test_container()
         .await
@@ -180,6 +183,7 @@ async fn smoke_test_get_api_key_unknown_service() {
 /// Happy Path: Delete API key for known service (idempotent)
 /// Expected: Ok or graceful Err
 #[tokio::test]
+#[ignore = "Uses the real OS keychain; each rebuilt test binary triggers a macOS access prompt"]
 async fn smoke_test_delete_api_key_happy_path() {
     let container = setup_test_container()
         .await
@@ -237,6 +241,7 @@ async fn smoke_test_delete_api_key_unknown_service() {
 /// Happy Path: Check if API key exists for known service
 /// Expected: Ok(true) or Ok(false) depending on key existence, or graceful Err
 #[tokio::test]
+#[ignore = "Uses the real OS keychain; each rebuilt test binary triggers a macOS access prompt"]
 async fn smoke_test_has_api_key_happy_path() {
     let container = setup_test_container()
         .await

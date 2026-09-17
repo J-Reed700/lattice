@@ -11,6 +11,7 @@
 //! `manifest.json` is always the first tar entry so a reader can learn the
 //! counts and byte totals without decompressing the rest of the stream.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -49,6 +50,18 @@ const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Sidecar suffixes SQLite may leave next to a database file.
 const DB_SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+/// A SHA-256 digest rendered as hex: the name of a library blob directory,
+/// and the value of `documents.checksum`.
+const BLOB_HASH_LEN: usize = 64;
+
+/// True for the only names the content-addressed library gives a top-level
+/// directory: 64 lowercase hex characters. `ContentAddressedStorage` writes
+/// them with `format!("{:x}", digest)`, so anything else under the library
+/// root is not a blob and is never packed.
+fn is_blob_hash(name: &str) -> bool {
+    name.len() == BLOB_HASH_LEN && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
 
 /// What `snapshot_database` produced.
 #[derive(Debug, Clone)]
@@ -334,6 +347,89 @@ async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>),
     Ok((cleared, migration_version))
 }
 
+/// Does `table` have a column called `column`?
+async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<bool, ArchiveError> {
+    // `pragma_table_info` is a table-valued function, so its argument is a
+    // string literal rather than a bind parameter; the quote doubling is the
+    // same defence `VACUUM INTO` above uses.
+    let escaped = table.replace('\'', "''");
+    let names: Vec<String> =
+        sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{escaped}')"))
+            .fetch_all(pool)
+            .await
+            .map_err(db_err)?;
+    Ok(names.iter().any(|name| name == column))
+}
+
+/// The blob hashes the archived database still points at.
+///
+/// Read from the snapshot rather than the live database, so the set and the
+/// `documents` rows inside the archive can never disagree: a document deleted
+/// after `VACUUM INTO` is not in the snapshot, and its blob is not packed.
+///
+/// `Ok(None)` means "this database cannot say" — no `documents` table, or no
+/// `checksum` column — and the planner then packs every blob directory.
+/// Shipping a few orphans is a much better failure than silently dropping the
+/// user's files out of their only backup.
+pub async fn referenced_blob_hashes(db: &Path) -> Result<Option<HashSet<String>>, ArchiveError> {
+    // Read-only with a rollback journal, exactly like `validate_snapshot`:
+    // reading the set must not leave a `-wal`/`-shm` beside the file that is
+    // about to be packed.
+    let options = SqliteConnectOptions::new()
+        .filename(db)
+        .read_only(true)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Delete)
+        .foreign_keys(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|error| {
+            ArchiveError::Database(format!(
+                "failed to open snapshot {} to list referenced blobs: {error}",
+                db.display()
+            ))
+        })?;
+
+    let result = read_referenced_blob_hashes(&pool).await;
+    pool.close().await;
+    result
+}
+
+async fn read_referenced_blob_hashes(
+    pool: &SqlitePool,
+) -> Result<Option<HashSet<String>>, ArchiveError> {
+    if !table_exists(pool, "documents").await? {
+        warn!("snapshot has no documents table; every library blob will be packed");
+        return Ok(None);
+    }
+    if !column_exists(pool, "documents", "checksum").await? {
+        warn!("snapshot documents table has no checksum column; every library blob will be packed");
+        return Ok(None);
+    }
+
+    let checksums: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT DISTINCT checksum FROM documents")
+            .fetch_all(pool)
+            .await
+            .map_err(db_err)?;
+
+    let total = checksums.len();
+    let hashes: HashSet<String> = checksums
+        .into_iter()
+        .flatten()
+        .map(|checksum| checksum.trim().to_ascii_lowercase())
+        .filter(|checksum| is_blob_hash(checksum))
+        .collect();
+    debug!(
+        distinct_checksums = total,
+        referenced_blobs = hashes.len(),
+        "read the referenced blob set from the snapshot"
+    );
+    Ok(Some(hashes))
+}
+
 /// Everything the payload writer packs.
 #[derive(Debug, Clone, Default)]
 pub struct ArchiveInputs {
@@ -342,6 +438,12 @@ pub struct ArchiveInputs {
     pub migration_version: Option<i64>,
     /// Content-addressed files library root (`~/.lattice/files`), if it exists.
     pub files_root: Option<PathBuf>,
+    /// Blob hashes the archived database references, from
+    /// [`referenced_blob_hashes`]. Only these blob directories are packed.
+    /// `None` skips the reference check and packs every blob directory; it is
+    /// what payload tests with no database use, and the fallback when the
+    /// snapshot cannot be asked.
+    pub referenced_blob_hashes: Option<HashSet<String>>,
     /// Vault markdown folder, if the vault is enabled and the folder exists.
     pub vault_root: Option<PathBuf>,
     /// `settings.json`, if present.
@@ -466,6 +568,145 @@ fn scan_tree(
     (files, bytes)
 }
 
+/// What `scan_library` decided about a files-library root.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LibraryScan {
+    /// Blob directories packed.
+    blobs: u64,
+    /// Files packed (what the manifest's `files_count` reports).
+    files: u64,
+    /// Plaintext bytes packed.
+    bytes: u64,
+    /// Top-level entries left out: orphan blobs and anything that is not a
+    /// blob directory at all.
+    skipped_blobs: u64,
+    /// Bytes those skipped entries occupy on disk.
+    skipped_bytes: u64,
+}
+
+/// Plan the files-library entries.
+///
+/// The library is content-addressed — `{root}/{sha256}/{filename}` — and the
+/// archived database is the only authority on which of those hashes still
+/// matter. So a top-level entry is packed only when it is a directory, its
+/// name is a blob hash, and `referenced` contains that hash. A blob left
+/// behind by an import that crashed, or by a document deleted before the
+/// orphan sweep ran, is not the user's data any more and does not belong in
+/// their backup; neither does a `.DS_Store` somebody's file manager dropped
+/// in the library root.
+///
+/// `referenced` of `None` skips the reference check (but not the shape
+/// check): payload tests have no database to ask, and a snapshot that cannot
+/// answer must not cost the user their files.
+fn scan_library(
+    root: &Path,
+    referenced: Option<&HashSet<String>>,
+    excludes: &[PathBuf],
+    out: &mut Vec<PlannedEntry>,
+) -> LibraryScan {
+    let root = canonical_or_owned(root);
+    let mut scan = LibraryScan::default();
+
+    let read_dir = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warn!(%error, root = %root.display(), "files library is unreadable; nothing archived from it");
+            return scan;
+        }
+    };
+
+    // `read_dir` order is whatever the filesystem feels like; sort so two
+    // archives of the same library have the same entry order.
+    let mut children: Vec<(String, PathBuf, bool, bool)> = Vec::new();
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warn!(%error, root = %root.display(), "skipping unreadable library entry");
+                continue;
+            }
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            warn!(path = %entry.path().display(), "skipping library entry with a non-UTF-8 name");
+            continue;
+        };
+        let Ok(file_type) = entry.file_type() else {
+            warn!(path = %entry.path().display(), "cannot stat library entry; skipped");
+            continue;
+        };
+        children.push((
+            name,
+            entry.path(),
+            file_type.is_dir(),
+            file_type.is_symlink(),
+        ));
+    }
+    children.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (name, path, is_dir, is_symlink) in children {
+        if is_excluded(&path, excludes) {
+            debug!(path = %path.display(), "library entry is excluded; skipped");
+            continue;
+        }
+        if is_symlink {
+            debug!(path = %path.display(), "skipping symlink (not followed)");
+            continue;
+        }
+
+        let wanted = match referenced {
+            Some(hashes) => hashes.contains(&name),
+            None => true,
+        };
+        if !is_dir || !is_blob_hash(&name) || !wanted {
+            scan.skipped_blobs = scan.skipped_blobs.saturating_add(1);
+            scan.skipped_bytes = scan.skipped_bytes.saturating_add(tree_bytes(&path, is_dir));
+            debug!(
+                path = %path.display(),
+                "library entry is not a referenced blob; not archived"
+            );
+            continue;
+        }
+
+        let Some(dir_name) = entry_name(FILES_ENTRY_PREFIX, Path::new(&name)) else {
+            continue;
+        };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            warn!(path = %path.display(), "blob directory vanished while scanning; skipped");
+            continue;
+        };
+        if !meta.is_dir() {
+            continue;
+        }
+        out.push(PlannedEntry {
+            source: path.clone(),
+            name: format!("{dir_name}/"),
+            is_dir: true,
+        });
+        let (files, bytes) = scan_tree(&path, &format!("{dir_name}/"), excludes, out);
+        scan.blobs = scan.blobs.saturating_add(1);
+        scan.files = scan.files.saturating_add(files);
+        scan.bytes = scan.bytes.saturating_add(bytes);
+    }
+
+    scan
+}
+
+/// Bytes a skipped library entry occupies. Metadata only: a blob that is not
+/// going into the archive is never opened.
+fn tree_bytes(path: &Path, is_dir: bool) -> u64 {
+    if !is_dir {
+        return std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+    }
+    WalkDir::new(path)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| entry.metadata().ok())
+        .fold(0u64, |total, meta| total.saturating_add(meta.len()))
+}
+
 /// Reads exactly `size` bytes from `inner`: truncating if the file grew since
 /// it was stat-ed, zero-padding if it shrank. A tar header promises a byte
 /// count up front, so a file changing underneath us must not desynchronise
@@ -560,15 +801,28 @@ pub fn write_payload<W: Write>(
         is_dir: false,
     });
 
-    // 2. Files library.
+    // 2. Files library: only the blobs the archived database references.
     let mut files_count = 0u64;
     let mut files_root = None;
     if let Some(root) = inputs.files_root.as_ref() {
         if root.is_dir() {
-            let (count, bytes) = scan_tree(root, FILES_ENTRY_PREFIX, &excludes, &mut planned);
-            files_count = count;
-            total_bytes = total_bytes.saturating_add(bytes);
+            let scan = scan_library(
+                root,
+                inputs.referenced_blob_hashes.as_ref(),
+                &excludes,
+                &mut planned,
+            );
+            files_count = scan.files;
+            total_bytes = total_bytes.saturating_add(scan.bytes);
             files_root = Some(root.to_string_lossy().to_string());
+            if scan.skipped_blobs > 0 {
+                info!(
+                    packed_blobs = scan.blobs,
+                    skipped_blobs = scan.skipped_blobs,
+                    skipped_bytes = scan.skipped_bytes,
+                    "left unreferenced library entries out of the archive"
+                );
+            }
         } else {
             warn!(path = %root.display(), "files library root is missing; not archived");
         }
@@ -1206,6 +1460,94 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn referenced_blobs_come_from_the_snapshot_not_the_live_database() {
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("lattice.db");
+        let pool = migrated_pool(&live).await;
+
+        // Two documents on one blob, one on another (spelled in upper case,
+        // the way a hand-edited row might be), and one whose checksum is not
+        // a digest at all.
+        for (id, checksum) in [
+            ("doc-1", SHA.to_string()),
+            ("doc-2", SHA.to_string()),
+            ("doc-3", ORPHAN_SHA.to_uppercase()),
+            ("doc-4", "not-a-digest".to_string()),
+        ] {
+            sqlx::query(
+                "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
+                 VALUES (?, ?, ?, 12, '2026-09-16T00:00:00Z', ?)",
+            )
+            .bind(id)
+            .bind(format!("/tmp/{id}.md"))
+            .bind(format!("{id}.md"))
+            .bind(&checksum)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let dest = dir.path().join("snapshot.db");
+        snapshot_database(&pool, &dest).await.unwrap();
+
+        // A document deleted after the snapshot was taken is not in the
+        // snapshot, so its blob is not referenced by the archive either.
+        sqlx::query("DELETE FROM documents WHERE id = 'doc-3'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let hashes = referenced_blob_hashes(&dest).await.unwrap().unwrap();
+        assert_eq!(
+            hashes,
+            HashSet::from([SHA.to_string(), ORPHAN_SHA.to_string()]),
+            "distinct, lower-cased, and only things shaped like a digest"
+        );
+        for suffix in DB_SIDECAR_SUFFIXES {
+            assert!(
+                !sidecar_path(&dest, suffix).exists(),
+                "reading the referenced set left a {suffix} sidecar behind"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_database_that_cannot_answer_packs_everything() {
+        let dir = tempdir().unwrap();
+
+        // No documents table at all.
+        let other = dir.path().join("other.db");
+        let options = SqliteConnectOptions::new()
+            .filename(&other)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Delete);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE notes (id TEXT PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(referenced_blob_hashes(&other).await.unwrap().is_none());
+
+        // A documents table from somewhere else, with no checksum column.
+        sqlx::query("CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        assert!(referenced_blob_hashes(&other).await.unwrap().is_none());
+
+        // Not a database at all.
+        let garbage = dir.path().join("garbage.db");
+        std::fs::write(&garbage, b"nope").unwrap();
+        assert!(referenced_blob_hashes(&garbage).await.is_err());
+    }
+
     // ----------------------------------------------------------------- payload
 
     struct Fixture {
@@ -1219,7 +1561,12 @@ mod tests {
     }
 
     const SHA: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    /// A blob no document references: an import that died before it
+    /// committed, or a document deleted before the sweep ran.
+    const ORPHAN_SHA: &str = "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9";
     const PDF_BYTES: &[u8] = b"%PDF-1.4 pretend this is a pdf";
+    const ORPHAN_BYTES: &[u8] = b"%PDF-1.4 nothing points at this";
+    const STRAY_BYTES: &[u8] = b"not a blob";
     const NOTE_NAME: &str = "\u{fc}n\u{ef}code note.md";
     const NOTE_BYTES: &[u8] = "# h\u{e9}llo w\u{f6}rld\n".as_bytes();
     const SETTINGS_BYTES: &[u8] = br#"{"theme":"dark"}"#;
@@ -1258,6 +1605,9 @@ mod tests {
             db_snapshot: db.clone(),
             migration_version: Some(20_260_916_010_000),
             files_root: Some(files_root.clone()),
+            // The planner tests say explicitly which blobs are referenced;
+            // `None` here keeps the base fixture packing what it always did.
+            referenced_blob_hashes: None,
             vault_root: Some(vault_root.clone()),
             settings_file: Some(settings.clone()),
             exclude: vec![vault_root.join("excluded")],
@@ -1362,6 +1712,7 @@ mod tests {
             db_snapshot: fx.db.clone(),
             migration_version: None,
             files_root: None,
+            referenced_blob_hashes: None,
             vault_root: None,
             settings_file: None,
             exclude: Vec::new(),
@@ -1379,6 +1730,126 @@ mod tests {
         assert!(extracted.vault_dir.is_none());
         assert!(extracted.settings_file.is_none());
         assert_eq!(std::fs::read(&extracted.db_path).unwrap(), DB_BYTES);
+    }
+
+    // --------------------------------------------------- referenced blobs only
+
+    /// Everything a real library root collects that is not the user's data:
+    /// an orphan blob, a directory that is not named after a hash at all, and
+    /// a file the OS dropped in the root.
+    fn litter_the_library(files_root: &Path) {
+        write_file(&files_root.join(ORPHAN_SHA).join("ghost.pdf"), ORPHAN_BYTES);
+        write_file(
+            &files_root.join("not-a-hash").join("thing.pdf"),
+            STRAY_BYTES,
+        );
+        write_file(&files_root.join(".DS_Store"), STRAY_BYTES);
+    }
+
+    fn expected_referenced_bytes() -> u64 {
+        (DB_BYTES.len() + PDF_BYTES.len() + NOTE_BYTES.len() + SETTINGS_BYTES.len()) as u64
+    }
+
+    #[test]
+    fn payload_packs_only_the_blobs_the_database_references() {
+        let fx = fixture();
+        litter_the_library(&fx.files_root);
+
+        let inputs = ArchiveInputs {
+            referenced_blob_hashes: Some(HashSet::from([SHA.to_string()])),
+            ..fx.inputs.clone()
+        };
+        let (manifest, bytes) = write_payload(Vec::new(), &inputs, &mut |_| {}).unwrap();
+
+        assert_eq!(
+            manifest.files_count, 1,
+            "only the referenced blob is packed"
+        );
+        assert_eq!(
+            manifest.total_plaintext_bytes,
+            expected_referenced_bytes(),
+            "skipped blobs must not be counted as packed bytes"
+        );
+
+        let dest = fx.root.join("extracted-referenced");
+        let extracted = extract_payload(Cursor::new(bytes), &dest, &mut |_| {}).unwrap();
+        let files_dir = extracted.files_dir.clone().unwrap();
+        assert_eq!(
+            std::fs::read(files_dir.join(SHA).join("name.pdf")).unwrap(),
+            PDF_BYTES
+        );
+        assert!(
+            !files_dir.join(ORPHAN_SHA).exists(),
+            "an orphan blob was archived"
+        );
+        assert!(
+            !files_dir.join("not-a-hash").exists(),
+            "a directory that is not a blob was archived"
+        );
+        assert!(
+            !files_dir.join(".DS_Store").exists(),
+            "a stray file was archived"
+        );
+
+        // Backing up never deletes: the library is exactly as it was.
+        assert!(fx.files_root.join(ORPHAN_SHA).join("ghost.pdf").exists());
+        assert!(fx.files_root.join(".DS_Store").exists());
+    }
+
+    #[test]
+    fn a_database_that_references_nothing_packs_no_blobs() {
+        let fx = fixture();
+        litter_the_library(&fx.files_root);
+
+        let inputs = ArchiveInputs {
+            referenced_blob_hashes: Some(HashSet::new()),
+            ..fx.inputs.clone()
+        };
+        let (manifest, bytes) = write_payload(Vec::new(), &inputs, &mut |_| {}).unwrap();
+
+        assert_eq!(manifest.files_count, 0);
+        assert!(
+            manifest.files_root.is_some(),
+            "the library root is still recorded even when nothing came from it"
+        );
+
+        let dest = fx.root.join("extracted-none");
+        let extracted = extract_payload(Cursor::new(bytes), &dest, &mut |_| {}).unwrap();
+        assert!(extracted.files_dir.is_none(), "no files entries at all");
+    }
+
+    #[test]
+    fn without_a_referenced_set_every_blob_directory_is_packed() {
+        let fx = fixture();
+        litter_the_library(&fx.files_root);
+
+        // `None` is the fallback for a snapshot that cannot be asked, and
+        // what the tests with no database use: blobs are packed unfiltered,
+        // but things that are not blobs still are not.
+        let (manifest, bytes) = write_payload(Vec::new(), &fx.inputs, &mut |_| {}).unwrap();
+        assert_eq!(manifest.files_count, 2);
+
+        let dest = fx.root.join("extracted-unfiltered");
+        let extracted = extract_payload(Cursor::new(bytes), &dest, &mut |_| {}).unwrap();
+        let files_dir = extracted.files_dir.clone().unwrap();
+        assert!(files_dir.join(SHA).join("name.pdf").exists());
+        assert!(files_dir.join(ORPHAN_SHA).join("ghost.pdf").exists());
+        assert!(!files_dir.join("not-a-hash").exists());
+        assert!(!files_dir.join(".DS_Store").exists());
+    }
+
+    #[test]
+    fn only_64_lowercase_hex_names_are_blob_directories() {
+        assert!(is_blob_hash(SHA));
+        assert!(is_blob_hash(ORPHAN_SHA));
+        assert!(
+            !is_blob_hash(&SHA.to_uppercase()),
+            "the library writes lower case"
+        );
+        assert!(!is_blob_hash("deadbeef"), "too short");
+        assert!(!is_blob_hash(&format!("{SHA}0")), "too long");
+        assert!(!is_blob_hash(&"g".repeat(64)), "not hex");
+        assert!(!is_blob_hash(""));
     }
 
     #[test]

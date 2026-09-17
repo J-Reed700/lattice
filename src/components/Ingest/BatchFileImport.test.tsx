@@ -145,7 +145,7 @@ describe('related source import', () => {
     await user.click(screen.getByRole('button', { name: 'Import 1 file' }));
     expect(mocks.startBatchImport).toHaveBeenCalledWith(
       ['C:\\Downloads\\chapter2.pdf'], undefined,
-      { sourceGroup: expect.objectContaining({ title: 'New book' }), rebuildExisting: false }
+      { sourceGroup: expect.objectContaining({ title: 'New book' }) }
     );
   });
 
@@ -164,7 +164,7 @@ describe('related source import', () => {
     await user.click(screen.getByRole('button', { name: 'Import 2 files' }));
     expect(mocks.startBatchImport).toHaveBeenCalledWith(
       ['/Downloads/chapter2.pdf', '/Downloads/chapter10.pdf'], undefined,
-      { sourceGroup: expect.objectContaining({ title: 'MPEP', edition: '2024', ordered: true, structure: 'sections' }), rebuildExisting: false }
+      { sourceGroup: expect.objectContaining({ title: 'MPEP', edition: '2024', ordered: true, structure: 'sections' }) }
     );
   });
 });

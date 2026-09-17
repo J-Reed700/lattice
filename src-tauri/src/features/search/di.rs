@@ -10,8 +10,10 @@ use sqlx::SqlitePool;
 use crate::application::ports::{
     DocumentRepository, EmbeddingPort, TextSearchPort, VectorSearchPort,
 };
+use crate::domain::downloaded_model::DownloadedModel;
 use crate::domain::embedding_constants::DEFAULT_EMBEDDING_DIM;
-use crate::features::embedding::late_chunking::EmbeddingStrategy;
+use crate::features::embedding::candle_service::{has_loadable_weights, CandleEmbeddingService};
+use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
@@ -28,7 +30,7 @@ use crate::shared::error::{AppError, Result};
 
 #[derive(Clone)]
 pub struct SearchDi {
-    pub embedding_identity: Option<String>,
+    pub runtime_index: Arc<super::engine::vector_search::runtime_index::RuntimeVectorIndex>,
     pub semantic_search_use_case: Arc<SemanticSearchUseCase>,
     pub hybrid_search_use_case: Arc<HybridSearchUseCase>,
 
@@ -94,20 +96,7 @@ pub async fn build_with_compression(
             db_pool.clone(),
         );
     let active = repository.get_active_embedding_model().await?;
-    let identity = active
-        .as_ref()
-        .and_then(|m| m.location().enclosing_dir())
-        .filter(|dir| {
-            // Weights may be safetensors or, for a checkpoint that never
-            // published a conversion, the `pytorch_model.bin` pickle.
-            ["config.json", "tokenizer.json"]
-                .iter()
-                .all(|name| dir.join(name).is_file())
-                && crate::features::embedding::candle_service::has_loadable_weights(dir)
-        })
-        .map(|dir| crate::features::embedding::candle_service::artifact_identity(&dir))
-        .transpose()?
-        .map(|id| crate::features::embedding::late_chunking::strategy_identity(&id, strategy));
+    let identity = index_identity(active.as_ref(), strategy);
     // Every vector space has its own index files. A model switch cannot wipe its
     // predecessor — and neither can a compression switch, which reshapes the
     // stored vectors just as completely as a model change does. The compression
@@ -144,24 +133,25 @@ pub async fn build_with_compression(
     // Compare the persisted vector layout against the requested one. If the
     // dimension or the compression configuration differs, wipe the index
     // (USearch can't reshape at runtime) so the new configuration can start
-    // from an empty index. The wipe is logged inside the helper.
-    let _check = crate::features::search::engine::vector_search::ensure_index_layout_match(
-        &usearch_index_path,
-        dimension,
-        &compression,
-    )?;
-
-    // USearch: single index that implements both VectorSearchPort and SearchServiceTrait.
-    let usearch_index = Arc::new(
-        USearchVectorIndex::open_or_create_with_compression(
+    // from an empty index. The wipe is logged inside the helper. Loading the
+    // index reads it from disk, so both steps run off the runtime thread.
+    let open_path = usearch_index_path.clone();
+    let open_compression = compression.clone();
+    let usearch_index = tokio::task::spawn_blocking(move || {
+        let _check = crate::features::search::engine::vector_search::ensure_index_layout_match(
+            &open_path,
             dimension,
-            usearch_index_path.clone(),
-            compression.clone(),
-        )
-        .map_err(|e| {
-            AppError::InternalError(format!("Failed to initialize USearch index: {}", e))
-        })?,
-    );
+            &open_compression,
+        )?;
+        // USearch: single index that implements both VectorSearchPort and SearchServiceTrait.
+        USearchVectorIndex::open_or_create_with_compression(dimension, open_path, open_compression)
+            .map_err(|e| {
+                AppError::InternalError(format!("Failed to initialize USearch index: {}", e))
+            })
+    })
+    .await
+    .map_err(|e| AppError::InternalError(format!("Vector index open task failed: {e}")))??;
+    let usearch_index = Arc::new(usearch_index);
 
     // SQLite is authoritative: rebuilding also removes stale keys after interrupted writes.
     let mut coverage: Option<(usize, usize)> = None;
@@ -179,10 +169,22 @@ pub async fn build_with_compression(
         // starts from whatever that generation already holds and fills in as
         // documents are indexed.
         if rows.len() < total as usize && !strategy.is_late_chunking() {
-            if let Some(dir) = active.as_ref().and_then(|m| m.location().enclosing_dir()) {
-                let model =
-                    crate::features::embedding::candle_service::CandleEmbeddingService::new(&dir)?
-                        .with_strategy(strategy);
+            // `identity` is only set for a local model with a recorded
+            // artifact identity, so this always matches here.
+            let stored = active.as_ref().and_then(|m| {
+                Some((
+                    m.location().enclosing_dir()?,
+                    m.embedding_artifact_identity()?.clone(),
+                ))
+            });
+            if let Some((dir, artifact)) = stored {
+                let model = tokio::task::spawn_blocking(move || {
+                    CandleEmbeddingService::open(&dir, artifact).map(|s| s.with_strategy(strategy))
+                })
+                .await
+                .map_err(|e| {
+                    AppError::InternalError(format!("Embedding model load task failed: {e}"))
+                })??;
                 crate::features::embedding::generation::prepare(&db_pool, &model).await?;
                 rows =
                     crate::features::embedding::generation::restore(&db_pool, identity, dimension)
@@ -198,7 +200,12 @@ pub async fn build_with_compression(
         }
         let expected = rows.len();
         coverage = Some((expected, usize::try_from(total).unwrap_or(0)));
-        let added = usearch_index.rebuild_from_embeddings(rows)?;
+        let index = Arc::clone(&usearch_index);
+        let added = tokio::task::spawn_blocking(move || index.rebuild_from_embeddings(rows))
+            .await
+            .map_err(|e| {
+                AppError::InternalError(format!("Vector index rebuild task failed: {e}"))
+            })??;
         if added != expected {
             return Err(AppError::InvalidState(
                 "Incomplete vector index rebuild".into(),
@@ -218,8 +225,15 @@ pub async fn build_with_compression(
         "USearch vector index ready"
     );
 
-    let vector_search = usearch_index.clone() as Arc<dyn VectorSearchPort>;
-    let search_service = usearch_index.clone() as Arc<dyn SearchServiceTrait>;
+    let runtime_index = Arc::new(
+        super::engine::vector_search::runtime_index::RuntimeVectorIndex::new(
+            usearch_index,
+            identity,
+            usearch_index_path,
+        ),
+    );
+    let vector_search = runtime_index.clone() as Arc<dyn VectorSearchPort>;
+    let search_service = runtime_index.clone() as Arc<dyn SearchServiceTrait>;
 
     let text_search = Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
     let document_repo =
@@ -273,7 +287,7 @@ pub async fn build_with_compression(
     ));
 
     Ok(SearchDi {
-        embedding_identity: identity,
+        runtime_index,
         semantic_search_use_case,
         hybrid_search_use_case,
         search_service,
@@ -284,6 +298,32 @@ pub async fn build_with_compression(
         vector_search,
         document_repo,
     })
+}
+
+/// The vector-space identity of the active embedding model, read from its
+/// row: the recorded artifact identity plus the strategy. `None` means there
+/// is no usable local model — nothing active, a remote model, missing files,
+/// or a row without an identity. Hashes nothing.
+fn index_identity(active: Option<&DownloadedModel>, strategy: EmbeddingStrategy) -> Option<String> {
+    let model = active?;
+    let dir = model.location().enclosing_dir()?;
+    let Some(artifact) = model.embedding_artifact_identity() else {
+        // The repository refuses to activate a local model without an
+        // identity. Startup does not fail over it; the embedding loader
+        // refuses the model and asks the user to activate it again.
+        tracing::error!(
+            model_id = %model.model_id(),
+            "Active embedding model has no recorded artifact identity; treating it as unconfigured"
+        );
+        return None;
+    };
+    // Weights may be safetensors or, for a checkpoint that never
+    // published a conversion, the `pytorch_model.bin` pickle.
+    let files_present = ["config.json", "tokenizer.json"]
+        .iter()
+        .all(|name| dir.join(name).is_file())
+        && has_loadable_weights(&dir);
+    files_present.then(|| strategy_identity(artifact.as_str(), strategy))
 }
 
 /// Search's registrar surface on `Container`.
@@ -400,5 +440,111 @@ mod reembed_marker_tests {
         let (_dir, path) = marker();
         settle_reembed_marker(&path, None, false);
         assert!(path.exists());
+    }
+}
+
+#[cfg(test)]
+mod index_identity_tests {
+    use super::index_identity;
+    use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
+    use crate::domain::model_metadata::ModelType;
+    use crate::domain::value_objects::ArtifactIdentity;
+    use crate::features::embedding::candle_service::WEIGHTS_SAFETENSORS;
+    use crate::features::embedding::late_chunking::{strategy_identity, EmbeddingStrategy};
+    use std::path::Path;
+
+    fn recorded() -> ArtifactIdentity {
+        ArtifactIdentity::from_digest(&[3; 32])
+    }
+
+    fn model(location: ModelLocation, identity: Option<ArtifactIdentity>) -> DownloadedModel {
+        DownloadedModel::from_db(
+            "row-1".into(),
+            "embedder".into(),
+            "org/embedder".into(),
+            location,
+            0,
+            ModelType::TextEmbeddings,
+            "bert".into(),
+            chrono::Utc::now(),
+            None,
+            0,
+            false,
+            true,
+            None,
+            false,
+            identity,
+        )
+    }
+
+    fn local(dir: &Path) -> ModelLocation {
+        ModelLocation::LocalDirectory {
+            path: dir.to_path_buf(),
+        }
+    }
+
+    fn model_dir(files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for name in files {
+            std::fs::write(dir.path().join(name), b"{}").unwrap();
+        }
+        dir
+    }
+
+    const COMPLETE: [&str; 3] = ["config.json", "tokenizer.json", WEIGHTS_SAFETENSORS];
+
+    #[test]
+    fn no_active_model_is_unconfigured() {
+        assert_eq!(index_identity(None, EmbeddingStrategy::ChunkFirst), None);
+    }
+
+    #[test]
+    fn local_model_is_named_by_its_recorded_identity_and_strategy() {
+        let dir = model_dir(&COMPLETE);
+        let active = model(local(dir.path()), Some(recorded()));
+        for strategy in [
+            EmbeddingStrategy::ChunkFirst,
+            EmbeddingStrategy::LateChunking,
+        ] {
+            assert_eq!(
+                index_identity(Some(&active), strategy),
+                Some(strategy_identity(recorded().as_str(), strategy))
+            );
+        }
+    }
+
+    #[test]
+    fn local_model_without_a_recorded_identity_is_unconfigured() {
+        let dir = model_dir(&COMPLETE);
+        let active = model(local(dir.path()), None);
+        assert_eq!(
+            index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
+            None
+        );
+    }
+
+    #[test]
+    fn remote_model_is_unconfigured() {
+        let active = model(ModelLocation::RemoteOllama, None);
+        assert_eq!(
+            index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
+            None
+        );
+    }
+
+    #[test]
+    fn local_model_with_missing_files_is_unconfigured() {
+        for files in [
+            &["config.json", WEIGHTS_SAFETENSORS][..],
+            &["config.json", "tokenizer.json"][..],
+        ] {
+            let dir = model_dir(files);
+            let active = model(local(dir.path()), Some(recorded()));
+            assert_eq!(
+                index_identity(Some(&active), EmbeddingStrategy::ChunkFirst),
+                None,
+                "files present: {files:?}"
+            );
+        }
     }
 }

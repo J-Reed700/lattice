@@ -398,8 +398,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `with_strategy(ChunkFirst)` is the constructor's own default, so the
     // chunk-first path is untouched; late chunking also changes
     // `model_identity()`, which is what keeps the two vector spaces apart.
-    let model =
-        Arc::new(CandleEmbeddingService::new(&args.embedding_dir)?.with_strategy(args.strategy));
+    let model = Arc::new(
+        CandleEmbeddingService::open_unregistered(&args.embedding_dir)?
+            .with_strategy(args.strategy),
+    );
     let reranker: Option<Arc<dyn Reranker>> = match &args.reranker {
         Some(path) => Some(load_reranker(path).await?),
         None => None,

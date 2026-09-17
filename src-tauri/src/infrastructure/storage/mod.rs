@@ -4,4 +4,4 @@
 
 pub mod content_addressed_storage;
 
-pub use content_addressed_storage::{ContentAddressedStorage, ContentAddressedStoragePort};
+pub use content_addressed_storage::ContentAddressedStorage;

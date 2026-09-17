@@ -1142,32 +1142,6 @@ async openFileById(fileId: string) : Promise<Result<OpenFileResponseDto, AppErro
 }
 },
 /**
- * Legacy Tauri shim - Removes a folder from the watch list and deletes all associated documents
- *
- * # Arguments
- *
- * * `container` - Service container with database pool and security context
- * * `path` - The folder path to remove from indexing
- *
- * # Example
- *
- * ```typescript
- * import { invoke } from '@tauri-apps/api/core';
- *
- * await invoke('remove_indexed_folder', {
- * path: '/Users/example/Documents/Archive'
- * });
- * ```
- */
-async removeIndexedFolder(path: string) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_indexed_folder", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Legacy Tauri shim - Reads the content of a file for preview purposes
  *
  * # Arguments
@@ -2945,14 +2919,6 @@ async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async reindexWebArchive() : Promise<Result<number, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("reindex_web_archive") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("rescan_vault") };
@@ -4454,7 +4420,7 @@ export type FavoriteDocument = { id: string; document_id: string; document_name:
 /**
  * Optional import context. File order comes from the request's file_paths.
  */
-export type FileIndexingOptionsDto = { sourceGroup: SourceGroup | null; rebuildExisting?: boolean }
+export type FileIndexingOptionsDto = { sourceGroup: SourceGroup | null }
 /**
  * File metadata representation.
  *

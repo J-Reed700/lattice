@@ -219,6 +219,67 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
     /// - `AppError::Database` if query fails
     async fn count_chunks(&self) -> Result<i64>;
 
+    /// How many documents reference this content checksum.
+    ///
+    /// The library stores one blob per checksum, so this is the question the
+    /// blob garbage collector asks before removing anything: a checksum with
+    /// no documents behind it is an orphan.
+    ///
+    /// The default derives the answer from [`Self::find_by_checksum`], which
+    /// is enough for the only use (is it referenced at all?). Persistent
+    /// repositories override it with a `COUNT(*)`.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::InvalidInput` if `checksum` is not a valid checksum
+    /// - `AppError::Database` if query fails
+    async fn count_by_checksum(&self, checksum: &str) -> Result<u64> {
+        let checksum = crate::domain::value_objects::Checksum::new(checksum.to_string())?;
+        Ok(u64::from(self.find_by_checksum(&checksum).await?.is_some()))
+    }
+
+    /// Every distinct content checksum referenced by a document.
+    ///
+    /// The startup sweep loads this set and removes every library blob whose
+    /// hash is not in it.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if query fails
+    async fn list_checksums(&self) -> Result<Vec<String>> {
+        let mut checksums: Vec<String> = self
+            .find_all()
+            .await?
+            .iter()
+            .map(|document| document.checksum().as_str().to_string())
+            .collect();
+        checksums.sort();
+        checksums.dedup();
+        Ok(checksums)
+    }
+
+    /// The content checksum of one document.
+    ///
+    /// Deliberately narrow, like [`Self::find_file_path_by_id`]: deletion needs
+    /// the checksum of a document that may never have been chunked, and
+    /// loading the aggregate for one column would refuse such a document
+    /// ("must have at least one chunk") and make it undeletable.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::NotFound` if no document has this id
+    /// - `AppError::Database` if query fails
+    async fn find_checksum_by_id(&self, document_id: &str) -> Result<String> {
+        self.find_by_id(document_id)
+            .await?
+            .map(|document| document.checksum().as_str().to_string())
+            .ok_or_else(|| {
+                crate::shared::error::AppError::NotFound(format!(
+                    "Document not found: {document_id}"
+                ))
+            })
+    }
+
     /// Find documents with a SQL-level LIMIT applied.
     ///
     /// Preferred over `find_all` when the caller doesn't need the entire table;

@@ -15,7 +15,8 @@ use crate::features::indexing::use_cases::{
     DeleteDocumentUseCase, IndexDirectoryUseCase, IndexFileUseCase, ReindexDocumentUseCase,
     RenameDocumentUseCase,
 };
-use crate::features::indexing::IndexingServiceTrait;
+use crate::features::indexing::LibraryGc;
+use crate::features::web::WebArchiveServiceTrait;
 use crate::infrastructure::adapters::content_extraction_adapter::ContentExtractionAdapter;
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
 use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
@@ -28,8 +29,11 @@ use crate::shared::error::Result;
 
 #[derive(Clone)]
 pub struct IndexingDi {
-    pub indexing_service: Arc<dyn IndexingServiceTrait>,
     pub indexing_state: Arc<crate::features::indexing::engine::IndexingState>,
+
+    /// The one owner of blob deletion in the content-addressed library.
+    /// Shared with the startup sweep.
+    pub library_gc: Arc<LibraryGc>,
 
     pub index_file_use_case: Arc<IndexFileUseCase>,
     pub index_directory_use_case: Arc<IndexDirectoryUseCase>,
@@ -54,9 +58,8 @@ pub fn build(
     db_pool: SqlitePool,
     model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
     vector_search: Arc<dyn VectorSearchPort>,
+    web_archive: Arc<dyn WebArchiveServiceTrait>,
 ) -> Result<IndexingDi> {
-    use crate::infrastructure::setup::degraded_mocks;
-
     let document_repo =
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
     let batch_job_repo =
@@ -88,13 +91,15 @@ pub fn build(
     let indexing_embedding =
         Arc::new(DynamicEmbedding::new(model_provider)) as Arc<dyn EmbeddingPort>;
 
-    // Degraded by default — real implementation is swapped in once models load.
-    let indexing_service = degraded_mocks::create_degraded_indexing();
     let indexing_state = Arc::new(crate::features::indexing::engine::IndexingState::new());
+    let library_gc = Arc::new(LibraryGc::new(
+        Arc::clone(&content_storage),
+        document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
+    ));
 
     let index_file_use_case = Arc::new(
         IndexFileUseCase::new(
-            content_storage,
+            Arc::clone(&content_storage),
             file_storage.clone(),
             content_extractor.clone(),
             indexing_embedding.clone(),
@@ -124,15 +129,17 @@ pub fn build(
         document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
         vector_search,
         uow_factory.clone(),
-        file_storage.clone(),
+        content_storage,
+        Arc::clone(&library_gc),
+        web_archive,
     ));
     let rename_document_use_case = Arc::new(RenameDocumentUseCase::new(
         document_repo.clone() as Arc<dyn DocumentRepositoryPort>
     ));
 
     Ok(IndexingDi {
-        indexing_service,
         indexing_state,
+        library_gc,
         index_file_use_case,
         index_directory_use_case,
         reindex_document_use_case,
@@ -171,8 +178,9 @@ impl Container {
         Arc::clone(self.indexing.rename_document_use_case())
     }
 
-    pub fn indexing_service(&self) -> Arc<dyn IndexingServiceTrait> {
-        Arc::clone(self.indexing.indexing_service())
+    /// Library blob collector, shared with the startup sweep.
+    pub fn library_gc(&self) -> Arc<LibraryGc> {
+        Arc::clone(self.indexing.library_gc())
     }
 
     /// Chunk repository accessor (from IndexingModule)

@@ -36,14 +36,16 @@ use std::sync::Arc;
 use crate::application::factories::{ChecksumFactory, FileMetadataFactory};
 use crate::application::ports::UnitOfWorkFactory;
 use crate::application::ports::{
-    ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort, DocumentRepositoryPort,
-    EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, SparseTermStorePort, VectorSearchPort,
+    BlobLease, ChunkSparseTerms, ContentAddressedStoragePort, ContentExtractionPort,
+    DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort, ImportedBlob,
+    SparseTermStorePort, VectorSearchPort,
 };
 use crate::domain::entities::Document;
 use crate::domain::value_objects::SparseEmbedding;
 use crate::features::embedding::entity::Embedding;
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::mapper::IndexingMapper;
+use crate::features::indexing::LibraryGc;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
@@ -53,20 +55,28 @@ use tracing::instrument;
 /// Type alias for embedding with its vector representation.
 pub type EmbeddingWithVector = (Embedding, Vec<f32>);
 
-/// Type alias for prepared document ready for indexing.
-/// (document, embeddings, library_path, imported_new, sparse_terms)
-///
-/// `sparse_terms` is one [`SparseEmbedding`] per chunk, in chunk order, and is
-/// empty whenever the loaded model has no learned sparse head or no sparse
-/// term store is wired. It travels with the dense vectors because both come
-/// out of the same forward pass and must be committed for the same chunk ids.
-pub type PreparedDocument = (
-    Document,
-    Vec<EmbeddingWithVector>,
-    String,
-    bool,
-    Vec<SparseEmbedding>,
-);
+/// A document prepared for indexing: everything the commit needs, plus the
+/// lease that keeps its library blob alive until that commit lands.
+pub struct PreparedDocument {
+    /// The aggregate, chunked and annotated, not yet marked indexed.
+    pub document: Document,
+    /// One dense vector per chunk, in chunk order.
+    pub embeddings: Vec<EmbeddingWithVector>,
+    /// Where the blob lives in the library.
+    pub library_path: String,
+    /// True when this import copied the blob into the library for the first
+    /// time, which is what makes a failure from here on leave an orphan.
+    pub imported_new: bool,
+    /// One [`SparseEmbedding`] per chunk, in chunk order, and empty whenever
+    /// the loaded model has no learned sparse head or no sparse term store is
+    /// wired. It travels with the dense vectors because both come out of the
+    /// same forward pass and must be committed for the same chunk ids.
+    pub sparse_terms: Vec<SparseEmbedding>,
+    /// Held from the copy until the document row commits. Dropping it any
+    /// earlier lets a concurrent delete or sweep remove the blob this
+    /// document is about to point at.
+    pub lease: BlobLease,
+}
 
 pub enum PrepareForIndexingOutcome {
     Prepared(Box<PreparedDocument>),
@@ -221,8 +231,8 @@ impl IndexFileUseCase {
                 })
             }
             PrepareForIndexingOutcome::Prepared(prepared) => {
-                let chunks_created = prepared.0.chunks().len();
-                let file_path = prepared.2.clone();
+                let chunks_created = prepared.document.chunks().len();
+                let file_path = prepared.library_path.clone();
                 let document_id = self
                     .commit_prepared(*prepared, self.uow_factory.as_ref())
                     .await?;
@@ -265,20 +275,14 @@ impl IndexFileUseCase {
         if let Some(context) = &requested_context {
             context.group.validate()?;
         }
-        let rebuild = request
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("rebuild_existing"))
-            .is_some_and(|s| s == "true");
         let existing = self
             .document_repo
             .find_by_checksum(&content_checksum)
             .await?;
         if let Some(existing) = &existing {
-            if !rebuild
-                && requested_context
-                    .as_ref()
-                    .is_none_or(|context| Some(context) == existing.source_context())
+            if requested_context
+                .as_ref()
+                .is_none_or(|context| Some(context) == existing.source_context())
             {
                 // The previous attempt may have committed SQLite and then failed
                 // while publishing to runtime search. Finish that step on retry.
@@ -290,27 +294,79 @@ impl IndexFileUseCase {
         }
 
         let already_in_library = self.content_storage.exists_by_hash(&content_hash).await?;
-        let (library_path, _) = self
+        let ImportedBlob {
+            path: library_path,
+            hash: library_hash,
+            lease,
+        } = self
             .content_storage
             .import_file(source_path.as_path())
             .await?;
         let imported_new = !already_in_library;
 
+        // Everything from here on can fail. When it does and this import is
+        // what put the blob on disk, the blob has to go back: nothing will
+        // ever reference it.
+        let prepared = self
+            .build_prepared_document(
+                source_path.as_path(),
+                library_path.as_path(),
+                request.chunking_strategy,
+                existing,
+                requested_context,
+            )
+            .await;
+
+        let (document, embeddings, sparse_terms) = match prepared {
+            Ok(parts) => parts,
+            Err(error) => {
+                // Release the lease first, or the collector would refuse its
+                // own caller's blob as still being imported.
+                drop(lease);
+                if imported_new {
+                    self.release_failed_import(&library_hash).await;
+                }
+                return Err(error);
+            }
+        };
+
+        Ok(PrepareForIndexingOutcome::Prepared(Box::new(
+            PreparedDocument {
+                document,
+                embeddings,
+                library_path: library_path.to_str().unwrap_or("").to_string(),
+                imported_new,
+                sparse_terms,
+                lease,
+            },
+        )))
+    }
+
+    /// Extract, chunk, annotate and embed the blob that was just imported.
+    ///
+    /// Split out from `prepare_for_indexing` so the import's blob lease has a
+    /// single, obvious failure boundary: everything in here runs after the
+    /// copy, and anything it returns as an error means nothing will ever
+    /// reference that blob.
+    async fn build_prepared_document(
+        &self,
+        source_path: &Path,
+        library_path: &Path,
+        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto,
+        existing: Option<Document>,
+        requested_context: Option<crate::domain::value_objects::source_context::SourceContext>,
+    ) -> Result<(Document, Vec<EmbeddingWithVector>, Vec<SparseEmbedding>)> {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
-        let metadata = FileMetadataFactory::from_path(library_path.as_path())?;
-        let checksum = ChecksumFactory::from_path(library_path.as_path())?;
-        let extracted = self
-            .content_extractor
-            .extract_content(library_path.as_path())
-            .await?;
+        let metadata = FileMetadataFactory::from_path(library_path)?;
+        let checksum = ChecksumFactory::from_path(library_path)?;
+        let extracted = self.content_extractor.extract_content(library_path).await?;
         let page_ranges = extracted.page_ranges;
         let content = extracted.text;
-        self.validate_text_content(source_path.as_path(), &content)?;
+        self.validate_text_content(source_path, &content)?;
 
-        let chunking_strategy =
-            IndexingMapper::chunking_strategy_to_domain(request.chunking_strategy)
-                .adapt_for_content(&content);
-        let library_path_validated = ValidatedFilePath::new(library_path.clone())?;
+        let chunking_strategy = IndexingMapper::chunking_strategy_to_domain(chunking_strategy)
+            .adapt_for_content(&content);
+        let library_path_validated = ValidatedFilePath::new(library_path.to_path_buf())?;
         let mut document = Document::from_file(
             library_path_validated,
             metadata.clone(),
@@ -447,13 +503,32 @@ impl IndexFileUseCase {
             })
             .collect();
 
-        Ok(PrepareForIndexingOutcome::Prepared(Box::new((
-            document,
-            embedding_entries,
-            library_path.to_str().unwrap_or("").to_string(),
-            imported_new,
-            sparse_terms,
-        ))))
+        Ok((document, embedding_entries, sparse_terms))
+    }
+
+    /// Hand back the blob an import copied but never referenced.
+    ///
+    /// Best effort by design: the import has already failed, and a blob left
+    /// behind is collected by the next startup sweep. Runs the same
+    /// [`LibraryGc`] path as deletion, so a blob another document shares is
+    /// still refused.
+    async fn release_failed_import(&self, hash: &str) {
+        let gc = LibraryGc::new(
+            Arc::clone(&self.content_storage),
+            Arc::clone(&self.document_repo),
+        );
+        match gc.release(hash).await {
+            Ok(removal) => tracing::info!(
+                %hash,
+                ?removal,
+                "Rolled back the library blob of a failed import"
+            ),
+            Err(error) => tracing::warn!(
+                %hash,
+                %error,
+                "Could not roll back a failed import's blob; the next startup sweep will collect it"
+            ),
+        }
     }
 
     /// Commit a prepared document atomically, then publish it to runtime search.
@@ -463,7 +538,15 @@ impl IndexFileUseCase {
         prepared: PreparedDocument,
         factory: &dyn UnitOfWorkFactory,
     ) -> Result<String> {
-        let (mut document, embeddings, _library_path, _imported_new, sparse_terms) = prepared;
+        let PreparedDocument {
+            mut document,
+            embeddings,
+            library_path: _,
+            imported_new,
+            sparse_terms,
+            lease,
+        } = prepared;
+        let library_hash = lease.hash().to_string();
         // Status and the complete chunk/vector set commit in the same transaction.
         document.mark_indexed();
         let document_id = document.id().to_string();
@@ -484,10 +567,20 @@ impl IndexFileUseCase {
         }
         .await;
         if let Err(error) = save_result {
-            uow.rollback().await?;
+            let rollback = uow.rollback().await;
+            // Nothing will reference the blob now; release it before the
+            // error propagates.
+            drop(lease);
+            if imported_new {
+                self.release_failed_import(&library_hash).await;
+            }
+            rollback?;
             return Err(error);
         }
         uow.commit().await?;
+        // The row is durable, so the document itself now protects the blob and
+        // this import's lease has done its job.
+        drop(lease);
         // After the commit, never inside it: the postings reference
         // `text_chunks(id)`, so the chunk rows have to exist first. A failure
         // here costs this document its sparse branch and nothing else — the
@@ -596,13 +689,6 @@ impl IndexFileUseCase {
             .map_err(|error| AppError::Other(format!("Document saved, but search indexing failed: {error}. Retry this file to finish indexing.")))
     }
 
-    pub async fn cleanup_library_file(&self, path: &str) -> Result<()> {
-        if path.trim().is_empty() {
-            return Ok(());
-        }
-        self.file_storage.delete_file(Path::new(path)).await
-    }
-
     fn validate_supported_file(&self, path: &Path) -> Result<()> {
         if self.content_extractor.is_supported(path) {
             return Ok(());
@@ -642,12 +728,19 @@ mod tests {
     use async_trait::async_trait;
     use std::path::Path;
 
+    /// Library that indexes files where they already are: every source path
+    /// is its own "blob", so tests exercise the pipeline without copying.
     struct MockContentStorage;
 
     #[async_trait]
     impl ContentAddressedStoragePort for MockContentStorage {
-        async fn import_file(&self, source_path: &Path) -> Result<(std::path::PathBuf, String)> {
-            Ok((source_path.to_path_buf(), "a".repeat(64)))
+        async fn import_file(&self, source_path: &Path) -> Result<ImportedBlob> {
+            let hash = "a".repeat(64);
+            Ok(ImportedBlob {
+                path: source_path.to_path_buf(),
+                lease: crate::application::ports::BlobLease::detached(&hash),
+                hash,
+            })
         }
 
         async fn exists_by_hash(&self, _hash: &str) -> Result<bool> {
@@ -656,6 +749,24 @@ mod tests {
 
         async fn get_path_by_hash(&self, _hash: &str) -> Result<Option<std::path::PathBuf>> {
             Ok(None)
+        }
+
+        fn owns(&self, _path: &Path) -> bool {
+            false
+        }
+
+        async fn list_hashes(&self) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn remove_if_unreferenced(
+            &self,
+            _hash: &str,
+            _refs: &dyn crate::application::ports::BlobReferenceCheck,
+        ) -> Result<crate::application::ports::BlobRemoval> {
+            Ok(crate::application::ports::BlobRemoval::Retained(
+                crate::application::ports::RetainReason::Missing,
+            ))
         }
     }
 

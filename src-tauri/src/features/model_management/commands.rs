@@ -44,7 +44,7 @@ use crate::interfaces::di::Container;
 use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto};
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 /// Request to get recommended models by category.
@@ -163,11 +163,14 @@ pub async fn get_compatible_models(
         available_disk_gb: get_available_disk_space(),
     };
 
-    let models = fetch_downloadable_hf_models(container.inner(), "gguf", 200)
-        .await?
-        .into_iter()
-        .filter(|entry| entry.model.category == category)
-        .collect::<Vec<_>>();
+    let models = if category == ModelCategory::Embedding {
+        fetch_embedding_hf_models(container.inner(), 500).await?
+    } else {
+        fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?
+    }
+    .into_iter()
+    .filter(|entry| entry.model.category == category)
+    .collect::<Vec<_>>();
     let downloads_by_model_id: HashMap<String, u64> = models
         .iter()
         .map(|entry| (entry.model.id.clone(), entry.downloads))
@@ -247,15 +250,10 @@ pub async fn get_all_recommended_models(
     tracing::info!("get_all_recommended_models: Getting Hugging Face models");
     let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
 
-    let embedding_models =
-        fetch_downloadable_hf_models(container.inner(), "sentence-transformers", 200).await?;
-    let existing_ids: std::collections::HashSet<String> =
-        models.iter().map(|m| m.model.id.clone()).collect();
-    for entry in embedding_models {
-        if !existing_ids.contains(&entry.model.id) {
-            models.push(entry);
-        }
-    }
+    merge_unique_models(
+        &mut models,
+        fetch_embedding_hf_models(container.inner(), 500).await?,
+    );
 
     let downloads_by_model_id: HashMap<String, u64> = models
         .iter()
@@ -270,28 +268,12 @@ pub async fn get_all_recommended_models(
         models.len()
     );
 
-    // Score compatibility for each model.
-    // Embedding-model filtering: only surface Compatible models. Drops
-    // both Incompatible (architecture not loadable / no safetensors) and
-    // Unknown (we can't tell from tags, and download_model.rs's gate
-    // rejects Unknown anyway — surfacing them in the catalog would let
-    // users click a button that always errors).
-    // This replaces the older is_gguf_only_model heuristic which assumed
-    // ONNX was the runtime — no longer true after the Candle migration.
+    // Score every discovered model. Embedding runtime compatibility is
+    // metadata for the catalog UI: unsupported and unknown models remain
+    // visible with their reason, while the download action stays disabled.
     let scorer = CompatibilityScorer::new();
     let mut recommendations: Vec<ModelRecommendation> = models
         .into_iter()
-        .filter(|entry| {
-            if entry.model.category == ModelCategory::Embedding {
-                use crate::features::embedding::compatibility::EmbeddingCompatibility;
-                matches!(
-                    entry.model.embedding_compatibility,
-                    Some(EmbeddingCompatibility::Compatible { .. })
-                )
-            } else {
-                true
-            }
-        })
         .filter_map(|entry| {
             scorer
                 .score_compatibility(&entry.model, &capabilities)
@@ -336,10 +318,50 @@ struct DownloadableHfModel {
     likes: u64,
 }
 
+/// Discover embedding repositories through the Hub's task indexes. Searching
+/// for the literal phrase `sentence-transformers` only covers one library and
+/// misses models published for the standard feature-extraction and
+/// sentence-similarity pipelines.
+async fn fetch_embedding_hf_models(
+    container: &Container,
+    limit_per_task: usize,
+) -> Result<Vec<DownloadableHfModel>> {
+    let mut models = Vec::new();
+    for query in ["filter:feature-extraction", "filter:sentence-similarity"] {
+        let discovered = fetch_hf_models(container, query, limit_per_task, false).await?;
+        merge_unique_models(&mut models, discovered);
+    }
+    Ok(models)
+}
+
+fn merge_unique_models(
+    destination: &mut Vec<DownloadableHfModel>,
+    incoming: Vec<DownloadableHfModel>,
+) {
+    let mut existing: HashSet<String> = destination
+        .iter()
+        .map(|entry| entry.model.id.clone())
+        .collect();
+    for entry in incoming {
+        if existing.insert(entry.model.id.clone()) {
+            destination.push(entry);
+        }
+    }
+}
+
 async fn fetch_downloadable_hf_models(
     container: &Container,
     query: &str,
     limit: usize,
+) -> Result<Vec<DownloadableHfModel>> {
+    fetch_hf_models(container, query, limit, true).await
+}
+
+async fn fetch_hf_models(
+    container: &Container,
+    query: &str,
+    limit: usize,
+    require_downloadable: bool,
 ) -> Result<Vec<DownloadableHfModel>> {
     let discovery_query = if query.trim().is_empty() {
         "gguf"
@@ -348,25 +370,28 @@ async fn fetch_downloadable_hf_models(
     };
     let model_catalog = container.model_catalog();
     let mut external_metadata = model_catalog.search_models(discovery_query, limit).await?;
-    let mut downloadable = external_metadata
-        .iter()
-        .filter_map(|meta| {
-            meta.to_domain_model()
-                .ok()
-                .map(|model| DownloadableHfModel {
-                    model,
-                    downloads: meta.downloads,
-                    likes: meta.likes,
-                })
-        })
-        .filter(|entry| is_downloadable_model(&entry.model))
-        .collect::<Vec<_>>();
+    let to_catalog_models = |metadata: &[crate::application::ports::ExternalModelMetadata]| {
+        metadata
+            .iter()
+            .filter_map(|meta| {
+                meta.to_domain_model()
+                    .ok()
+                    .map(|model| DownloadableHfModel {
+                        model,
+                        downloads: meta.downloads,
+                        likes: meta.likes,
+                    })
+            })
+            .filter(|entry| !require_downloadable || is_downloadable_model(&entry.model))
+            .collect::<Vec<_>>()
+    };
+    let mut catalog_models = to_catalog_models(&external_metadata);
 
     // Recovery path for stale/empty broad-catalog cache entries.
     // We only auto-invalidate for the broad "gguf" discovery query used by recommendations.
     if discovery_query.eq_ignore_ascii_case("gguf")
         && (external_metadata.is_empty()
-            || downloadable.is_empty()
+            || catalog_models.is_empty()
             || external_metadata
                 .iter()
                 .all(|meta| meta.preferred_filename.is_none()))
@@ -380,23 +405,11 @@ async fn fetch_downloadable_hf_models(
             tracing::warn!("Failed to clear model catalog cache for retry: {}", e);
         } else {
             external_metadata = model_catalog.search_models(discovery_query, limit).await?;
-            downloadable = external_metadata
-                .iter()
-                .filter_map(|meta| {
-                    meta.to_domain_model()
-                        .ok()
-                        .map(|model| DownloadableHfModel {
-                            model,
-                            downloads: meta.downloads,
-                            likes: meta.likes,
-                        })
-                })
-                .filter(|entry| is_downloadable_model(&entry.model))
-                .collect();
+            catalog_models = to_catalog_models(&external_metadata);
         }
     }
 
-    Ok(downloadable)
+    Ok(catalog_models)
 }
 
 /// Parse model category string.
@@ -589,22 +602,6 @@ pub async fn search_model_catalog(
     let external_models: Vec<_> = discovered_models
         .into_iter()
         .map(|entry| (entry.model, ModelSource::External))
-        // Embedding-model gate (search path): only surface models the
-        // local Candle runtime can actually load. Compatible-only —
-        // Unknown is filtered out because download_model.rs rejects it,
-        // so showing it here would let users click a button that always
-        // errors. Mirrors the gate in get_all_recommended_models.
-        .filter(|(model, _)| {
-            if model.category == ModelCategory::Embedding {
-                use crate::features::embedding::compatibility::EmbeddingCompatibility;
-                matches!(
-                    model.embedding_compatibility,
-                    Some(EmbeddingCompatibility::Compatible { .. })
-                )
-            } else {
-                true
-            }
-        })
         .collect();
 
     let catalog_service = ModelCatalogService::new();

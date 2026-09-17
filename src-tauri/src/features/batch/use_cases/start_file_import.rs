@@ -257,9 +257,6 @@ impl StartBatchFileImportUseCase {
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
                     if let Some(indexing) = &options.indexing {
-                        if indexing.rebuild_existing {
-                            metadata.insert("rebuild_existing".into(), "true".into());
-                        }
                         if let Some(group) = &indexing.source_group {
                             // item IDs are stable across retries; repository creation order is stable.
                             let position = options
@@ -565,17 +562,35 @@ mod tests {
             async fn import_file(
                 &self,
                 _source_path: &Path,
-            ) -> Result<(std::path::PathBuf, String)> {
-                Ok((
-                    std::path::PathBuf::from("/mock/path"),
-                    "mockhash".to_string(),
-                ))
+            ) -> Result<crate::application::ports::ImportedBlob> {
+                let hash = "a".repeat(64);
+                Ok(crate::application::ports::ImportedBlob {
+                    path: std::path::PathBuf::from("/mock/path"),
+                    lease: crate::application::ports::BlobLease::detached(&hash),
+                    hash,
+                })
             }
             async fn exists_by_hash(&self, _hash: &str) -> Result<bool> {
                 Ok(false)
             }
             async fn get_path_by_hash(&self, _hash: &str) -> Result<Option<std::path::PathBuf>> {
                 Ok(None)
+            }
+
+            fn owns(&self, _path: &Path) -> bool {
+                false
+            }
+            async fn list_hashes(&self) -> Result<Vec<String>> {
+                Ok(Vec::new())
+            }
+            async fn remove_if_unreferenced(
+                &self,
+                _hash: &str,
+                _refs: &dyn crate::application::ports::BlobReferenceCheck,
+            ) -> Result<crate::application::ports::BlobRemoval> {
+                Ok(crate::application::ports::BlobRemoval::Retained(
+                    crate::application::ports::RetainReason::Missing,
+                ))
             }
         }
 

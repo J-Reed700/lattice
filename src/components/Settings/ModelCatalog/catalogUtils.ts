@@ -96,7 +96,7 @@ export function embeddingBlockReason(metadata: ModelMetadata): string | null {
   if (!compatibility || compatibility.kind === 'compatible') return null;
   return compatibility.kind === 'incompatible'
     ? compatibility.reason
-    : 'Architecture not recognized — only BERT-family embedders are supported today.';
+    : 'This architecture is not recognized by the local embedding runtime.';
 }
 
 export type ModelFitVerdict = 'fits' | 'tight' | 'too-large';

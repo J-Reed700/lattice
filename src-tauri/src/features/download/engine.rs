@@ -202,6 +202,53 @@ impl HttpDownloadEngine {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
+    /// The destination already holds every byte the server advertises, so
+    /// there is nothing left to transfer. A ranged request from that offset
+    /// is answered with 416 Range Not Satisfiable, which is how re-downloading
+    /// a model whose files were still intact on disk (fresh database, weights
+    /// kept) used to fail. Hash the file so the caller's checksum path runs
+    /// exactly as it would after a real transfer.
+    async fn complete_from_local_file(
+        &self,
+        url: &str,
+        destination: &Path,
+        total_bytes: u64,
+        progress_callback: Option<&ProgressCallback>,
+    ) -> Result<DownloadResult, DownloadError> {
+        let start_time = Instant::now();
+
+        let metadata = tokio::fs::metadata(destination).await.map_err(|e| {
+            DownloadError::IoError(format!("Failed to read local file metadata: {}", e))
+        })?;
+        if metadata.len() != total_bytes {
+            return Err(DownloadError::ValidationFailed(format!(
+                "Local file is {} bytes but the server advertises {} bytes",
+                metadata.len(),
+                total_bytes
+            )));
+        }
+
+        let sha256_checksum = self.compute_file_sha256(destination).await?;
+
+        if let Some(callback) = progress_callback {
+            callback(total_bytes, 0.0);
+        }
+
+        info!(
+            url = %url,
+            destination = %destination.display(),
+            bytes = total_bytes,
+            "Local file already complete; skipping transfer"
+        );
+
+        Ok(DownloadResult {
+            bytes_downloaded: total_bytes,
+            total_bytes: Some(total_bytes),
+            sha256_checksum,
+            elapsed: start_time.elapsed(),
+        })
+    }
+
     async fn download_with_retry(
         &self,
         url: &str,
@@ -312,6 +359,14 @@ impl HttpDownloadEngine {
         let start_time = Instant::now();
 
         info!(url = %url, "Starting download");
+
+        if let (Some(offset), Some(total)) = (resume_from, expected_total_bytes) {
+            if total > 0 && offset == total {
+                return self
+                    .complete_from_local_file(url, destination, total, progress_callback.as_ref())
+                    .await;
+            }
+        }
 
         let response = self
             .send_request_with_range(url, resume_from, auth_token)
@@ -1016,6 +1071,64 @@ mod tests {
 
     fn temp_path(file_name: &str) -> PathBuf {
         std::env::temp_dir().join(file_name)
+    }
+
+    #[tokio::test]
+    async fn complete_local_file_is_not_requested_again() {
+        let destination = temp_path("engine_already_complete.bin");
+        let payload = b"already on disk";
+        tokio::fs::write(&destination, payload)
+            .await
+            .expect("write fixture");
+        let total = payload.len() as u64;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let callback: ProgressCallback = Arc::new(move |bytes, speed| {
+            let _ = tx.send((bytes, speed));
+        });
+
+        // Port 9 is the discard service: if the engine issued a request here
+        // the test would fail with a connection error instead of completing.
+        let result = HttpDownloadEngine::new()
+            .expect("engine")
+            .download_impl(
+                "http://127.0.0.1:9/never-requested.bin",
+                &destination,
+                Some(total),
+                Some(callback),
+                None,
+                Some(total),
+            )
+            .await
+            .expect("complete file short-circuits the transfer");
+
+        assert_eq!(result.bytes_downloaded, total);
+        assert_eq!(result.total_bytes, Some(total));
+        assert_eq!(
+            result.sha256_checksum,
+            format!("{:x}", Sha256::digest(payload))
+        );
+
+        let events = collect_progress_events(rx, Duration::from_millis(200)).await;
+        assert_eq!(events, vec![(total, 0.0)]);
+
+        let _ = tokio::fs::remove_file(&destination).await;
+    }
+
+    #[tokio::test]
+    async fn complete_local_file_with_wrong_length_is_rejected() {
+        let destination = temp_path("engine_wrong_length.bin");
+        tokio::fs::write(&destination, b"short")
+            .await
+            .expect("write fixture");
+
+        let result = HttpDownloadEngine::new()
+            .expect("engine")
+            .complete_from_local_file("http://127.0.0.1:9/x.bin", &destination, 1_000, None)
+            .await;
+
+        assert!(matches!(result, Err(DownloadError::ValidationFailed(_))));
+        let _ = tokio::fs::remove_file(&destination).await;
     }
 
     #[tokio::test]

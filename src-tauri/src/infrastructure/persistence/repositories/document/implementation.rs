@@ -258,6 +258,21 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         Ok(count.0)
     }
 
+    async fn count_by_checksum(&self, checksum: &str) -> Result<u64> {
+        let mut conn = self.pool.acquire().await?;
+        ops::count_by_checksum(&mut conn, checksum).await
+    }
+
+    async fn list_checksums(&self) -> Result<Vec<String>> {
+        let mut conn = self.pool.acquire().await?;
+        ops::list_checksums(&mut conn).await
+    }
+
+    async fn find_checksum_by_id(&self, document_id: &str) -> Result<String> {
+        let mut conn = self.pool.acquire().await?;
+        ops::find_checksum_by_id(&mut conn, document_id).await
+    }
+
     async fn find_all_paginated(&self, limit: usize) -> Result<Vec<DocumentEntity>> {
         let mut conn = self.pool.acquire().await?;
         ops::find_all_paginated(&mut conn, limit).await

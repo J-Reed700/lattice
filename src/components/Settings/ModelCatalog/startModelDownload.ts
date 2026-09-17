@@ -9,6 +9,7 @@
 import { type QueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 
+import { embeddingBlockReason } from './catalogUtils';
 import { getErrorMessage } from '../../../lib/errorUtils';
 import { useToastStore } from '../../../stores/toastStore';
 
@@ -33,6 +34,17 @@ export async function startModelDownload({
   addToast,
   queryClient,
 }: StartModelDownloadArgs): Promise<StartModelDownloadResult> {
+  const blockReason = embeddingBlockReason(metadata);
+  if (blockReason) {
+    addToast({
+      type: 'warning',
+      title: 'Model not supported',
+      message: blockReason,
+      duration: 8000,
+    });
+    return { alreadyDownloaded: false };
+  }
+
   try {
     const response = await invoke<DownloadModelResponse>('plugin:model|download_model', {
       modelId: metadata.id,

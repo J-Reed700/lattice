@@ -302,6 +302,19 @@ impl ExternalModelMetadata {
     fn infer_category(&self) -> Result<ModelCategory, String> {
         let tags_lower: Vec<String> = self.tags.iter().map(|t| t.to_lowercase()).collect();
 
+        // Embedding indicators take precedence. Decoder-backed embedders such
+        // as Qwen3 legitimately carry both `text-generation` (their base
+        // architecture) and `feature-extraction` / `sentence-transformers`
+        // (their actual task). Classifying the architecture tag first hides
+        // those models from the embedding catalog.
+        if tags_lower.iter().any(|t| {
+            t.contains("sentence-transformers")
+                || t.contains("feature-extraction")
+                || t.contains("embedding")
+        }) {
+            return Ok(ModelCategory::Embedding);
+        }
+
         // LLM indicators
         if tags_lower.iter().any(|t| {
             t.contains("text-generation")
@@ -310,15 +323,6 @@ impl ExternalModelMetadata {
                 || t.contains("conversational")
         }) {
             return Ok(ModelCategory::LLM);
-        }
-
-        // Embedding indicators
-        if tags_lower.iter().any(|t| {
-            t.contains("sentence-transformers")
-                || t.contains("feature-extraction")
-                || t.contains("embedding")
-        }) {
-            return Ok(ModelCategory::Embedding);
         }
 
         // OCR indicators
@@ -889,6 +893,40 @@ mod tests {
 
         let category = external.infer_category().unwrap();
         assert_eq!(category, ModelCategory::LLM);
+    }
+
+    #[test]
+    fn embedding_task_wins_over_decoder_architecture_tag() {
+        let external = ExternalModelMetadata {
+            id: "Qwen/Qwen3-Embedding-0.6B".into(),
+            name: "Qwen3 Embedding 0.6B".into(),
+            description: "Decoder-backed embedding model".into(),
+            tags: vec![
+                "sentence-transformers".into(),
+                "qwen3".into(),
+                "text-generation".into(),
+                "feature-extraction".into(),
+            ],
+            downloads: 0,
+            likes: 0,
+            download_url: None,
+            license: "apache-2.0".into(),
+            last_modified: "".into(),
+            gated: Some(false),
+            preferred_filename: Some("model.safetensors".into()),
+            preferred_size_bytes: None,
+            embedding_compatibility: Some(
+                crate::domain::model_management::EmbeddingCompatibility::Compatible {
+                    architecture: "qwen3".into(),
+                },
+            ),
+        };
+
+        assert_eq!(external.infer_category().unwrap(), ModelCategory::Embedding);
+        assert_eq!(
+            external.to_domain_model().unwrap().category,
+            ModelCategory::Embedding
+        );
     }
 
     #[test]

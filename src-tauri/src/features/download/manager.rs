@@ -35,4 +35,4 @@ mod tests;
 mod pause_resume_tests;
 
 pub use state::DownloadManagerService;
-pub use types::{DownloadEvent, DownloadManager, DownloadRequest};
+pub use types::{DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest};

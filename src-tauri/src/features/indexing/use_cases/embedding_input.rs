@@ -559,7 +559,8 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "requires LATTICE_STRUCTURE_MODEL and LATTICE_STRUCTURE_PDF (read-only)"]
     async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> {
-        let model = CandleEmbeddingService::new(std::env::var("LATTICE_STRUCTURE_MODEL")?)?;
+        let model =
+            CandleEmbeddingService::open_unregistered(std::env::var("LATTICE_STRUCTURE_MODEL")?)?;
         let path = std::path::PathBuf::from(std::env::var("LATTICE_STRUCTURE_PDF")?);
         let extracted = ContentExtractionAdapter::new()
             .extract_content(&path)

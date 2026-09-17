@@ -5,7 +5,7 @@
 //! - Computes SHA256 hash of file content for deduplication
 //! - Detects duplicates by hash (not path)
 //! - Preserves original filename for UX
-//! - Returns (library_path, hash) for indexing
+//! - Owns the deletion of those copies, and only those copies
 //!
 //! # Architecture
 //!
@@ -25,90 +25,31 @@
 //!       └── paper.pdf
 //! ```
 //!
-//! # Example
+//! # Concurrency
 //!
-//! ```rust,no_run
-//! use lattice::infrastructure::storage::ContentAddressedStorage;
-//! use std::path::Path;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     let storage = ContentAddressedStorage::new()?;
-//!
-//!     // Import file to library
-//!     let (library_path, hash) = storage.import_file(
-//!         Path::new("/downloads/document.pdf")
-//!     ).await?;
-//!
-//!     println!("Imported to: {}", library_path.display());
-//!     println!("Hash: {}", hash);
-//!
-//!     // Check if another file is already in library
-//!     if storage.exists_by_hash(&hash).await? {
-//!         println!("This file is already in the library!");
-//!     }
-//!
-//!     Ok(())
-//! }
-//! ```
+//! Every mutation of a blob happens under a lock keyed by that blob's hash, so
+//! an import and a delete of the same content serialize. An import additionally
+//! takes a `BlobLease` before it copies and holds it past that lock, which is
+//! what stops a delete arriving *after* the copy but *before* the document row
+//! commits from removing a blob that is about to be referenced.
 
-use crate::application::ports::ContentAddressedStoragePort as ContentAddressedStoragePortTrait;
+use crate::application::ports::content_addressed_storage_port::{
+    is_blob_hash, BlobLeases, BlobReferenceCheck, BlobRemoval, ContentAddressedStoragePort,
+    ImportedBlob, RetainReason,
+};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 
-/// Content-addressed storage port (re-exported from application ports).
-///
-/// Defines the interface for importing files to content-addressed storage
-/// and checking for duplicates by hash.
-#[async_trait]
-pub trait ContentAddressedStoragePort: Send + Sync {
-    /// Import file to content-addressed storage.
-    ///
-    /// # Arguments
-    ///
-    /// * `source_path` - Path to source file to import
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (library_path, sha256_hash)
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::FileNotFound` if source file doesn't exist
-    /// - `AppError::FileRead` if cannot read source file
-    /// - `AppError::FileStorage` if cannot write to library
-    ///
-    /// # Behavior
-    ///
-    /// - If file with same hash exists, returns existing library path (no copy)
-    /// - If file is new, copies to `{library_root}/{hash}/original_filename`
-    async fn import_file(&self, source_path: &Path) -> Result<(PathBuf, String)>;
-
-    /// Check if file exists in library by hash.
-    ///
-    /// # Arguments
-    ///
-    /// * `hash` - SHA256 hash of file content
-    ///
-    /// # Returns
-    ///
-    /// `true` if a file with this hash exists in library
-    async fn exists_by_hash(&self, hash: &str) -> Result<bool>;
-
-    /// Get library path for a given hash.
-    ///
-    /// # Arguments
-    ///
-    /// * `hash` - SHA256 hash of file content
-    ///
-    /// # Returns
-    ///
-    /// `Some(PathBuf)` if file exists in library, `None` otherwise
-    async fn get_path_by_hash(&self, hash: &str) -> Result<Option<PathBuf>>;
-}
+/// Above this many cached per-hash locks, drop the ones nobody is holding.
+/// A sweep touches every blob in the library, and a lock no task holds carries
+/// no state worth keeping.
+const LOCK_CACHE_HIGH_WATER: usize = 256;
 
 /// Content-addressed file storage implementation.
 ///
@@ -116,7 +57,8 @@ pub trait ContentAddressedStoragePort: Send + Sync {
 ///
 /// # Thread Safety
 ///
-/// All operations are async and use Tokio's thread-safe file I/O.
+/// All operations are async and use Tokio's thread-safe file I/O. Mutations of
+/// one blob are serialized by a per-hash async lock.
 ///
 /// # Deduplication
 ///
@@ -125,6 +67,10 @@ pub trait ContentAddressedStoragePort: Send + Sync {
 pub struct ContentAddressedStorage {
     /// Root directory for library storage (~/.lattice/files/)
     library_root: PathBuf,
+    /// Imports currently in flight, by hash.
+    leases: Arc<BlobLeases>,
+    /// Per-hash mutual exclusion for copy and remove.
+    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl ContentAddressedStorage {
@@ -132,37 +78,21 @@ impl ContentAddressedStorage {
     ///
     /// Uses default library root: `~/.lattice/files/`
     ///
-    /// # Returns
-    ///
-    /// New storage instance
-    ///
     /// # Errors
     ///
     /// - `AppError::InvalidState` if home directory cannot be determined
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let storage = ContentAddressedStorage::new()?;
-    /// ```
     pub fn new() -> Result<Self> {
         let library_root = Self::default_library_root()?;
-        Ok(Self { library_root })
+        Ok(Self::with_root(library_root))
     }
 
     /// Create storage with custom library root.
-    ///
-    /// # Arguments
-    ///
-    /// * `library_root` - Custom library root directory
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let storage = ContentAddressedStorage::with_root(PathBuf::from("/custom/library"));
-    /// ```
     pub fn with_root(library_root: PathBuf) -> Self {
-        Self { library_root }
+        Self {
+            library_root,
+            leases: BlobLeases::new(),
+            locks: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Get default library root directory.
@@ -179,15 +109,22 @@ impl ContentAddressedStorage {
         Ok(home.join(".lattice").join("files"))
     }
 
+    /// The lock guarding mutations of one blob.
+    fn hash_lock(&self, hash: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.locks.lock();
+        if locks.len() > LOCK_CACHE_HIGH_WATER {
+            // A strong count of 1 means this map holds the only handle, so no
+            // task is inside — or waiting for — that lock.
+            locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+        }
+        Arc::clone(
+            locks
+                .entry(hash.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    }
+
     /// Compute SHA256 hash of file content.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to file to hash
-    ///
-    /// # Returns
-    ///
-    /// Hex-encoded SHA256 hash string
     ///
     /// # Errors
     ///
@@ -216,20 +153,13 @@ impl ContentAddressedStorage {
 
     /// Get directory path for a hash.
     ///
-    /// Returns `{library_root}/{hash}/`
+    /// Only ever called with a hash that passed `is_blob_hash`, which is what
+    /// keeps `{hash}` a single, inert directory name.
     fn hash_directory(&self, hash: &str) -> PathBuf {
         self.library_root.join(hash)
     }
 
     /// Extract filename from path.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to extract filename from
-    ///
-    /// # Returns
-    ///
-    /// Filename as string
     ///
     /// # Errors
     ///
@@ -242,35 +172,26 @@ impl ContentAddressedStorage {
                 AppError::InvalidInput(format!("Path has no filename: {}", path.display()))
             })
     }
-}
 
-#[async_trait]
-impl ContentAddressedStoragePortTrait for ContentAddressedStorage {
-    async fn import_file(&self, source_path: &Path) -> Result<(PathBuf, String)> {
-        // 1. Compute SHA256 hash of file content
-        let hash = self.compute_file_hash(source_path).await?;
+    /// Place the source file's content under `{root}/{hash}`, or return the
+    /// copy that is already there. The caller holds the per-hash lock.
+    async fn place_in_library(&self, source_path: &Path, hash: &str) -> Result<PathBuf> {
+        let hash_dir = self.hash_directory(hash);
 
-        // 2. Get hash-based directory
-        let hash_dir = self.hash_directory(&hash);
-
-        // 3. Check if hash directory already exists
         if hash_dir.exists() {
-            // File already in library - find existing file
             let filename = Self::extract_filename(source_path)?;
             let library_path = hash_dir.join(&filename);
 
             if library_path.exists() {
-                // Exact file exists, return it
                 tracing::info!(
-                    hash = %hash,
+                    %hash,
                     path = %library_path.display(),
                     "File already in library (duplicate detected by hash)"
                 );
-                return Ok((library_path, hash));
+                return Ok(library_path);
             }
 
-            // Hash directory exists but different filename - still a duplicate
-            // Find first file in directory
+            // Same content under a different filename is still a duplicate.
             let mut entries = fs::read_dir(&hash_dir).await.map_err(|e| {
                 AppError::FileStorage(format!("Failed to read hash directory: {}", e))
             })?;
@@ -280,23 +201,21 @@ impl ContentAddressedStoragePortTrait for ContentAddressedStorage {
             })? {
                 let existing_path = entry.path();
                 tracing::info!(
-                    hash = %hash,
+                    %hash,
                     existing = %existing_path.display(),
                     source = %source_path.display(),
                     "Duplicate content detected (different filename)"
                 );
-                return Ok((existing_path, hash));
+                return Ok(existing_path);
             }
 
-            // Directory exists but is empty - fall through to copy
+            // Directory exists but is empty — fall through and copy.
         }
 
-        // 4. File is new - create hash directory and copy file
         fs::create_dir_all(&hash_dir).await.map_err(|e| {
             AppError::FileStorage(format!("Failed to create hash directory: {}", e))
         })?;
 
-        // 5. Copy file to library with original filename
         let filename = Self::extract_filename(source_path)?;
         let library_path = hash_dir.join(&filename);
 
@@ -305,42 +224,196 @@ impl ContentAddressedStoragePortTrait for ContentAddressedStorage {
             .map_err(|e| AppError::FileStorage(format!("Failed to copy file to library: {}", e)))?;
 
         tracing::info!(
-            hash = %hash,
+            %hash,
             source = %source_path.display(),
             library = %library_path.display(),
             "File imported to library"
         );
 
-        // 6. Return library path and hash
-        Ok((library_path, hash))
+        Ok(library_path)
+    }
+
+    /// Total size of every file under `dir`.
+    ///
+    /// `Ok(None)` when the directory itself does not exist.
+    async fn directory_size(dir: &Path) -> Result<Option<u64>> {
+        let mut pending = vec![dir.to_path_buf()];
+        let mut total = 0_u64;
+        let mut read_the_root = false;
+
+        while let Some(current) = pending.pop() {
+            let mut entries = match fs::read_dir(&current).await {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if read_the_root {
+                        // Raced with something removing a subdirectory.
+                        continue;
+                    }
+                    return Ok(None);
+                }
+                Err(error) => {
+                    return Err(AppError::FileStorage(format!(
+                        "Failed to read {}: {error}",
+                        current.display()
+                    )))
+                }
+            };
+            read_the_root = true;
+
+            while let Some(entry) = entries.next_entry().await.map_err(|error| {
+                AppError::FileStorage(format!("Failed to read directory entry: {error}"))
+            })? {
+                match entry.metadata().await {
+                    Ok(metadata) if metadata.is_dir() => pending.push(entry.path()),
+                    Ok(metadata) => total = total.saturating_add(metadata.len()),
+                    Err(error) => tracing::debug!(
+                        path = %entry.path().display(),
+                        %error,
+                        "Could not size a library entry; counting it as zero"
+                    ),
+                }
+            }
+        }
+
+        Ok(Some(total))
+    }
+}
+
+#[async_trait]
+impl ContentAddressedStoragePort for ContentAddressedStorage {
+    async fn import_file(&self, source_path: &Path) -> Result<ImportedBlob> {
+        let hash = self.compute_file_hash(source_path).await?;
+        if !is_blob_hash(&hash) {
+            return Err(AppError::InvalidState(format!(
+                "Computed content hash is not a SHA-256 digest: {hash}"
+            )));
+        }
+
+        let lock = self.hash_lock(&hash);
+        let _guard = lock.lock().await;
+        // Taken before the copy and handed to the caller: the blob is
+        // protected from the moment it exists until the row referencing it has
+        // committed and the caller drops the lease.
+        let lease = self.leases.acquire(&hash);
+        let path = self.place_in_library(source_path, &hash).await?;
+
+        Ok(ImportedBlob { path, hash, lease })
     }
 
     async fn exists_by_hash(&self, hash: &str) -> Result<bool> {
-        let hash_dir = self.hash_directory(hash);
-        Ok(hash_dir.exists())
+        if !is_blob_hash(hash) {
+            return Ok(false);
+        }
+        Ok(self.hash_directory(hash).exists())
     }
 
     async fn get_path_by_hash(&self, hash: &str) -> Result<Option<PathBuf>> {
-        let hash_dir = self.hash_directory(hash);
-
-        if !hash_dir.exists() {
+        if !is_blob_hash(hash) {
             return Ok(None);
         }
 
-        let mut entries = fs::read_dir(&hash_dir)
-            .await
-            .map_err(|e| AppError::FileStorage(format!("Failed to read hash directory: {}", e)))?;
+        let mut entries = match fs::read_dir(self.hash_directory(hash)).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(AppError::FileStorage(format!(
+                    "Failed to read hash directory: {error}"
+                )))
+            }
+        };
 
-        if let Some(entry) = entries
+        let entry = entries
             .next_entry()
             .await
-            .map_err(|e| AppError::FileStorage(format!("Failed to read directory entry: {}", e)))?
+            .map_err(|e| AppError::FileStorage(format!("Failed to read directory entry: {}", e)))?;
+
+        Ok(entry.map(|entry| entry.path()))
+    }
+
+    fn owns(&self, path: &Path) -> bool {
+        // `starts_with` compares components, but `root/../../etc` also starts
+        // with `root`. A path that climbs out is not ours, whatever it prefixes.
+        if path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
         {
-            Ok(Some(entry.path()))
-        } else {
-            // Directory exists but is empty
-            Ok(None)
+            return false;
         }
+        path.starts_with(&self.library_root)
+    }
+
+    async fn list_hashes(&self) -> Result<Vec<String>> {
+        let mut entries = match fs::read_dir(&self.library_root).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(AppError::FileStorage(format!(
+                    "Failed to read library root: {error}"
+                )))
+            }
+        };
+
+        let mut hashes = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(|error| {
+            AppError::FileStorage(format!("Failed to read library entry: {error}"))
+        })? {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !is_blob_hash(&name) {
+                tracing::debug!(
+                    entry = %name,
+                    "Skipping library entry that is not a blob directory"
+                );
+                continue;
+            }
+            match entry.metadata().await {
+                Ok(metadata) if metadata.is_dir() => hashes.push(name),
+                Ok(_) => tracing::debug!(entry = %name, "Skipping non-directory library entry"),
+                Err(error) => {
+                    tracing::debug!(entry = %name, %error, "Skipping unreadable library entry");
+                }
+            }
+        }
+
+        Ok(hashes)
+    }
+
+    async fn remove_if_unreferenced(
+        &self,
+        hash: &str,
+        refs: &dyn BlobReferenceCheck,
+    ) -> Result<BlobRemoval> {
+        if !is_blob_hash(hash) {
+            return Err(AppError::InvalidInput(format!(
+                "Not a library blob hash, refusing to touch the filesystem: {hash}"
+            )));
+        }
+
+        let lock = self.hash_lock(hash);
+        let _guard = lock.lock().await;
+
+        if self.leases.is_leased(hash) {
+            return Ok(BlobRemoval::Retained(RetainReason::Leased));
+        }
+        // Re-read references under the lock: a document committed since the
+        // caller built its own list is still seen here.
+        if refs.is_referenced(hash).await? {
+            return Ok(BlobRemoval::Retained(RetainReason::Referenced));
+        }
+
+        let hash_dir = self.hash_directory(hash);
+        let Some(bytes_freed) = Self::directory_size(&hash_dir).await? else {
+            return Ok(BlobRemoval::Retained(RetainReason::Missing));
+        };
+
+        fs::remove_dir_all(&hash_dir).await.map_err(|error| {
+            AppError::FileStorage(format!(
+                "Failed to remove library blob {}: {error}",
+                hash_dir.display()
+            ))
+        })?;
+
+        tracing::info!(%hash, bytes_freed, "Removed unreferenced library blob");
+        Ok(BlobRemoval::Removed { bytes_freed })
     }
 }
 
@@ -349,97 +422,105 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Reference check with a fixed answer.
+    struct Refs(bool);
+
+    #[async_trait]
+    impl BlobReferenceCheck for Refs {
+        async fn is_referenced(&self, _hash: &str) -> Result<bool> {
+            Ok(self.0)
+        }
+    }
+
+    /// Reference check that records what it was asked.
+    struct RecordingRefs {
+        asked: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl BlobReferenceCheck for RecordingRefs {
+        async fn is_referenced(&self, hash: &str) -> Result<bool> {
+            self.asked.lock().push(hash.to_string());
+            Ok(false)
+        }
+    }
+
+    async fn write_source(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, content).await.unwrap();
+        path
+    }
+
     #[tokio::test]
     async fn test_import_file_new() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
-        let source_file = temp_dir.path().join("source.txt");
-
-        fs::write(&source_file, "Test content").await.unwrap();
+        let source_file = write_source(temp_dir.path(), "source.txt", "Test content").await;
 
         let storage = ContentAddressedStorage::with_root(library_root.clone());
 
-        let (library_path, hash) = storage.import_file(&source_file).await.unwrap();
+        let blob = storage.import_file(&source_file).await.unwrap();
 
-        assert!(library_path.starts_with(&library_root));
-        assert!(
-            library_path
-                .parent()
-                .unwrap()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                == hash
+        assert!(blob.path.starts_with(&library_root));
+        assert_eq!(
+            blob.path.parent().unwrap().file_name().unwrap().to_str(),
+            Some(blob.hash.as_str())
         );
-        assert_eq!(library_path.file_name().unwrap(), "source.txt");
+        assert_eq!(blob.path.file_name().unwrap(), "source.txt");
 
-        assert!(library_path.exists());
-        let content = fs::read_to_string(&library_path).await.unwrap();
+        assert!(blob.path.exists());
+        let content = fs::read_to_string(&blob.path).await.unwrap();
         assert_eq!(content, "Test content");
 
-        assert_eq!(hash.len(), 64); // SHA-256 = 64 hex chars
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(is_blob_hash(&blob.hash));
     }
 
     #[tokio::test]
     async fn test_import_file_duplicate() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
-        let source_file1 = temp_dir.path().join("file1.txt");
-        let source_file2 = temp_dir.path().join("file2.txt");
+        let source_file1 = write_source(temp_dir.path(), "file1.txt", "Identical content").await;
+        let source_file2 = write_source(temp_dir.path(), "file2.txt", "Identical content").await;
 
-        fs::write(&source_file1, "Identical content").await.unwrap();
-        fs::write(&source_file2, "Identical content").await.unwrap();
+        let storage = ContentAddressedStorage::with_root(library_root);
 
-        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        let first = storage.import_file(&source_file1).await.unwrap();
+        let second = storage.import_file(&source_file2).await.unwrap();
 
-        let (path1, hash1) = storage.import_file(&source_file1).await.unwrap();
-
-        let (path2, hash2) = storage.import_file(&source_file2).await.unwrap();
-
-        assert_eq!(hash1, hash2);
-
-        assert_eq!(path1.parent(), path2.parent());
+        assert_eq!(first.hash, second.hash);
+        assert_eq!(first.path.parent(), second.path.parent());
     }
 
     #[tokio::test]
     async fn test_import_file_different_content() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
-        let source_file1 = temp_dir.path().join("file1.txt");
-        let source_file2 = temp_dir.path().join("file2.txt");
-
-        fs::write(&source_file1, "Content 1").await.unwrap();
-        fs::write(&source_file2, "Content 2").await.unwrap();
+        let source_file1 = write_source(temp_dir.path(), "file1.txt", "Content 1").await;
+        let source_file2 = write_source(temp_dir.path(), "file2.txt", "Content 2").await;
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        let (path1, hash1) = storage.import_file(&source_file1).await.unwrap();
-        let (path2, hash2) = storage.import_file(&source_file2).await.unwrap();
+        let first = storage.import_file(&source_file1).await.unwrap();
+        let second = storage.import_file(&source_file2).await.unwrap();
 
-        assert_ne!(hash1, hash2);
-
-        assert_ne!(path1, path2);
-
-        // Both files should exist
-        assert!(path1.exists());
-        assert!(path2.exists());
+        assert_ne!(first.hash, second.hash);
+        assert_ne!(first.path, second.path);
+        assert!(first.path.exists());
+        assert!(second.path.exists());
     }
 
     #[tokio::test]
     async fn test_exists_by_hash() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
-        let source_file = temp_dir.path().join("file.txt");
-
-        fs::write(&source_file, "Test content").await.unwrap();
+        let source_file = write_source(temp_dir.path(), "file.txt", "Test content").await;
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        let (_path, hash) = storage.import_file(&source_file).await.unwrap();
+        let blob = storage.import_file(&source_file).await.unwrap();
 
-        assert!(storage.exists_by_hash(&hash).await.unwrap());
+        assert!(storage.exists_by_hash(&blob.hash).await.unwrap());
+        assert!(!storage.exists_by_hash(&"f".repeat(64)).await.unwrap());
         assert!(!storage.exists_by_hash("nonexistent_hash").await.unwrap());
     }
 
@@ -447,52 +528,271 @@ mod tests {
     async fn test_get_path_by_hash() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
-        let source_file = temp_dir.path().join("file.txt");
-
-        fs::write(&source_file, "Test content").await.unwrap();
+        let source_file = write_source(temp_dir.path(), "file.txt", "Test content").await;
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        let (original_path, hash) = storage.import_file(&source_file).await.unwrap();
+        let blob = storage.import_file(&source_file).await.unwrap();
 
-        // Retrieve path by hash
-        let retrieved_path = storage.get_path_by_hash(&hash).await.unwrap();
-
-        assert_eq!(retrieved_path, Some(original_path));
+        let retrieved_path = storage.get_path_by_hash(&blob.hash).await.unwrap();
+        assert_eq!(retrieved_path, Some(blob.path.clone()));
     }
 
     #[tokio::test]
     async fn test_get_path_by_hash_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
-        let library_root = temp_dir.path().join("library");
+        let storage = ContentAddressedStorage::with_root(temp_dir.path().join("library"));
 
-        let storage = ContentAddressedStorage::with_root(library_root);
-
-        let result = storage.get_path_by_hash("nonexistent").await.unwrap();
-        assert_eq!(result, None);
+        assert_eq!(storage.get_path_by_hash("nonexistent").await.unwrap(), None);
+        assert_eq!(
+            storage.get_path_by_hash(&"a".repeat(64)).await.unwrap(),
+            None
+        );
     }
 
     #[test]
     fn test_extract_filename() {
-        let path = Path::new("/path/to/file.txt");
-        let filename = ContentAddressedStorage::extract_filename(path).unwrap();
+        let filename =
+            ContentAddressedStorage::extract_filename(Path::new("/path/to/file.txt")).unwrap();
         assert_eq!(filename, "file.txt");
 
-        let path = Path::new("file.txt");
-        let filename = ContentAddressedStorage::extract_filename(path).unwrap();
+        let filename = ContentAddressedStorage::extract_filename(Path::new("file.txt")).unwrap();
         assert_eq!(filename, "file.txt");
     }
 
     #[tokio::test]
     async fn test_import_file_not_found() {
         let temp_dir = TempDir::new().unwrap();
+        let storage = ContentAddressedStorage::with_root(temp_dir.path().join("library"));
+
+        let result = storage
+            .import_file(&temp_dir.path().join("nonexistent.txt"))
+            .await;
+        assert!(matches!(result, Err(AppError::FileNotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn owns_only_paths_inside_the_library_root() {
+        let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
-        let nonexistent = temp_dir.path().join("nonexistent.txt");
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+
+        assert!(storage.owns(&library_root.join("a".repeat(64)).join("paper.pdf")));
+        assert!(storage.owns(&library_root));
+        assert!(!storage.owns(Path::new("/Users/someone/vault/note.md")));
+        assert!(!storage.owns(&temp_dir.path().join("web-archive").join("article.md")));
+        assert!(
+            !storage.owns(&library_root.join("..").join("escape.txt")),
+            "a path that climbs out of the root is not ours"
+        );
+    }
+
+    #[tokio::test]
+    async fn removes_an_unreferenced_blob_and_its_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let source_file = write_source(temp_dir.path(), "paper.txt", "unreferenced").await;
+
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        let blob = storage.import_file(&source_file).await.unwrap();
+        let hash = blob.hash.clone();
+        let blob_dir = library_root.join(&hash);
+        // The import's lease ends here; nothing references the blob.
+        drop(blob);
+
+        let removal = storage
+            .remove_if_unreferenced(&hash, &Refs(false))
+            .await
+            .unwrap();
+
+        assert!(removal.was_removed());
+        assert_eq!(removal.bytes_freed(), "unreferenced".len() as u64);
+        assert!(!blob_dir.exists(), "the hash directory goes too");
+        assert!(library_root.exists(), "the library root stays");
+    }
+
+    #[tokio::test]
+    async fn keeps_a_blob_a_document_still_references() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let source_file = write_source(temp_dir.path(), "paper.txt", "referenced").await;
+
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        let blob = storage.import_file(&source_file).await.unwrap();
+        let hash = blob.hash.clone();
+        drop(blob);
+
+        let removal = storage
+            .remove_if_unreferenced(&hash, &Refs(true))
+            .await
+            .unwrap();
+
+        assert_eq!(removal, BlobRemoval::Retained(RetainReason::Referenced));
+        assert!(library_root.join(&hash).exists());
+    }
+
+    #[tokio::test]
+    async fn a_live_lease_blocks_removal() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let source_file = write_source(temp_dir.path(), "paper.txt", "leased").await;
+
+        let storage = ContentAddressedStorage::with_root(library_root);
+        // Lease still held: an import that has not committed its row yet.
+        let blob = storage.import_file(&source_file).await.unwrap();
+        let hash = blob.hash.clone();
+
+        let refs = RecordingRefs {
+            asked: Mutex::new(Vec::new()),
+        };
+        let removal = storage.remove_if_unreferenced(&hash, &refs).await.unwrap();
+
+        assert_eq!(removal, BlobRemoval::Retained(RetainReason::Leased));
+        assert!(
+            refs.asked.lock().is_empty(),
+            "a leased blob is refused before the reference check is even consulted"
+        );
+        assert!(blob.path.exists());
+
+        // Once the import is done with it, the blob can go.
+        drop(blob);
+        assert!(storage
+            .remove_if_unreferenced(&hash, &Refs(false))
+            .await
+            .unwrap()
+            .was_removed());
+    }
+
+    #[tokio::test]
+    async fn reports_a_blob_that_is_not_there() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = ContentAddressedStorage::with_root(temp_dir.path().join("library"));
+
+        let removal = storage
+            .remove_if_unreferenced(&"e".repeat(64), &Refs(false))
+            .await
+            .unwrap();
+
+        assert_eq!(removal, BlobRemoval::Retained(RetainReason::Missing));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_hash_that_is_not_a_blob_name() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let victim = temp_dir.path().join("precious.txt");
+        fs::write(&victim, "do not delete me").await.unwrap();
 
         let storage = ContentAddressedStorage::with_root(library_root);
 
-        let result = storage.import_file(&nonexistent).await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(AppError::FileNotFound { .. })));
+        let uppercase = "A".repeat(64);
+        let too_short = "a".repeat(63);
+        for candidate in [
+            "../precious.txt",
+            "..",
+            "",
+            uppercase.as_str(),
+            too_short.as_str(),
+            "not-a-hash",
+        ] {
+            let result = storage
+                .remove_if_unreferenced(candidate, &Refs(false))
+                .await;
+            assert!(
+                matches!(result, Err(AppError::InvalidInput(_))),
+                "expected {candidate:?} to be refused"
+            );
+        }
+
+        assert!(victim.exists());
+    }
+
+    #[tokio::test]
+    async fn list_hashes_emits_only_blob_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let source_file = write_source(temp_dir.path(), "paper.txt", "listed").await;
+
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        let blob = storage.import_file(&source_file).await.unwrap();
+
+        // Things that are not blobs: a stray file, an upper-case name, a short name.
+        fs::write(library_root.join("README.md"), "hello")
+            .await
+            .unwrap();
+        fs::create_dir_all(library_root.join("A".repeat(64)))
+            .await
+            .unwrap();
+        fs::create_dir_all(library_root.join("tmp")).await.unwrap();
+
+        let hashes = storage.list_hashes().await.unwrap();
+
+        assert_eq!(hashes, vec![blob.hash.clone()]);
+    }
+
+    #[tokio::test]
+    async fn list_hashes_on_a_library_that_does_not_exist_yet() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = ContentAddressedStorage::with_root(temp_dir.path().join("never-created"));
+
+        assert!(storage.list_hashes().await.unwrap().is_empty());
+    }
+
+    /// An import and a sweep race for the same content. Whatever the
+    /// interleaving, the import must never come back holding a path the sweep
+    /// deleted: that is exactly the document-less dangling row the lease
+    /// exists to prevent.
+    #[tokio::test]
+    async fn concurrent_import_and_remove_never_strand_the_importer() {
+        for _ in 0..25 {
+            let temp_dir = TempDir::new().unwrap();
+            let library_root = temp_dir.path().join("library");
+            let source_file = write_source(temp_dir.path(), "racy.txt", "contended content").await;
+
+            let storage = Arc::new(ContentAddressedStorage::with_root(library_root));
+            // Seed the blob, then let go of it so a removal is possible at all.
+            let hash = storage.import_file(&source_file).await.unwrap().hash;
+
+            let importer = {
+                let storage = Arc::clone(&storage);
+                let source_file = source_file.clone();
+                tokio::spawn(async move { storage.import_file(&source_file).await })
+            };
+            let remover = {
+                let storage = Arc::clone(&storage);
+                let hash = hash.clone();
+                tokio::spawn(
+                    async move { storage.remove_if_unreferenced(&hash, &Refs(false)).await },
+                )
+            };
+
+            let blob = importer.await.unwrap().unwrap();
+            let removal = remover.await.unwrap().unwrap();
+
+            match removal {
+                BlobRemoval::Removed { .. } => {
+                    // The removal won the lock and finished before the import
+                    // took its lease, so the import re-copied the blob.
+                    assert!(
+                        blob.path.exists(),
+                        "an import that ran after a removal must have re-copied the blob"
+                    );
+                }
+                BlobRemoval::Retained(reason) => {
+                    assert_eq!(reason, RetainReason::Leased);
+                    assert!(blob.path.exists(), "a leased blob is never deleted");
+                }
+            }
+
+            // The import still holds its lease, so a second sweep also refuses.
+            assert_eq!(
+                storage
+                    .remove_if_unreferenced(&hash, &Refs(false))
+                    .await
+                    .unwrap(),
+                BlobRemoval::Retained(RetainReason::Leased)
+            );
+            assert!(blob.path.exists());
+        }
     }
 }

@@ -14,7 +14,7 @@ mod tests;
 pub use app::initialize_app;
 pub use database::setup_database;
 pub use directories::{setup_app_directories, setup_model_directory};
-pub use embedding::{setup_embedding_service, setup_tokenizer};
+pub use embedding::setup_tokenizer;
 pub use observability::setup_tracing;
 pub use shutdown::graceful_shutdown;
 

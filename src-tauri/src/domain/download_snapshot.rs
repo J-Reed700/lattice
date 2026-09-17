@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileSnapshot {
+    /// The real DownloadSession id used by pause/resume/cancel operations.
+    pub id: String,
     pub filename: String,
     pub bytes_downloaded: u64,
     pub total_bytes: u64,

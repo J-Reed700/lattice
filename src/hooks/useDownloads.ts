@@ -30,6 +30,16 @@ const cacheKeyFor = (download: DownloadStatus): string => {
   return download.model_id ? `${download.model_id}:${filename}` : download.id;
 };
 
+const findByBackendId = (
+  downloads: Map<string, DownloadStatus>,
+  backendId: string
+): [string, DownloadStatus] | undefined => {
+  for (const entry of downloads) {
+    if (entry[1].id === backendId) return entry;
+  }
+  return undefined;
+};
+
 export async function fetchDownloadMap(): Promise<Map<string, DownloadStatus>> {
   const result = await VaultAPI.listDownloads();
   if (!result.ok) throw new Error(result.error);
@@ -47,6 +57,61 @@ function updateDownloadCache(
     DOWNLOADS_QUERY_KEY,
     (current) => updater(current ?? new Map())
   );
+}
+
+/**
+ * Reconcile an event snapshot into the query cache.
+ *
+ * A model begins life as a single session because its other file sessions have
+ * not been created yet. Once the remaining sessions exist, the backend emits a
+ * batch snapshot. Re-keying by the real session id removes that early standalone
+ * row instead of leaving a permanently queued duplicate behind.
+ */
+export function applyDownloadSnapshot(
+  current: Map<string, DownloadStatus>,
+  snapshot: TauriEvents.Downloads.StateSnapshot
+): Map<string, DownloadStatus> {
+  const next = new Map(current);
+
+  if (snapshot.kind === 'single') {
+    const existingEntry = findByBackendId(current, snapshot.id);
+    const storeKey = existingEntry?.[0] ?? snapshot.id;
+    next.set(storeKey, toDownloadStatus(snapshot.id, snapshot, {
+      existing: existingEntry?.[1],
+    }));
+    return next;
+  }
+
+  for (const file of snapshot.files) {
+    const storeKey = `${snapshot.id}:${file.filename}`;
+    const existingEntry = findByBackendId(next, file.id);
+    const existing = next.get(storeKey) ?? existingEntry?.[1];
+
+    if (existingEntry && existingEntry[0] !== storeKey) {
+      next.delete(existingEntry[0]);
+    }
+
+    const fileSnapshot: TauriEvents.Downloads.Single = {
+      kind: 'single',
+      id: file.id,
+      filename: file.filename,
+      bytesDownloaded: file.bytesDownloaded,
+      totalBytes: file.totalBytes,
+      bytesPerSecond: snapshot.aggregateBytesPerSecond,
+      percentage: file.totalBytes > 0
+        ? (file.bytesDownloaded / file.totalBytes) * 100
+        : 0,
+      etaSeconds: snapshot.aggregateEtaSeconds,
+      status: file.status,
+    };
+    next.set(storeKey, toDownloadStatus(file.id, fileSnapshot, {
+      modelId: snapshot.id,
+      modelName: snapshot.groupName,
+      existing,
+    }));
+  }
+
+  return next;
 }
 
 interface SnapshotIdentity {
@@ -101,38 +166,10 @@ export function useDownloadsListener(): void {
           EventSchemas.Downloads.StateSnapshot,
           (event: { payload: EventSchemas.Downloads.StateSnapshot }) => {
             if (!mounted) return;
-            updateDownloadCache(queryClient, (current) => {
-              const next = new Map(current);
-              const snapshot = event.payload;
-              if (snapshot.kind === 'single') {
-                next.set(snapshot.id, toDownloadStatus(snapshot.id, snapshot, {
-                  existing: current.get(snapshot.id),
-                }));
-              } else {
-                for (const file of snapshot.files) {
-                  const syntheticId = `${snapshot.id}:${file.filename}`;
-                  const fileSnapshot: TauriEvents.Downloads.Single = {
-                    kind: 'single',
-                    id: syntheticId,
-                    filename: file.filename,
-                    bytesDownloaded: file.bytesDownloaded,
-                    totalBytes: file.totalBytes,
-                    bytesPerSecond: snapshot.aggregateBytesPerSecond,
-                    percentage: file.totalBytes > 0
-                      ? (file.bytesDownloaded / file.totalBytes) * 100
-                      : 0,
-                    etaSeconds: snapshot.aggregateEtaSeconds,
-                    status: file.status,
-                  };
-                  next.set(syntheticId, toDownloadStatus(syntheticId, fileSnapshot, {
-                    modelId: snapshot.id,
-                    modelName: snapshot.groupName,
-                    existing: current.get(syntheticId),
-                  }));
-                }
-              }
-              return next;
-            });
+            updateDownloadCache(
+              queryClient,
+              (current) => applyDownloadSnapshot(current, event.payload)
+            );
           },
           (error: z.ZodError) => {
             if (!mounted) return;
@@ -148,10 +185,11 @@ export function useDownloadsListener(): void {
             const { id, error } = event.payload;
             setListenerError(`Download failed: ${error}`);
             updateDownloadCache(queryClient, (current) => {
-              const existing = current.get(id);
-              if (!existing) return current;
+              const existingEntry = findByBackendId(current, id);
+              if (!existingEntry) return current;
+              const [storeKey, existing] = existingEntry;
               const next = new Map(current);
-              next.set(id, {
+              next.set(storeKey, {
                 ...existing,
                 state: 'Failed',
                 error_message: error,
@@ -195,7 +233,7 @@ export function useDownloadActions() {
   const downloads = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY);
   const resolveBackendId = useCallback((storeKey: string): string => {
     const row = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY)?.get(storeKey);
-    return row?.id ?? (storeKey.includes(':') ? storeKey.split(':')[0] : storeKey);
+    return row?.id ?? storeKey;
   }, [queryClient]);
   const resyncFromBackend = useCallback(async () => {
     await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: fetchDownloadMap, staleTime: 0 });

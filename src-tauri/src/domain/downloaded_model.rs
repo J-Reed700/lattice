@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::model_metadata::ModelType;
 use crate::domain::model_type_classifier::ModelTypeClassifier;
+use crate::domain::value_objects::ArtifactIdentity;
 
 ///
 /// This is orthogonal to role flags (chat/utility/embedding) and to the
@@ -180,6 +181,11 @@ pub struct DownloadedModel {
     /// Whether this model is currently active for the utility role
     /// (HyDE expansion, router, intent classification)
     is_active_for_utility: bool,
+
+    /// Content identity of the model's artifacts, recorded when the model is
+    /// activated for embedding. `None` for remote models and for local models
+    /// that have never been activated for embedding.
+    embedding_artifact_identity: Option<ArtifactIdentity>,
 }
 
 impl DownloadedModel {
@@ -296,6 +302,7 @@ impl DownloadedModel {
             is_active_for_embedding: false,
             metadata,
             is_active_for_utility: false,
+            embedding_artifact_identity: None,
         })
     }
 
@@ -319,6 +326,7 @@ impl DownloadedModel {
         is_active_for_embedding: bool,
         metadata: Option<JsonValue>,
         is_active_for_utility: bool,
+        embedding_artifact_identity: Option<ArtifactIdentity>,
     ) -> Self {
         Self {
             id,
@@ -335,6 +343,7 @@ impl DownloadedModel {
             is_active_for_embedding,
             metadata,
             is_active_for_utility,
+            embedding_artifact_identity,
         }
     }
 
@@ -364,20 +373,6 @@ impl DownloadedModel {
     /// - This just updates the field; trigger handles deactivating others
     pub fn set_active_for_chat(&mut self, active: bool) {
         self.is_active_for_chat = active;
-    }
-
-    /// Set whether this model is active for embedding
-    ///
-    /// # Arguments
-    ///
-    /// * `active` - True to set as active embedding model, false otherwise
-    ///
-    /// # Business Logic
-    ///
-    /// - Database trigger ensures only one model can be active for embedding
-    /// - This just updates the field; trigger handles deactivating others
-    pub fn set_active_for_embedding(&mut self, active: bool) {
-        self.is_active_for_embedding = active;
     }
 
     /// Set whether this model is active for the utility role
@@ -522,6 +517,10 @@ impl DownloadedModel {
 
     pub fn is_active_for_utility(&self) -> bool {
         self.is_active_for_utility
+    }
+
+    pub fn embedding_artifact_identity(&self) -> Option<&ArtifactIdentity> {
+        self.embedding_artifact_identity.as_ref()
     }
 }
 

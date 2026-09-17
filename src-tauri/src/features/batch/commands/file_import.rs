@@ -91,7 +91,7 @@ pub async fn start_batch_file_import_impl(
     // This avoids partial jobs that immediately fail per-file with degraded mock errors.
     let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
         AppError::ServiceNotAvailable(format!(
-            "AI embedding models not installed. Download and activate an embedding model in Settings -> Models. Details: {}",
+            "Could not load the active embedding model: {}",
             e
         ))
     })?;

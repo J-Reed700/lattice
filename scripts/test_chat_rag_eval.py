@@ -32,8 +32,22 @@ class ChatRagEvalTests(unittest.TestCase):
         wrong_source = chat_rag_eval.evaluate_answer(
             query, expectation, "The period is 14 days [2].", ["a", "b"], 10, "m"
         )
-        self.assertTrue(passing["answer_correct"])
-        self.assertFalse(wrong_source["answer_correct"])
+        self.assertTrue(passing["mechanical_checks_passed"])
+        self.assertFalse(wrong_source["mechanical_checks_passed"])
+
+    def test_mechanical_matches_never_certify_semantics(self):
+        query = {"id": "q", "relevance": {"a": 3}}
+        labels = {"required_patterns": [["14"]]}
+        for answer in ("The period is NOT 14 days [1].",
+                       "The period is 14 days [1]. The Moon is cheese."):
+            row = chat_rag_eval.evaluate_answer(query, labels, answer, ["a"], 1, "m")
+            self.assertIsNone(row["answer_correct"])
+            self.assertIsNone(chat_rag_eval.aggregate([row])["answer_accuracy"])
+
+    def test_empty_fact_groups_do_not_vacuously_pass(self):
+        row = chat_rag_eval.evaluate_answer(
+            {"id": "q", "relevance": {"a": 3}}, {}, "Cheese [1].", ["a"], 1, "m")
+        self.assertFalse(row["mechanical_checks_passed"])
 
     def test_unanswerable_requires_abstention_without_citation(self):
         query = {"id": "q", "relevance": {}}
@@ -46,7 +60,7 @@ class ChatRagEvalTests(unittest.TestCase):
             10,
             "m",
         )
-        self.assertTrue(row["answer_correct"])
+        self.assertTrue(row["mechanical_checks_passed"])
 
 
 if __name__ == "__main__":

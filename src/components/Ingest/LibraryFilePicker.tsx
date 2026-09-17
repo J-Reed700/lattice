@@ -27,7 +27,7 @@ export function LibraryFilePicker({ onAdd, disabled }: { onAdd: (paths: string[]
     </Button>
     {error && <p role="alert" className="text-sm text-danger-fg">{error}</p>}
     {documents && <div className="space-y-3 rounded border border-border-subtle p-3">
-      <p className="text-sm text-text-secondary">Update related-source settings and rebuild search using the saved files. Existing documents and their spaces stay linked.</p>
+      <p className="text-sm text-text-secondary">Update related-source settings for files already in your library. Existing documents and their spaces stay linked.</p>
       <input aria-label="Filter library files" placeholder="Find files by name" value={filter} onChange={event => setFilter(event.target.value)} className={`${settingsFieldClass} w-full`} />
       <div className="flex items-center justify-between text-xs">
         <span>{visible.length} files · {selected.size} selected (up to 100)</span>

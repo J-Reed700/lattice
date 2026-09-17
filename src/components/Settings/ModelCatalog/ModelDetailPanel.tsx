@@ -304,16 +304,21 @@ export function ModelDetailPanel({
   ].filter(Boolean) as string[];
 
   const downloadControl = () => {
+    if (isEmbeddingArchIncompatible) {
+      return (
+        <button
+          type="button"
+          onClick={handleAsyncEvent(handleDownload)}
+          className={SECONDARY_BUTTON_CLASS}
+          title={incompatibilityReason ?? undefined}
+        >
+          Not supported on this build
+        </button>
+      );
+    }
     if (!hasDownloadSource) return null;
     if (isCheckingDownload) return <span className="text-sm text-text-muted">Checking…</span>;
     if (isDownloaded) return <span className="text-sm text-text-muted">Downloaded</span>;
-    if (isEmbeddingArchIncompatible) {
-      return (
-        <span className="text-sm text-text-muted" title={incompatibilityReason ?? undefined}>
-          Not supported on this build
-        </span>
-      );
-    }
     if (isStartingDownload) return <span className="text-sm text-text-muted">Starting…</span>;
     if (isDownloading || hasActiveDownload) {
       const percentage = activeDownload?.percentage;
@@ -396,7 +401,9 @@ export function ModelDetailPanel({
             <button
               type="button"
               onClick={handleAsyncEvent(handleSetActiveEmbedding)}
-              disabled={!isDownloaded || isSettingEmbeddingModel}
+              disabled={
+                !isDownloaded || isSettingEmbeddingModel || isEmbeddingArchIncompatible
+              }
               className={SECONDARY_BUTTON_CLASS}
             >
               {isSettingEmbeddingModel ? 'Setting…' : 'Use for embeddings'}

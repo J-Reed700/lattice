@@ -129,7 +129,6 @@ fn main() {
             // Additional public IPC contracts (use the same signatures as runtime).
             lattice::features::file::commands::open_file,
             lattice::features::file::commands::open_file_by_id,
-            lattice::features::file::commands::remove_indexed_folder,
             lattice::features::file::commands::read_file_content,
             lattice::features::file::commands::read_file_bytes,
             lattice::features::file::commands::show_in_folder,
@@ -325,7 +324,6 @@ fn main() {
             lattice::features::web::plugin::ingest_web_url,
             lattice::features::web::plugin::fetch_url_preview,
             lattice::features::web::plugin::extract_article,
-            lattice::features::web::plugin::reindex_web_archive,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,

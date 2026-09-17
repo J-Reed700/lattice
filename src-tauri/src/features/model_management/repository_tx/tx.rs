@@ -82,14 +82,6 @@ impl SqliteModelRepositoryTx {
         Ok(())
     }
 
-    pub async fn set_active_for_embedding(&self, model_id: &str) -> Result<()> {
-        let tx_arc = self.get_transaction()?;
-        let mut tx = tx_arc.lock().await;
-        ops::deactivate_all_embedding_models(&mut tx).await?;
-        ops::activate_embedding_model(&mut tx, model_id).await?;
-        Ok(())
-    }
-
     pub async fn list_all(&self) -> Result<Vec<Model>> {
         let tx_arc = self.get_transaction()?;
         let mut tx = tx_arc.lock().await;
@@ -119,10 +111,6 @@ impl SqliteModelRepositoryTx {
 
     pub async fn set_active_chat_model(&self, model_id: &str) -> Result<()> {
         self.set_active_for_chat(model_id).await
-    }
-
-    pub async fn set_active_embedding_model(&self, model_id: &str) -> Result<()> {
-        self.set_active_for_embedding(model_id).await
     }
 
     pub async fn clear_active_chat_model(&self) -> Result<()> {

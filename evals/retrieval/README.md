@@ -1,5 +1,11 @@
 # Retrieval evaluation
 
+[Fresh inference diagnosis and grounding fixes (2026-09-16)](2026-09-16-DIAGNOSIS.md).
+
+For reproducible answer runs, evidence-bound human review, paired comparisons,
+and release gates, see [Evaluation evidence protocol](EVALUATION_PROTOCOL.md).
+Regex checks are diagnostics; unreviewed answers do not have verified accuracy.
+
 Three synthetic corpora are included:
 
 - `starter.json` is the small smoke fixture. It covers paraphrases,

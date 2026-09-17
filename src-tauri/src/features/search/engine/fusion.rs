@@ -215,27 +215,39 @@ mod tests {
     }
 
     /// The failure this exists for: one branch's confident first hit versus a
-    /// passage both branches merely tolerated.
+    /// passage both branches merely tolerated. Weights alone are not enough
+    /// at `k = 60` — the curve is too flat — which is exactly what the v2
+    /// evaluation showed; the combination of a vector-leaning weight and a
+    /// small `k` is what lets the sole hit through.
     #[test]
-    fn vector_weight_lets_a_sole_top_hit_beat_two_mediocre_agreements() {
+    fn vector_weight_and_small_k_let_a_sole_top_hit_beat_two_mediocre_agreements() {
         let mut vector: Vec<(String, f32)> = vec![("japanese".to_string(), 0.8)];
         vector.extend((0..5).map(|i| (format!("filler{i}"), 0.5)));
         vector.push(("global".to_string(), 0.4)); // vector rank 7
-        let mut bm25: Vec<(String, f32)> = (0..24).map(|i| (format!("lex{i}"), 1.0)).collect();
-        bm25.push(("global".to_string(), 0.5)); // BM25 rank 25
+        let mut bm25: Vec<(String, f32)> = vec![("global".to_string(), 5.0)]; // bm25 rank 1
+        bm25.extend((0..10).map(|i| (format!("lex{i}"), 1.0)));
 
         let plain = super::ReciprocalRankFusion::new(60.0).fuse(vector.clone(), bm25.clone());
         assert_eq!(plain.first().map(|r| r.id.as_str()), Some("global"));
 
-        let weighted = super::ReciprocalRankFusion::with_default().fuse_weighted(
-            vector,
-            bm25,
-            crate::shared::constants::DEFAULT_VECTOR_FUSION_WEIGHT,
-            crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
+        // 0.7/61 < 0.7/67 + 0.3/61: the agreement still wins at k = 60.
+        let weighted_flat = super::ReciprocalRankFusion::new(60.0).fuse_weighted(
+            vector.clone(),
+            bm25.clone(),
+            0.7,
+            0.3,
         );
-        assert_eq!(weighted.first().map(|r| r.id.as_str()), Some("japanese"));
+        assert_eq!(weighted_flat.first().map(|r| r.id.as_str()), Some("global"));
+
+        // 0.7/6 > 0.7/12 + 0.3/6: a steep curve plus the weight flips it.
+        let weighted_steep =
+            super::ReciprocalRankFusion::new(5.0).fuse_weighted(vector, bm25, 0.7, 0.3);
+        assert_eq!(
+            weighted_steep.first().map(|r| r.id.as_str()),
+            Some("japanese")
+        );
         // The agreement is not discarded, only outranked.
-        assert!(weighted.iter().any(|r| r.id == "global"));
+        assert!(weighted_steep.iter().any(|r| r.id == "global"));
     }
 
     use super::*;

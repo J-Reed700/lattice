@@ -56,7 +56,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_file_path_by_id,
             file_commands::show_in_folder,
             commands::get_indexed_folders,
-            file_commands::remove_indexed_folder,
             commands::get_indexing_activities,
             commands::get_recent_documents,
             document_list::get_document,

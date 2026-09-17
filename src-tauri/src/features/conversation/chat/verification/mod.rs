@@ -9,7 +9,9 @@
 //!
 //! The judge is an improvement on the lexical verdict, never a precondition
 //! for one. Without an LLM handle, or when it times out or answers with
-//! nonsense, every claim keeps the verdict the pre-filter gave it.
+//! nonsense, escalated claims remain unsupported rather than receiving a
+//! positive verdict from vocabulary overlap alone. With no judge configured,
+//! reports remain explicitly lexical.
 
 use std::sync::Arc;
 
@@ -269,6 +271,14 @@ impl GroundingVerifier {
             return GroundingReport::from_assessments(assessments, false);
         }
 
+        // Escalated claims are unresolved until the semantic judge returns.
+        // A timeout or malformed reply must not certify a numeric contradiction
+        // merely because it shares vocabulary with the source.
+        for index in &pending {
+            if let Some(assessment) = assessments.get_mut(*index) {
+                assessment.verdict = ClaimVerdict::Unsupported;
+            }
+        }
         let outcomes = judge.judge_claims(&claims, &pending, sources).await;
         for (index, outcome) in outcomes {
             if let Some(assessment) = assessments.get_mut(index) {
@@ -505,8 +515,65 @@ mod tests {
         assert!(report.judge_used);
     }
 
+    /// Opt-in: sends only synthetic claims through the production model adapter
+    /// and grounding verifier. No library documents or conversation state used.
     #[tokio::test]
-    async fn garbage_judge_output_falls_back_to_the_lexical_verdict() {
+    #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and a reachable model"]
+    async fn live_grounding_adversarial_regressions() {
+        use crate::application::contracts::settings::LLMSettingsDto;
+        use crate::features::llm::llama_cpp::LlamaCppLlm;
+        let settings: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let config: LLMSettingsDto =
+            serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
+        let llm = Arc::new(LlamaCppLlm::new(&config).unwrap());
+        let verifier = GroundingVerifier::new(Some(llm));
+        let mut evidence = source(
+            "The design workspace retains hourly file versions for 14 days before expiration.",
+        );
+        evidence.citation_id = Some(7);
+        for (name, answer, expected, judged) in [
+            ("supported", "The design workspace retains hourly file versions for 14 days before expiration [7].", ClaimVerdict::Supported, true),
+            ("wrong_number", "The design workspace retains hourly file versions for 30 days before expiration [7].", ClaimVerdict::Contradicted, true),
+            ("negation", "The design workspace does not retain hourly file versions for 14 days before expiration [7].", ClaimVerdict::Contradicted, true),
+            ("invented_citation", "The design workspace retains hourly file versions for 14 days before expiration [99].", ClaimVerdict::Unsupported, false),
+        ] {
+            let report = verifier.verify(answer, &[evidence.clone()]).await;
+            println!("{name}: {}", report.metadata_json());
+            assert_eq!(report.claims_evaluated, 1, "{name}");
+            assert_eq!(report.claims[0].verdict, expected, "{name}");
+            assert_eq!(report.judge_used, judged, "{name}: a fallback is not a semantic judgment");
+        }
+    }
+
+    #[tokio::test]
+    async fn fabricated_support_quote_cannot_certify_a_claim() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdicts":[{"id":1,"verdict":"supported","quote":"fabricated evidence that is absent"}]}"#,
+        ]));
+        let report = GroundingVerifier::new(Some(llm))
+            .verify(CONTRADICTING_RESPONSE, &[source(CONTRADICTION_SOURCE)])
+            .await;
+        assert_eq!(report.supported_claims, 0);
+    }
+
+    #[tokio::test]
+    async fn invalid_citation_is_not_rescued_by_the_judge() {
+        let llm = Arc::new(ScriptedLlm::new(vec![
+            r#"{"verdicts":[{"id":1,"verdict":"supported","quote":"reduced measured cold tolerance"}]}"#,
+        ]));
+        let response = CONTRADICTING_RESPONSE.replace("[1]", "[99]");
+        let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
+            .verify(&response, &[source(CONTRADICTION_SOURCE)])
+            .await;
+        assert_eq!(report.supported_claims, 0);
+        assert_eq!(llm.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn garbage_judge_output_does_not_certify_an_unresolved_claim() {
         let sources = vec![source(CONTRADICTION_SOURCE)];
         let llm = Arc::new(ScriptedLlm::new(vec!["I cannot judge these claims."]));
 
@@ -515,7 +582,7 @@ mod tests {
             .await;
 
         assert_eq!(llm.call_count(), 1);
-        assert_eq!(report.supported_claims, 1);
+        assert_eq!(report.supported_claims, 0);
         assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
         assert!(!report.judge_used);
     }

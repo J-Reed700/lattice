@@ -874,6 +874,59 @@ impl DocumentRepositoryPort for DocumentRepository {
 
         Ok(crate::infrastructure::persistence::mappers::DocumentMapper::to_entities(&db_models))
     }
+
+    async fn count_by_checksum(&self, checksum: &str) -> Result<u64> {
+        let pool = self.pool.clone();
+        let checksum = checksum.to_string();
+
+        // Non-macro form: new SQL, and the compile-time-checked macros would
+        // need a regenerated offline cache.
+        let count: i64 = query_with_quick_timeout(|| async {
+            sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE checksum = ?1")
+                .bind(&checksum)
+                .fetch_one(&pool)
+                .await
+        })
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to count documents by checksum: {e}")))?;
+
+        Ok(count.max(0) as u64)
+    }
+
+    async fn list_checksums(&self) -> Result<Vec<String>> {
+        let pool = self.pool.clone();
+
+        query_with_timeout(|| async {
+            sqlx::query_scalar(
+                "SELECT DISTINCT checksum FROM documents \
+                 WHERE checksum IS NOT NULL AND checksum <> ''",
+            )
+            .fetch_all(&pool)
+            .await
+        })
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to list document checksums: {e}")))
+    }
+
+    async fn find_checksum_by_id(&self, document_id: &str) -> Result<String> {
+        let pool = self.pool.clone();
+        let id = document_id.to_string();
+
+        let checksum: Option<String> = query_with_quick_timeout(|| async {
+            sqlx::query_scalar("SELECT checksum FROM documents WHERE id = ?1")
+                .bind(&id)
+                .fetch_optional(&pool)
+                .await
+        })
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to find checksum for document '{document_id}': {e}"
+            ))
+        })?;
+
+        checksum.ok_or_else(|| AppError::NotFound(format!("Document not found: {document_id}")))
+    }
 }
 
 /// Implementation of `RepositoryPort<Document>` for DDD compliance.
@@ -1145,3 +1198,123 @@ impl RepositoryPort<Document> for DocumentRepository {
 /// `RepositoryPort<Document>` and `DocumentRepositoryPort`, this marker implementation
 /// allows it to satisfy the unified trait.
 impl crate::application::ports::DocumentRepository for DocumentRepository {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::ports::DocumentRepositoryPort;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn repository() -> DocumentRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        DocumentRepository::new(pool)
+    }
+
+    /// Insert a row directly: these queries read one column and must not
+    /// depend on chunks existing.
+    async fn insert(repo: &DocumentRepository, id: &str, path: &str, checksum: &str) {
+        sqlx::query(
+            "INSERT INTO documents \
+             (id, file_path, file_name, file_type, mime_type, size_bytes, \
+              modified_at, checksum, status) \
+             VALUES (?1, ?2, ?3, 'txt', 'text/plain', 4, CURRENT_TIMESTAMP, ?4, 'indexed')",
+        )
+        .bind(id)
+        .bind(path)
+        .bind(id)
+        .bind(checksum)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn count_by_checksum_counts_every_row_that_shares_the_content() {
+        let repo = repository().await;
+        let shared = "a".repeat(64);
+        let lonely = "b".repeat(64);
+
+        insert(&repo, "doc-1", "/lib/a/one.txt", &shared).await;
+        insert(&repo, "doc-2", "/lib/a/two.txt", &shared).await;
+        insert(&repo, "doc-3", "/lib/b/three.txt", &lonely).await;
+
+        assert_eq!(repo.count_by_checksum(&shared).await.unwrap(), 2);
+        assert_eq!(repo.count_by_checksum(&lonely).await.unwrap(), 1);
+        assert_eq!(repo.count_by_checksum(&"c".repeat(64)).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn count_by_checksum_of_an_empty_table_is_zero() {
+        let repo = repository().await;
+
+        assert_eq!(repo.count_by_checksum(&"a".repeat(64)).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_checksums_is_the_distinct_referenced_set() {
+        let repo = repository().await;
+        let shared = "a".repeat(64);
+        let lonely = "b".repeat(64);
+
+        insert(&repo, "doc-1", "/lib/a/one.txt", &shared).await;
+        insert(&repo, "doc-2", "/lib/a/two.txt", &shared).await;
+        insert(&repo, "doc-3", "/lib/b/three.txt", &lonely).await;
+        // A row with no checksum must not put an empty string in the set:
+        // the sweep would then treat "" as a referenced blob name.
+        insert(&repo, "doc-4", "/lib/c/four.txt", "").await;
+
+        let mut checksums = repo.list_checksums().await.unwrap();
+        checksums.sort();
+
+        assert_eq!(checksums, vec![shared, lonely]);
+    }
+
+    #[tokio::test]
+    async fn list_checksums_of_an_empty_table_is_empty() {
+        let repo = repository().await;
+
+        assert!(repo.list_checksums().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_checksum_by_id_reads_one_column() {
+        let repo = repository().await;
+        let checksum = "d".repeat(64);
+        insert(&repo, "doc-1", "/lib/d/one.txt", &checksum).await;
+
+        assert_eq!(
+            repo.find_checksum_by_id("doc-1").await.unwrap(),
+            checksum,
+            "a document with no chunks still yields its checksum"
+        );
+        assert!(matches!(
+            repo.find_checksum_by_id("missing").await,
+            Err(AppError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_document_drops_it_from_the_referenced_set() {
+        let repo = repository().await;
+        let checksum = "e".repeat(64);
+        insert(&repo, "doc-1", "/lib/e/one.txt", &checksum).await;
+        insert(&repo, "doc-2", "/lib/e/two.txt", &checksum).await;
+
+        DocumentRepositoryPort::delete(&repo, "doc-1")
+            .await
+            .unwrap();
+        assert_eq!(repo.count_by_checksum(&checksum).await.unwrap(), 1);
+        assert_eq!(repo.list_checksums().await.unwrap(), vec![checksum.clone()]);
+
+        DocumentRepositoryPort::delete(&repo, "doc-2")
+            .await
+            .unwrap();
+        assert_eq!(repo.count_by_checksum(&checksum).await.unwrap(), 0);
+        assert!(repo.list_checksums().await.unwrap().is_empty());
+    }
+}

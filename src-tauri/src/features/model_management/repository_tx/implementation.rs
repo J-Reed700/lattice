@@ -87,23 +87,6 @@ impl SqliteModelRepository {
         Ok(())
     }
 
-    pub async fn set_active_for_embedding(&self, model_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            error!(error = %e, "Failed to begin transaction");
-            AppError::Database(format!("Failed to begin transaction: {}", e))
-        })?;
-
-        ops::deactivate_all_embedding_models(&mut tx).await?;
-        ops::activate_embedding_model(&mut tx, model_id).await?;
-
-        tx.commit().await.map_err(|e| {
-            error!(error = %e, "Failed to commit transaction");
-            AppError::Database(format!("Failed to commit transaction: {}", e))
-        })?;
-
-        Ok(())
-    }
-
     pub async fn list_all(&self) -> Result<Vec<Model>> {
         let mut conn = self.pool.acquire().await?;
         ops::list_all(&mut conn).await
@@ -130,10 +113,6 @@ impl SqliteModelRepository {
 
     pub async fn set_active_chat_model(&self, model_id: &str) -> Result<()> {
         self.set_active_for_chat(model_id).await
-    }
-
-    pub async fn set_active_embedding_model(&self, model_id: &str) -> Result<()> {
-        self.set_active_for_embedding(model_id).await
     }
 
     pub async fn clear_active_chat_model(&self) -> Result<()> {

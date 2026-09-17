@@ -6,7 +6,7 @@ use crate::features::download::download_repository::mock::MockDownloadRepository
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::{
-    DownloadManager, DownloadManagerService, DownloadRequest,
+    DownloadBatchItem, DownloadEvent, DownloadManager, DownloadManagerService, DownloadRequest,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -55,6 +55,54 @@ async fn test_start_download() -> Result<(), Box<dyn std::error::Error>> {
         "Download should be in active or terminal state, got {:?}",
         status.state()
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_is_fully_registered_before_first_started_event(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repository = Arc::new(MockDownloadRepository::new());
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root())
+        .with_max_concurrent(1);
+
+    let mut items = Vec::new();
+    for index in 1..=3 {
+        let url = format!("https://example.com/model-{index}.bin");
+        engine.set_file_size(&url, Some(1000));
+        items.push(DownloadBatchItem {
+            requests: vec![DownloadRequest {
+                url,
+                destination: temp_file(&format!("model-{index}.bin")),
+                checksum: None,
+                auth_token: None,
+                model_name: Some("Qwen embedding".to_string()),
+                model_id: Some("qwen-embedding".to_string()),
+                model_file_name: Some(format!("model-{index}.bin")),
+            }],
+        });
+    }
+
+    let receiver = manager.subscribe_to_events();
+    let mut receiver = receiver
+        .write()
+        .await
+        .take()
+        .ok_or("event receiver already taken")?;
+    let repository_at_event = repository.clone();
+    let event_observer = tokio::spawn(async move {
+        let event = receiver.recv().await;
+        let session_count = repository_at_event.list().await.map(|rows| rows.len());
+        (event, session_count)
+    });
+
+    let ids = manager.start_download_batch(items).await?;
+    let (event, session_count) = event_observer.await?;
+
+    assert_eq!(ids.len(), 3);
+    assert_eq!(session_count?, 3);
+    assert!(matches!(event, Some(DownloadEvent::Started { .. })));
 
     Ok(())
 }
@@ -179,6 +227,35 @@ async fn test_cancel_download() -> Result<(), Box<dyn std::error::Error>> {
         "Download should be in terminal state after cancel, got {:?}",
         status.state()
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn terminal_download_actions_are_idempotent() -> Result<(), Box<dyn std::error::Error>> {
+    let mut session = DownloadSession::new(
+        "completed-download".to_string(),
+        "https://example.com/file.bin".to_string(),
+        temp_file("completed-file.bin"),
+        Some(1000),
+        None,
+    )?;
+    session.start()?;
+    session.update_progress(1000, 0.0);
+    session.complete()?;
+
+    let repository = Arc::new(MockDownloadRepository::new().with_session(session));
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager = DownloadManagerService::new(repository.clone(), engine, temp_root());
+
+    manager.pause_download("completed-download").await?;
+    manager.cancel_download("completed-download").await?;
+
+    let status = repository
+        .get("completed-download")
+        .await?
+        .ok_or("Status not found")?;
+    assert_eq!(status.state(), &DownloadState::Completed);
 
     Ok(())
 }

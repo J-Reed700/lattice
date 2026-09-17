@@ -59,13 +59,14 @@ def main():
             checked.append(row)
         except sqlite3.Error as error:
             failures.append({**row, 'error': str(error)})
-    # Verify the guard rejects the exact obsolete-schema class it was added for.
+    # Verify the guard still rejects the obsolete-schema class it was added for:
+    # a column that no live table has. (`documents` stores `file_name`.)
     try:
-        prepare(connection, 'SELECT files.name FROM files')
+        prepare(connection, 'SELECT documents.name FROM documents')
     except sqlite3.OperationalError:
         pass
     else:
-        raise AssertionError('Obsolete files.name unexpectedly accepted')
+        raise AssertionError('Obsolete documents.name unexpectedly accepted')
     report = {'migrations': len(migrations), 'checked': checked, 'dynamic': dynamic, 'failures': failures}
     if args.json:
         print(json.dumps(report, indent=2))

@@ -235,15 +235,6 @@ pub trait TagServiceTrait: Send + Sync {
     fn merge_tags(&self, existing: Vec<String>, generated: Vec<String>) -> Vec<String>;
 }
 
-/// Trait for file storage operations
-///
-/// Provides content-addressed file storage with deduplication and reference counting.
-/// Files are stored using SHA256 hashes, enabling automatic dedup.
-///
-/// # Implementations
-/// - `FileStorageService`: Production implementation with lattice storage
-/// - `MockFileStorageService`: In-memory mock for testing
-#[async_trait]
 #[async_trait]
 pub trait TagRepositoryTrait: Send + Sync {
     /// Create a new tag (convenience method for tests)

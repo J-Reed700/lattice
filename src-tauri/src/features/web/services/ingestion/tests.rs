@@ -42,6 +42,10 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
     async fn list_articles(&self) -> Result<Vec<PathBuf>> {
         unimplemented!("Not needed for ingestion tests")
     }
+
+    fn owns(&self, path: &Path) -> bool {
+        path.starts_with("/mock/web-archive")
+    }
 }
 
 struct MockEmbeddingService;

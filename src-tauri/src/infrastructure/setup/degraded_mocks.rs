@@ -1,8 +1,6 @@
 use crate::application::ports::batch_job_repository_port::BatchJobStatus;
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
-use crate::features::indexing::engine::progress::IndexProgress;
-use crate::features::indexing::IndexingServiceTrait;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
 use crate::shared::domain_types::ValidatedFilePath;
 use crate::shared::error::{AppError, Result};
@@ -40,70 +38,6 @@ impl BatchFileImportServiceTrait for DegradedBatchFileImportService {
     }
 }
 
-pub struct DegradedIndexingService;
-
-#[async_trait::async_trait]
-impl IndexingServiceTrait for DegradedIndexingService {
-    async fn index_file(
-        &self,
-        _path: std::path::PathBuf,
-    ) -> crate::features::indexing::engine::error::Result<()> {
-        Err(AppError::AiModelsNotInstalled(
-            AI_MODELS_NOT_INSTALLED_MSG.to_string(),
-        ))
-    }
-
-    async fn index_folder(
-        &self,
-        _path: std::path::PathBuf,
-        _recursive: bool,
-    ) -> crate::features::indexing::engine::error::Result<()> {
-        Err(AppError::AiModelsNotInstalled(
-            AI_MODELS_NOT_INSTALLED_MSG.to_string(),
-        ))
-    }
-
-    async fn reindex_file(
-        &self,
-        _path: std::path::PathBuf,
-    ) -> crate::features::indexing::engine::error::Result<()> {
-        Err(AppError::AiModelsNotInstalled(
-            AI_MODELS_NOT_INSTALLED_MSG.to_string(),
-        ))
-    }
-
-    async fn remove_file(
-        &self,
-        _path: std::path::PathBuf,
-    ) -> crate::features::indexing::engine::error::Result<()> {
-        Err(AppError::AiModelsNotInstalled(
-            AI_MODELS_NOT_INSTALLED_MSG.to_string(),
-        ))
-    }
-
-    async fn cancel_all(&self) -> crate::features::indexing::engine::error::Result<()> {
-        Ok(())
-    }
-
-    async fn get_progress(&self) -> IndexProgress {
-        IndexProgress::default()
-    }
-
-    async fn subscribe_progress(&self) -> tokio::sync::broadcast::Receiver<IndexProgress> {
-        let (tx, rx) = tokio::sync::broadcast::channel(1);
-        drop(tx);
-        rx
-    }
-
-    async fn pause_indexing(&self) -> crate::features::indexing::engine::error::Result<()> {
-        Ok(())
-    }
-
-    async fn resume_indexing(&self) -> crate::features::indexing::engine::error::Result<()> {
-        Ok(())
-    }
-}
-
 pub struct DegradedBatchUrlImportService;
 
 #[async_trait::async_trait]
@@ -137,10 +71,6 @@ pub fn create_degraded_web_ingestion() -> Arc<dyn WebIngestionServiceTrait> {
 
 pub fn create_degraded_batch_file_import() -> Arc<dyn BatchFileImportServiceTrait> {
     Arc::new(DegradedBatchFileImportService)
-}
-
-pub fn create_degraded_indexing() -> Arc<dyn IndexingServiceTrait> {
-    Arc::new(DegradedIndexingService)
 }
 
 pub fn create_degraded_batch_url_import() -> Arc<dyn BatchUrlImportServiceTrait> {

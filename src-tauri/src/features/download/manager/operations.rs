@@ -4,7 +4,7 @@
 //! live here; the heavy lifting is delegated to the queue and task modules.
 
 use super::state::{DownloadManagerService, StopReason};
-use super::types::{DownloadEvent, DownloadManager, DownloadRequest};
+use super::types::{DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest};
 use crate::domain::download::{DownloadError, DownloadSession, DownloadState};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -15,6 +15,74 @@ use uuid::Uuid;
 #[async_trait]
 impl DownloadManager for DownloadManagerService {
     async fn start_download(&self, request: DownloadRequest) -> Result<String, DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
+        let id = self.enqueue_download(request).await?;
+
+        info!(download_id = %id, "→ Calling process_queue()...");
+        self.process_queue().await?;
+        info!(download_id = %id, "✓ Queue processed successfully");
+
+        info!(download_id = %id, "✓ start_download() returning ID");
+        Ok(id)
+    }
+
+    async fn start_download_batch(
+        &self,
+        items: Vec<DownloadBatchItem>,
+    ) -> Result<Vec<String>, DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
+        let mut ids = Vec::with_capacity(items.len());
+
+        for item in items {
+            let mut last_error = None;
+            let mut registered_id = None;
+
+            let candidate_count = item.requests.len();
+            for (candidate_index, request) in item.requests.into_iter().enumerate() {
+                match self.enqueue_download(request).await {
+                    Ok(id) => {
+                        registered_id = Some(id);
+                        break;
+                    }
+                    Err(error) => {
+                        let can_try_fallback = candidate_index + 1 < candidate_count
+                            && matches!(error, DownloadError::HttpError { status: 404, .. });
+                        last_error = Some(error);
+                        if !can_try_fallback {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            match registered_id {
+                Some(id) => ids.push(id),
+                None => {
+                    for id in &ids {
+                        self.repository.delete(id).await?;
+                    }
+                    {
+                        let mut queue = self.download_queue.write().await;
+                        queue.retain(|id| !ids.contains(id));
+                    }
+                    {
+                        let mut tokens = self.auth_tokens.write().await;
+                        tokens.retain(|id, _| !ids.contains(id));
+                    }
+                    return Err(last_error.unwrap_or_else(|| {
+                        DownloadError::NetworkError(
+                            "Download batch item has no candidate URLs".to_string(),
+                        )
+                    }));
+                }
+            }
+        }
+
+        self.process_queue().await?;
+        Ok(ids)
+    }
+
+    async fn enqueue_download(&self, request: DownloadRequest) -> Result<String, DownloadError> {
         if request.destination.as_os_str().is_empty() {
             return Err(DownloadError::InvalidDestination(
                 "Destination path cannot be empty".to_string(),
@@ -101,11 +169,7 @@ impl DownloadManager for DownloadManagerService {
             info!(download_id = %id, "✓ Added to download queue");
         }
 
-        info!(download_id = %id, "→ Calling process_queue()...");
-        self.process_queue().await?;
-        info!(download_id = %id, "✓ Queue processed successfully");
-
-        info!(download_id = %id, "✓ start_download() returning ID");
+        info!(download_id = %id, "✓ enqueue_download() returning ID");
         Ok(id)
     }
 
@@ -115,6 +179,14 @@ impl DownloadManager for DownloadManagerService {
             .get(id)
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
+
+        // UI state can lag a fast completion event. Treat a pause that loses
+        // that race as already settled instead of surfacing an impossible
+        // Completed -> Paused transition to the user.
+        if session.state().is_terminal() {
+            debug!(download_id = %id, state = ?session.state(), "Ignoring pause for terminal download");
+            return Ok(());
+        }
 
         session.pause()?;
         self.repository.update(&session).await?;
@@ -164,6 +236,7 @@ impl DownloadManager for DownloadManagerService {
         session.resume()?;
         self.repository.update(&session).await?;
 
+        let _queue_guard = self.queue_gate.lock().await;
         {
             let mut queue = self.download_queue.write().await;
             queue.push_back(id.to_string());
@@ -187,6 +260,13 @@ impl DownloadManager for DownloadManagerService {
             .get(id)
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
+
+        // Cancellation is idempotent from the caller's perspective. This also
+        // handles completion winning the race after the cancel button renders.
+        if session.state().is_terminal() {
+            debug!(download_id = %id, state = ?session.state(), "Ignoring cancel for terminal download");
+            return Ok(());
+        }
 
         session.cancel()?;
         self.repository.update(&session).await?;
@@ -241,6 +321,7 @@ impl DownloadManager for DownloadManagerService {
         session.manual_retry()?;
         self.repository.update(&session).await?;
 
+        let _queue_guard = self.queue_gate.lock().await;
         // Queue for download (reuse existing queue logic)
         {
             let mut queue = self.download_queue.write().await;
@@ -318,6 +399,7 @@ impl DownloadManager for DownloadManagerService {
     }
 
     async fn process_pending_queue(&self) -> Result<(), DownloadError> {
+        let _queue_guard = self.queue_gate.lock().await;
         self.process_queue().await
     }
 

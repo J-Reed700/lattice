@@ -130,7 +130,6 @@ use crate::application::ports::{
 // Service Traits
 use crate::features::batch::{BatchFileImportServiceTrait, BatchUrlImportServiceTrait};
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::indexing::IndexingServiceTrait;
 use crate::features::qa::ConversationalQAServiceTrait;
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
 use crate::features::tags::TagServiceTrait;
@@ -306,8 +305,15 @@ impl SearchModule {
         self.embedding_strategy
     }
 
+    pub(crate) fn runtime_index(
+        &self,
+    ) -> Arc<crate::features::search::engine::vector_search::runtime_index::RuntimeVectorIndex>
+    {
+        self.search.runtime_index.clone()
+    }
+
     pub fn embedding_identity(&self) -> Option<&str> {
-        self.search.embedding_identity.as_deref()
+        self.search.runtime_index.identity()
     }
 
     pub fn semantic_search_use_case(&self) -> &Arc<SemanticSearchUseCase> {
@@ -501,13 +507,20 @@ impl IndexingModule {
         model_provider: Arc<dyn crate::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,
     ) -> crate::shared::error::Result<Self> {
+        let model_dir = core.data_dir().join("models");
+        // Web first: deletion routes archived articles back through the very
+        // archive service that wrote them, so indexing needs that instance.
+        let web = crate::features::web::di::build(
+            db_pool.clone(),
+            &model_dir,
+            Arc::clone(&model_provider),
+        )?;
         let indexing = crate::features::indexing::di::build(
             db_pool.clone(),
-            model_provider.clone(),
+            model_provider,
             vector_search,
+            web.web_archive.clone(),
         )?;
-        let model_dir = core.data_dir().join("models");
-        let web = crate::features::web::di::build(db_pool.clone(), &model_dir, model_provider)?;
         let batch = crate::features::batch::di::build(
             indexing.batch_job_repo.clone(),
             indexing.index_file_use_case.clone(),
@@ -600,8 +613,9 @@ impl IndexingModule {
         &self.indexing.indexing_state
     }
 
-    pub fn indexing_service(&self) -> &Arc<dyn IndexingServiceTrait> {
-        &self.indexing.indexing_service
+    /// Collector for unreferenced blobs in the imported-file library.
+    pub fn library_gc(&self) -> &Arc<crate::features::indexing::LibraryGc> {
+        &self.indexing.library_gc
     }
 
     pub fn web_ingestion_service(&self) -> &Arc<dyn WebIngestionServiceTrait> {

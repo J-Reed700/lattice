@@ -6,10 +6,8 @@
 
 mod article_extractor;
 mod context;
-mod file_storage;
 mod model;
 
 pub use article_extractor::*;
 pub use context::*;
-pub use file_storage::*;
 pub use model::*;

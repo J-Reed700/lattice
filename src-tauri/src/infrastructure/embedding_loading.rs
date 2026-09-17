@@ -11,8 +11,9 @@ use std::sync::Arc;
 pub(crate) struct EmbeddingLoader {
     pub downloaded_models: Arc<DownloadedModelRepository>,
     pub security: Arc<SecurityContext>,
-    pub expected_dimension: usize,
-    pub expected_identity: Option<String>,
+    pub index:
+        Arc<crate::features::search::engine::vector_search::runtime_index::RuntimeVectorIndex>,
+    pub pool: sqlx::SqlitePool,
     /// How chunk vectors are produced, straight from the user's settings.
     ///
     /// The strategy is part of the vector space, not a detail of inference:
@@ -94,35 +95,46 @@ impl EmbeddingLoader {
             ))
         })?;
 
+        // Activation records the identity; a local active model without one
+        // means the row was written outside the repository's guard.
+        let Some(identity) = active_model.embedding_artifact_identity().cloned() else {
+            tracing::error!(
+                model_id = %active_model.model_id(),
+                "Active embedding model has no recorded artifact identity"
+            );
+            return Err(AppError::ModelLoadFailed(
+                "Embedding model has no recorded identity. Activate it again in Settings.".into(),
+            ));
+        };
+
         tracing::info!(
             "Loading Candle embedding model from validated dir: {}",
             model_dir.display()
         );
 
-        match CandleEmbeddingService::new(&model_dir).map(|s| s.with_strategy(self.strategy)) {
+        // mmap and Metal initialization block; keep them off the runtime thread.
+        let strategy = self.strategy;
+        let load_dir = model_dir.clone();
+        let loaded = tokio::task::spawn_blocking(move || {
+            CandleEmbeddingService::open(&load_dir, identity).map(|s| s.with_strategy(strategy))
+        })
+        .await
+        .unwrap_or_else(|e| {
+            Err(AppError::InternalError(format!(
+                "Embedding model load task failed: {e}"
+            )))
+        });
+
+        match loaded {
             Ok(service) => {
-                if self.expected_identity.as_deref() != Some(service.model_identity().as_str()) {
-                    return Err(AppError::ModelLoadFailed("Embedding model changed. Restart Lattice to open its prepared search generation.".into()));
-                }
-                let expected_dim = self.expected_dimension;
+                self.index
+                    .bind_first(&self.pool, &service, self.strategy.is_late_chunking())
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to initialize embedding search index");
+                        AppError::ModelLoadFailed(e.to_string())
+                    })?;
                 let actual_dim = service.dimension();
-                if actual_dim != expected_dim {
-                    tracing::error!(
-                        "Embedding dimension mismatch: model '{}' produces {}-dim vectors \
-                         but the vector index expects {}-dim. Restart the app to rebuild \
-                         the index at the new dimension.",
-                        active_model.model_name(),
-                        actual_dim,
-                        expected_dim
-                    );
-                    return Err(AppError::ModelLoadFailed(format!(
-                        "Model '{}' produces {}-dimensional embeddings but the search index \
-                         requires {}. Restart the app to migrate the index.",
-                        active_model.model_name(),
-                        actual_dim,
-                        expected_dim
-                    )));
-                }
 
                 tracing::info!(
                     "Successfully loaded active embedding model: {} ({}-dim, {:?})",

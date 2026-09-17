@@ -398,11 +398,9 @@ mod tests {
     use crate::features::tags::TagServiceTrait;
     use crate::features::web::mocks::MockWebIngestionService;
     use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
-    use crate::infrastructure::services::mocks::{
-        MockFileStorageService, MockModelManager, MockSearchEnrichmentService,
-    };
+    use crate::infrastructure::services::mocks::{MockModelManager, MockSearchEnrichmentService};
     use crate::infrastructure::services::traits::{
-        FileStorageServiceTrait, ModelManagerTrait, SearchEnrichmentServiceTrait,
+        ModelManagerTrait, SearchEnrichmentServiceTrait,
     };
 
     #[tokio::test]
@@ -491,28 +489,6 @@ mod tests {
         let tag2 = service.get_or_create("rust", "#000000").await.unwrap();
         assert_eq!(tag.id(), tag2.id());
         assert_eq!(tag2.color(), "#ff5733"); // Original color preserved
-    }
-
-    #[tokio::test]
-    async fn test_mock_file_storage() {
-        use crate::shared::domain_types::ValidatedFilePath;
-        use std::path::PathBuf;
-
-        let service = MockFileStorageService::new();
-
-        let path = PathBuf::from("/test/file.txt");
-        let validated_path = ValidatedFilePath::new(path.clone()).unwrap();
-        let record = service
-            .store_file(validated_path, "text/plain", None)
-            .await
-            .unwrap();
-
-        assert!(!record.id.is_empty());
-        assert_eq!(record.mime_type, "text/plain");
-
-        // Retrieve path
-        let retrieved_path = service.get_file_path(&record.id).await.unwrap();
-        assert_eq!(retrieved_path, path);
     }
 
     #[tokio::test]

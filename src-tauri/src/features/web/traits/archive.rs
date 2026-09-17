@@ -195,4 +195,12 @@ pub trait WebArchiveServiceTrait: Send + Sync {
     /// # }
     /// ```
     async fn list_articles(&self) -> Result<Vec<PathBuf>>;
+
+    /// True when `path` is inside this archive.
+    ///
+    /// Web documents keep the article path in `documents.file_path`, and
+    /// deletion has to tell an archived article apart from a library blob or a
+    /// file the user keeps somewhere of their own. Only the archive knows
+    /// where its own base directory is, so only it can answer.
+    fn owns(&self, path: &Path) -> bool;
 }
