@@ -875,6 +875,15 @@ class CliTests(TempDirTestCase):
         self.assertIn("    skip: Vulkan loader not installed on this host; static checks passed", out)
         self.assertIn("0 passed, 0 failed, 1 skipped", out)
 
+    def test_strict_fails_skipped_runs(self):
+        self.write(LINUX, GOOD_BLOBS[LINUX](), self.bin)
+        result = vb.RunResult(127, VulkanLoaderClassificationTests.LINUX_MISSING)
+        with mock.patch.object(vb, "host_platform", return_value=("linux", "x86_64")), \
+                mock.patch.object(vb, "run_isolated", return_value=result):
+            code, out = self.main("--lock", str(self.lock), "--run", "--strict", str(self.bin))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL --strict: every binary for this host must run", out)
+
     def test_empty_directory_fails(self):
         code, out = self.main("--lock", str(self.lock), str(self.bin))
         self.assertEqual(code, 1, out)

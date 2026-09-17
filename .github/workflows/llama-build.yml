@@ -49,6 +49,7 @@ concurrency:
 env:
   LOCK: src-tauri/scripts/llama-server.lock
   VERIFY: src-tauri/scripts/verify_llama_binaries.py
+  VULKAN_SDK_VERSION: 1.3.290.0
 
 jobs:
   pin:
@@ -138,16 +139,21 @@ jobs:
         if: matrix.vulkan
         uses: jakoch/install-vulkan-sdk-action@v1.6.0
         with:
-          vulkan_version: 1.3.290.0
+          vulkan_version: ${{ env.VULKAN_SDK_VERSION }}
           install_runtime: true
           cache: true
           stripdown: true
 
-      # The smoke test runs with a scrubbed environment, so the loader must be
-      # installed system-wide as it is on users' machines.
-      - name: Install Vulkan loader
+      # Users' GPU drivers install the Vulkan loader system-wide. Mirror that so
+      # the smoke test (scrubbed environment) runs the binary instead of skipping.
+      - name: Install Vulkan loader (Linux)
         if: matrix.vulkan && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libvulkan1
+
+      - name: Install Vulkan loader (Windows)
+        if: matrix.vulkan && runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "C:\VulkanSDK\$env:VULKAN_SDK_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
 
       # Full commit history without file contents, so the binary reports the
       # real build number instead of `1`.
@@ -226,7 +232,7 @@ jobs:
         shell: bash
         run: |
           grep -v '^sha256 ' "$LOCK" > "$RUNNER_TEMP/unhashed.lock"
-          python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --run "staging/${{ matrix.file }}"
+          python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --run --strict "staging/${{ matrix.file }}"
 
       - uses: actions/upload-artifact@v7
         with:

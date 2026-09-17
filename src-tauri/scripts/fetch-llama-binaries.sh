@@ -12,7 +12,8 @@
 #   bash scripts/fetch-llama-binaries.sh               install / repair
 #   bash scripts/fetch-llama-binaries.sh --check       verify what is installed, download nothing
 #   bash scripts/fetch-llama-binaries.sh --update-lock after publishing a release: pin its hashes
-#   add --no-run to skip executing the host binary
+#   add --no-run to skip executing the host binary, or --strict to fail when a
+#   Vulkan build can't be run because this machine has no Vulkan loader (CI)
 #
 # Downloads use `gh` when it is installed and authenticated, otherwise curl
 # (the release repository is public).
@@ -36,16 +37,22 @@ FILES=(
 )
 
 MODE=install
-RUN_FLAG=--run
+RUN=1
+STRICT=
 for arg in "$@"; do
   case "$arg" in
     --check) MODE=check ;;
     --update-lock) MODE=update-lock ;;
-    --no-run) RUN_FLAG= ;;
-    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-run) RUN=0 ;;
+    --strict) STRICT=--strict ;;
+    -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown argument '$arg' (see --help)" >&2; exit 2 ;;
   esac
 done
+RUN_FLAG=
+if [[ $RUN -eq 1 ]]; then
+  RUN_FLAG="--run $STRICT"
+fi
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -78,7 +85,7 @@ done
 [[ -n "$PYTHON" ]] || die "python >= 3.9 is required to verify the binaries"
 
 verify() {
-  # shellcheck disable=SC2086 # RUN_FLAG is intentionally empty or one word
+  # shellcheck disable=SC2086 # RUN_FLAG is intentionally empty or split into flags
   "$PYTHON" "$VERIFY" --lock "$LOCK" --expect-all $RUN_FLAG "$@"
 }
 

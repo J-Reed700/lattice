@@ -11,12 +11,12 @@ accepts dependencies that every supported user machine provides.
 Usage (Python >= 3.9, standard library only, any working directory):
 
     python3 src-tauri/scripts/verify_llama_binaries.py \
-        [--lock PATH] [--require-hashes] [--run] [--expect-all] PATH...
+        [--lock PATH] [--require-hashes] [--run] [--strict] [--expect-all] PATH...
 
 PATH is a binary or a directory; a directory contributes every
 `llama-server-*` file inside it. Exit status: 0 when every binary passed (or
-was skipped only because this host lacks the Vulkan loader), 1 when any check
-failed, 2 for usage or lock-file errors.
+was skipped only because this host lacks the Vulkan loader, unless --strict),
+1 when any check failed, 2 for usage or lock-file errors.
 
 Checks, per binary (the target comes from the file name):
   * format and architecture match the target;
@@ -1127,6 +1127,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="fail when the lock pins no sha256 hashes")
     parser.add_argument("--run", action="store_true",
                         help="also run `--version` for binaries built for this host")
+    parser.add_argument("--strict", action="store_true",
+                        help="with --run, fail binaries whose run was skipped for a missing "
+                             "Vulkan loader (for hosts that are expected to provide one)")
     parser.add_argument("--expect-all", action="store_true",
                         help=f"fail unless all {len(EXPECTED_FILES)} release files are present")
     return parser
@@ -1158,6 +1161,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _say(format_report(report))
 
     failed = counts["FAIL"] > 0
+    if args.strict and counts["SKIP"]:
+        _say("FAIL --strict: every binary for this host must run, but some were skipped")
+        failed = True
     if not files:
         _say(f"FAIL no llama-server-* binaries found in: {', '.join(args.paths)}")
         failed = True
