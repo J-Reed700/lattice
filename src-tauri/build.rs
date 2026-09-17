@@ -403,16 +403,29 @@ fn main() {
     }
 }
 
-/// Refuses release builds whose bundled `llama-server` sidecars are missing,
-/// placeholders, unpinned or different from `scripts/llama-server.lock`, or
-/// whose Tauri config drifted from the sidecar policy. Debug builds only warn
-/// (CI checks debug builds against empty placeholder sidecars).
+/// The tauri CLI exports this to the cargo it drives, for `dev` as well as
+/// for `build` (including `build --debug`). Plain `cargo check`/`test`/
+/// `clippy` — what CI and editors run, against empty placeholder sidecars —
+/// never sets it.
+const TAURI_CLI_ENV: &str = "TAURI_CLI_VERBOSITY";
+
+/// Refuses any build whose bundled `llama-server` sidecars are unpinned or
+/// different from `scripts/llama-server.lock`, or whose Tauri config drifted
+/// from the lock. A *missing* sidecar is fatal whenever an app is actually
+/// produced — a release build, or anything the tauri CLI drives — and only a
+/// warning for a bare `cargo check`, which compiles source and ships nothing.
+///
+/// `LATTICE_ALLOW_UNPINNED_SIDECAR=1` lets a developer build against a
+/// hand-built sidecar. It works in debug builds only and says so loudly; a
+/// release build refuses it outright, so no combination of flags can wrap a
+/// bundle around a binary the lock has not vouched for.
 ///
 /// Returns `false` when the build must fail.
 fn guard_llama_sidecar() -> bool {
     use sidecar_guard::ALLOW_UNPINNED_ENV;
 
     println!("cargo::rerun-if-env-changed={ALLOW_UNPINNED_ENV}");
+    println!("cargo::rerun-if-env-changed={TAURI_CLI_ENV}");
     println!("cargo::rerun-if-env-changed=TAURI_CONFIG");
     let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default());
     let target = env::var("TARGET").unwrap_or_default();
@@ -421,35 +434,58 @@ fn guard_llama_sidecar() -> bool {
     for path in &evaluation.watched {
         println!("cargo::rerun-if-changed={}", path.display());
     }
-    if evaluation.problems.is_empty() {
-        return true;
-    }
 
-    if env::var("PROFILE").as_deref() != Ok("release") {
-        for problem in &evaluation.problems {
-            println!("cargo::warning=llama-server sidecar (not enforced in debug): {problem}");
-        }
-        return true;
-    }
-
-    if env::var(ALLOW_UNPINNED_ENV).as_deref() == Ok("1") {
+    let is_release = env::var("PROFILE").as_deref() == Ok("release");
+    let allow_unpinned = env::var(ALLOW_UNPINNED_ENV).as_deref() == Ok("1");
+    if is_release && allow_unpinned {
         println!(
-            "cargo::warning=!!!!!!!! {ALLOW_UNPINNED_ENV}=1: this RELEASE build for {target} \
-             bundles an UNVERIFIED llama-server sidecar. DO NOT SHIP OR PUBLISH IT. !!!!!!!!"
+            "cargo::error={ALLOW_UNPINNED_ENV}=1 is set, but it is a debug-only escape hatch: a \
+             release build never ships a sidecar the lock has not vouched for. Unset it, then \
+             run: bash src-tauri/scripts/fetch-llama-binaries.sh"
         );
-        for problem in &evaluation.problems {
-            println!("cargo::warning=!!!!!!!! {problem}");
+        return false;
+    }
+
+    let mut fatal: Vec<&String> = evaluation.problems.iter().collect();
+    if is_release || env::var_os(TAURI_CLI_ENV).is_some() {
+        fatal.extend(&evaluation.placeholders);
+    } else {
+        for problem in &evaluation.placeholders {
+            println!(
+                "cargo::warning=no llama-server sidecar, so this build cannot run a local \
+                 model: {problem}"
+            );
         }
+    }
+    if fatal.is_empty() {
         return true;
     }
 
-    println!("cargo::error=llama-server sidecar guard: refusing to build a release for {target}:");
-    for problem in &evaluation.problems {
+    if allow_unpinned {
+        let banner = "!".repeat(72);
+        println!("cargo::warning={banner}");
+        println!(
+            "cargo::warning=! {ALLOW_UNPINNED_ENV}=1: this build for {target} uses an UNVERIFIED"
+        );
+        println!(
+            "cargo::warning=! llama-server sidecar. It is a debug build; DO NOT DISTRIBUTE IT."
+        );
+        for problem in fatal {
+            println!("cargo::warning=!   - {problem}");
+        }
+        println!("cargo::warning={banner}");
+        return true;
+    }
+
+    println!("cargo::error=llama-server sidecar guard: refusing to build for {target}:");
+    for problem in fatal {
         println!("cargo::error=  - {problem}");
     }
-    println!(
-        "cargo::error=(local experiments only: {ALLOW_UNPINNED_ENV}=1 downgrades these errors \
-         to warnings; never ship such a build)"
-    );
+    if !is_release {
+        println!(
+            "cargo::error=(local experiments only: {ALLOW_UNPINNED_ENV}=1 downgrades these \
+             errors to warnings in a debug build; a release build refuses it)"
+        );
+    }
     false
 }

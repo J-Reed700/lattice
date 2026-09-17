@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import json
 import os
 import struct
 import subprocess
@@ -148,7 +149,8 @@ GLIBC_OK = (("libc.so.6", "GLIBC_2.2.5"), ("libc.so.6", "GLIBC_2.34"), ("libm.so
 
 
 def build_elf(*, needed=("libm.so.6", "libc.so.6"), versions=GLIBC_OK, rpath=None, runpath=None,
-              interp=vb.LINUX_INTERPRETER, machine=vb.EM_X86_64, dynamic=True) -> bytes:
+              interp=vb.LINUX_INTERPRETER, machine=vb.EM_X86_64, dynamic=True,
+              elf_type=vb.ET_DYN, entry=0x1000) -> bytes:
     base = 0x400000
     strtab = bytearray(b"\0")
 
@@ -205,7 +207,8 @@ def build_elf(*, needed=("libm.so.6", "libc.so.6"), versions=GLIBC_OK, rpath=Non
     if dynamic:
         phdrs += phdr(vb.PT_DYNAMIC, dyn_off, len(dyn_bytes))
     ident = b"\x7fELF" + bytes([vb.ELFCLASS64, vb.ELFDATA2LSB, 1, 3]) + b"\0" * 8
-    ehdr = ident + struct.pack("<HHIQQQIHHHHHH", 3, machine, 1, 0, 64, 0, 0, 64, 56, phnum, 64, 0, 0)
+    ehdr = ident + struct.pack("<HHIQQQIHHHHHH", elf_type, machine, 1, entry, 64, 0, 0, 64, 56,
+                               phnum, 64, 0, 0)
     out = ehdr + phdrs + interp_bytes + bytes(strtab) + bytes(verneed)
     if dynamic:
         out += dyn_bytes
@@ -222,7 +225,7 @@ WIN_SYSTEM_IMPORTS = ("KERNEL32.dll", "ADVAPI32.dll", "WS2_32.dll",
 
 def build_pe(*, imports=WIN_SYSTEM_IMPORTS, delay_imports=(), delay_va_form=False,
              image_base=0x140000000, machine=vb.IMAGE_FILE_MACHINE_AMD64,
-             magic=vb.PE32_PLUS_MAGIC, characteristics=0x0022) -> bytes:
+             magic=vb.PE32_PLUS_MAGIC, characteristics=0x0022, entry_point=0x1000) -> bytes:
     section_rva, section_raw = 0x1000, 0x400
     imports, delay_imports = tuple(imports), tuple(delay_imports)
     import_len = 20 * (len(imports) + 1) if imports else 0
@@ -251,6 +254,7 @@ def build_pe(*, imports=WIN_SYSTEM_IMPORTS, delay_imports=(), delay_va_form=Fals
 
     opt = bytearray(240)
     struct.pack_into("<H", opt, 0, magic)
+    struct.pack_into("<I", opt, 16, entry_point)
     struct.pack_into("<Q", opt, 24, image_base)
     struct.pack_into("<II", opt, 32, 0x1000, 0x200)
     struct.pack_into("<II", opt, 56, 0x3000, section_raw)
@@ -290,9 +294,10 @@ class TempDirTestCase(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def write(self, name: str, blob: bytes, directory: Path = None) -> Path:
+    def write(self, name: str, blob: bytes, directory: Path = None, mode: int = 0o755) -> Path:
         path = (directory or self.dir) / name
         path.write_bytes(blob)
+        path.chmod(mode)  # a release file is executable; the verifier checks it
         return path
 
     def verify(self, name: str, blob: bytes, lock=LOCK, **kwargs) -> vb.Report:
@@ -495,6 +500,20 @@ class ElfTests(TempDirTestCase):
             with self.subTest(blob=label):
                 self.assertFailsWith(self.verify(LINUX_CPU, blob), "not a valid ELF executable")
 
+    def test_only_a_program_passes(self):
+        # A relocatable object or a core dump parses as ELF64 x86-64 and has
+        # nothing else to check, so the type is the only thing that rejects it.
+        for elf_type in (0, vb.ET_REL, 4):
+            with self.subTest(elf_type=elf_type):
+                report = self.verify(LINUX_CPU, build_elf(elf_type=elf_type))
+                self.assertFailsWith(report, "expected ET_EXEC or ET_DYN")
+        bare = (b"\x7fELF" + bytes([vb.ELFCLASS64, vb.ELFDATA2LSB, 1, 0]) + b"\0" * 8
+                + struct.pack("<HH", vb.ET_REL, vb.EM_X86_64) + b"\0" * 44)
+        self.assertEqual(len(bare), 64)
+        self.assertFailsWith(self.verify(LINUX_CPU, bare), "ELF type is ET_REL")
+        self.assertFailsWith(self.verify(LINUX_CPU, build_elf(entry=0)),
+                             "ELF entry point is 0")
+
 
 class PeTests(TempDirTestCase):
     def test_system_dlls_pass_case_insensitively(self):
@@ -544,6 +563,12 @@ class PeTests(TempDirTestCase):
         report = self.verify(WIN_CPU, build_pe(characteristics=0x2022))
         self.assertFailsWith(report, "image is a DLL")
 
+    def test_only_a_program_passes(self):
+        report = self.verify(WIN_CPU, build_pe(characteristics=0x0020))
+        self.assertFailsWith(report, "IMAGE_FILE_EXECUTABLE_IMAGE is not set")
+        self.assertFailsWith(self.verify(WIN_CPU, build_pe(entry_point=0)),
+                             "entry point RVA is 0")
+
     def test_other_formats_and_truncation_fail_cleanly(self):
         for label, blob in (("elf", build_elf()), ("empty", b""), ("truncated", build_pe()[:0x100]),
                             ("no-pe-signature", b"MZ" + b"\0" * 0x80)):
@@ -584,6 +609,64 @@ class HashAndNameTests(TempDirTestCase):
                 self.assertFailsWith(self.verify(name, build_elf()), "unrecognized file name")
 
 
+@unittest.skipIf(os.name == "nt", "Windows file systems have no executable bit")
+class ExecutableBitTests(TempDirTestCase):
+    """A sidecar without +x only fails when the app first spawns it."""
+
+    def test_missing_executable_bit_fails(self):
+        for name in (MAC, LINUX_CPU):
+            with self.subTest(name=name):
+                path = self.write(name, GOOD_BLOBS[name](), mode=0o644)
+                self.assertFailsWith(vb.verify_file(path, LOCK), "not executable (mode -rw-r--r--)")
+
+    def test_any_execute_bit_is_enough(self):
+        for mode in (0o755, 0o700, 0o544):
+            with self.subTest(mode=oct(mode)):
+                self.assertPasses(vb.verify_file(self.write(LINUX_CPU, build_elf(), mode=mode), LOCK))
+
+    def test_windows_targets_are_exempt(self):
+        # Neither a Windows target nor an NTFS host has such a bit; requiring
+        # one would only fail on the POSIX host that staged the release.
+        for name in (WIN, WIN_CPU):
+            with self.subTest(name=name):
+                path = self.write(name, GOOD_BLOBS[name](), mode=0o644)
+                self.assertPasses(vb.verify_file(path, LOCK))
+
+
+class SingleSourceOfTruthTests(unittest.TestCase):
+    """The file list lives in TARGETS; nothing else may repeat it."""
+
+    REPO_ROOT = SCRIPT_DIR.parents[1]
+    CONSUMERS = (SCRIPT_DIR / "fetch-llama-binaries.sh",
+                 REPO_ROOT / ".github/workflows/llama-build.yml")
+
+    def test_print_targets_covers_every_release_file(self):
+        self.assertEqual(vb.print_targets("files").splitlines(), list(vb.EXPECTED_FILES))
+        matrix = json.loads(vb.print_targets("matrix"))["include"]
+        self.assertEqual([entry["file"] for entry in matrix], list(vb.EXPECTED_FILES))
+        for entry in matrix:
+            self.assertTrue(entry["os"] and entry["name"], entry)
+            self.assertEqual(entry["vulkan"], vb.TARGETS[entry["file"]].uses_vulkan)
+        self.assertEqual(len(vb.print_targets("markdown").splitlines()), len(vb.EXPECTED_FILES))
+
+    def test_consumers_do_not_name_the_release_files(self):
+        for path in self.CONSUMERS:
+            with self.subTest(file=path.name):
+                text = path.read_text(encoding="utf-8")
+                for name in vb.EXPECTED_FILES:
+                    self.assertNotIn(name, text, f"{path.name} keeps its own copy of {name}")
+
+    def test_metal_bf16_is_tied_to_the_advertised_macos_floor(self):
+        # Metal `bfloat` needs macOS 14; the shaders are compiled on the user's
+        # machine, so a 13.x failure is invisible to every CI job.
+        workflow = (self.REPO_ROOT / ".github/workflows/llama-build.yml").read_text(encoding="utf-8")
+        major = vb.parse_version(vb.parse_lock(vb.DEFAULT_LOCK).macos_min)[0]
+        if major < 14:
+            self.assertNotIn("GGML_METAL_USE_BF16", vb.TARGETS[MAC].cmake_backend)
+            if "GGML_METAL_USE_BF16" in workflow:
+                self.assertIn('"${macos_min%%.*}" -ge 14', workflow)
+
+
 class LockParserTests(TempDirTestCase):
     def parse(self, text: str) -> vb.Lock:
         path = self.dir / "llama-server.lock"
@@ -596,7 +679,7 @@ class LockParserTests(TempDirTestCase):
         self.assertIn(fragment, str(ctx.exception))
 
     def test_valid_lock(self):
-        digest = "AB" * 32
+        digest = "ab" * 32
         lock = self.parse(LOCK_TEXT + f"sha256 {digest} {MAC}\n  # indented comment\n")
         self.assertEqual((lock.llama_cpp_tag, lock.release, lock.repo, lock.macos_min, lock.glibc_max),
                          ("b1", "llama/b1-r1", "owner/repo", "13.3", "2.35"))
@@ -619,7 +702,8 @@ class LockParserTests(TempDirTestCase):
             "no value": (LOCK_TEXT.replace("repo owner/repo", "repo"), "expected `repo <value>`"),
             "bad version": (LOCK_TEXT.replace("macos_min 13.3", "macos_min thirteen"),
                             "macos_min must be a dotted version"),
-            "short hash": (LOCK_TEXT + f"sha256 abc {MAC}\n", "not a 64-digit hex sha256"),
+            "short hash": (LOCK_TEXT + f"sha256 abc {MAC}\n",
+                           "not a lowercase 64-digit hex sha256"),
             "hash arity": (LOCK_TEXT + f"sha256 {'a' * 64}\n", "expected `sha256 <hex> <file>`"),
             "hash path": (LOCK_TEXT + f"sha256 {'a' * 64} bin/{MAC}\n", "bare file name"),
             "duplicate hash": (LOCK_TEXT + f"sha256 {'a' * 64} {MAC}\nsha256 {'b' * 64} {MAC}\n",
@@ -631,6 +715,28 @@ class LockParserTests(TempDirTestCase):
 
     def test_error_names_the_line(self):
         self.assertRejected(LOCK_TEXT + "bogus 1\n", "llama-server.lock:8:")
+
+    def test_semantics_match_the_rust_guard(self):
+        # build_support/sidecar_guard.rs::lock_semantics_match_the_python_verifier
+        # pins the other half of this: a lock is valid for both parsers or for
+        # neither, and they read the same meaning out of it.
+        self.assertRejected(LOCK_TEXT + f"sha256 {'A' * 64} {MAC}\n", "lowercase")
+        for text in ("13", "13.3", "13.3.0"):
+            self.assertEqual(self.parse(self.written(f"macos_min {text}")).macos_min, text)
+        for text in ("13.", "13.3.0.1", "thirteen", "13.3-beta", "v13"):
+            with self.subTest(version=text):
+                self.assertRejected(self.written(f"macos_min {text}"), "dotted version")
+                self.assertRejected(self.written(f"glibc_max {text}"), "dotted version")
+        # Trailing zeros are padding, not a newer version.
+        equal = (vb.parse_version("13.3"), vb.parse_version("13.3.0"))
+        self.assertTrue(vb.version_le(*equal) and vb.version_le(*reversed(equal)))
+        self.assertFalse(vb.version_le(vb.parse_version("13.4"), vb.parse_version("13.3")))
+
+    def written(self, line: str) -> str:
+        """LOCK_TEXT with `line`'s key replaced by it."""
+        key = line.split(" ", 1)[0]
+        return "".join(line + "\n" if other.startswith(f"{key} ") else other + "\n"
+                       for other in LOCK_TEXT.splitlines())
 
     def test_unreadable_lock(self):
         with self.assertRaises(vb.LockError):
@@ -894,6 +1000,35 @@ class CliTests(TempDirTestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("FAIL --strict: every binary for this host must run", out)
 
+    def test_run_only_flags_are_never_silently_ignored(self):
+        self.populate()
+        for flag in ("--strict", "--require-run"):
+            with self.subTest(flag=flag):
+                code, out = self.main("--lock", str(self.lock), flag, str(self.bin))
+                self.assertEqual(code, 2, out)
+                self.assertIn(f"{flag} requires --run", out)
+
+    def test_require_run_needs_an_executed_binary(self):
+        # Pinning a hash is a promise that the build works, so the caller must
+        # be able to insist that something really ran.
+        self.write(LINUX, GOOD_BLOBS[LINUX](), self.bin)
+        with mock.patch.object(vb, "host_platform", return_value=("macos", "aarch64")):
+            code, out = self.main("--lock", str(self.lock), "--run", "--require-run", str(self.bin))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL --require-run: no binary was executed (host is aarch64 macos)", out)
+
+        result = vb.RunResult(0, "version: 8981 (abc)")
+        with mock.patch.object(vb, "host_platform", return_value=("linux", "x86_64")), \
+                mock.patch.object(vb, "run_isolated", return_value=result):
+            code, out = self.main("--lock", str(self.lock), "--run", "--require-run", str(self.bin))
+        self.assertEqual(code, 0, out)
+
+    def test_print_targets_needs_no_lock_or_paths(self):
+        code, out = self.main("--lock", str(self.dir / "missing.lock"), "--print-targets", "files")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.split(), list(vb.EXPECTED_FILES))
+        self.assertEqual(self.main("--print-targets", "elvish")[0], 2)
+
     def test_empty_directory_fails(self):
         code, out = self.main("--lock", str(self.lock), str(self.bin))
         self.assertEqual(code, 1, out)
@@ -923,6 +1058,41 @@ class CliTests(TempDirTestCase):
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertIn(b"no llama-server-* binaries found", proc.stdout)
+
+
+@unittest.skipIf(os.name == "nt", "the fetch script needs bash")
+class FetchScriptFlagTests(unittest.TestCase):
+    """fetch-llama-binaries.sh rejects flag combinations it cannot honour.
+
+    These run the real script; every case is refused before it reads the lock
+    or reaches the network.
+    """
+
+    SCRIPT = SCRIPT_DIR / "fetch-llama-binaries.sh"
+
+    def run_script(self, *args):
+        proc = subprocess.run(["bash", str(self.SCRIPT), *args], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=60)
+        return proc.returncode, proc.stdout.decode()
+
+    def test_contradictory_flags_are_refused(self):
+        cases = (
+            (("--no-run", "--strict"), "cannot be combined with --no-run"),
+            (("--update-lock", "--no-run"), "must run the binaries it pins"),
+            (("--repin",), "--repin only applies to --update-lock"),
+            (("--check", "--repin"), "--repin only applies to --update-lock"),
+            (("--bogus",), "unknown argument"),
+        )
+        for args, fragment in cases:
+            with self.subTest(args=args):
+                code, out = self.run_script(*args)
+                self.assertEqual(code, 2, out)
+                self.assertIn(fragment, out)
+
+    def test_help_documents_repin(self):
+        code, out = self.run_script("--help")
+        self.assertEqual(code, 0, out)
+        self.assertIn("--repin", out)
 
 
 @unittest.skipUnless(os.environ.get("VERIFY_LLAMA_REAL_BINARIES"),

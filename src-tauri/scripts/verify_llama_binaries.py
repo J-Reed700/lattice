@@ -8,10 +8,18 @@ Homebrew. This verifier reads the executable formats itself (Mach-O, ELF, PE,
 parsed with `struct`), so any host can check every target, and it only
 accepts dependencies that every supported user machine provides.
 
+This file is also the single source of truth for *which* sidecars exist: the
+`TARGETS` table below names every release file with its triple, backend, CI
+runner and cmake flags, and `--print-targets` hands that list to
+fetch-llama-binaries.sh and to .github/workflows/llama-build.yml so none of
+them can carry a stale copy of it.
+
 Usage (Python >= 3.9, standard library only, any working directory):
 
     python3 src-tauri/scripts/verify_llama_binaries.py \
-        [--lock PATH] [--require-hashes] [--run] [--strict] [--expect-all] PATH...
+        [--lock PATH] [--require-hashes] [--run] [--strict] [--require-run] \
+        [--expect-all] PATH...
+    python3 src-tauri/scripts/verify_llama_binaries.py --print-targets FORMAT
 
 PATH is a binary or a directory; a directory contributes every
 `llama-server-*` file inside it. Exit status: 0 when every binary passed (or
@@ -19,7 +27,11 @@ was skipped only because this host lacks the Vulkan loader, unless --strict),
 1 when any check failed, 2 for usage or lock-file errors.
 
 Checks, per binary (the target comes from the file name):
-  * format and architecture match the target;
+  * format and architecture match the target, and the file is an *executable*
+    of that format (MH_EXECUTE / ET_EXEC or ET_DYN with an entry point /
+    IMAGE_FILE_EXECUTABLE_IMAGE), not an object file or a library;
+  * the executable bit is set, except for Windows targets and hosts, which
+    have none (Tauri bundles the file exactly as it is);
   * every dynamic dependency is on the allowlist for that target (macOS:
     /System/Library/ and /usr/lib/ only, no LC_RPATH, minimum macOS <= lock
     `macos_min`, valid code signature; Linux: system glibc libraries only, no
@@ -30,7 +42,8 @@ Checks, per binary (the target comes from the file name):
     loaded from a separate file at runtime;
   * sha256 matches the lock's `sha256` line, when the lock pins hashes;
   * with --run, binaries for this host are copied to an empty directory and
-    must answer `--version` under a scrubbed environment.
+    must answer `--version` under a scrubbed environment; --require-run then
+    fails a caller that trusted a run which never happened.
 """
 
 from __future__ import annotations
@@ -38,10 +51,12 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import json
 import os
 import platform
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -85,7 +100,10 @@ class Lock:
 LOCK_SCALAR_KEYS = ("llama_cpp_tag", "release", "repo", "macos_min", "glibc_max")
 LOCK_VERSION_KEYS = ("macos_min", "glibc_max")
 _DOTTED_VERSION_RE = re.compile(r"^\d+(\.\d+){0,2}$")
-_SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+# Lowercase only, matching build_support/sidecar_guard.rs: the hashes are
+# written by `sha256sum`/`shasum`, so any other case means the lock was edited
+# by hand and the two parsers would disagree about whether it is valid.
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def parse_lock(path) -> Lock:
@@ -114,12 +132,12 @@ def parse_lock(path) -> Lock:
                 raise LockError(f"{where}: expected `sha256 <hex> <file>`, got {raw!r}")
             digest, name = fields[1], fields[2]
             if not _SHA256_HEX_RE.match(digest):
-                raise LockError(f"{where}: {digest!r} is not a 64-digit hex sha256")
+                raise LockError(f"{where}: {digest!r} is not a lowercase 64-digit hex sha256")
             if "/" in name or "\\" in name or name in (".", ".."):
                 raise LockError(f"{where}: sha256 file must be a bare file name, got {name!r}")
             if name in hashes:
                 raise LockError(f"{where}: duplicate sha256 line for {name}")
-            hashes[name] = digest.lower()
+            hashes[name] = digest
         elif key in LOCK_SCALAR_KEYS:
             if len(fields) != 2:
                 raise LockError(f"{where}: expected `{key} <value>`, got {raw!r}")
@@ -163,16 +181,33 @@ def format_version(version: Version) -> str:
 # ---------------------------------------------------------------------------
 
 
+OS_LABELS = {"macos": "macOS", "windows": "Windows", "linux": "Linux"}
+ARCH_LABELS = {"aarch64": "arm64", "x86_64": "x64"}
+BACKEND_LABELS = {"metal": "Metal", "vulkan": "Vulkan", "cpu": "CPU"}
+
+
 @dataclasses.dataclass(frozen=True)
 class Target:
     triple: str
     os: str  # "macos" | "windows" | "linux"
     arch: str  # "aarch64" | "x86_64"
     backend: str  # "metal" | "vulkan" | "cpu"
+    # How llama-build.yml builds this file. Kept next to the checks so the
+    # workflow matrix cannot name a file set the verifier does not know.
+    runner: str = ""
+    cmake_backend: str = ""
 
     @property
     def uses_vulkan(self) -> bool:
         return self.backend == "vulkan"
+
+    @property
+    def label(self) -> str:
+        return f"{OS_LABELS.get(self.os, self.os)} {ARCH_LABELS.get(self.arch, self.arch)}"
+
+    @property
+    def backend_label(self) -> str:
+        return BACKEND_LABELS.get(self.backend, self.backend)
 
 
 _MAC = "aarch64-apple-darwin"
@@ -180,13 +215,25 @@ _WIN = "x86_64-pc-windows-msvc"
 _LINUX = "x86_64-unknown-linux-gnu"
 
 # Every file a release must contain, by exact name. Tauri's externalBin wants
-# `<name>-<triple>`; the CPU fallbacks use the `llama-server-cpu-` prefix.
+# `<name>-<triple>`; the CPU fallbacks use the `llama-server-cpu-` prefix and
+# are spawned when the GPU build cannot start or initialise. Metal's `bfloat`
+# needs macOS 14, so GGML_METAL_USE_BF16 is not here: llama-build.yml adds it
+# only when the lock's macos_min allows it.
 TARGETS: Dict[str, Target] = {
-    f"llama-server-{_MAC}": Target(_MAC, "macos", "aarch64", "metal"),
-    f"llama-server-{_WIN}.exe": Target(_WIN, "windows", "x86_64", "vulkan"),
-    f"llama-server-cpu-{_WIN}.exe": Target(_WIN, "windows", "x86_64", "cpu"),
-    f"llama-server-{_LINUX}": Target(_LINUX, "linux", "x86_64", "vulkan"),
-    f"llama-server-cpu-{_LINUX}": Target(_LINUX, "linux", "x86_64", "cpu"),
+    # Apple Silicon only: Intel Macs would need a CPU-only binary.
+    f"llama-server-{_MAC}": Target(
+        _MAC, "macos", "aarch64", "metal", "macos-14",
+        "-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON"),
+    # Vulkan covers NVIDIA, AMD and Intel GPUs without the CUDA toolchain.
+    f"llama-server-{_WIN}.exe": Target(
+        _WIN, "windows", "x86_64", "vulkan", "windows-2022", "-DGGML_VULKAN=ON"),
+    f"llama-server-cpu-{_WIN}.exe": Target(
+        _WIN, "windows", "x86_64", "cpu", "windows-2022", ""),
+    # ubuntu-22.04 keeps the glibc requirement at the lock's glibc_max.
+    f"llama-server-{_LINUX}": Target(
+        _LINUX, "linux", "x86_64", "vulkan", "ubuntu-22.04", "-DGGML_VULKAN=ON"),
+    f"llama-server-cpu-{_LINUX}": Target(
+        _LINUX, "linux", "x86_64", "cpu", "ubuntu-22.04", ""),
 }
 EXPECTED_FILES: Tuple[str, ...] = tuple(TARGETS)
 
@@ -494,6 +541,14 @@ ELFCLASS64 = 2
 ELFDATA2LSB = 1
 EM_X86_64 = 62
 EM_AARCH64 = 183
+ET_REL = 1
+ET_EXEC = 2
+ET_DYN = 3
+# A PIE executable is ET_DYN, so the type alone cannot separate it from a
+# shared library; ET_REL (a `.o`) and ET_CORE have no entry point at all.
+ELF_TYPE_NAMES = {0: "ET_NONE", ET_REL: "ET_REL", ET_EXEC: "ET_EXEC", ET_DYN: "ET_DYN",
+                  4: "ET_CORE"}
+ELF_EXECUTABLE_TYPES = (ET_EXEC, ET_DYN)
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_INTERP = 3
@@ -512,6 +567,8 @@ _MAX_VERNEED_ENTRIES = 1000
 @dataclasses.dataclass
 class ElfInfo:
     arch: str
+    elf_type: int = 0
+    entry: int = 0
     is_dynamic: bool = False
     interpreter: Optional[str] = None
     needed: List[str] = dataclasses.field(default_factory=list)
@@ -532,9 +589,10 @@ def parse_elf(data: bytes) -> ElfInfo:
     if data[5] != ELFDATA2LSB:
         return ElfInfo(arch="big-endian ELF")
 
-    (_type, machine, _version, _entry, phoff, _shoff, _flags, _ehsize,
+    (elf_type, machine, _version, entry, phoff, _shoff, _flags, _ehsize,
      phentsize, phnum, _shentsize, _shnum, _shstrndx) = _unpack("<HHIQQQIHHHHHH", data, 16)
-    info = ElfInfo(arch={EM_X86_64: "x86_64", EM_AARCH64: "aarch64"}.get(machine, f"e_machine {machine}"))
+    info = ElfInfo(arch={EM_X86_64: "x86_64", EM_AARCH64: "aarch64"}.get(machine, f"e_machine {machine}"),
+                   elf_type=elf_type, entry=entry)
     if phnum == PN_XNUM:
         raise FormatError("extended program header numbering is not supported")
     if phnum and phentsize != 56:
@@ -617,6 +675,7 @@ def parse_elf(data: bytes) -> ElfInfo:
 IMAGE_FILE_MACHINE_I386 = 0x014C
 IMAGE_FILE_MACHINE_AMD64 = 0x8664
 IMAGE_FILE_MACHINE_ARM64 = 0xAA64
+IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002
 IMAGE_FILE_DLL = 0x2000
 PE32_MAGIC = 0x10B
 PE32_PLUS_MAGIC = 0x20B
@@ -629,6 +688,8 @@ _MAX_IMPORT_DESCRIPTORS = 4096
 class PeInfo:
     arch: str
     is_dll: bool = False
+    is_executable_image: bool = False
+    entry_point: int = 0
     imports: List[str] = dataclasses.field(default_factory=list)
     delay_imports: List[str] = dataclasses.field(default_factory=list)
 
@@ -653,7 +714,10 @@ def parse_pe(data: bytes) -> PeInfo:
         return PeInfo(arch=f"32-bit PE ({arch})")
     if magic != PE32_PLUS_MAGIC:
         raise FormatError(f"unknown optional header magic {magic:#x}")
-    info = PeInfo(arch=arch, is_dll=bool(characteristics & IMAGE_FILE_DLL))
+    (entry_point,) = _unpack("<I", data, opt + 16)
+    info = PeInfo(arch=arch, is_dll=bool(characteristics & IMAGE_FILE_DLL),
+                  is_executable_image=bool(characteristics & IMAGE_FILE_EXECUTABLE_IMAGE),
+                  entry_point=entry_point)
 
     (image_base,) = _unpack("<Q", data, opt + 24)
     (size_of_headers,) = _unpack("<I", data, opt + 60)
@@ -724,6 +788,8 @@ class Report:
     notes: List[str] = dataclasses.field(default_factory=list)
     # Set when the run check could not execute for a benign host reason.
     skipped: Optional[str] = None
+    # True only when this binary was actually executed and answered `--version`.
+    ran: bool = False
 
     @property
     def status(self) -> str:
@@ -804,6 +870,13 @@ def check_linux(info: ElfInfo, target: Target, lock: Lock, report: Report) -> No
     if info.arch != "x86_64":
         report.fail(f"architecture is {info.arch}; {target.triple} needs an x86-64 ELF64")
         return
+    if info.elf_type not in ELF_EXECUTABLE_TYPES:
+        report.fail(f"ELF type is {ELF_TYPE_NAMES.get(info.elf_type, info.elf_type)}, expected "
+                    "ET_EXEC or ET_DYN; an object file or core dump is not a program")
+        return
+    if info.entry == 0:
+        report.fail("ELF entry point is 0; the file is a shared library or a stub, not a program")
+        return
     report.deps = list(info.needed)
     allowed = LINUX_SYSTEM_LIBS | (LINUX_VULKAN_LIBS if target.uses_vulkan else frozenset())
     for library in info.needed:
@@ -867,6 +940,11 @@ def check_windows(info: PeInfo, target: Target, lock: Lock, report: Report) -> N
         return
     if info.is_dll:
         report.fail("image is a DLL, not an executable")
+    if not info.is_executable_image:
+        report.fail("IMAGE_FILE_EXECUTABLE_IMAGE is not set; the image is an object file or a "
+                    "link artifact, not a program")
+    if info.entry_point == 0:
+        report.fail("entry point RVA is 0; the image has no code to start")
     report.deps = info.imports + [f"{name} (delay-load)" for name in info.delay_imports]
     if target.uses_vulkan and not any(
             name.lower() in WINDOWS_VULKAN_DLLS for name in info.imports + info.delay_imports):
@@ -888,6 +966,25 @@ FORMATS: Dict[str, Tuple[str, Callable[[bytes], object], Callable[..., None]]] =
     "linux": ("ELF", parse_elf, check_linux),
     "windows": ("PE", parse_pe, check_windows),
 }
+
+
+def check_executable_bit(path: Path, target: Target, report: Report) -> None:
+    """Fail a sidecar that is not marked executable.
+
+    Tauri copies the file into the bundle as it is, so a sidecar without the
+    bit only fails when the app first tries to spawn it. Windows has no such
+    bit, neither in its targets nor on a Windows host's file system.
+    """
+    if os.name == "nt" or target.os == "windows":
+        return
+    try:
+        mode = path.stat().st_mode
+    except OSError as exc:
+        report.fail(f"cannot stat: {exc}")
+        return
+    if not mode & 0o111:
+        report.fail(f"not executable (mode {stat.filemode(mode)}); the app could not spawn it "
+                    "(fix: chmod +x)")
 
 
 def check_hash(name: str, data: bytes, lock: Lock, require_hashes: bool, report: Report) -> None:
@@ -1022,6 +1119,7 @@ def check_run(path: Path, target: Target, report: Report, host: Tuple[str, str],
     if result.returncode == 0 and "version:" in result.output:
         line = next(line for line in result.output.splitlines() if "version:" in line)
         report.facts.append(f"runs ({line.strip()})")
+        report.ran = True
         return
 
     findable = target.os == "windows" and windows_vulkan_loader_findable(os.environ)
@@ -1076,6 +1174,7 @@ def verify_file(path: Path, lock: Lock, *, require_hashes: bool = False, run: bo
     else:
         report.parsed = True
         check(info, target, lock, report)
+    check_executable_bit(path, target, report)
     check_hash(path.name, data, lock, require_hashes, report)
     if run and report.parsed:
         check_run(path, target, report, host or host_platform())
@@ -1120,11 +1219,27 @@ def format_report(report: Report) -> str:
     return "\n".join(lines)
 
 
+PRINT_TARGET_FORMATS = ("files", "matrix", "markdown")
+
+
+def print_targets(fmt: str) -> str:
+    """The release file list, in the shape the caller consumes it."""
+    if fmt == "files":
+        return "\n".join(EXPECTED_FILES)
+    if fmt == "matrix":
+        return json.dumps({"include": [
+            {"name": f"{target.label} ({target.backend_label})", "os": target.runner,
+             "file": name, "vulkan": target.uses_vulkan, "backend": target.cmake_backend}
+            for name, target in TARGETS.items()]})
+    return "\n".join(f"| `{name}` | {target.label} | {target.backend_label} |"
+                     for name, target in TARGETS.items())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Verify that llama-server sidecar binaries are self-contained "
                     "and runnable on users' machines.")
-    parser.add_argument("paths", nargs="+", metavar="PATH",
+    parser.add_argument("paths", nargs="*", metavar="PATH",
                         help="binary files, or directories holding llama-server-* files")
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK,
                         help=f"pin file (default: {DEFAULT_LOCK})")
@@ -1135,8 +1250,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strict", action="store_true",
                         help="with --run, fail binaries whose run was skipped for a missing "
                              "Vulkan loader (for hosts that are expected to provide one)")
+    parser.add_argument("--require-run", action="store_true",
+                        help="with --run, fail unless at least one binary was actually executed "
+                             "(so a caller cannot trust a run that never happened)")
     parser.add_argument("--expect-all", action="store_true",
                         help=f"fail unless all {len(EXPECTED_FILES)} release files are present")
+    parser.add_argument("--print-targets", choices=PRINT_TARGET_FORMATS, metavar="FORMAT",
+                        help="print the release file list and exit, as one of: "
+                             + ", ".join(PRINT_TARGET_FORMATS))
     return parser
 
 
@@ -1147,7 +1268,18 @@ def _say(line: str) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.print_targets:
+        _say(print_targets(args.print_targets))
+        return EXIT_OK
+    if not args.paths:
+        parser.error("at least one PATH is required")
+    # A strictness flag that quietly does nothing is worse than no flag: both
+    # only decide how a *run* is judged.
+    for flag in ("strict", "require_run"):
+        if getattr(args, flag) and not args.run:
+            parser.error(f"--{flag.replace('_', '-')} requires --run")
     try:
         lock = parse_lock(args.lock)
         files = collect_binaries(args.paths)
@@ -1159,15 +1291,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _say(f"note: {args.lock} pins no sha256 hashes; hash check skipped")
     host = host_platform()
     counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+    ran = 0
     for path in files:
         report = verify_file(path, lock, require_hashes=args.require_hashes,
                              run=args.run, host=host)
         counts[report.status] += 1
+        ran += report.ran
         _say(format_report(report))
 
     failed = counts["FAIL"] > 0
     if args.strict and counts["SKIP"]:
         _say("FAIL --strict: every binary for this host must run, but some were skipped")
+        failed = True
+    if args.require_run and not ran:
+        _say(f"FAIL --require-run: no binary was executed (host is {host[1]} {host[0]})")
         failed = True
     if not files:
         _say(f"FAIL no llama-server-* binaries found in: {', '.join(args.paths)}")

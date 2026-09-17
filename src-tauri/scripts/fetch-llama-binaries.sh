@@ -14,6 +14,12 @@
 #   bash scripts/fetch-llama-binaries.sh --update-lock after publishing a release: pin its hashes
 #   add --no-run to skip executing the host binary, or --strict to fail when a
 #   Vulkan build can't be run because this machine has no Vulkan loader (CI)
+#   add --repin to let --update-lock replace a hash the lock already pins
+#
+# --update-lock prints every line it would change, always runs the host's
+# binary before pinning anything, and refuses to overwrite an existing pin
+# unless --repin says so: a published release is immutable, so a changed hash
+# means the release changed under us.
 #
 # Downloads use `gh` when it is installed and authenticated, otherwise curl
 # (the release repository is public).
@@ -28,30 +34,42 @@ BINARIES_DIR="$TAURI_ROOT/binaries"
 LOCK="$SCRIPT_DIR/llama-server.lock"
 VERIFY="$SCRIPT_DIR/verify_llama_binaries.py"
 
-FILES=(
-  llama-server-aarch64-apple-darwin
-  llama-server-x86_64-pc-windows-msvc.exe
-  llama-server-cpu-x86_64-pc-windows-msvc.exe
-  llama-server-x86_64-unknown-linux-gnu
-  llama-server-cpu-x86_64-unknown-linux-gnu
-)
-
 MODE=install
 RUN=1
 STRICT=
+REPIN=0
 for arg in "$@"; do
   case "$arg" in
     --check) MODE=check ;;
     --update-lock) MODE=update-lock ;;
     --no-run) RUN=0 ;;
     --strict) STRICT=--strict ;;
-    -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --repin) REPIN=1 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown argument '$arg' (see --help)" >&2; exit 2 ;;
   esac
 done
+
+usage_error() { echo "error: $*" >&2; exit 2; }
+
+# Contradictory flags are an error, never a silent downgrade of the stricter one.
+if [[ $RUN -eq 0 && -n "$STRICT" ]]; then
+  usage_error "--strict only decides how a run is judged; it cannot be combined with --no-run"
+fi
+if [[ "$MODE" == update-lock && $RUN -eq 0 ]]; then
+  usage_error "--update-lock must run the binaries it pins; drop --no-run"
+fi
+if [[ $REPIN -eq 1 && "$MODE" != update-lock ]]; then
+  usage_error "--repin only applies to --update-lock"
+fi
+
 RUN_FLAG=
 if [[ $RUN -eq 1 ]]; then
   RUN_FLAG="--run $STRICT"
+fi
+if [[ "$MODE" == update-lock ]]; then
+  # A hash is a promise that this build works; only an executed binary earns it.
+  RUN_FLAG="--run --strict --require-run"
 fi
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -83,6 +101,14 @@ for candidate in python3 python; do
   fi
 done
 [[ -n "$PYTHON" ]] || die "python >= 3.9 is required to verify the binaries"
+
+# The verifier's TARGETS table is the one list of release files; keeping a copy
+# here is how the two drifted apart before.
+FILES=()
+while IFS= read -r file; do
+  [[ -n "$file" ]] && FILES+=("$file")
+done < <("$PYTHON" "$VERIFY" --print-targets files)
+[[ ${#FILES[@]} -gt 0 ]] || die "$VERIFY --print-targets files listed no release files"
 
 verify() {
   # shellcheck disable=SC2086 # RUN_FLAG is intentionally empty or split into flags
@@ -152,20 +178,48 @@ rm "$STAGING/SHA256SUMS.txt"
 chmod +x "$STAGING"/llama-server-*
 
 if [[ "$MODE" == update-lock ]]; then
-  # Prove the published files are sound before pinning them.
+  # Prove the published files are sound, and that the host's binary really ran,
+  # before pinning them.
   unhashed_lock="$STAGING/unhashed.lock"
   grep -v '^sha256 ' "$LOCK" > "$unhashed_lock"
   # shellcheck disable=SC2086
   "$PYTHON" "$VERIFY" --lock "$unhashed_lock" --expect-all $RUN_FLAG "$STAGING"
   rm "$unhashed_lock"
-  {
-    grep -v '^sha256 ' "$LOCK"
-    for file in "${FILES[@]}"; do
-      echo "sha256 $(file_hash "$STAGING/$file") $file"
-    done
-  } > "$LOCK.tmp"
-  mv "$LOCK.tmp" "$LOCK"
-  echo "Pinned $RELEASE checksums in $LOCK (commit this change)."
+
+  # Show the pins that would change, and never replace one by accident.
+  echo "Pins for $RELEASE in $LOCK:"
+  changes=0
+  repinned=
+  for file in "${FILES[@]}"; do
+    new="$(file_hash "$STAGING/$file")"
+    old="$(lock_hash "$file")"
+    if [[ -z "$old" ]]; then
+      echo "  + sha256 $new $file"
+      changes=1
+    elif [[ "$old" != "$new" ]]; then
+      echo "  - sha256 $old $file"
+      echo "  + sha256 $new $file"
+      repinned="$repinned $file"
+      changes=1
+    else
+      echo "    sha256 $new $file (unchanged)"
+    fi
+  done
+  if [[ -n "$repinned" && $REPIN -ne 1 ]]; then
+    die "the lock already pins a different hash for:$repinned. A published release is immutable, so investigate why its bytes changed; pass --repin once you are sure."
+  fi
+  if [[ $changes -eq 0 ]]; then
+    echo "Nothing to pin: $LOCK already matches $RELEASE."
+  else
+    {
+      grep -v '^sha256 ' "$LOCK"
+      for file in "${FILES[@]}"; do
+        echo "sha256 $(file_hash "$STAGING/$file") $file"
+      done
+    } > "$LOCK.tmp"
+    mv "$LOCK.tmp" "$LOCK"
+    echo "Pinned $RELEASE checksums in $LOCK (commit this change)."
+  fi
 else
   for file in "${FILES[@]}"; do
     actual="$(file_hash "$STAGING/$file")"
