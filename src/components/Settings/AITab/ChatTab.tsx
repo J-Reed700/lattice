@@ -191,13 +191,11 @@ export function ChatTab() {
                     ? {
                         model: "gpt-6-astra",
                         maxTokens: 8192,
-                        timeoutSeconds: 120,
                       }
                     : event.target.value === "anthropic"
                       ? {
                           model: "claude-opus-5",
                           maxTokens: 8192,
-                          timeoutSeconds: 120,
                         }
                       : {}),
                 })

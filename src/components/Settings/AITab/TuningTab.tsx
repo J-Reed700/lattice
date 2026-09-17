@@ -10,6 +10,10 @@ import { PageHeader, SettingsRow, SettingsSection, Switch } from '../../ui';
 
 import type { LLMSettings as ApiLLMSettings } from '../../../types/api/settings';
 
+/** Mirrors MIN/MAX_LLM_STALL_TIMEOUT_SECONDS in the settings repository. */
+const STALL_TIMEOUT_MIN = 15;
+const STALL_TIMEOUT_MAX = 180;
+
 export function TuningTab() {
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
 
@@ -232,12 +236,16 @@ export function TuningTab() {
           />
         </SettingsRow>
 
-        <SettingsRow label="Timeout" hint="Seconds" htmlFor="tuning-timeout">
+        <SettingsRow
+          label="Stall timeout"
+          hint="Seconds a response may go silent before it's treated as dead. This does not limit how long an answer may take."
+          htmlFor="tuning-timeout"
+        >
           <input
             id="tuning-timeout"
             type="number"
-            min={5}
-            max={300}
+            min={STALL_TIMEOUT_MIN}
+            max={STALL_TIMEOUT_MAX}
             step={1}
             value={runtimeDraft.timeoutSeconds}
             onChange={(event) =>
@@ -248,7 +256,9 @@ export function TuningTab() {
             }
             onBlur={() =>
               void saveLlmUpdates({
-                timeoutSeconds: Math.round(clamp(runtimeDraft.timeoutSeconds, 5, 300)),
+                timeoutSeconds: Math.round(
+                  clamp(runtimeDraft.timeoutSeconds, STALL_TIMEOUT_MIN, STALL_TIMEOUT_MAX)
+                ),
               })
             }
             className={NUMBER_FIELD_CLASS}
