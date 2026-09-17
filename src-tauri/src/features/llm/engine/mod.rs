@@ -13,6 +13,7 @@ pub mod noop_client;
 pub mod ollama_client;
 pub mod sidecar_client;
 pub mod sidecar_manager;
+pub mod sidecar_pool;
 pub mod traits;
 pub mod types;
 
@@ -35,6 +36,7 @@ pub use noop_client::NoOpLLMClient;
 pub use ollama_client::OllamaClient;
 pub use sidecar_client::SidecarLLMClient;
 pub use sidecar_manager::{SidecarConfig, SidecarHandle, SidecarManager};
+pub use sidecar_pool::{Liveness, Origin, SharedProcesses};
 pub use system::{detect_capabilities, GPUInfo, GPUVendor, Platform, SystemCapabilities};
 pub use traits::{GenerationConfig, LLMClient};
 pub use types::*;

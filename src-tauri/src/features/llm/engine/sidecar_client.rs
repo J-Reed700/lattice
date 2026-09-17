@@ -2,8 +2,9 @@
 //!
 //! Implements the `LLMClient` trait by talking to a local llama-server
 //! process over loopback HTTP, using the OpenAI-compatible
-//! `/v1/chat/completions` endpoint. Owns the `SidecarHandle` so the
-//! sidecar process dies with the client.
+//! `/v1/chat/completions` endpoint. Holds a share of the `SidecarHandle`, so
+//! the process dies once no client is left on it — one server can be serving
+//! several roles.
 //!
 //! # Architecture
 //!
@@ -184,12 +185,17 @@ pub struct CompletionOutcome {
 
 /// LLM client that talks to a bundled llama-server sidecar.
 ///
-/// Owns the `SidecarHandle`; dropping the client kills the process.
+/// Shares the `SidecarHandle`; the process dies with its last holder.
 pub struct SidecarLLMClient {
-    /// Process handle. Wrapped in `Arc` because `SidecarHandle`'s drop
-    /// kills the process; if multiple clones existed, dropping one
-    /// would orphan the others. We hold exactly one Arc so the process
-    /// outlives all clones until the last drop.
+    /// Process handle. `Arc` because `SidecarHandle`'s drop kills the
+    /// process, so the count is the process's lifetime: dropping one holder
+    /// while another still has it would orphan that one.
+    ///
+    /// The other holders are not just clones of this client. Roles that
+    /// resolve to the same model share one server through
+    /// [`SidecarManager::start_shared`](super::sidecar_manager::SidecarManager::start_shared),
+    /// each with its own client and generation settings over it, so dropping
+    /// this client stops the process only if no other role is on it.
     sidecar: Arc<SidecarHandle>,
 
     /// HTTP client. Reused across calls for connection pooling.

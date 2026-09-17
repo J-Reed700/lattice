@@ -186,10 +186,15 @@ pub async fn create_llm_with_fallback(config: LLMConfig) -> Arc<dyn LLMPort> {
 }
 
 /// Create a local-LLM client backed by the bundled `llama-server`
-/// sidecar. Spawns the child process (Metal on macOS, Vulkan on
+/// sidecar. Starts the child process (Metal on macOS, Vulkan on
 /// Windows/Linux, CPU on hardware that can't accelerate), waits for
 /// HTTP readiness, wraps the resulting `SidecarHandle` in a
 /// `SidecarLLMClient` and a `SidecarPortAdapter`.
+///
+/// Every local role — chat, router, utility — arrives here, so a role whose
+/// model resolves to one already running gets a client over that server
+/// rather than a second copy of the weights. See
+/// [`SidecarManager::start_shared`](crate::features::llm::engine::sidecar_manager::SidecarManager::start_shared).
 ///
 /// The sidecar is the canonical local-inference path on all platforms.
 async fn create_local_llm_sidecar(
@@ -243,7 +248,7 @@ async fn create_local_llm_sidecar(
         }
     }
 
-    let handle = SidecarManager::start_with_fallback(app, config).await?;
+    let handle = SidecarManager::start_shared(app, config).await?;
     let binary = handle.binary().label();
     let n_gpu_layers = handle.n_gpu_layers();
     if let Some(degraded) = handle.degraded() {
@@ -262,7 +267,7 @@ async fn create_local_llm_sidecar(
         .unwrap_or("local")
         .to_string();
 
-    let client = SidecarLLMClient::new(Arc::new(handle), model_name, generation_config)?;
+    let client = SidecarLLMClient::new(handle, model_name, generation_config)?;
     info!(binary, n_gpu_layers, "Local LLM (sidecar) ready");
 
     Ok(Arc::new(SidecarPortAdapter { client }))

@@ -42,6 +42,7 @@
 //! - It does not download model files — that's the existing model
 //!   storage layer, untouched by this migration.
 
+use crate::features::llm::engine::sidecar_pool::{Liveness, Origin, SharedProcesses};
 use crate::features::llm::engine::system::SystemCapabilities;
 use crate::features::llm::engine::types::LLMError;
 use parking_lot::Mutex as SyncMutex;
@@ -198,7 +199,13 @@ impl SidecarBinary {
 }
 
 /// Configuration for spawning a llama-server sidecar.
-#[derive(Debug, Clone)]
+///
+/// Equality is identity for a running server: two roles whose configurations
+/// compare equal are asking for the same process, and the pool in
+/// [`sidecar_pool`](super::sidecar_pool) hands them one. Any field added here
+/// that changes what the server *is* must therefore be part of the key —
+/// which deriving `Eq`/`Hash` over the whole struct takes care of.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SidecarConfig {
     /// Path to the GGUF model file.
     pub model_path: PathBuf,
@@ -389,6 +396,17 @@ impl SidecarHandle {
         self.degraded.as_deref()
     }
 
+    /// Whether the server behind this handle is still up.
+    ///
+    /// The child slot is emptied by exactly two things: `stop`, and the event
+    /// drain when it sees `Terminated`. So this is false for a handle that was
+    /// stopped *and* for one whose server exited or crashed on its own — which
+    /// is what the pool needs, since a crashed server's handle stays alive as
+    /// an `Arc` for as long as any role holds it.
+    pub fn is_running(&self) -> bool {
+        self.child.lock().is_some()
+    }
+
     /// Explicitly kill the sidecar. After this returns, the handle is
     /// inert; `Drop` becomes a no-op. Idempotent — second call is fine.
     pub fn stop(&self) {
@@ -403,6 +421,12 @@ impl SidecarHandle {
                 tracing::info!("Stopped llama-server sidecar at {}", self.endpoint);
             }
         }
+    }
+}
+
+impl Liveness for SidecarHandle {
+    fn is_running(&self) -> bool {
+        SidecarHandle::is_running(self)
     }
 }
 
@@ -598,6 +622,17 @@ impl Drop for SpawnedChild {
 pub struct SidecarRegistry {
     entries: SyncMutex<Vec<RegistryEntry>>,
 
+    /// Live servers keyed by the configuration that started them, so the
+    /// chat, router and utility roles pointing at one GGUF share a process
+    /// instead of loading the same weights once each. Lives here because
+    /// this type is already the process-wide truth about sidecars, and
+    /// sharing is a fact about the set as a whole, not about any one child.
+    ///
+    /// Orthogonal to `entries`: that is the kill list, this is the sharing
+    /// map. A shared server holds exactly one `entries` slot however many
+    /// roles are using it.
+    shared: SharedProcesses<SidecarConfig, SidecarHandle>,
+
     /// Windows Job Object (no-op on other platforms). Sidecar PIDs
     /// get assigned to this object on spawn so Windows kernel kills
     /// them automatically when our process handle closes — even on
@@ -640,6 +675,7 @@ impl SidecarRegistry {
 
         Self {
             entries: SyncMutex::new(Vec::new()),
+            shared: SharedProcesses::new(),
             #[cfg(windows)]
             job: SyncMutex::new(job),
         }
@@ -1034,6 +1070,63 @@ pub fn spawn_binary_preflight(app: &AppHandle) {
 pub struct SidecarManager;
 
 impl SidecarManager {
+    /// Get the sidecar serving `config`, starting one if nothing is.
+    ///
+    /// This is the entry point production code should use. `config` is the
+    /// identity of a server, so two roles that resolve to the same model file
+    /// on the same hardware settings — the chat model also being the utility
+    /// or router model, which is the common setup, not an edge case — share
+    /// one process. Before this, each role's cache loaded independently and a
+    /// 4 GB model was resident two or three times over.
+    ///
+    /// What is *not* shared is per-role generation settings: those travel on
+    /// each request, so the roles keep their own `SidecarLLMClient` (and its
+    /// own `GenerationConfig`) over one server.
+    ///
+    /// Sharing costs much less concurrency than it looks like it should. We
+    /// pass no `--parallel`, and this build's default is auto, which picks
+    /// several slots over a unified KV cache — the pinned b8981 logs
+    /// `n_parallel = 4 and kv_unified = true` — so two roles are served side by
+    /// side rather than one queueing behind the other. What they do share is
+    /// the single `--ctx-size` window behind those slots, so concurrent long
+    /// prompts can crowd each other. That is a far cheaper failure than a
+    /// second multi-gigabyte copy of the same weights, which on the machines
+    /// this matters for does not fit at all.
+    ///
+    /// Falls back to an unshared server when no [`SidecarRegistry`] is managed
+    /// (tests, or any host that never called `manage`) so sharing is an
+    /// optimization rather than a requirement.
+    pub async fn start_shared(
+        app: &AppHandle,
+        config: SidecarConfig,
+    ) -> Result<Arc<SidecarHandle>, LLMError> {
+        let Some(registry) = app.try_state::<SidecarRegistry>() else {
+            tracing::debug!("SidecarRegistry not managed; starting an unshared sidecar");
+            return Self::start_with_fallback(app, config).await.map(Arc::new);
+        };
+
+        let key = config.clone();
+        let (handle, origin) = registry
+            .shared
+            .get_or_start(key, || Self::start_with_fallback(app, config))
+            .await?;
+
+        if origin == Origin::Reused {
+            // The whole point of the change, so it says so out loud: without
+            // this line a regression to duplicate loads looks identical in
+            // the log to the fix working.
+            tracing::info!(
+                endpoint = %handle.endpoint(),
+                binary = handle.binary().label(),
+                n_gpu_layers = handle.n_gpu_layers(),
+                context_size = handle.context_size(),
+                "Reusing the running llama-server for this model; no second load"
+            );
+        }
+
+        Ok(handle)
+    }
+
     /// Spawn a llama-server sidecar, falling back until something runs.
     ///
     /// The first attempt uses `config` on the primary build. Each failure
@@ -2598,6 +2691,31 @@ mod tests {
             platform: Platform::Linux,
             os_version: None,
         }
+    }
+
+    /// Sharing is keyed on the whole config, so two roles only reuse one
+    /// server if their configs compare equal. That holds because
+    /// `from_capabilities` is a pure function of the path and the machine —
+    /// if it ever grows a nondeterministic input (a timestamp, a port, a
+    /// counter), every role silently gets its own copy of the weights again
+    /// and the only symptom is memory.
+    #[test]
+    fn the_same_model_on_one_machine_is_one_key() {
+        use crate::features::llm::engine::system::GPUVendor;
+        let caps = make_caps(Some(GPUVendor::Apple), 16.0);
+        let chat = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let utility = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        assert_eq!(
+            chat, utility,
+            "the roles must agree on the key or they will not share"
+        );
+
+        let other_model = SidecarConfig::from_capabilities(PathBuf::from("/tmp/other.gguf"), &caps);
+        assert_ne!(chat, other_model, "a different model needs its own server");
+
+        // A degraded fallback is a different server, not the same one with a
+        // note on it: it holds a different context window.
+        assert_ne!(chat, chat.without_gpu_offload());
     }
 
     #[test]
