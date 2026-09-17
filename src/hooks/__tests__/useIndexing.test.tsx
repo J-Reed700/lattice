@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useIndexing } from '../useIndexing';
 
-const api = vi.hoisted(() => ({ listBatchJobs: vi.fn(), getBatchJobStatus: vi.fn(), batchFileImport: vi.fn() }));
+const api = vi.hoisted(() => ({ listBatchJobs: vi.fn(), getBatchJobStatus: vi.fn(), batchFileImport: vi.fn(), cancelBatchJob: vi.fn() }));
 vi.mock('@/lib/api', () => ({ VaultAPI: api, default: api }));
 vi.mock('../../lib/api', () => ({ VaultAPI: api, default: api }));
 
@@ -51,6 +51,26 @@ describe('useIndexing progress', () => {
     api.getBatchJobStatus.mockResolvedValue({ ok: true, data: { status: 'completed', totalItems: 1, completedItems: 1, failedItems: 0, items: [] } });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(result.current.getOperation('job')).toMatchObject({ status: 'completed', successfulFiles: 1, error: undefined });
+  });
+
+  it('cancels an active batch and marks unfinished items as cancelled immediately', async () => {
+    api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'job', jobType: 'file_import', status: 'running', totalItems: 2, completedItems: 0, failedItems: 0 }] });
+    api.getBatchJobStatus.mockResolvedValue({ ok: true, data: {
+      status: 'running', totalItems: 2, completedItems: 0, failedItems: 0,
+      items: [{ target: '/one.pdf', status: 'running' }, { target: '/two.pdf', status: 'pending' }],
+    } });
+    api.cancelBatchJob.mockResolvedValue({ ok: true, data: 1 });
+    const { result } = renderHook(() => useIndexing());
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    await act(async () => { await result.current.cancelBatchImport('job'); });
+
+    expect(api.cancelBatchJob).toHaveBeenCalledWith('job');
+    expect(result.current.getOperation('job')).toMatchObject({
+      status: 'cancelled',
+      items: [{ status: 'cancelled' }, { status: 'cancelled' }],
+    });
+    expect(result.current.isIndexing).toBe(false);
   });
 
 });

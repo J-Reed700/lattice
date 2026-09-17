@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   selectFiles: vi.fn(),
   indexFile: vi.fn(),
   startBatchImport: vi.fn(),
+  cancelBatchImport: vi.fn(),
   getOperation: vi.fn(),
   operations: new Map(),
   fileBrowser: { customCollections: [], addDocumentsToCustomCollection: vi.fn() },
@@ -19,9 +20,9 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ onDragDropEvent: async () => () => {} }),
 }));
 vi.mock('@/hooks/useIndexing', () => ({
-  useIndexing: () => ({ startBatchImport: mocks.startBatchImport, getOperation: mocks.getOperation, operations: mocks.operations }),
+  useIndexing: () => ({ startBatchImport: mocks.startBatchImport, cancelBatchImport: mocks.cancelBatchImport, getOperation: mocks.getOperation, operations: mocks.operations }),
 }));
-vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ toast: { error: vi.fn(), success: vi.fn() } }) }));
+vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }) }));
 vi.mock('@/stores/conversationsStore', () => ({
   useConversationsStore: (select: (state: { selectedSpaceId: null }) => unknown) => select({ selectedSpaceId: null }),
 }));
@@ -42,6 +43,7 @@ describe('BatchFileImport', () => {
     mocks.operations.clear();
     mocks.getOperation.mockReset();
     mocks.startBatchImport.mockResolvedValue({ ok: false, error: 'Embedding model files are missing. Download MiniLM again.' });
+    mocks.cancelBatchImport.mockResolvedValue({ ok: true, data: 1 });
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -90,6 +92,29 @@ describe('BatchFileImport', () => {
     expect(screen.getAllByText('Imported')).toHaveLength(2);
     expect(screen.getByText('Failed — Unreadable PDF')).toBeInTheDocument();
     expect(mocks.startBatchImport).not.toHaveBeenCalled();
+  });
+
+  it('keeps Cancel enabled during an import and cancels the durable batch', async () => {
+    const user = userEvent.setup();
+    const operation = {
+      id: 'running-job', status: 'processing', totalFiles: 3,
+      processedFiles: 1, successfulFiles: 1, failedFiles: 0,
+      items: [
+        { target: '/Downloads/one.pdf', status: 'completed' },
+        { target: '/Downloads/two.pdf', status: 'running' },
+        { target: '/Downloads/three.pdf', status: 'pending' },
+      ],
+    };
+    mocks.operations.set(operation.id, operation);
+    mocks.getOperation.mockReturnValue(operation);
+    render(<TooltipProvider><BatchFileImport /></TooltipProvider>);
+
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    expect(cancel).toBeEnabled();
+    await user.click(cancel);
+
+    await waitFor(() => expect(mocks.cancelBatchImport).toHaveBeenCalledWith('running-job'));
+    expect(screen.getAllByText('Cancelled')).toHaveLength(2);
   });
 
   it('restores a finished failed PDF and offers retry after reopening Import', async () => {

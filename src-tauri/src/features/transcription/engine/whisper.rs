@@ -25,6 +25,7 @@ use crate::application::ports::transcription_port::{
 use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
 use crate::features::transcription::engine::audio_decode::decode_to_mono_16k;
 use crate::shared::error::AppError;
+use crate::shared::utils::with_autorelease_pool;
 
 /// How long a loaded model is kept resident after the last transcription.
 pub const TRANSCRIPTION_IDLE_TTL: Duration = Duration::from_secs(300);
@@ -715,25 +716,27 @@ impl TranscriptionPort for WhisperTranscriptionService {
         let loaded_slot = Arc::clone(&self.loaded);
 
         let outcome = tokio::task::spawn_blocking(move || -> Result<Transcript, AppError> {
-            let decoded = decode_to_mono_16k(&path, MAX_AUDIO_SECS)?;
+            with_autorelease_pool(move || -> Result<Transcript, AppError> {
+                let decoded = decode_to_mono_16k(&path, MAX_AUDIO_SECS)?;
 
-            let mut guard = loaded_slot.lock();
-            let needs_load = guard
-                .as_ref()
-                .is_none_or(|loaded| loaded.model_id != resolved.model_id);
-            if needs_load {
-                *guard = Some(load_whisper(&resolved)?);
-            }
-            let loaded = guard.as_mut().ok_or_else(|| {
-                AppError::ModelLoadFailed("transcription model was not loaded".to_string())
-            })?;
+                let mut guard = loaded_slot.lock();
+                let needs_load = guard
+                    .as_ref()
+                    .is_none_or(|loaded| loaded.model_id != resolved.model_id);
+                if needs_load {
+                    *guard = Some(load_whisper(&resolved)?);
+                }
+                let loaded = guard.as_mut().ok_or_else(|| {
+                    AppError::ModelLoadFailed("transcription model was not loaded".to_string())
+                })?;
 
-            let (segments, language) = transcribe_pcm(loaded, &decoded.samples)?;
+                let (segments, language) = transcribe_pcm(loaded, &decoded.samples)?;
 
-            Ok(Transcript {
-                segments,
-                language,
-                duration_ms: decoded.duration_ms,
+                Ok(Transcript {
+                    segments,
+                    language,
+                    duration_ms: decoded.duration_ms,
+                })
             })
         })
         .await

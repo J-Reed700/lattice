@@ -39,6 +39,7 @@ use candle_transformers::models::modernbert::{Config as ModernBertConfig, Modern
 use candle_transformers::models::nomic_bert::{Config as NomicBertConfig, NomicBertModel};
 use candle_transformers::models::xlm_roberta::{Config as XlmRobertaConfig, XLMRobertaModel};
 use serde::Deserialize;
+use std::sync::Arc;
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer};
 use tokio::sync::Mutex;
 
@@ -53,6 +54,7 @@ use crate::features::embedding::sparse_head::{SparseHead, MAX_PASSAGE_TERMS, MAX
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
+use crate::shared::utils::with_autorelease_pool;
 
 /// Encoder families and the Qwen3 decoder supported by the local runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,8 +192,8 @@ impl From<LoadError> for AppError {
 
 /// Candle-backed embedding service.
 pub struct CandleEmbeddingService {
-    model: Mutex<ModelVariant>,
-    tokenizer: Tokenizer,
+    model: Arc<Mutex<ModelVariant>>,
+    tokenizer: Arc<Tokenizer>,
     device: Device,
     dimension: usize,
     pooling: PoolingStrategy,
@@ -204,7 +206,7 @@ pub struct CandleEmbeddingService {
     /// BGE-M3's learned sparse head, when this checkpoint ships one. `None`
     /// for every other model, which is what makes `supports_sparse()` false
     /// and keeps the sparse retrieval branch from ever starting.
-    sparse_head: Option<SparseHead>,
+    sparse_head: Option<Arc<SparseHead>>,
 }
 
 impl CandleEmbeddingService {
@@ -228,8 +230,12 @@ impl CandleEmbeddingService {
     /// Flipping it re-generates every vector, because `model_identity()`
     /// changes with the strategy.
     pub fn open(model_dir: impl AsRef<Path>, identity: ArtifactIdentity) -> Result<Self> {
-        let dir = model_dir.as_ref();
+        // Uploading the weights is thousands of Metal dispatches; drain what
+        // they autorelease here instead of leaving it on the loading thread.
+        with_autorelease_pool(|| Self::open_in_pool(model_dir.as_ref(), identity))
+    }
 
+    fn open_in_pool(dir: &Path, identity: ArtifactIdentity) -> Result<Self> {
         let config_path = dir.join("config.json");
         let tokenizer_path = dir.join("tokenizer.json");
 
@@ -309,6 +315,11 @@ impl CandleEmbeddingService {
         tokenizer
             .with_truncation(None)
             .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
+        if architecture == ModelArchitecture::Qwen3 {
+            // Qwen3 runs one unpadded sequence per causal pass, so the shared
+            // tokenizer is configured for that once instead of cloned per batch.
+            tokenizer.with_padding(None);
+        }
 
         let var_builder = if weights_path
             .file_name()
@@ -420,8 +431,8 @@ impl CandleEmbeddingService {
         }
 
         Ok(Self {
-            model: Mutex::new(model),
-            tokenizer,
+            model: Arc::new(Mutex::new(model)),
+            tokenizer: Arc::new(tokenizer),
             device,
             dimension: config.hidden_size,
             pooling,
@@ -429,7 +440,7 @@ impl CandleEmbeddingService {
             input_policy,
             identity,
             strategy: EmbeddingStrategy::default(),
-            sparse_head,
+            sparse_head: sparse_head.map(Arc::new),
         })
     }
 
@@ -531,7 +542,7 @@ impl CandleEmbeddingService {
 
         // Padding would add tokens with meaningless offsets; a span is a single
         // sequence, so there is nothing to pad to.
-        let mut tokenizer = self.tokenizer.clone();
+        let mut tokenizer = Tokenizer::clone(&self.tokenizer);
         tokenizer.with_padding(None);
         let encoding = tokenizer.encode(span_text, true).map_err(|e| {
             LateChunkingError::Embedding(LoadError::Tokenizer(e.to_string()).into())
@@ -592,46 +603,52 @@ impl CandleEmbeddingService {
     /// One forward pass over one already-tokenized sequence, returned as
     /// (seq, hidden) rows. Only late chunking needs per-token states.
     async fn span_hidden_states(&self, encoding: &tokenizers::Encoding) -> Result<Vec<Vec<f32>>> {
-        let ids = encoding.get_ids();
-        let length = ids.len();
-        let guard = self.model.lock().await;
-        let hidden_states = match &*guard {
-            // A fresh lightweight clone shares weights but starts with an empty
-            // KV cache, exactly as the batch path does.
-            ModelVariant::Qwen3(template) => {
-                let mut model = template.clone();
-                let input = Tensor::new(ids, &self.device)
-                    .and_then(|t| t.unsqueeze(0))
-                    .map_err(|e| LoadError::Candle(e.to_string()))?;
-                model
-                    .forward(&input, 0)
-                    .map_err(|e| LoadError::Candle(e.to_string()))?
-            }
-            model => {
-                let to_i64 = |values: &[u32]| values.iter().map(|&v| v as i64).collect::<Vec<_>>();
-                let tensor = |values: Vec<i64>| {
-                    Tensor::from_vec(values, (1, length), &self.device).map_err(|e| {
-                        AppError::EmbeddingFailed {
-                            reason: format!("span tensor: {}", e),
-                        }
-                    })
-                };
-                let input_ids_t = tensor(to_i64(ids))?;
-                let attention_mask_t = tensor(to_i64(encoding.get_attention_mask()))?;
-                let token_type_ids_t = tensor(to_i64(encoding.get_type_ids()))?;
-                run_encoder(model, &input_ids_t, &attention_mask_t, &token_type_ids_t)?
-            }
-        };
-        drop(guard);
+        let guard = Arc::clone(&self.model).lock_owned().await;
+        let device = self.device.clone();
+        let encoding = encoding.clone();
+        run_inference(move || {
+            let ids = encoding.get_ids();
+            let length = ids.len();
+            let hidden_states = match &*guard {
+                // A fresh lightweight clone shares weights but starts with an empty
+                // KV cache, exactly as the batch path does.
+                ModelVariant::Qwen3(template) => {
+                    let mut model = template.clone();
+                    let input = Tensor::new(ids, &device)
+                        .and_then(|t| t.unsqueeze(0))
+                        .map_err(|e| LoadError::Candle(e.to_string()))?;
+                    model
+                        .forward(&input, 0)
+                        .map_err(|e| LoadError::Candle(e.to_string()))?
+                }
+                model => {
+                    let to_i64 =
+                        |values: &[u32]| values.iter().map(|&v| v as i64).collect::<Vec<_>>();
+                    let tensor = |values: Vec<i64>| {
+                        Tensor::from_vec(values, (1, length), &device).map_err(|e| {
+                            AppError::EmbeddingFailed {
+                                reason: format!("span tensor: {}", e),
+                            }
+                        })
+                    };
+                    let input_ids_t = tensor(to_i64(ids))?;
+                    let attention_mask_t = tensor(to_i64(encoding.get_attention_mask()))?;
+                    let token_type_ids_t = tensor(to_i64(encoding.get_type_ids()))?;
+                    run_encoder(model, &input_ids_t, &attention_mask_t, &token_type_ids_t)?
+                }
+            };
+            drop(guard);
 
-        hidden_states
-            .squeeze(0)
-            .and_then(|t| t.to_dtype(DType::F32))
-            .and_then(|t| t.contiguous())
-            .and_then(|t| t.to_vec2::<f32>())
-            .map_err(|e| AppError::EmbeddingFailed {
-                reason: format!("hidden states → rows: {}", e),
-            })
+            hidden_states
+                .squeeze(0)
+                .and_then(|t| t.to_dtype(DType::F32))
+                .and_then(|t| t.contiguous())
+                .and_then(|t| t.to_vec2::<f32>())
+                .map_err(|e| AppError::EmbeddingFailed {
+                    reason: format!("hidden states → rows: {}", e),
+                })
+        })
+        .await
     }
 
     /// Run a forward pass + pool + L2-normalize for a batch of texts.
@@ -672,137 +689,28 @@ impl CandleEmbeddingService {
             self.input_policy.validate(text)?;
         }
 
-        // A fresh lightweight clone per input shares weights but starts with an empty KV
-        // cache. No padding enters causal attention and no state leaks between passages.
-        {
-            let guard = self.model.lock().await;
-            if let ModelVariant::Qwen3(template) = &*guard {
-                let mut tokenizer = self.tokenizer.clone();
-                tokenizer.with_padding(None);
-                let mut result = Vec::with_capacity(texts.len());
-                for text in &texts {
-                    let encoding = tokenizer
-                        .encode(text.as_str(), true)
-                        .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
-                    let ids = encoding.get_ids();
-                    if ids.is_empty() {
-                        return Err(AppError::InvalidInput(
-                            "Cannot embed an empty token sequence".into(),
-                        ));
-                    }
-                    let mut model = template.clone();
-                    let input = Tensor::new(ids, &self.device)
-                        .and_then(|t| t.unsqueeze(0))
-                        .map_err(|e| LoadError::Candle(e.to_string()))?;
-                    let hidden = model
-                        .forward(&input, 0)
-                        .map_err(|e| LoadError::Candle(e.to_string()))?;
-                    let pooled = hidden
-                        .narrow(1, ids.len() - 1, 1)
-                        .and_then(|t| t.squeeze(1))
-                        .map_err(|e| LoadError::Candle(e.to_string()))?;
-                    let normalized =
-                        l2_normalize(&pooled).map_err(|e| LoadError::Candle(e.to_string()))?;
-                    result.extend(
-                        tensor_to_vec_of_vec(&normalized)
-                            .map_err(|e| LoadError::Candle(e.to_string()))?,
-                    );
-                }
-                let sparse = vec![SparseEmbedding::empty(); result.len()];
-                return Ok((result, sparse));
-            }
-        }
-
-        let encodings = self
-            .tokenizer
-            .encode_batch(texts.clone(), true)
-            .map_err(|e| AppError::EmbeddingFailed {
-                reason: format!("tokenization: {}", e),
-            })?;
-
-        let batch_size = encodings.len();
-        let max_len = encodings
-            .iter()
-            .map(|e| e.get_ids().len())
-            .max()
-            .unwrap_or(0);
-
-        let mut input_ids = Vec::with_capacity(batch_size * max_len);
-        let mut attention_mask = Vec::with_capacity(batch_size * max_len);
-        let mut token_type_ids = Vec::with_capacity(batch_size * max_len);
-        for enc in &encodings {
-            input_ids.extend(enc.get_ids().iter().map(|&x| x as i64));
-            attention_mask.extend(enc.get_attention_mask().iter().map(|&x| x as i64));
-            token_type_ids.extend(enc.get_type_ids().iter().map(|&x| x as i64));
-        }
-
+        let guard = Arc::clone(&self.model).lock_owned().await;
+        let tokenizer = Arc::clone(&self.tokenizer);
         let device = self.device.clone();
         let pooling = self.pooling;
-
-        let input_ids_t =
-            Tensor::from_vec(input_ids, (batch_size, max_len), &device).map_err(|e| {
-                AppError::EmbeddingFailed {
-                    reason: format!("input_ids tensor: {}", e),
-                }
-            })?;
-        let attention_mask_t = Tensor::from_vec(attention_mask, (batch_size, max_len), &device)
-            .map_err(|e| AppError::EmbeddingFailed {
-                reason: format!("attention_mask tensor: {}", e),
-            })?;
-        let token_type_ids_t = Tensor::from_vec(token_type_ids, (batch_size, max_len), &device)
-            .map_err(|e| AppError::EmbeddingFailed {
-                reason: format!("token_type_ids tensor: {}", e),
-            })?;
-
-        let guard = self.model.lock().await;
-
-        let hidden_states =
-            run_encoder(&guard, &input_ids_t, &attention_mask_t, &token_type_ids_t)?;
-
-        drop(guard);
-
-        // Read the sparse head off the hidden states we already have. Padding
-        // is dropped by trimming each row back to its own token count before
-        // aggregation, so a short passage in a long batch cannot pick up terms
-        // from the pad token.
-        let sparse_vectors = match (sparse_head, sparse_terms) {
-            (Some(head), Some(max_terms)) => {
-                let rows = head.token_weights(&hidden_states)?;
-                encodings
-                    .iter()
-                    .zip(rows.iter())
-                    .map(|(encoding, row)| {
-                        let ids = encoding.get_ids();
-                        let usable = row.len().min(ids.len());
-                        head.aggregate(
-                            ids.get(..usable).unwrap_or_default(),
-                            row.get(..usable).unwrap_or_default(),
-                            encoding.get_special_tokens_mask(),
-                            max_terms,
-                        )
-                    })
-                    .collect()
+        let sparse_head = sparse_head.cloned();
+        run_inference(move || match &*guard {
+            ModelVariant::Qwen3(template) => {
+                let dense = qwen3_embed(template, &tokenizer, &device, &texts)?;
+                let sparse = vec![SparseEmbedding::empty(); dense.len()];
+                Ok((dense, sparse))
             }
-            _ => Vec::new(),
-        };
-
-        let pooled = match pooling {
-            PoolingStrategy::Cls => cls_pool(&hidden_states),
-            PoolingStrategy::Mean => mean_pool(&hidden_states, &attention_mask_t),
-        }
-        .map_err(|e| AppError::EmbeddingFailed {
-            reason: format!("pooling: {}", e),
-        })?;
-
-        let normalized = l2_normalize(&pooled).map_err(|e| AppError::EmbeddingFailed {
-            reason: format!("L2 normalize: {}", e),
-        })?;
-
-        let vectors = tensor_to_vec_of_vec(&normalized).map_err(|e| AppError::EmbeddingFailed {
-            reason: format!("tensor → Vec<Vec<f32>>: {}", e),
-        })?;
-
-        Ok((vectors, sparse_vectors))
+            model => encoder_embed(
+                model,
+                &tokenizer,
+                &device,
+                pooling,
+                sparse_head.as_deref(),
+                sparse_terms,
+                &texts,
+            ),
+        })
+        .await
     }
 
     /// Dense vectors and learned sparse term weights from a single forward
@@ -1037,6 +945,161 @@ fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
 /// Run the encoder for one padded batch, returning (batch, seq, hidden).
 /// Shared by the pooled batch path and by late chunking, which needs the
 /// per-token states rather than a pooled vector.
+/// Run one inference step off the async runtime.
+///
+/// Metal work blocks for as long as the GPU takes, so it belongs on the
+/// blocking pool rather than a runtime worker. It also autoreleases
+/// Objective-C objects on every dispatch, which the step's own autorelease
+/// pool releases on return; without it they stayed parked on the worker
+/// thread for the life of the process (see `shared::utils::autorelease`).
+async fn run_inference<T, F>(f: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || with_autorelease_pool(f))
+        .await
+        .map_err(|e| AppError::EmbeddingFailed {
+            reason: format!("inference task: {}", e),
+        })?
+}
+
+/// Last-token embeddings for `texts`, one causal pass each. `tokenizer` is
+/// the unpadded one `open` configures for Qwen3.
+fn qwen3_embed(
+    template: &candle_transformers::models::qwen3::Model,
+    tokenizer: &Tokenizer,
+    device: &Device,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>> {
+    let mut result = Vec::with_capacity(texts.len());
+    for text in texts {
+        let encoding = tokenizer
+            .encode(text.as_str(), true)
+            .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
+        let ids = encoding.get_ids();
+        if ids.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Cannot embed an empty token sequence".into(),
+            ));
+        }
+        // A fresh lightweight clone per input shares weights but starts with an
+        // empty KV cache. No padding enters causal attention and no state leaks
+        // between passages.
+        let mut model = template.clone();
+        let input = Tensor::new(ids, device)
+            .and_then(|t| t.unsqueeze(0))
+            .map_err(|e| LoadError::Candle(e.to_string()))?;
+        let hidden = model
+            .forward(&input, 0)
+            .map_err(|e| LoadError::Candle(e.to_string()))?;
+        let pooled = hidden
+            .narrow(1, ids.len() - 1, 1)
+            .and_then(|t| t.squeeze(1))
+            .map_err(|e| LoadError::Candle(e.to_string()))?;
+        let normalized = l2_normalize(&pooled).map_err(|e| LoadError::Candle(e.to_string()))?;
+        result.extend(
+            tensor_to_vec_of_vec(&normalized).map_err(|e| LoadError::Candle(e.to_string()))?,
+        );
+    }
+    Ok(result)
+}
+
+/// One padded batch through an encoder model: dense vectors, plus the sparse
+/// head read off the same hidden states when `sparse_head` and
+/// `sparse_terms` are both given.
+fn encoder_embed(
+    model: &ModelVariant,
+    tokenizer: &Tokenizer,
+    device: &Device,
+    pooling: PoolingStrategy,
+    sparse_head: Option<&SparseHead>,
+    sparse_terms: Option<usize>,
+    texts: &[String],
+) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
+    let encodings =
+        tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|e| AppError::EmbeddingFailed {
+                reason: format!("tokenization: {}", e),
+            })?;
+
+    let batch_size = encodings.len();
+    let max_len = encodings
+        .iter()
+        .map(|e| e.get_ids().len())
+        .max()
+        .unwrap_or(0);
+
+    let mut input_ids = Vec::with_capacity(batch_size * max_len);
+    let mut attention_mask = Vec::with_capacity(batch_size * max_len);
+    let mut token_type_ids = Vec::with_capacity(batch_size * max_len);
+    for enc in &encodings {
+        input_ids.extend(enc.get_ids().iter().map(|&x| x as i64));
+        attention_mask.extend(enc.get_attention_mask().iter().map(|&x| x as i64));
+        token_type_ids.extend(enc.get_type_ids().iter().map(|&x| x as i64));
+    }
+
+    let input_ids_t = Tensor::from_vec(input_ids, (batch_size, max_len), device).map_err(|e| {
+        AppError::EmbeddingFailed {
+            reason: format!("input_ids tensor: {}", e),
+        }
+    })?;
+    let attention_mask_t = Tensor::from_vec(attention_mask, (batch_size, max_len), device)
+        .map_err(|e| AppError::EmbeddingFailed {
+            reason: format!("attention_mask tensor: {}", e),
+        })?;
+    let token_type_ids_t = Tensor::from_vec(token_type_ids, (batch_size, max_len), device)
+        .map_err(|e| AppError::EmbeddingFailed {
+            reason: format!("token_type_ids tensor: {}", e),
+        })?;
+
+    let hidden_states = run_encoder(model, &input_ids_t, &attention_mask_t, &token_type_ids_t)?;
+
+    // Read the sparse head off the hidden states we already have. Padding
+    // is dropped by trimming each row back to its own token count before
+    // aggregation, so a short passage in a long batch cannot pick up terms
+    // from the pad token.
+    let sparse_vectors = match (sparse_head, sparse_terms) {
+        (Some(head), Some(max_terms)) => {
+            let rows = head.token_weights(&hidden_states)?;
+            encodings
+                .iter()
+                .zip(rows.iter())
+                .map(|(encoding, row)| {
+                    let ids = encoding.get_ids();
+                    let usable = row.len().min(ids.len());
+                    head.aggregate(
+                        ids.get(..usable).unwrap_or_default(),
+                        row.get(..usable).unwrap_or_default(),
+                        encoding.get_special_tokens_mask(),
+                        max_terms,
+                    )
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+
+    let pooled = match pooling {
+        PoolingStrategy::Cls => cls_pool(&hidden_states),
+        PoolingStrategy::Mean => mean_pool(&hidden_states, &attention_mask_t),
+    }
+    .map_err(|e| AppError::EmbeddingFailed {
+        reason: format!("pooling: {}", e),
+    })?;
+
+    let normalized = l2_normalize(&pooled).map_err(|e| AppError::EmbeddingFailed {
+        reason: format!("L2 normalize: {}", e),
+    })?;
+
+    let vectors = tensor_to_vec_of_vec(&normalized).map_err(|e| AppError::EmbeddingFailed {
+        reason: format!("tensor → Vec<Vec<f32>>: {}", e),
+    })?;
+
+    Ok((vectors, sparse_vectors))
+}
+
 fn run_encoder(
     model: &ModelVariant,
     input_ids: &Tensor,

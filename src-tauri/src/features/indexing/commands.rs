@@ -13,12 +13,10 @@ use crate::shared::api_result::{ApiResult, ErrorCode};
 use tauri::State;
 
 async fn ensure_embedding_ready(container: &Container) -> Result<(), String> {
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        format!(
-            "Could not load the active embedding model: {}",
-            e
-        )
-    })?;
+    let embedding_service = container
+        .get_or_load_embedding()
+        .await
+        .map_err(|e| format!("Could not load the active embedding model: {}", e))?;
 
     let is_ready = embedding_service
         .is_ready()

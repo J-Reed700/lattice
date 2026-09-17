@@ -1,5 +1,6 @@
 pub mod alignment;
 pub mod atomic_fs;
+pub mod autorelease;
 pub mod compute_device;
 pub mod config;
 pub mod http_client;
@@ -12,6 +13,7 @@ pub mod supervised_task;
 
 pub use alignment::{bytes_to_f32_slice, bytes_to_f32_vec};
 pub use atomic_fs::AtomicFs;
+pub use autorelease::with_autorelease_pool;
 pub use compute_device::best_available_compute_device;
 pub use http_client::{reqwest_client_builder, should_disable_system_proxy};
 pub use path::{path_to_string, validate_path};

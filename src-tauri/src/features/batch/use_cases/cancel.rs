@@ -92,24 +92,28 @@ impl CancelBatchJobUseCase {
             return Err(AppError::InvalidInput("Job ID cannot be empty".to_string()));
         }
 
-        // 2. Cancel all pending items
+        let job = self.batch_repo.get_batch_job(&request.job_id).await?;
+        if matches!(job.status.as_str(), "completed" | "failed" | "cancelled") {
+            return Ok(CancelBatchJobResponseDto { cancelled_count: 0 });
+        }
+
+        // Publish cancellation first so the worker cannot begin another queued
+        // item while cancellation is being applied to those rows.
+        self.batch_repo
+            .update_job_status(
+                &request.job_id,
+                "cancelled",
+                None,
+                Some(chrono::Utc::now().to_rfc3339()),
+            )
+            .await?;
+
+        // A job may have only one currently-running item and zero pending items;
+        // it is still cancelled and the worker stops after its current safe point.
         let cancelled_count = self
             .batch_repo
             .cancel_pending_items(&request.job_id)
             .await?;
-
-        // 3. Update job status to cancelled (if all items cancelled)
-        if cancelled_count > 0 {
-            let _ = self
-                .batch_repo
-                .update_job_status(
-                    &request.job_id,
-                    "cancelled",
-                    None,
-                    Some(chrono::Utc::now().to_rfc3339()),
-                )
-                .await;
-        }
 
         // 4. Return cancelled count
         Ok(CancelBatchJobResponseDto { cancelled_count })
@@ -127,12 +131,14 @@ mod tests {
 
     struct MockBatchJobRepository {
         cancelled_items: Arc<Mutex<usize>>,
+        job_status: Arc<Mutex<String>>,
     }
 
     impl MockBatchJobRepository {
         fn new(cancelled_items: usize) -> Self {
             Self {
                 cancelled_items: Arc::new(Mutex::new(cancelled_items)),
+                job_status: Arc::new(Mutex::new("running".into())),
             }
         }
     }
@@ -156,10 +162,11 @@ mod tests {
         async fn update_job_status(
             &self,
             _job_id: &str,
-            _status: &str,
+            status: &str,
             _started_at: Option<String>,
             _completed_at: Option<String>,
         ) -> Result<()> {
+            *self.job_status.lock().unwrap() = status.to_string();
             Ok(())
         }
 
@@ -184,7 +191,20 @@ mod tests {
         }
 
         async fn get_batch_job(&self, _job_id: &str) -> Result<BatchJobStatus> {
-            unimplemented!()
+            Ok(BatchJobStatus {
+                id: _job_id.to_string(),
+                job_type: "file_import".into(),
+                status: self.job_status.lock().unwrap().clone(),
+                total_items: 1,
+                completed_items: 0,
+                failed_items: 0,
+                progress: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                started_at: None,
+                completed_at: None,
+                error_message: None,
+                items: vec![],
+            })
         }
 
         async fn get_pending_items(&self, _job_id: &str) -> Result<Vec<BatchJobItem>> {
@@ -211,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_job_with_pending_items() {
         let repo = Arc::new(MockBatchJobRepository::new(5));
-        let use_case = CancelBatchJobUseCase::new(repo);
+        let use_case = CancelBatchJobUseCase::new(repo.clone());
 
         let request = CancelBatchJobRequestDto {
             job_id: "test-job-123".to_string(),
@@ -222,12 +242,13 @@ mod tests {
 
         let response = result.unwrap();
         assert_eq!(response.cancelled_count, 5);
+        assert_eq!(*repo.job_status.lock().unwrap(), "cancelled");
     }
 
     #[tokio::test]
-    async fn test_cancel_job_with_no_pending_items() {
+    async fn test_cancel_job_with_only_a_running_item() {
         let repo = Arc::new(MockBatchJobRepository::new(0));
-        let use_case = CancelBatchJobUseCase::new(repo);
+        let use_case = CancelBatchJobUseCase::new(repo.clone());
 
         let request = CancelBatchJobRequestDto {
             job_id: "completed-job".to_string(),
@@ -238,6 +259,7 @@ mod tests {
 
         let response = result.unwrap();
         assert_eq!(response.cancelled_count, 0);
+        assert_eq!(*repo.job_status.lock().unwrap(), "cancelled");
     }
 
     #[tokio::test]

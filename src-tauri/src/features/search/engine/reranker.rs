@@ -45,6 +45,7 @@
 //! are now on the same scale.
 
 use crate::shared::error::{AppError, Result, ResultExt};
+use crate::shared::utils::with_autorelease_pool;
 use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_nn::{linear, Linear, Module, VarBuilder};
 use candle_transformers::models::bert::{BertModel, Config};
@@ -387,72 +388,74 @@ impl RerankerService {
         let safetensors_owned = safetensors_path.clone();
         let config_owned = config_path.clone();
         let inner = tokio::task::spawn_blocking(move || -> Result<Inner> {
-            let config_json = std::fs::read_to_string(&config_owned)
-                .context("Failed to read reranker config.json")?;
-            let config: Config = serde_json::from_str(&config_json).map_err(|e| {
-                AppError::Other(format!("Failed to parse reranker config.json: {e}"))
-            })?;
-
-            let device = best_reranker_device();
-
-            // SAFETY: VarBuilder::from_mmaped_safetensors is unsafe
-            // because it mmap-loads the safetensors file — Rust can't
-            // statically guarantee the file won't be modified while
-            // the mapping is live. We rely on three invariants:
-            //   1. The model file lives in the app's models directory;
-            //      no other Lattice code path writes to it after the
-            //      one-time download.
-            //   2. The file is read-only mmap'd (PROT_READ); accidental
-            //      writes through the mapping would segfault, not
-            //      corrupt.
-            //   3. The download flow uses atomic temp+rename
-            //      (model_manager.rs), so any future re-download
-            //      replaces the inode, not its contents.
-            // Standard candle pattern; same shape used by the
-            // embedding loader at features/embedding/candle_service.rs.
-            #[allow(unsafe_code)]
-            let vb = unsafe {
-                VarBuilder::from_mmaped_safetensors(&[&safetensors_owned], DType::F32, &device)
-            }
-            .map_err(|e| AppError::Other(format!("Failed to mmap reranker weights: {e}")))?;
-
-            // BertModel::load tries `embeddings`/`encoder` first, then
-            // falls back to `bert.embeddings`/`bert.encoder` if a
-            // `model_type` is set in the config (which it is —
-            // `model_type: "bert"`). Cross-encoder safetensors use the
-            // `bert.*` prefix, so the fallback is what'll fire.
-            let model = BertModel::load(vb.clone(), &config)
-                .map_err(|e| AppError::Other(format!("Failed to build BertModel: {e}")))?;
-
-            // The classifier head: a single linear from hidden_size → 1.
-            // HF `BertForSequenceClassification` exports the head at
-            // `classifier.{weight, bias}` (no `bert.` prefix because it
-            // sits next to, not under, the encoder).
-            // Candle Metal currently rejects this degenerate hidden_size×1
-            // matrix shape. Keep the expensive encoder on the accelerator and
-            // load the tiny classifier head on CPU.
-            let classifier_device = Device::Cpu;
-            #[allow(unsafe_code)]
-            let classifier_vb = unsafe {
-                VarBuilder::from_mmaped_safetensors(
-                    &[&safetensors_owned],
-                    DType::F32,
-                    &classifier_device,
-                )
-            }
-            .map_err(|e| AppError::Other(format!("Failed to mmap classifier weights: {e}")))?;
-            let classifier = linear(config.hidden_size, 1, classifier_vb.pp("classifier"))
-                .map_err(|e| {
-                    AppError::Other(format!(
-                        "Failed to load classifier head (expected `classifier.weight`/\
-                     `classifier.bias` in safetensors): {e}"
-                    ))
+            with_autorelease_pool(move || -> Result<Inner> {
+                let config_json = std::fs::read_to_string(&config_owned)
+                    .context("Failed to read reranker config.json")?;
+                let config: Config = serde_json::from_str(&config_json).map_err(|e| {
+                    AppError::Other(format!("Failed to parse reranker config.json: {e}"))
                 })?;
 
-            Ok(Inner {
-                model,
-                classifier,
-                device,
+                let device = best_reranker_device();
+
+                // SAFETY: VarBuilder::from_mmaped_safetensors is unsafe
+                // because it mmap-loads the safetensors file — Rust can't
+                // statically guarantee the file won't be modified while
+                // the mapping is live. We rely on three invariants:
+                //   1. The model file lives in the app's models directory;
+                //      no other Lattice code path writes to it after the
+                //      one-time download.
+                //   2. The file is read-only mmap'd (PROT_READ); accidental
+                //      writes through the mapping would segfault, not
+                //      corrupt.
+                //   3. The download flow uses atomic temp+rename
+                //      (model_manager.rs), so any future re-download
+                //      replaces the inode, not its contents.
+                // Standard candle pattern; same shape used by the
+                // embedding loader at features/embedding/candle_service.rs.
+                #[allow(unsafe_code)]
+                let vb = unsafe {
+                    VarBuilder::from_mmaped_safetensors(&[&safetensors_owned], DType::F32, &device)
+                }
+                .map_err(|e| AppError::Other(format!("Failed to mmap reranker weights: {e}")))?;
+
+                // BertModel::load tries `embeddings`/`encoder` first, then
+                // falls back to `bert.embeddings`/`bert.encoder` if a
+                // `model_type` is set in the config (which it is —
+                // `model_type: "bert"`). Cross-encoder safetensors use the
+                // `bert.*` prefix, so the fallback is what'll fire.
+                let model = BertModel::load(vb.clone(), &config)
+                    .map_err(|e| AppError::Other(format!("Failed to build BertModel: {e}")))?;
+
+                // The classifier head: a single linear from hidden_size → 1.
+                // HF `BertForSequenceClassification` exports the head at
+                // `classifier.{weight, bias}` (no `bert.` prefix because it
+                // sits next to, not under, the encoder).
+                // Candle Metal currently rejects this degenerate hidden_size×1
+                // matrix shape. Keep the expensive encoder on the accelerator and
+                // load the tiny classifier head on CPU.
+                let classifier_device = Device::Cpu;
+                #[allow(unsafe_code)]
+                let classifier_vb = unsafe {
+                    VarBuilder::from_mmaped_safetensors(
+                        &[&safetensors_owned],
+                        DType::F32,
+                        &classifier_device,
+                    )
+                }
+                .map_err(|e| AppError::Other(format!("Failed to mmap classifier weights: {e}")))?;
+                let classifier = linear(config.hidden_size, 1, classifier_vb.pp("classifier"))
+                    .map_err(|e| {
+                        AppError::Other(format!(
+                            "Failed to load classifier head (expected `classifier.weight`/\
+                     `classifier.bias` in safetensors): {e}"
+                        ))
+                    })?;
+
+                Ok(Inner {
+                    model,
+                    classifier,
+                    device,
+                })
             })
         })
         .await
@@ -488,7 +491,9 @@ impl RerankerService {
         let max_length = self.max_length;
 
         tokio::task::spawn_blocking(move || {
-            rerank_sync(&inner, &tokenizer, &query, documents, top_k, max_length)
+            with_autorelease_pool(|| {
+                rerank_sync(&inner, &tokenizer, &query, documents, top_k, max_length)
+            })
         })
         .await
         .map_err(|e| AppError::Other(format!("Reranking task failed: {e}")))?
