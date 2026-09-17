@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Cpu, Globe, GitBranch, Paperclip, RefreshCw, Send, Settings2, Square } from 'lucide-react';
+import { Cpu, Globe, GitBranch, Paperclip, RefreshCw, Scissors, Send, Settings2, Square } from 'lucide-react';
 
 import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 
@@ -28,7 +28,7 @@ import { toast } from '../../stores/toastStore';
 import { resolveChatModel } from '../../utils/chatModelSelection';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 
-import type { CustomToolSettings, ToolPreferences } from '../../types';
+import type { CompactionRecord, CustomToolSettings, ToolPreferences } from '../../types';
 
 const GENERAL_SPACE_ID = 'space_general';
 
@@ -160,6 +160,7 @@ export function ChatPanel() {
     setComposerDraft,
     regenerateResponse,
     forkConversation,
+    compactConversation,
     moveConversationToSpace,
     loadConversationLinkedDocuments,
   } = useConversationsStore();
@@ -176,6 +177,10 @@ export function ChatPanel() {
   const [isControlsOpen, setIsControlsOpen] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [isImportingFiles, setIsImportingFiles] = useState(false);
+  const [isCompacting, setIsCompacting] = useState(false);
+  const [compactionByConversation, setCompactionByConversation] = useState<
+    Record<string, CompactionRecord>
+  >({});
   const panelRef = useRef<HTMLDivElement>(null);
   const modelLabelRef = useRef<HTMLButtonElement>(null);
   const toolPreferencesRef = useRef<ToolPreferences>(toolPreferences);
@@ -387,6 +392,46 @@ export function ChatPanel() {
     }));
   };
 
+  // The applied compaction for the active conversation, if any, drives the
+  // "Context compacted" divider. Local session state (from a /compact run in
+  // this session) takes precedence; otherwise fall back to the persisted
+  // record on the conversation so the divider survives a reload.
+  const compactionRecord = activeConversationId
+    ? compactionByConversation[activeConversationId] ??
+      conversations.find((conversation) => conversation.id === activeConversationId)
+        ?.compaction ??
+      null
+    : null;
+
+  const handleCompact = useCallback(
+    async (conversationId: string) => {
+      if (isCompacting) return;
+      setIsCompacting(true);
+      // Summarizing runs a model call, so it can take a while with nothing else
+      // on screen to show for it.
+      toast.info('Compacting context', {
+        message: 'Summarizing the older messages…',
+      });
+      try {
+        const record = await compactConversation(conversationId);
+        if (record) {
+          setCompactionByConversation((prev) => ({
+            ...prev,
+            [conversationId]: record,
+          }));
+          toast.success('Context compacted', {
+            message: `${record.originalMessageCount} older message${
+              record.originalMessageCount === 1 ? '' : 's'
+            } folded into a summary.`,
+          });
+        }
+      } finally {
+        setIsCompacting(false);
+      }
+    },
+    [compactConversation, isCompacting]
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isSending || !activeConversationId) return;
@@ -400,6 +445,14 @@ export function ChatPanel() {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+
+    // /compact folds the older messages into an LLM summary instead of sending
+    // a message, so the context window carries the distilled past.
+    if (/^\/compact$/i.test(message)) {
+      void handleCompact(activeConversationId);
+      return;
+    }
+
     const currentToolPreferences = toolPreferencesRef.current;
     const turnMode =
       normalizeTurnMode(currentToolPreferences.turnMode) ??
@@ -694,6 +747,17 @@ export function ChatPanel() {
         },
       },
       {
+        id: 'chat.compact',
+        label: 'Compact context',
+        group: 'Chat',
+        icon: Scissors,
+        enabled: Boolean(activeConversationId) && !isCompacting && messages.length > 0,
+        description: 'Fold older messages into a summary (/compact).',
+        run: () => {
+          if (activeConversationId) void handleCompact(activeConversationId);
+        },
+      },
+      {
         id: 'chat.switch-model',
         label: 'Switch chat model',
         group: 'Chat',
@@ -736,7 +800,9 @@ export function ChatPanel() {
       downloadedModels,
       forkConversation,
       handleChooseFiles,
+      handleCompact,
       handleSearchWholeVault,
+      isCompacting,
       isScopedToLinkedFiles,
       messages.length,
       regenerateResponse,
@@ -808,16 +874,34 @@ export function ChatPanel() {
               {messages.map((message, index) => {
                 const key = getMessageKey(message);
                 const previous = index > 0 ? messages[index - 1] : null;
+                const showCompactionDivider =
+                  Boolean(compactionRecord) &&
+                  'id' in message &&
+                  message.id === compactionRecord?.upToMessageId;
                 return (
-                  <Message
-                    key={key}
-                    message={message}
-                    isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
-                    isLastTurn={index === messages.length - 1}
-                    previousMessageId={
-                      previous && 'id' in previous ? previous.id : undefined
-                    }
-                  />
+                  <Fragment key={key}>
+                    <Message
+                      message={message}
+                      isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
+                      isLastTurn={index === messages.length - 1}
+                      previousMessageId={
+                        previous && 'id' in previous ? previous.id : undefined
+                      }
+                    />
+                    {showCompactionDivider && compactionRecord && (
+                      <div
+                        className="flex items-center gap-3 px-6 py-2"
+                        role="separator"
+                        aria-label="Context compacted"
+                      >
+                        <div className="h-px flex-1 bg-[hsl(var(--border-default))]" />
+                        <span className="text-xxs uppercase tracking-wide text-[hsl(var(--text-muted))]">
+                          Context compacted
+                        </span>
+                        <div className="h-px flex-1 bg-[hsl(var(--border-default))]" />
+                      </div>
+                    )}
+                  </Fragment>
                 );
               })}
             </motion.div>

@@ -456,6 +456,7 @@ impl ConversationRepository {
                 pinned_at: row.pinned_at,
                 archived_at: row.archived_at,
                 last_message_preview: row.last_message_preview,
+                compaction: None,
             })
             .collect::<Vec<_>>();
 

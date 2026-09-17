@@ -6,11 +6,11 @@ use crate::features::conversation::branching_dto::{
 };
 use crate::features::conversation::chat::{ChatResponse, ToolPreferences};
 use crate::features::conversation::dto::{
-    CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
-    DeleteConversationResponseDto, GetConversationMessagesRequestDto,
-    GetConversationMessagesResponseDto, GetConversationRequestDto, GetConversationResponseDto,
-    ListConversationsQuery, ListConversationsResponseDto, RenameConversationRequestDto,
-    RenameConversationResponseDto,
+    CompactConversationRequestDto, CompactConversationResponseDto, CreateConversationRequestDto,
+    CreateConversationResponseDto, DeleteConversationRequestDto, DeleteConversationResponseDto,
+    GetConversationMessagesRequestDto, GetConversationMessagesResponseDto,
+    GetConversationRequestDto, GetConversationResponseDto, ListConversationsQuery,
+    ListConversationsResponseDto, RenameConversationRequestDto, RenameConversationResponseDto,
 };
 use crate::features::conversation::message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, DeleteConversationMessageRequestDto,
@@ -532,6 +532,21 @@ pub async fn regenerate_response(
     .await
 }
 
+/// Compact a conversation's oldest messages into an LLM summary.
+///
+/// The oldest messages (everything except the most recent
+/// `keepRecentMessages`, default 4) are summarized by the LLM and folded into
+/// a single context note. The original messages stay in the history for
+/// display; only the LLM context switches to the summary.
+#[tauri::command]
+#[specta::specta]
+pub async fn compact_conversation(
+    request: CompactConversationRequestDto,
+    container: State<'_, Container>,
+) -> Result<CompactConversationResponseDto, ApiError> {
+    conversation_impl::compact_conversation_impl(request, container.inner()).await
+}
+
 pub fn init() -> TauriPlugin<tauri::Wry> {
     Builder::new("conversation")
         .invoke_handler(tauri::generate_handler![
@@ -580,6 +595,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             truncate_conversation_after,
             fork_conversation,
             regenerate_response,
+            compact_conversation,
         ])
         .build()
 }

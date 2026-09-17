@@ -112,8 +112,8 @@ pub use embedding_constants::{
 
 // Re-export conversation types from master branch
 pub use conversation::{
-    Conversation, ConversationAggregate, ConversationMessage, DocumentReference, LLMMessage,
-    MessageRole,
+    CompactionRecord, Conversation, ConversationAggregate, ConversationMessage, DocumentReference,
+    LLMMessage, MessageRole,
 };
 
 // Re-export function calling types

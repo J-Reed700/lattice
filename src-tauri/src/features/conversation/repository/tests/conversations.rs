@@ -236,3 +236,74 @@ async fn test_count_and_exists() {
     assert!(repo.exists(&conversation.id.to_string()).await.unwrap());
     assert!(!repo.exists("non-existent").await.unwrap());
 }
+
+#[tokio::test]
+async fn test_upsert_summary_keeps_one_row_per_conversation() {
+    use crate::domain::conversation::CompactionRecord;
+    use crate::shared::domain_types::ConversationId;
+    use std::str::FromStr;
+
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+
+    let conversation = repo
+        .create_conversation("Compacted", "model", None)
+        .await
+        .unwrap();
+    let conversation_id = conversation.id.to_string();
+    seed_message(
+        &pool,
+        &conversation_id,
+        "msg-1",
+        "user",
+        "first",
+        10,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+
+    let record = |summary: &str, summary_tokens: i64| CompactionRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        conversation_id: ConversationId::from_str(&conversation_id).unwrap(),
+        summary_text: summary.to_string(),
+        up_to_message_id: "msg-1".to_string(),
+        original_message_count: 1,
+        original_tokens: 10,
+        summary_tokens,
+        compression_ratio: summary_tokens as f64 / 10.0,
+        created_at: chrono::Utc::now(),
+    };
+
+    let first = record("first summary", 5);
+    repo.upsert_summary(&first).await.unwrap();
+    let stored_first = repo.get_summary(&conversation_id).await.unwrap().unwrap();
+
+    // The row must carry the record's own id and timestamp: callers are handed
+    // the record, so a row keyed by anything else is a row they cannot find.
+    assert_eq!(stored_first.id, first.id);
+    assert_eq!(
+        stored_first.created_at.timestamp(),
+        first.created_at.timestamp()
+    );
+    let first_id = stored_first.id;
+
+    // Re-compacting replaces the summary in place: callers read one row, so
+    // `get_summary` never has to choose between competing summaries.
+    repo.upsert_summary(&record("second summary", 4))
+        .await
+        .unwrap();
+
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversation_summaries WHERE conversation_id = ?")
+            .bind(&conversation_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, 1, "a conversation must keep at most one summary");
+
+    let stored = repo.get_summary(&conversation_id).await.unwrap().unwrap();
+    assert_eq!(stored.id, first_id, "the summary id stays stable");
+    assert_eq!(stored.summary_text, "second summary");
+    assert_eq!(stored.summary_tokens, 4);
+}

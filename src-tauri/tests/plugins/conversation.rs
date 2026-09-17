@@ -99,10 +99,12 @@ fn test_conversation_dto_complete() {
         pinned_at: None,
         archived_at: None,
         last_message_preview: Some("Most recent content".to_string()),
+        compaction: None,
     };
 
     assert_eq!(dto.id, "conv-111");
     assert_eq!(dto.message_count, 10);
+    assert!(dto.compaction.is_none());
 }
 
 #[test]

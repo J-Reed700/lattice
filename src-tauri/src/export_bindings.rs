@@ -124,6 +124,7 @@ fn main() {
             lattice::features::conversation::plugin::regenerate_response,
             lattice::features::conversation::plugin::truncate_conversation_after,
             lattice::features::conversation::plugin::fork_conversation,
+            lattice::features::conversation::plugin::compact_conversation,
             lattice::features::settings::plugin::get_system_theme::<tauri::Wry>,
             lattice::features::settings::plugin::set_cloud_api_key,
             // Additional public IPC contracts (use the same signatures as runtime).

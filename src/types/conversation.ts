@@ -170,6 +170,8 @@ export interface Conversation {
   updatedAt: string;
   messageCount?: number;
   totalTokens?: number;
+  /** Active compaction summary, if older messages were folded into a summary. */
+  compaction?: CompactionRecord | null;
   messages?: ConversationMessage[];
 }
 
@@ -183,6 +185,25 @@ export interface ConversationMessage {
   status: MessageStatus;
   metadata?: string | null;
   sources?: SourceWithMetadata[];
+}
+
+/**
+ * A compaction record: the oldest messages of a conversation folded into an
+ * LLM summary. The original messages stay in the history for display; only
+ * the LLM context switches to the summary from here on.
+ */
+export interface CompactionRecord {
+  id: string;
+  conversationId: string;
+  summaryText: string;
+  /** Id of the last message folded into the summary (inclusive boundary). */
+  upToMessageId: string;
+  originalMessageCount: number;
+  originalTokens: number;
+  summaryTokens: number;
+  /** `summaryTokens / originalTokens`, clamped to (0, 1]. */
+  compressionRatio: number;
+  createdAt: string;
 }
 
 export interface ConversationMessageBookmark {

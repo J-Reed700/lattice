@@ -86,6 +86,20 @@ async fn setup_schema(pool: &SqlitePool) {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (document_id, space_id)
             );
+
+            CREATE TABLE conversation_summaries (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL UNIQUE,
+                summary_text TEXT NOT NULL,
+                up_to_message_id TEXT NOT NULL,
+                original_message_count INTEGER NOT NULL CHECK(original_message_count > 0),
+                original_tokens INTEGER NOT NULL CHECK(original_tokens > 0),
+                summary_tokens INTEGER NOT NULL CHECK(summary_tokens > 0),
+                compression_ratio REAL NOT NULL CHECK(compression_ratio > 0.0 AND compression_ratio <= 1.0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (up_to_message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE
+            );
             "#,
     )
     .execute(pool)

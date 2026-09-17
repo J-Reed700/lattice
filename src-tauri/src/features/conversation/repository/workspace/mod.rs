@@ -1,7 +1,8 @@
 //! Conversation workspace persistence. All SQL and transaction ownership stays here.
 use super::ConversationRepository;
 use crate::features::conversation::dto::{
-    ConversationDto, ListConversationsResponseDto, RenameConversationResponseDto,
+    CompactionRecordDto, ConversationDto, ListConversationsResponseDto,
+    RenameConversationResponseDto,
 };
 use crate::features::conversation::message_bookmark_dto::*;
 use crate::features::conversation::space_dto::*;

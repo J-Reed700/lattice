@@ -56,6 +56,7 @@ export type {
   StreamChunk,
   TurnMode,
   ToolPreferences,
+  CompactionRecord,
 } from './conversation';
 
 export * from './api';

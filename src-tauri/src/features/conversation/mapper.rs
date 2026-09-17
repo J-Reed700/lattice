@@ -5,7 +5,7 @@
 //! This mapper handles conversion between conversation domain models and their DTO representations.
 
 use crate::domain::{Conversation, ConversationAggregate};
-use crate::features::conversation::dto::ConversationDto;
+use crate::features::conversation::dto::{CompactionRecordDto, ConversationDto};
 
 /// Mapper for conversation-related conversions.
 pub struct ConversationDtoMapper;
@@ -40,6 +40,7 @@ impl ConversationDtoMapper {
             pinned_at: None,
             archived_at: None,
             last_message_preview: None,
+            compaction: None,
         }
     }
 
@@ -53,7 +54,9 @@ impl ConversationDtoMapper {
     ///
     /// Conversation DTO for JSON serialization
     pub fn aggregate_to_dto(aggregate: &ConversationAggregate) -> ConversationDto {
-        Self::to_dto(aggregate.conversation())
+        let mut dto = Self::to_dto(aggregate.conversation());
+        dto.compaction = aggregate.compaction().map(CompactionRecordDto::from_record);
+        dto
     }
 }
 

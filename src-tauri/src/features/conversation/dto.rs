@@ -65,6 +65,10 @@ pub struct ConversationDto {
 
     /// Optional preview of the most recent message content
     pub last_message_preview: Option<String>,
+
+    /// Active compaction summary, if the conversation's older messages have
+    /// been folded into one (see `conversation_summaries`).
+    pub compaction: Option<CompactionRecordDto>,
 }
 
 /// Conversation message representation.
@@ -215,6 +219,78 @@ pub struct DeleteConversationResponseDto {
     pub status: String,
 }
 
+/// Request to compact a conversation's oldest messages into an LLM summary.
+///
+/// The oldest messages are folded into a summary so the LLM context window
+/// carries the distilled past instead of the raw history. The most recent
+/// `keep_recent_messages` messages stay raw.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactConversationRequestDto {
+    /// Conversation identifier
+    pub conversation_id: String,
+
+    /// Number of most-recent messages to keep raw (default 4).
+    pub keep_recent_messages: Option<i64>,
+}
+
+/// A compaction record as returned to the client.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionRecordDto {
+    /// Stable identifier for this compaction
+    pub id: String,
+
+    /// Conversation this compaction belongs to
+    pub conversation_id: String,
+
+    /// The LLM-produced summary of the compacted messages
+    pub summary_text: String,
+
+    /// Id of the last message folded into the summary (inclusive boundary)
+    pub up_to_message_id: String,
+
+    /// How many messages were folded into the summary
+    pub original_message_count: i64,
+
+    /// Total tokens of the folded messages before summarization
+    pub original_tokens: i64,
+
+    /// Token count of the summary itself
+    pub summary_tokens: i64,
+
+    /// `summary_tokens / original_tokens`, clamped to `(0.0, 1.0]`
+    pub compression_ratio: f64,
+
+    /// When the compaction was created (ISO 8601)
+    pub created_at: String,
+}
+
+impl CompactionRecordDto {
+    /// Build a DTO from the domain record.
+    pub fn from_record(record: &crate::domain::conversation::CompactionRecord) -> Self {
+        Self {
+            id: record.id.clone(),
+            conversation_id: record.conversation_id.to_string(),
+            summary_text: record.summary_text.clone(),
+            up_to_message_id: record.up_to_message_id.clone(),
+            original_message_count: record.original_message_count,
+            original_tokens: record.original_tokens,
+            summary_tokens: record.summary_tokens,
+            compression_ratio: record.compression_ratio,
+            created_at: record.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Response from compacting a conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactConversationResponseDto {
+    /// The compaction that was applied
+    pub compaction: CompactionRecordDto,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +316,7 @@ mod tests {
             pinned_at: None,
             archived_at: None,
             last_message_preview: None,
+            compaction: None,
         };
 
         let json = serde_json::to_string(&conversation).unwrap();

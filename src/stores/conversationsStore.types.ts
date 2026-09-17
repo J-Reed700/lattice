@@ -5,6 +5,7 @@ import type {
   DocumentSpaceMembershipDto,
 } from '../types';
 import type {
+  CompactionRecord,
   Conversation,
   ConversationMessageBookmark,
   MessageVerificationSummary,
@@ -127,6 +128,15 @@ export interface ConversationsState {
     _conversationId: string,
     _upToMessageId?: string
   ) => Promise<string | null>;
+  /**
+   * Fold the conversation's oldest messages into an LLM summary so the context
+   * window carries the distilled past. Resolves with the applied compaction
+   * record, or `null` on failure (surfaced via the store's `error`).
+   */
+  compactConversation: (
+    _conversationId: string,
+    _keepRecentMessages?: number
+  ) => Promise<CompactionRecord | null>;
   setComposerDraft: (_draft: string | null) => void;
   cancelGeneration: (_conversationId?: string | null) => Promise<void>;
   deleteMessage: (_conversationId: string, _messageId: string) => Promise<void>;
