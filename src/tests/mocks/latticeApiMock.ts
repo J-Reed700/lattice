@@ -158,6 +158,7 @@ export function createVaultAPIMock() {
     // Model operations
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
     warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     getModelInfo: vi.fn().mockResolvedValue({
       name: 'test-model',
       size: 1000000,
@@ -279,6 +280,22 @@ export function createVaultAPIMock() {
     regenerateResponse: vi.fn().mockResolvedValue({
       ok: true,
       data: { conversationId: 'test-conversation', messages: [], contextUsed: 0 },
+    }),
+    compactConversation: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        compaction: {
+          id: 'test-compaction',
+          conversationId: 'test-conversation',
+          summaryText: 'Summary of the older messages.',
+          upToMessageId: 'm2',
+          originalMessageCount: 4,
+          originalTokens: 1200,
+          summaryTokens: 150,
+          compressionRatio: 0.125,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
     }),
     generateChatStarters: vi.fn().mockResolvedValue({
       ok: true,

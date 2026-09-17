@@ -1,8 +1,10 @@
 //! Conversation rows: create, read, list, update and delete.
 
 use super::ConversationRepository;
-use crate::domain::conversation::{Conversation, ConversationAggregate};
-use crate::features::conversation::persistence_mapper::{ConversationModel, ConversationRowMapper};
+use crate::domain::conversation::{CompactionRecord, Conversation, ConversationAggregate};
+use crate::features::conversation::persistence_mapper::{
+    ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
+};
 use crate::shared::domain_types::ConversationId;
 use crate::shared::error::{AppError, Result};
 use chrono::Utc;
@@ -149,11 +151,40 @@ impl ConversationRepository {
 
         let document_refs = self.get_document_references(id).await?;
 
+        let compaction = self.get_summary(id).await?;
+
         // Reconstruct aggregate
-        let aggregate =
-            ConversationAggregate::from_persistence(conversation, messages, document_refs);
+        let aggregate = ConversationAggregate::from_persistence(
+            conversation,
+            messages,
+            document_refs,
+            compaction,
+        );
 
         Ok(Some(aggregate))
+    }
+
+    /// Load the compaction summary for a conversation, if any. At most one row
+    /// can exist per conversation (see [`Self::upsert_summary`]).
+    pub async fn get_summary(&self, id: &str) -> Result<Option<CompactionRecord>> {
+        let model = sqlx::query_as::<_, ConversationSummaryModel>(
+            r#"
+            SELECT id, conversation_id, summary_text, up_to_message_id,
+                   original_message_count, original_tokens, summary_tokens,
+                   compression_ratio, created_at
+            FROM conversation_summaries
+            WHERE conversation_id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to load conversation summary: {}", e)))?;
+
+        match model {
+            Some(m) => Ok(Some(ConversationSummaryMapper::to_entity(&m)?)),
+            None => Ok(None),
+        }
     }
 
     pub async fn find_all(
@@ -300,6 +331,63 @@ impl ConversationRepository {
                 "Conversation not found: {}",
                 conversation.id
             )));
+        }
+
+        // Persist the active compaction summary, if any (upsert).
+        if let Some(record) = aggregate.compaction() {
+            self.upsert_summary(record).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Insert or update the compaction summary for a conversation.
+    ///
+    /// One row per conversation: `conversation_summaries.conversation_id` is
+    /// UNIQUE, and conflicting on that column updates the existing row in
+    /// place, so its primary key stays stable across re-compactions. Reading a
+    /// summary back can therefore never have to choose between rows. Doing this
+    /// in one statement also keeps two concurrent compactions of the same
+    /// conversation from both inserting.
+    pub async fn upsert_summary(&self, record: &CompactionRecord) -> Result<()> {
+        let conversation_id = record.conversation_id.to_string();
+        let created_at = record.created_at.to_rfc3339();
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO conversation_summaries (
+                id, conversation_id, summary_text, up_to_message_id,
+                original_message_count, original_tokens, summary_tokens,
+                compression_ratio, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (conversation_id) DO UPDATE SET
+                summary_text = excluded.summary_text,
+                up_to_message_id = excluded.up_to_message_id,
+                original_message_count = excluded.original_message_count,
+                original_tokens = excluded.original_tokens,
+                summary_tokens = excluded.summary_tokens,
+                compression_ratio = excluded.compression_ratio,
+                created_at = excluded.created_at
+            "#,
+        )
+        .bind(&record.id)
+        .bind(&conversation_id)
+        .bind(&record.summary_text)
+        .bind(&record.up_to_message_id)
+        .bind(record.original_message_count)
+        .bind(record.original_tokens)
+        .bind(record.summary_tokens)
+        .bind(record.compression_ratio)
+        .bind(&created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to save conversation summary: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::Database(
+                "Conversation summary upsert affected no rows".into(),
+            ));
         }
 
         Ok(())

@@ -99,6 +99,7 @@ impl ConversationServiceTrait for MockConversationService {
             updated.conversation().clone(),
             messages,
             updated.document_context().to_vec(),
+            updated.compaction().cloned(),
         );
         Ok(result)
     }
@@ -126,6 +127,20 @@ impl ConversationServiceTrait for MockConversationService {
         id: &str,
     ) -> Result<Option<crate::domain::conversation::ConversationAggregate>> {
         Ok(self.conversations.read().unwrap().get(id).cloned())
+    }
+
+    async fn compact_conversation(
+        &self,
+        conversation_id: &str,
+        summary_text: String,
+        up_to_message_id: &str,
+        summary_tokens: i64,
+    ) -> Result<crate::domain::conversation::CompactionRecord> {
+        let mut conversations = self.conversations.write().unwrap();
+        let current = conversations.get_mut(conversation_id).ok_or_else(|| {
+            crate::shared::error::AppError::NotFound("Conversation not found".into())
+        })?;
+        current.apply_compaction(summary_text, up_to_message_id, summary_tokens)
     }
 
     async fn list_conversations(

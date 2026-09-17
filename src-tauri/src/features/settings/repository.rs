@@ -17,7 +17,8 @@
 use crate::application::ports::{merge_json_update, SettingsRepositoryPort};
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult, VectorIndexCompressionModeDto,
-    MAX_VECTOR_COMPRESSION_DIMS, MIN_VECTOR_COMPRESSION_DIMS,
+    DEFAULT_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS, MAX_VECTOR_COMPRESSION_DIMS,
+    MIN_LLM_STALL_TIMEOUT_SECONDS, MIN_VECTOR_COMPRESSION_DIMS,
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
@@ -50,6 +51,28 @@ impl Default for SettingsFile {
             version: SETTINGS_VERSION,
             settings: SettingsDto::default(),
         }
+    }
+}
+
+/// Bring a stored document inside the ranges the validator enforces.
+///
+/// `llm.timeout_seconds` used to mean "total request timeout" and now means
+/// "stall timeout", so values written under the old meaning — 120 for a cloud
+/// provider, 300 to escape the old five-minute cap — land outside the new
+/// range. Resolving them to the default keeps them away from the validator,
+/// which would otherwise reject a save of some unrelated field with an error
+/// about a number the user never typed, and stops a stale 300 from disabling
+/// stall detection outright.
+fn resolve_out_of_range_values(settings: &mut SettingsDto) {
+    if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
+        .contains(&settings.llm.timeout_seconds)
+    {
+        tracing::info!(
+            stored = settings.llm.timeout_seconds,
+            resolved = DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
+            "Stored LLM stall timeout is outside the supported range; using the default"
+        );
+        settings.llm.timeout_seconds = DEFAULT_LLM_STALL_TIMEOUT_SECONDS;
     }
 }
 
@@ -145,14 +168,14 @@ impl SettingsRepository {
     /// If the file is corrupted or has invalid format, returns default settings
     /// and overwrites the corrupted file.
     async fn read_settings_file(&self) -> Result<SettingsFile> {
-        match fs::read_to_string(&self.settings_path).await {
+        let mut settings_file = match fs::read_to_string(&self.settings_path).await {
             Ok(content) => {
                 match serde_json::from_str::<SettingsFile>(&content) {
                     Ok(settings_file) => {
                         if settings_file.version < SETTINGS_VERSION {
-                            self.migrate_settings(settings_file).await
+                            self.migrate_settings(settings_file).await?
                         } else {
-                            Ok(settings_file)
+                            settings_file
                         }
                     }
                     Err(e) => {
@@ -161,7 +184,7 @@ impl SettingsRepository {
                         self.quarantine_corrupt_settings(&e.to_string()).await;
                         let defaults = SettingsFile::default();
                         self.write_settings_file(&defaults).await?;
-                        Ok(defaults)
+                        defaults
                     }
                 }
             }
@@ -170,9 +193,13 @@ impl SettingsRepository {
                 tracing::info!("Creating default settings file: {}", e);
                 let defaults = SettingsFile::default();
                 self.write_settings_file(&defaults).await?;
-                Ok(defaults)
+                defaults
             }
-        }
+        };
+
+        resolve_out_of_range_values(&mut settings_file.settings);
+
+        Ok(settings_file)
     }
 
     /// Write settings file to disk using atomic write.
@@ -499,8 +526,17 @@ impl SettingsRepository {
                 "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
             );
         }
-        if settings.llm.timeout_seconds == 0 {
-            result.add_error("llm", "timeout_seconds must be greater than 0".to_string());
+        if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
+            .contains(&settings.llm.timeout_seconds)
+        {
+            result.add_error(
+                "llm",
+                format!(
+                    "timeout_seconds is the stall timeout — the silence a response may go without \
+                     being declared dead — and must be between {} and {} seconds",
+                    MIN_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS
+                ),
+            );
         }
         for path in &settings.llm.external_model_directories {
             let trimmed = path.trim();
@@ -1083,9 +1119,13 @@ impl SettingsRepositoryPort for SettingsRepository {
             .map_err(|e| AppError::Storage(format!("Failed to read import file: {}", e)))?;
 
         // Deserialize
-        let imported_settings: SettingsDto = serde_json::from_str(&content).map_err(|e| {
+        let mut imported_settings: SettingsDto = serde_json::from_str(&content).map_err(|e| {
             AppError::Deserialization(format!("Failed to deserialize settings: {}", e))
         })?;
+
+        // An export taken before the stall-timeout rework is otherwise rejected
+        // wholesale over one repurposed number.
+        resolve_out_of_range_values(&mut imported_settings);
 
         let validation = self.validate_settings(&imported_settings);
         if validation.has_errors() {

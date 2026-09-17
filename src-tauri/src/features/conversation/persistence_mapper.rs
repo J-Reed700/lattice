@@ -8,7 +8,7 @@
 //! - Document references
 
 use crate::domain::conversation::{
-    Conversation, ConversationMessage, DocumentReference, MessageRole,
+    CompactionRecord, Conversation, ConversationMessage, DocumentReference, MessageRole,
 };
 use crate::shared::domain_types::ConversationId;
 use crate::shared::error::{AppError, Result};
@@ -54,6 +54,20 @@ pub struct DocumentReferenceModel {
     pub chunk_id: Option<String>,
     pub relevance_score: Option<f32>,
     pub added_at: String,
+}
+
+/// Database model for conversation summaries (context compaction).
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ConversationSummaryModel {
+    pub id: String,
+    pub conversation_id: String,
+    pub summary_text: String,
+    pub up_to_message_id: String,
+    pub original_message_count: i64,
+    pub original_tokens: i64,
+    pub summary_tokens: i64,
+    pub compression_ratio: f64,
+    pub created_at: String,
 }
 
 /// Mapper for Conversation entity and database model.
@@ -235,6 +249,52 @@ impl DocumentReferenceMapper {
     }
 }
 
+/// Mapper for CompactionRecord entity and database model.
+pub struct ConversationSummaryMapper;
+
+impl ConversationSummaryMapper {
+    /// Convert domain entity to database model.
+    pub fn to_model(entity: &CompactionRecord) -> ConversationSummaryModel {
+        ConversationSummaryModel {
+            id: entity.id.clone(),
+            conversation_id: entity.conversation_id.to_string(),
+            summary_text: entity.summary_text.clone(),
+            up_to_message_id: entity.up_to_message_id.clone(),
+            original_message_count: entity.original_message_count,
+            original_tokens: entity.original_tokens,
+            summary_tokens: entity.summary_tokens,
+            compression_ratio: entity.compression_ratio,
+            created_at: entity.created_at.to_rfc3339(),
+        }
+    }
+
+    /// Convert database model to domain entity.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::InvalidData` if the timestamp cannot be parsed
+    /// - `AppError::InvalidData` if the conversation ID is invalid
+    pub fn to_entity(model: &ConversationSummaryModel) -> Result<CompactionRecord> {
+        let created_at = DateTime::parse_from_rfc3339(&model.created_at)
+            .map_err(|e| AppError::InvalidData(format!("Invalid created_at timestamp: {}", e)))?
+            .with_timezone(&Utc);
+
+        let conversation_id = ConversationId::from_str(&model.conversation_id)?;
+
+        Ok(CompactionRecord {
+            id: model.id.clone(),
+            conversation_id,
+            summary_text: model.summary_text.clone(),
+            up_to_message_id: model.up_to_message_id.clone(),
+            original_message_count: model.original_message_count,
+            original_tokens: model.original_tokens,
+            summary_tokens: model.summary_tokens,
+            compression_ratio: model.compression_ratio,
+            created_at,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +364,36 @@ mod tests {
         assert_eq!(converted.document_id, entity.document_id);
         assert_eq!(converted.chunk_id, entity.chunk_id);
         assert_eq!(converted.relevance_score, entity.relevance_score);
+    }
+
+    #[test]
+    fn test_compaction_summary_mapper_round_trip() {
+        let entity = CompactionRecord {
+            id: "sum-123".to_string(),
+            conversation_id: ConversationId::new(),
+            summary_text: "User asked about RAG; assistant explained it.".to_string(),
+            up_to_message_id: "msg-456".to_string(),
+            original_message_count: 6,
+            original_tokens: 4000,
+            summary_tokens: 250,
+            compression_ratio: 0.0625,
+            created_at: Utc::now(),
+        };
+
+        let model = ConversationSummaryMapper::to_model(&entity);
+        let converted = ConversationSummaryMapper::to_entity(&model).unwrap();
+
+        assert_eq!(converted.id, entity.id);
+        assert_eq!(converted.conversation_id, entity.conversation_id);
+        assert_eq!(converted.summary_text, entity.summary_text);
+        assert_eq!(converted.up_to_message_id, entity.up_to_message_id);
+        assert_eq!(
+            converted.original_message_count,
+            entity.original_message_count
+        );
+        assert_eq!(converted.original_tokens, entity.original_tokens);
+        assert_eq!(converted.summary_tokens, entity.summary_tokens);
+        assert!((converted.compression_ratio - entity.compression_ratio).abs() < f64::EPSILON);
     }
 
     #[test]

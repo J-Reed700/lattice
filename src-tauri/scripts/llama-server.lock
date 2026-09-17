@@ -1,0 +1,27 @@
+# llama-server sidecar pin: the single source of truth for building,
+# publishing, fetching, verifying and bundling the sidecar binaries.
+# See src-tauri/binaries/README.md for the bump procedure.
+#
+# Format: one `key value` pair per line; `sha256 <hex> <file>` lines are
+# written by `scripts/fetch-llama-binaries.sh --update-lock` after the
+# release is published, and are authoritative over the release's own
+# SHA256SUMS.txt.
+
+# Upstream llama.cpp tag compiled by .github/workflows/llama-build.yml.
+llama_cpp_tag b8981
+# GitHub release holding the binaries. Bump the -rN suffix to rebuild the
+# same llama.cpp tag; published releases are never overwritten.
+release llama/b8981-r2
+# Repository that owns the release (public, so anonymous download works).
+repo J-Reed700/lattice
+# Oldest macOS the binary may require. Keep equal to
+# bundle.macOS.minimumSystemVersion in tauri.conf.json.
+macos_min 13.3
+# Newest glibc symbol version the Linux binaries may require
+# (ubuntu-22.04 build image).
+glibc_max 2.35
+sha256 3b6c1b9bf6678078b49fe11c5a36f860533145e92f5d19778cea83297d916d01 llama-server-aarch64-apple-darwin
+sha256 f46d4b265046ccd596346ea82ed299c1a5eff32328aac1f8a075cf3f9de027fa llama-server-x86_64-pc-windows-msvc.exe
+sha256 111aaced70d5e2c6f44002162373cd1eb8017520f69321d7d7a70f857b4426d0 llama-server-cpu-x86_64-pc-windows-msvc.exe
+sha256 86851f577cd6f0a155d613e3e51c0566ba5c6c2bfa4a061d67f866978ae2d0ff llama-server-x86_64-unknown-linux-gnu
+sha256 a1ebc72ac290076a5371c1d15ff78f6ba7e825116f82b6ab33e35c68832e77c4 llama-server-cpu-x86_64-unknown-linux-gnu

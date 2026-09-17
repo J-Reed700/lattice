@@ -1,45 +1,47 @@
 # Sidecar Binaries
 
-This directory holds the `llama-server` sidecar binaries that ship inside the Lattice installer. The binaries themselves are **not committed** — they are fetched at build time by `scripts/fetch-llama-binaries.sh`.
+This directory holds the `llama-server` sidecar binaries that ship inside the Lattice installer and run local GGUF models. They are **not committed**. `scripts/fetch-llama-binaries.sh` installs them from a GitHub Release pinned in `scripts/llama-server.lock`.
 
-## How it works
+## Guarantees
 
-1. **Build:** `.github/workflows/llama-build.yml` (in the repo root) compiles `llama-server` for each target (Mac+Metal, Windows+Vulkan, Windows+CPU, Linux+Vulkan) and attaches the resulting binaries to a GitHub Release tagged `llama/<llama-cpp-tag>`.
+Each guarantee has a check that fails loudly when it breaks:
 
-2. **Fetch:** `scripts/fetch-llama-binaries.sh` downloads those binaries into this directory, verifying SHA-256 checksums against `SHA256SUMS.txt`.
+| Guarantee | Enforced by |
+|---|---|
+| Every binary is one self-contained file: only OS-provided libraries (plus the system Vulkan loader for the Vulkan builds), no rpaths, macOS minimum ≤ `macos_min`, glibc ≤ `glibc_max`, static C++ runtime, no OpenMP | `scripts/verify_llama_binaries.py`, run by the build workflow, the fetch script and CI |
+| The binary for each runner starts after its build tree is deleted | `llama-build.yml` (`--run`) |
+| A published release never changes | `llama-build.yml` refuses to publish over an existing release; the lock pins every file's SHA-256 |
+| The installed files are exactly the pinned ones | `fetch-llama-binaries.sh` replaces anything that doesn't match the lock; CI's `sidecar-binaries` job fetches, verifies and runs them on macOS, Windows and Linux |
+| A release build can't bundle anything else | `build.rs` fails release builds whose sidecars don't match the lock |
+| A broken binary is reported, not silently ignored | the app runs `--version` at startup and names the reason in model settings; Windows and Linux fall back to the CPU binary |
 
-3. **Bundle:** Tauri's `externalBin` config (in `tauri.conf.json`) picks up the binaries here at app build time and bundles them into the installer.
+## Files
 
-4. **Spawn:** At runtime, Lattice spawns the right binary based on detected hardware (see `features/llm/engine/sidecar_manager.rs`).
-
-## Local dev
-
-To get the binaries locally:
-
-```bash
-cd src-tauri
-bash scripts/fetch-llama-binaries.sh
-```
-
-This reads `scripts/llama-server-version.txt` for the pinned tag.
-
-## Bumping the llama.cpp version
-
-1. Edit `scripts/llama-server-version.txt` (single line, e.g. `b8981`).
-2. Edit `.github/workflows/llama-build.yml`'s `LLAMA_CPP_TAG` env to match.
-3. Manually trigger `.github/workflows/llama-build.yml` from the Actions tab, OR push a tag like `git tag llama/b8981 && git push origin llama/b8981`.
-4. Once the Release is published, run `bash scripts/fetch-llama-binaries.sh` locally and verify.
-5. Commit the version bump.
-
-## Naming convention
-
-Tauri's `externalBin` requires binaries to follow `<base-name>-<target-triple>` pattern. Our base name is `llama-server`. The targets are:
-
-| File | Target triple | Backend |
+| File | Platform | Backend |
 |---|---|---|
 | `llama-server-aarch64-apple-darwin` | macOS Apple Silicon | Metal |
 | `llama-server-x86_64-pc-windows-msvc.exe` | Windows x64 | Vulkan |
-| `llama-server-cpu-x86_64-pc-windows-msvc.exe` | Windows x64 | CPU (AVX2) — fallback |
+| `llama-server-cpu-x86_64-pc-windows-msvc.exe` | Windows x64 | CPU (AVX2), fallback |
 | `llama-server-x86_64-unknown-linux-gnu` | Linux x64 | Vulkan |
+| `llama-server-cpu-x86_64-unknown-linux-gnu` | Linux x64 | CPU (AVX2), fallback |
 
-The CPU Windows variant uses a non-standard prefix (`llama-server-cpu-`) because Tauri's `externalBin` only allows one binary per target triple. The runtime fallback logic (Sprint 3) explicitly picks between these two when Vulkan init fails.
+Tauri's `externalBin` names files `<name>-<target-triple>`, so the CPU fallbacks are a second sidecar, `binaries/llama-server-cpu`, bundled on Windows and Linux through `tauri.windows.conf.json` and `tauri.linux.conf.json`.
+
+## Local development
+
+```bash
+bash src-tauri/scripts/fetch-llama-binaries.sh          # install or repair
+bash src-tauri/scripts/fetch-llama-binaries.sh --check  # verify only
+```
+
+Files that already match the lock are not downloaded again.
+
+## Bumping llama.cpp or rebuilding
+
+1. In `scripts/llama-server.lock`, set `llama_cpp_tag` (for a rebuild, keep it), set `release` to `llama/<llama_cpp_tag>-r<N>` with a new `N`, and delete the `sha256` lines.
+2. Optional dry run: run **Build llama-server sidecar binaries** from the Actions tab on your branch. It builds and verifies all five binaries without publishing. Pull requests that touch the pipeline do the same automatically.
+3. Commit the lock, then push the matching tag: `git tag llama/<llama_cpp_tag>-r<N> && git push origin llama/<llama_cpp_tag>-r<N>`. The workflow checks that the tag equals the lock's `release` and publishes the release.
+4. Pin it: `bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock`. This downloads the release, checks it against its `SHA256SUMS.txt`, verifies every binary and writes the `sha256` lines.
+5. Commit the updated lock. Until then CI's `sidecar-binaries` job and release builds fail on purpose.
+
+When raising `macos_min`, raise `bundle.macOS.minimumSystemVersion` in `tauri.conf.json` to match; `build.rs` rejects release builds where they differ.

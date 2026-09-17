@@ -8,7 +8,7 @@ use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct CloudLlm {
     provider: LLMProvider,
@@ -16,6 +16,8 @@ pub struct CloudLlm {
     key: String,
     endpoint: String,
     client: reqwest::Client,
+    /// Longest silence tolerated inside a streamed response.
+    stall_timeout: Duration,
     max_tokens: u32,
     context_window: usize,
     system_prompt: String,
@@ -37,10 +39,11 @@ impl CloudLlm {
                 ))
             }
         };
+        // No client-wide timeout: a long answer is bounded by the request's time
+        // budget, and a streamed one additionally by stall detection.
         let client = crate::shared::utils::reqwest_client_builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(settings.timeout_seconds.max(1) as u64))
             .build()
             .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
         Ok(Self {
@@ -49,6 +52,7 @@ impl CloudLlm {
             key,
             endpoint: endpoint.into(),
             client,
+            stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
             max_tokens: settings.max_tokens,
             context_window: settings.context_window as usize,
             system_prompt: settings.prompts.system_prompt.clone(),
@@ -103,6 +107,9 @@ impl CloudLlm {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
             }
             if let Some(effort) = &request.reasoning_effort {
+                // Anthropic has no "none" effort, and disabling thinking is rejected
+                // by some models; the lowest effort is the portable equivalent.
+                let effort = if effort == "none" { "low" } else { effort };
                 set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
                 set_field(&mut body, "output_config", json!({"effort":effort}))?;
             }
@@ -122,9 +129,28 @@ impl CloudLlm {
         }
     }
 
-    async fn send(&self, body: &Value) -> Result<reqwest::Response> {
+    /// All three attempts and their backoffs share one `deadline`, so a retry
+    /// never multiplies the caller's time budget. `bound_body` applies what is
+    /// left of it to the whole exchange; without it only the wait for response
+    /// headers is bounded and the streamed body is left to stall detection.
+    async fn send(
+        &self,
+        body: &Value,
+        deadline: Instant,
+        bound_body: bool,
+    ) -> Result<reqwest::Response> {
+        let mut last_error = None;
         for attempt in 0..3u32 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(last_error.unwrap_or_else(|| self.budget_error()));
+            }
             let request = self.client.post(&self.endpoint).json(body);
+            let request = if bound_body {
+                request.timeout(remaining)
+            } else {
+                request
+            };
             let request = if self.provider == LLMProvider::Openai {
                 request.bearer_auth(&self.key)
             } else {
@@ -132,33 +158,60 @@ impl CloudLlm {
                     .header("x-api-key", &self.key)
                     .header("anthropic-version", "2023-06-01")
             };
-            let response = request
-                .send()
-                .await
-                .map_err(|e| AppError::Network(format!("Cloud request failed: {e}")))?;
+            let send = request.send();
+            let response = if bound_body {
+                send.await
+            } else {
+                tokio::time::timeout(remaining, send)
+                    .await
+                    .map_err(|_| self.budget_error())?
+            }
+            .map_err(|e| {
+                if e.is_timeout() {
+                    self.budget_error()
+                } else {
+                    AppError::Network(format!("Cloud request failed: {e}"))
+                }
+            })?;
             let status = response.status();
             if status.is_success() {
                 return Ok(response);
             }
-            if attempt < 2 && (status.as_u16() == 429 || status.is_server_error()) {
-                let delay = response
+            // Avoid echoing provider bodies which can contain submitted user text.
+            let error = AppError::Network(format!(
+                "{} API returned HTTP {}",
+                self.provider_name(),
+                status
+            ));
+            if attempt == 2 || !(status.as_u16() == 429 || status.is_server_error()) {
+                return Err(error);
+            }
+            let delay = Duration::from_secs(
+                response
                     .headers()
                     .get("retry-after")
                     .and_then(|h| h.to_str().ok())
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(1 << attempt)
-                    .min(30);
-                tokio::time::sleep(Duration::from_secs(delay)).await;
-                continue;
+                    .min(30),
+            );
+            // Sleeping past the deadline would report a budget expiry instead of
+            // the provider's own reason for refusing.
+            if deadline.saturating_duration_since(Instant::now()) <= delay {
+                return Err(error);
             }
-            // Avoid echoing provider bodies which can contain submitted user text.
-            return Err(AppError::Network(format!(
-                "{} API returned HTTP {}",
-                self.provider_name(),
-                status
-            )));
+            last_error = Some(error);
+            tokio::time::sleep(delay).await;
         }
         Err(AppError::Network("Cloud request retries exhausted".into()))
+    }
+
+    /// Exhausting the budget is not a stall, and must not be reported as one.
+    fn budget_error(&self) -> AppError {
+        AppError::ServiceNotAvailable(format!(
+            "{} did not respond within the request's time budget",
+            self.provider_name()
+        ))
     }
 
     fn legacy_request(
@@ -198,7 +251,10 @@ impl LLMPort for CloudLlm {
         true
     }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let response = self.send(&self.body(request, false)?).await?;
+        let deadline = Instant::now() + request.effective_time_budget();
+        let response = self
+            .send(&self.body(request, false)?, deadline, true)
+            .await?;
         let value: Value = response
             .json()
             .await
@@ -237,13 +293,22 @@ impl LLMPort for CloudLlm {
         images: Option<Vec<String>>,
     ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
         let request = self.legacy_request(prompt, context, images)?;
-        let response = self.send(&self.body(&request, true)?).await?;
+        // The streamed body is bounded by stall detection below, but waiting for
+        // the status line is bounded by nothing else.
+        let deadline = Instant::now() + request.effective_time_budget();
+        let response = self
+            .send(&self.body(&request, true)?, deadline, false)
+            .await?;
         let mut bytes = response.bytes_stream();
         let provider = self.provider;
+        let stall_timeout = self.stall_timeout;
         let output = async_stream::try_stream! {
             let mut buffer = Vec::new();
             let mut completed = false;
-            while let Some(chunk) = bytes.next().await {
+            loop {
+                let next = tokio::time::timeout(stall_timeout, bytes.next()).await
+                    .map_err(|_| AppError::Network(format!("Cloud stream stalled for {}s", stall_timeout.as_secs())))?;
+                let Some(chunk) = next else { break };
                 buffer.extend_from_slice(&chunk.map_err(|e| AppError::Network(format!("Cloud stream interrupted: {e}")))?);
                 if buffer.len() > 4 * 1024 * 1024 { Err(AppError::Network("Cloud event exceeds size limit".into()))?; }
                 // Split complete lines at the byte level; UTF-8 characters may span network packets.
@@ -463,6 +528,22 @@ mod tests {
             anthropic.body(&request, false).unwrap()["messages"][0]["content"][0]["tool_use_id"],
             "abc"
         );
+    }
+
+    #[test]
+    fn anthropic_maps_no_reasoning_to_its_lowest_effort() {
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Anthropic,
+            ..Default::default()
+        };
+        let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+        let request = CompletionRequest {
+            reasoning_effort: Some("none".into()),
+            ..Default::default()
+        };
+        let body = anthropic.body(&request, false).unwrap();
+        assert_eq!(body["output_config"]["effort"], "low");
+        assert_eq!(body["thinking"]["type"], "adaptive");
     }
 }
 

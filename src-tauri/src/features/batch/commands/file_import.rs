@@ -90,10 +90,7 @@ pub async fn start_batch_file_import_impl(
     // 3. Ensure embedding service is available before spawning background batch job.
     // This avoids partial jobs that immediately fail per-file with degraded mock errors.
     let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::ServiceNotAvailable(format!(
-            "Could not load the active embedding model: {}",
-            e
-        ))
+        AppError::ServiceNotAvailable(format!("Could not load the active embedding model: {}", e))
     })?;
     let embedding_ready = embedding_service.is_ready().await.map_err(|e| {
         AppError::ServiceNotAvailable(format!("Failed to verify embedding model readiness: {}", e))

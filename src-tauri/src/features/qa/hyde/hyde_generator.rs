@@ -28,6 +28,7 @@
 //! HyDEInterpretation
 //! ```
 
+use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
 use crate::application::ports::LLMPort;
 use crate::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use crate::shared::error::{AppError, Result};
@@ -35,7 +36,13 @@ use crate::shared::text_utils::safe_truncate;
 use lazy_regex::regex;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
+
+/// Wall-clock cap for one rewrite. These run inline before retrieval on every
+/// turn, and a query rewrite that takes half a minute is useless anyway, so the
+/// ten-minute default budget would only mean a wedged turn.
+const REWRITE_TIME_BUDGET: Duration = Duration::from_secs(30);
 
 /// Prompt template for question expansion via HyDE.
 ///
@@ -340,6 +347,56 @@ impl HyDEGenerator {
         Self { llm }
     }
 
+    /// Run a self-contained rewrite prompt with model reasoning disabled.
+    ///
+    /// Reasoning models (e.g. Qwen3) otherwise think for minutes before a
+    /// one-line rewrite. A truncated or failed completion is an error, as in
+    /// the providers' legacy `generate`, never a partial rewrite.
+    async fn rewrite(&self, prompt: &str) -> Result<String> {
+        if !self.llm.supports_typed_completions() {
+            // The untyped path carries neither the no-reasoning hint nor a time
+            // budget, so a reasoning model thinks its way through a one-line
+            // rewrite. Warned once: it is a property of the provider, not of
+            // the turn.
+            static UNTYPED_REWRITE_WARNED: std::sync::Once = std::sync::Once::new();
+            UNTYPED_REWRITE_WARNED.call_once(|| {
+                warn!(
+                    model = self.llm.model_name(),
+                    "Query rewrites fall back to untyped generation: this provider sees no \
+                     reasoning-effort hint and no time budget"
+                );
+            });
+            return self.llm.generate(prompt, &[], None).await;
+        }
+        let response = self
+            .llm
+            .complete(&CompletionRequest {
+                input: vec![CompletionInput::Message {
+                    role: "user".into(),
+                    content: prompt.to_string(),
+                }],
+                reasoning_effort: Some("none".into()),
+                time_budget: Some(REWRITE_TIME_BUDGET),
+                ..Default::default()
+            })
+            .await?;
+        if !response.tool_calls.is_empty() {
+            return Err(AppError::InvalidState(
+                "Unexpected tool call in query rewrite".into(),
+            ));
+        }
+        if matches!(
+            response.finish_reason.as_str(),
+            "length" | "max_tokens" | "incomplete" | "failed"
+        ) {
+            return Err(AppError::InvalidState(format!(
+                "Query rewrite stopped before completing: {}",
+                response.finish_reason
+            )));
+        }
+        Ok(response.text)
+    }
+
     /// Classify whether a query is context-dependent follow-up.
     pub async fn classify_followup_with_context(
         &self,
@@ -353,7 +410,7 @@ impl HyDEGenerator {
         let prompt = FOLLOWUP_CLASSIFIER_TEMPLATE
             .replace("{query}", query)
             .replace("{context}", conversation_context);
-        let output = self.llm.generate(&prompt, &[], None).await.map_err(|e| {
+        let output = self.rewrite(&prompt).await.map_err(|e| {
             error!(
                 error = %e,
                 query = %query,
@@ -396,7 +453,7 @@ impl HyDEGenerator {
             "HyDE web query prompt prepared"
         );
 
-        let generated = self.llm.generate(&prompt, &[], None).await.map_err(|e| {
+        let generated = self.rewrite(&prompt).await.map_err(|e| {
             error!(
                 error = %e,
                 query = %query,
@@ -472,7 +529,7 @@ impl HyDEGenerator {
             "HyDE question prompt prepared"
         );
 
-        let hyde_text = self.llm.generate(&prompt, &[], None).await.map_err(|e| {
+        let hyde_text = self.rewrite(&prompt).await.map_err(|e| {
             error!(
                 error = %e,
                 query = %query,
@@ -536,7 +593,7 @@ impl HyDEGenerator {
             "HyDE command prompt prepared"
         );
 
-        let hyde_text = self.llm.generate(&prompt, &[], None).await.map_err(|e| {
+        let hyde_text = self.rewrite(&prompt).await.map_err(|e| {
             error!(
                 error = %e,
                 query = %query,
@@ -616,7 +673,7 @@ impl HyDEGenerator {
             "HyDE followup prompt prepared"
         );
 
-        let hyde_text = self.llm.generate(&prompt, &[], None).await.map_err(|e| {
+        let hyde_text = self.rewrite(&prompt).await.map_err(|e| {
             error!(
                 error = %e,
                 query = %query,
@@ -721,6 +778,145 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+    }
+
+    /// Typed-completion mock that records every request and refuses the
+    /// legacy path, so a rewrite that skips `complete` fails loudly.
+    struct TypedLLM {
+        response: String,
+        finish_reason: String,
+        requests: std::sync::Mutex<Vec<CompletionRequest>>,
+    }
+
+    impl TypedLLM {
+        fn new(response: impl Into<String>, finish_reason: impl Into<String>) -> Self {
+            Self {
+                response: response.into(),
+                finish_reason: finish_reason.into(),
+                requests: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<CompletionRequest> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl LLMPort for TypedLLM {
+        fn supports_typed_completions(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            request: &CompletionRequest,
+        ) -> Result<crate::application::ports::llm_port::CompletionResponse> {
+            self.requests.lock().unwrap().push(request.clone());
+            Ok(crate::application::ports::llm_port::CompletionResponse {
+                text: self.response.clone(),
+                finish_reason: self.finish_reason.clone(),
+                ..Default::default()
+            })
+        }
+
+        async fn generate(
+            &self,
+            _prompt: &str,
+            _context: &[String],
+            _images: Option<Vec<String>>,
+        ) -> Result<String> {
+            unreachable!("typed providers must rewrite through complete()")
+        }
+
+        async fn generate_streaming(
+            &self,
+            _prompt: &str,
+            _context: &[String],
+            _images: Option<Vec<String>>,
+        ) -> Result<Box<dyn Stream<Item = Result<String>> + Send + Unpin + '_>> {
+            unreachable!("typed providers must rewrite through complete()")
+        }
+
+        fn model_name(&self) -> &str {
+            "typed-llm"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_typed_rewrites_disable_reasoning() {
+        let llm = Arc::new(TypedLLM::new(
+            "Rust ownership, borrowing, and lifetimes in systems programming.",
+            "stop",
+        ));
+        let generator = HyDEGenerator::new(llm.clone());
+
+        generator
+            .classify_followup_with_context("what about those?", "User: Rust ownership")
+            .await
+            .unwrap();
+        generator
+            .generate_web_search_query("How does Rust ownership work?", None)
+            .await
+            .unwrap();
+        generator
+            .generate(QueryType::Question, "How does Rust ownership work?")
+            .await
+            .unwrap();
+        generator
+            .generate(QueryType::Command, "find notes on Rust ownership")
+            .await
+            .unwrap();
+        let followup = generator
+            .generate_with_context(
+                QueryType::Followup,
+                "and borrowing?",
+                Some("User: How does Rust ownership work?"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(followup.search_strategy, SearchStrategy::Hybrid);
+
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 5);
+        for request in &requests {
+            assert_eq!(request.reasoning_effort.as_deref(), Some("none"));
+            assert_eq!(request.time_budget, Some(REWRITE_TIME_BUDGET));
+            assert!(request.tools.is_empty());
+            assert!(request.json_schema.is_none());
+            assert!(matches!(
+                request.input.as_slice(),
+                [CompletionInput::Message { role, .. }] if role == "user"
+            ));
+        }
+        let CompletionInput::Message { content, .. } = &requests[2].input[0] else {
+            unreachable!("asserted above");
+        };
+        assert!(content.contains("Question: How does Rust ownership work?"));
+    }
+
+    #[tokio::test]
+    async fn test_typed_rewrite_truncated_at_length_is_an_error() {
+        let llm = Arc::new(TypedLLM::new("Rust ownership and", "length"));
+        let generator = HyDEGenerator::new(llm);
+
+        let result = generator
+            .generate(QueryType::Question, "How does Rust ownership work?")
+            .await;
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]

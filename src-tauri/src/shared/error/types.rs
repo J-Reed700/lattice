@@ -732,6 +732,8 @@ impl From<crate::features::llm::engine::types::LLMError> for AppError {
             LLMError::Timeout => AppError::Other("LLM request timed out".to_string()),
             LLMError::InsufficientMemory(msg) => AppError::ModelLoadFailed(msg),
             LLMError::PlatformNotSupported(msg) => AppError::ServiceNotAvailable(msg),
+            // Not `ModelLoadFailed`: nothing is wrong with the model.
+            LLMError::SidecarBinaryUnusable(msg) => AppError::ServiceNotAvailable(msg),
             LLMError::Io(e) => AppError::Io {
                 message: e.to_string(),
                 kind: format!("{:?}", e.kind()),

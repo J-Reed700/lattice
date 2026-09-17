@@ -57,7 +57,7 @@
     "longDescription": "Privacy-focused knowledge management with AI-powered search, auto-tagging, and intelligent connections.",
     "macOS": {
       "frameworks": [],
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "13.3",
       "exceptionDomain": "",
       "signingIdentity": "-",
       "entitlements": null

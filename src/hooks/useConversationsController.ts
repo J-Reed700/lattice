@@ -21,6 +21,7 @@ import type {
 } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
+  CompactionRecord,
   Conversation,
   ConversationMessage,
   ConversationMessageBookmark,
@@ -350,7 +351,14 @@ export function useConversationsController(): ConversationsState {
       list.unshift(detailQuery.data);
     }
     return list.map(conversation => conversation.id === activeId
-      ? { ...conversation, messages: messagesQuery.data ?? [] }
+      ? {
+          ...conversation,
+          messages: messagesQuery.data ?? [],
+          // The explorer list query does not carry the compaction record, so the
+          // active row takes it from the detail read; without this the divider
+          // vanishes on reload even though the summary is still applied.
+          compaction: detailQuery.data?.compaction ?? conversation.compaction,
+        }
       : conversation);
   }, [activeId, conversationsQuery.data, detailQuery.data, messagesQuery.data]);
   const messageBookmarks = useMemo(
@@ -980,6 +988,33 @@ export function useConversationsController(): ConversationsState {
     return newId;
   }, [invalidateLists, selectConversation]);
 
+  /**
+   * Fold the conversation's oldest messages into an LLM summary.
+   *
+   * The backend keeps the raw messages for display and only switches the LLM
+   * context to the summary. On success the lists are refreshed and the applied
+   * record is returned so the caller can render a divider; on failure the error
+   * is surfaced and `null` is returned.
+   */
+  const compactConversation = useCallback(async (
+    conversationId: string,
+    keepRecentMessages?: number
+  ): Promise<CompactionRecord | null> => {
+    const result = await VaultAPI.compactConversation(conversationId, keepRecentMessages);
+    if (!result.ok) {
+      setUiError(result.error);
+      return null;
+    }
+    await Promise.all([
+      invalidateLists(),
+      // The detail read is what carries the compaction back after a reload.
+      queryClient.invalidateQueries({
+        queryKey: conversationKeys.detail(conversationId),
+      }),
+    ]);
+    return result.data.compaction;
+  }, [invalidateLists, queryClient]);
+
   const cancelGeneration = useCallback(async (conversationId?: string | null) => {
     const state = conversationUiStore.getState();
     const id = conversationId ?? state.activeConversationId;
@@ -1099,6 +1134,7 @@ export function useConversationsController(): ConversationsState {
     regenerateResponse,
     truncateAfter,
     forkConversation,
+    compactConversation,
     setComposerDraft,
     cancelGeneration,
     deleteMessage,
@@ -1106,7 +1142,8 @@ export function useConversationsController(): ConversationsState {
     clearError,
   }), [
     addConversationWebSource, bookmarkMessage, bookmarksQuery.isLoading, cancelGeneration,
-    clearError, conversations, conversationsQuery.isLoading, createConversation, deleteConversation,
+    clearError, compactConversation, conversations, conversationsQuery.isLoading,
+    createConversation, deleteConversation,
     deleteMessage, documentSpaceMembershipsByDocumentId, linkedDocumentsByConversationId,
     loadConversationLinkedDocuments, loadConversationWebSources, loadConversations,
     loadDocumentSpaceMemberships, loadMessageBookmarks, loadSpaces, messageBookmarkMap,

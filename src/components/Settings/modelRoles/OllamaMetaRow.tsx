@@ -35,7 +35,13 @@ export function OllamaMetaRow() {
   const ollamaUrl = settings?.llm.ollamaUrl.trim() ?? '';
   const chatTag = settings?.llm.model.trim() ?? '';
   const provider = settings?.llm.provider;
-  const chatOverride = ollamaRow.is_active_for_chat && provider && provider !== 'ollama';
+  // Chat and utility both resolve through the configured provider (see
+  // ModelLoader::load and load_utility_remote), so either assignment is
+  // overridden whenever the provider is not Ollama.
+  const providerOverride =
+    (ollamaRow.is_active_for_chat || ollamaRow.is_active_for_utility) &&
+    provider &&
+    provider !== 'ollama';
   const utilityTag = settings?.llm.ollamaUtilityModel.trim() ?? '';
 
   // Utility falls back to the chat tag when the user hasn't set a
@@ -71,11 +77,11 @@ export function OllamaMetaRow() {
           </button>
         )}
         <p className="mt-1 break-words text-xs text-text-muted">{meta}</p>
-        {chatOverride && (
+        {providerOverride && (
           <div role="status" className="mt-2 max-w-xl text-xs text-text-secondary">
             {provider === 'auto'
-              ? 'Chat provider is Auto: local models and llama.cpp take priority over this Ollama assignment.'
-              : `Chat provider is ${provider === 'llamacpp' ? 'llama.cpp' : provider}: this Ollama chat assignment does not select the provider.`}{' '}
+              ? 'Chat provider is Auto: for both chat and utility, local models and llama.cpp take priority over this Ollama assignment.'
+              : `Chat provider is ${provider === 'llamacpp' ? 'llama.cpp' : provider}: chat and utility use that provider, not this Ollama assignment.`}{' '}
             <button type="button" onClick={goToChatSettings} className="text-accent underline underline-offset-2">
               Change chat provider
             </button>

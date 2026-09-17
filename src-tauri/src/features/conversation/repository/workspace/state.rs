@@ -51,6 +51,7 @@ async fn fetch_conversation_state(
 fn to_conversation_dto(
     c: &crate::domain::conversation::Conversation,
     state: Option<ConversationStateRow>,
+    compaction: Option<CompactionRecordDto>,
 ) -> crate::features::conversation::dto::ConversationDto {
     let (
         space_id,
@@ -110,6 +111,7 @@ fn to_conversation_dto(
         pinned_at,
         archived_at,
         last_message_preview,
+        compaction,
     }
 }
 
@@ -231,6 +233,19 @@ impl ConversationRepository {
         conversation: &crate::domain::conversation::Conversation,
     ) -> Result<ConversationDto, AppError> {
         let state = fetch_conversation_state(&self.pool, &conversation.id.to_string()).await?;
-        Ok(to_conversation_dto(conversation, state))
+        let compaction = match self.get_summary(&conversation.id.to_string()).await {
+            Ok(Some(record)) => Some(CompactionRecordDto::from_record(&record)),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(
+                    conversation_id = %conversation.id,
+                    error = %e,
+                    "Failed to load conversation compaction summary"
+                );
+                None
+            }
+        };
+
+        Ok(to_conversation_dto(conversation, state, compaction))
     }
 }

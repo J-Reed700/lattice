@@ -131,7 +131,17 @@ impl ContextWindowBuilder {
         let mut context_rev = Vec::new();
         let mut total_tokens = 0;
 
-        let messages = aggregate.messages();
+        // A compaction summary stands in for the messages it folded, so it is
+        // charged to the budget first and the scan below only sees what is still
+        // carried raw. Without a compaction this is None and nothing changes.
+        let preamble = aggregate
+            .context_preamble()
+            .map(|summary| format!("System: {}", summary));
+        if let Some(preamble) = &preamble {
+            total_tokens += (self.token_counter)(preamble);
+        }
+
+        let messages = aggregate.live_messages();
 
         // Prioritize most recent completed turns, then restore chronological order.
         for msg in messages.iter().rev().filter(|m| m.is_completed()) {
@@ -156,7 +166,10 @@ impl ContextWindowBuilder {
         }
 
         context_rev.reverse();
-        context_rev
+        match preamble {
+            Some(preamble) => std::iter::once(preamble).chain(context_rev).collect(),
+            None => context_rev,
+        }
     }
 }
 

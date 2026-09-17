@@ -88,6 +88,148 @@ fn question_with_forced_web_keeps_web_enabled() {
     assert!(!fallback);
 }
 
+fn flags(kb: bool, web: bool, wiki: bool, followup: bool) -> SearchFlags {
+    SearchFlags {
+        force_kb_search: kb,
+        force_web_search: web,
+        force_wiki_search: wiki,
+        deep_research_mode: false,
+        force_followup_mode: followup,
+    }
+}
+
+#[test]
+fn kb_runs_alongside_external_search_when_kb_cannot_cancel_it() {
+    // Query turn mode forces KB and web together.
+    let query_turn = flags(true, true, false, false);
+    let kb_and_wiki = flags(true, false, true, false);
+    // KB from the router, not forced: external search is never a fallback.
+    let routed_kb_followup_web = flags(false, true, false, true);
+    let routed_kb_wiki = flags(false, false, true, false);
+
+    assert!(kb_can_run_alongside_external(query_turn));
+    assert!(kb_can_run_alongside_external(kb_and_wiki));
+    assert!(kb_can_run_alongside_external(routed_kb_followup_web));
+    assert!(kb_can_run_alongside_external(routed_kb_wiki));
+}
+
+#[test]
+fn kb_runs_first_when_external_search_is_its_fallback_or_absent() {
+    // Forced follow-ups prefer KB first, so KB decides whether to search out.
+    let followup_kb_web = flags(true, true, false, true);
+    let followup_kb_web_wiki = flags(true, true, true, true);
+    // Nothing external to run beside KB.
+    let kb_only = flags(true, false, false, false);
+    let nothing_forced = flags(false, false, false, false);
+
+    assert!(!kb_can_run_alongside_external(followup_kb_web));
+    assert!(!kb_can_run_alongside_external(followup_kb_web_wiki));
+    assert!(!kb_can_run_alongside_external(kb_only));
+    assert!(!kb_can_run_alongside_external(nothing_forced));
+}
+
+#[test]
+fn concurrent_decision_matches_the_gate_kb_retrieval_will_produce() {
+    // KB retrieval classifies a turn as a follow-up only in follow-up mode, so
+    // whenever the pipeline runs KB concurrently, the post-KB gate stays open.
+    for bits in 0u8..16 {
+        let flags = flags(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+        let kb_query_type = if flags.force_followup_mode {
+            QueryType::Followup
+        } else {
+            QueryType::Question
+        };
+        let kb_interpretation =
+            crate::domain::qa::hyde::HyDEInterpretation::raw_only("q", kb_query_type);
+        if kb_can_run_alongside_external(flags) {
+            assert!(
+                !should_use_external_as_fallback(flags, &kb_interpretation),
+                "{flags:?}"
+            );
+        }
+    }
+}
+
+fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
+    RetrievalPipelineOutcome {
+        short_circuit_response: None,
+        interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+            "q",
+            QueryType::Question,
+        ),
+        search_response: empty_search_response(),
+        followup_context: None,
+        web_context: None,
+        web_search_error: None,
+        kb_unavailable_reason: None,
+        sources: Vec::new(),
+        available_for_rag: 0,
+        sub_timings: RetrievalSubTimingMetrics::default(),
+        searched_documents: 0,
+        scope_is_linked: false,
+        sufficiency: None,
+    }
+}
+
+fn external_result(url: &str, context: Option<&str>) -> pipeline::ExternalSearchResult {
+    let citation = WebSearchResult {
+        title: url.to_string(),
+        url: url.to_string(),
+        snippet: "snippet".to_string(),
+        published_date: None,
+        source: None,
+    };
+    pipeline::ExternalSearchResult {
+        sources: build_web_source_citations(&[citation], &[], 200),
+        context: context.map(str::to_string),
+        error: None,
+        elapsed_ms: 7,
+    }
+}
+
+#[test]
+fn external_results_merge_wiki_before_web() {
+    let mut outcome = empty_pipeline_outcome();
+    let mut web = external_result("https://example.com/web", Some("web context"));
+    web.error = Some("partial failure".to_string());
+
+    pipeline::attach_wiki_results(
+        &mut outcome,
+        external_result("https://en.wikipedia.org/wiki/X", Some("wiki context")),
+    );
+    pipeline::attach_web_results(&mut outcome, web);
+
+    assert_eq!(
+        outcome.web_context.as_deref(),
+        Some("wiki context\n\nweb context")
+    );
+    let urls: Vec<_> = outcome
+        .sources
+        .iter()
+        .map(|s| s.file_path.as_str())
+        .collect();
+    assert_eq!(urls.len(), 2, "{urls:?}");
+    assert!(urls[0].contains("wikipedia"), "{urls:?}");
+    assert_eq!(outcome.web_search_error.as_deref(), Some("partial failure"));
+    assert_eq!(outcome.sub_timings.wiki_search_ms, 7);
+    assert_eq!(outcome.sub_timings.web_search_ms, 7);
+}
+
+#[test]
+fn empty_wiki_search_leaves_web_context_alone() {
+    let mut outcome = empty_pipeline_outcome();
+
+    pipeline::attach_wiki_results(&mut outcome, pipeline::ExternalSearchResult::default());
+    assert!(outcome.web_context.is_none());
+
+    pipeline::attach_web_results(
+        &mut outcome,
+        external_result("https://example.com/web", Some("web context")),
+    );
+    assert_eq!(outcome.web_context.as_deref(), Some("web context"));
+    assert!(outcome.web_search_error.is_none());
+}
+
 #[test]
 fn web_query_prefers_raw_user_text_for_followups_when_specific() {
     let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(

@@ -14,7 +14,7 @@ interface IndexingOperation {
   successfulFiles: number;
   failedFiles: number;
   currentFile?: string;
-  status: 'pending' | 'processing' | 'completed' | 'error';
+  status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'error';
   error?: string;
   items?: BatchJobItem[];
 }
@@ -24,6 +24,7 @@ interface UseIndexingReturn {
   isIndexing: boolean;
   historyError?: string;
   startBatchImport: (filePaths: string[], spaceId?: string, indexing?: FileIndexingOptionsDto) => Promise<ApiResult<string>>;
+  cancelBatchImport: (id: string) => Promise<ApiResult<number>>;
   getOperation: (id: string) => IndexingOperation | undefined;
   clearOperation: (id: string) => void;
 }
@@ -178,6 +179,30 @@ export function useIndexing(): UseIndexingReturn {
     return result;
   }, [updateOperations]);
 
+  const cancelBatchImport = useCallback(async (id: string): Promise<ApiResult<number>> => {
+    const result = await VaultAPI.cancelBatchJob(id);
+    if (result.ok) {
+      updateOperations((prev) => {
+        const next = new Map(prev);
+        const operation = next.get(id);
+        if (operation) {
+          next.set(id, {
+            ...operation,
+            status: 'cancelled',
+            error: undefined,
+            items: operation.items?.map((item) =>
+              ['pending', 'running', 'processing'].includes(item.status.toLowerCase())
+                ? { ...item, status: 'cancelled' }
+                : item
+            ),
+          });
+        }
+        return next;
+      });
+    }
+    return result;
+  }, [updateOperations]);
+
   const getOperation = useCallback(
     (id: string): IndexingOperation | undefined => operations.get(id),
     [operations]
@@ -200,6 +225,7 @@ export function useIndexing(): UseIndexingReturn {
     isIndexing,
     historyError,
     startBatchImport,
+    cancelBatchImport,
     getOperation,
     clearOperation,
   };
@@ -219,8 +245,10 @@ function mapBatchStatus(status: BatchJobStatus): IndexingOperation['status'] {
       return (status.failedItems ?? status.failed_items ?? 0) > 0 ? 'error' : 'completed';
     case 'failed':
     case 'error':
-    case 'cancelled':
       return 'error';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled';
     default:
       return 'processing';
   }

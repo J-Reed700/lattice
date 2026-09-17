@@ -16,6 +16,7 @@ use parking_lot::Mutex;
 use tokenizers::Tokenizer;
 
 use crate::shared::error::{AppError, Result, ResultExt};
+use crate::shared::utils::with_autorelease_pool;
 
 use super::reranker::{best_reranker_device, resolve_model_dir, RerankResult, Reranker};
 
@@ -110,41 +111,43 @@ impl Qwen3RerankerService {
         let weights_path = resolved.weights.clone();
 
         let inner = tokio::task::spawn_blocking(move || -> Result<Qwen3Inner> {
-            let device = best_reranker_device();
-            #[allow(unsafe_code)]
-            let variable_builder = unsafe {
-                VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
-            }
-            .map_err(|error| {
-                AppError::Other(format!("Failed to mmap Qwen3 reranker weights: {error}"))
-            })?;
+            with_autorelease_pool(move || -> Result<Qwen3Inner> {
+                let device = best_reranker_device();
+                #[allow(unsafe_code)]
+                let variable_builder = unsafe {
+                    VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
+                }
+                .map_err(|error| {
+                    AppError::Other(format!("Failed to mmap Qwen3 reranker weights: {error}"))
+                })?;
 
-            let model = Model::new(&config, variable_builder.clone()).map_err(|error| {
-                AppError::Other(format!("Failed to build Qwen3 reranker model: {error}"))
-            })?;
+                let model = Model::new(&config, variable_builder.clone()).map_err(|error| {
+                    AppError::Other(format!("Failed to build Qwen3 reranker model: {error}"))
+                })?;
 
-            // Qwen3-Reranker-0.6B ties the LM head to the input embeddings.
-            // Selecting the two relevant rows is mathematically identical to
-            // computing the full vocabulary projection and then indexing it,
-            // while avoiding roughly 151k unused logits for every candidate.
-            let head_name = if config.tie_word_embeddings {
-                "model.embed_tokens.weight"
-            } else {
-                "lm_head.weight"
-            };
-            let decision_head = load_decision_head(
-                &weights_path,
-                head_name,
-                config.vocab_size,
-                config.hidden_size,
-                false_token_id,
-                true_token_id,
-            )?;
+                // Qwen3-Reranker-0.6B ties the LM head to the input embeddings.
+                // Selecting the two relevant rows is mathematically identical to
+                // computing the full vocabulary projection and then indexing it,
+                // while avoiding roughly 151k unused logits for every candidate.
+                let head_name = if config.tie_word_embeddings {
+                    "model.embed_tokens.weight"
+                } else {
+                    "lm_head.weight"
+                };
+                let decision_head = load_decision_head(
+                    &weights_path,
+                    head_name,
+                    config.vocab_size,
+                    config.hidden_size,
+                    false_token_id,
+                    true_token_id,
+                )?;
 
-            Ok(Qwen3Inner {
-                model,
-                decision_head,
-                device,
+                Ok(Qwen3Inner {
+                    model,
+                    decision_head,
+                    device,
+                })
             })
         })
         .await
@@ -217,37 +220,39 @@ impl Qwen3RerankerService {
         let max_length = self.max_length;
 
         tokio::task::spawn_blocking(move || {
-            let prompt_tokens = encode_prompts(
-                &tokenizer,
-                &prefix_tokens,
-                &suffix_tokens,
-                &instruction,
-                &query,
-                &documents,
-                max_length,
-            )?;
-            let scores = score_prompts(&inner, &prompt_tokens)?;
-            if scores.len() != documents.len() {
-                return Err(AppError::InvalidState(format!(
-                    "Qwen3 reranker returned {} scores for {} documents",
-                    scores.len(),
-                    documents.len()
-                )));
-            }
+            with_autorelease_pool(move || {
+                let prompt_tokens = encode_prompts(
+                    &tokenizer,
+                    &prefix_tokens,
+                    &suffix_tokens,
+                    &instruction,
+                    &query,
+                    &documents,
+                    max_length,
+                )?;
+                let scores = score_prompts(&inner, &prompt_tokens)?;
+                if scores.len() != documents.len() {
+                    return Err(AppError::InvalidState(format!(
+                        "Qwen3 reranker returned {} scores for {} documents",
+                        scores.len(),
+                        documents.len()
+                    )));
+                }
 
-            let mut ranked: Vec<RerankResult> = scores
-                .into_iter()
-                .enumerate()
-                .map(|(index, score)| RerankResult { index, score })
-                .collect();
-            ranked.sort_by(|left, right| {
-                right
-                    .score
-                    .total_cmp(&left.score)
-                    .then(left.index.cmp(&right.index))
-            });
-            ranked.truncate(top_k.min(ranked.len()));
-            Ok(ranked)
+                let mut ranked: Vec<RerankResult> = scores
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, score)| RerankResult { index, score })
+                    .collect();
+                ranked.sort_by(|left, right| {
+                    right
+                        .score
+                        .total_cmp(&left.score)
+                        .then(left.index.cmp(&right.index))
+                });
+                ranked.truncate(top_k.min(ranked.len()));
+                Ok(ranked)
+            })
         })
         .await
         .map_err(|error| AppError::Other(format!("Qwen3 reranking task failed: {error}")))?

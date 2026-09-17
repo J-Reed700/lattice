@@ -244,6 +244,18 @@ async fn create_local_llm_sidecar(
     }
 
     let handle = SidecarManager::start_with_fallback(app, config).await?;
+    let binary = handle.binary().label();
+    let n_gpu_layers = handle.n_gpu_layers();
+    if let Some(degraded) = handle.degraded() {
+        // The user asked for one configuration and got another — slower, or
+        // with a smaller window. Never silent.
+        warn!(
+            binary,
+            n_gpu_layers,
+            context_size = handle.context_size(),
+            "Local LLM started in a degraded configuration: {degraded}"
+        );
+    }
     let model_name = model_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -251,7 +263,7 @@ async fn create_local_llm_sidecar(
         .to_string();
 
     let client = SidecarLLMClient::new(Arc::new(handle), model_name, generation_config)?;
-    info!("Local LLM (sidecar) ready");
+    info!(binary, n_gpu_layers, "Local LLM (sidecar) ready");
 
     Ok(Arc::new(SidecarPortAdapter { client }))
 }

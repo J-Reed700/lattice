@@ -270,6 +270,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   truncate_conversation_after: { domain: 'conversation', command: 'truncate_conversation_after' },
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
+  compact_conversation: { domain: 'conversation', command: 'compact_conversation' },
 
   // Passage references
   create_passage_reference: { domain: 'references', command: 'create_passage_reference' },
@@ -2776,6 +2777,19 @@ const VaultAPI = {
       conversationId,
       toolPreferences,
       requestId,
+    }),
+
+  /**
+   * Folds the conversation's oldest messages into an LLM summary. The raw
+   * messages stay in the history; only the LLM context switches to the
+   * summary. Returns the applied compaction record.
+   */
+  compactConversation: async (
+    conversationId: string,
+    keepRecentMessages?: number
+  ): Promise<ApiResult<{ compaction: Wire.CompactionRecordDto }>> =>
+    apiCall('compact_conversation', {
+      request: { conversationId, keepRecentMessages: keepRecentMessages ?? null },
     }),
 
   /**

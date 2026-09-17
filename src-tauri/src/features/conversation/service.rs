@@ -121,6 +121,45 @@ impl ConversationService {
         self.repository.load_aggregate(id).await
     }
 
+    /// Compact the conversation's oldest messages into an LLM summary.
+    ///
+    /// Loads the aggregate, applies the compaction (folding all messages up to
+    /// `up_to_message_id` into `summary_text`), and persists the summary.
+    ///
+    /// # Arguments
+    /// * `conversation_id` - Conversation ID
+    /// * `summary_text` - LLM-produced summary of the compacted messages
+    /// * `up_to_message_id` - id of the last message folded into the summary
+    /// * `summary_tokens` - token count of the summary
+    ///
+    /// # Returns
+    /// The created compaction record
+    ///
+    /// # Errors
+    /// - `AppError::NotFound` if the conversation or boundary message is missing
+    /// - `AppError::InvalidInput` if the summary is empty or carries no tokens
+    pub async fn compact_conversation(
+        &self,
+        conversation_id: &str,
+        summary_text: String,
+        up_to_message_id: &str,
+        summary_tokens: i64,
+    ) -> Result<crate::domain::conversation::CompactionRecord> {
+        let mut aggregate = self
+            .repository
+            .load_aggregate(conversation_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Conversation not found: {}", conversation_id))
+            })?;
+
+        let record = aggregate.apply_compaction(summary_text, up_to_message_id, summary_tokens)?;
+
+        self.repository.save_compaction(&record).await?;
+
+        Ok(record)
+    }
+
     /// List conversations ordered by most recently updated
     ///
     /// # Arguments
@@ -637,6 +676,22 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         self.update_message_status(message_id, status).await
     }
+
+    async fn compact_conversation(
+        &self,
+        conversation_id: &str,
+        summary_text: String,
+        up_to_message_id: &str,
+        summary_tokens: i64,
+    ) -> Result<crate::domain::conversation::CompactionRecord> {
+        self.compact_conversation(
+            conversation_id,
+            summary_text,
+            up_to_message_id,
+            summary_tokens,
+        )
+        .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -775,6 +830,20 @@ mod tests {
                 space_id TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (document_id, space_id)
+            );
+
+            CREATE TABLE conversation_summaries (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL UNIQUE,
+                summary_text TEXT NOT NULL,
+                up_to_message_id TEXT NOT NULL,
+                original_message_count INTEGER NOT NULL CHECK(original_message_count > 0),
+                original_tokens INTEGER NOT NULL CHECK(original_tokens > 0),
+                summary_tokens INTEGER NOT NULL CHECK(summary_tokens > 0),
+                compression_ratio REAL NOT NULL CHECK(compression_ratio > 0.0 AND compression_ratio <= 1.0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (up_to_message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE
             );
             "#,
         )

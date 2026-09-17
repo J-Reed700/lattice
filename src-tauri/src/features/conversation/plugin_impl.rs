@@ -5,11 +5,11 @@ use crate::features::conversation::chat::{
 };
 use crate::features::conversation::commands as conversation;
 use crate::features::conversation::dto::{
-    CreateConversationRequestDto, CreateConversationResponseDto, DeleteConversationRequestDto,
-    DeleteConversationResponseDto, GetConversationMessagesRequestDto,
-    GetConversationMessagesResponseDto, GetConversationRequestDto, GetConversationResponseDto,
-    ListConversationsQuery, ListConversationsResponseDto, RenameConversationRequestDto,
-    RenameConversationResponseDto,
+    CompactConversationRequestDto, CompactConversationResponseDto, CreateConversationRequestDto,
+    CreateConversationResponseDto, DeleteConversationRequestDto, DeleteConversationResponseDto,
+    GetConversationMessagesRequestDto, GetConversationMessagesResponseDto,
+    GetConversationRequestDto, GetConversationResponseDto, ListConversationsQuery,
+    ListConversationsResponseDto, RenameConversationRequestDto, RenameConversationResponseDto,
 };
 use crate::features::conversation::message_bookmark_dto::{
     BookmarkConversationMessageRequestDto, DeleteConversationMessageRequestDto,
@@ -558,4 +558,175 @@ pub async fn list_conversations_explorer_impl(
         .list_conversations_explorer(query)
         .await
         .map_err(ApiError::from)
+}
+
+/// Default number of most-recent messages kept raw after a compaction.
+const COMPACT_KEEP_RECENT_DEFAULT: i64 = 4;
+/// Floor for the keep-recent count: always leave at least this many raw.
+const COMPACT_KEEP_RECENT_MIN: i64 = 2;
+/// Rough token estimate used when the model does not report one (4 chars/token).
+const COMPACT_CHARS_PER_TOKEN: i64 = 4;
+/// A summarization that takes longer than this is not worth waiting for.
+const COMPACT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// Compact a conversation's oldest messages into an LLM summary.
+///
+/// Everything except the most recent `keep_recent_messages` is folded into a
+/// single summary, produced by the utility model and persisted via the
+/// conversation service. Re-compacting folds the previous summary together with
+/// what has been said since, so text an earlier pass already distilled is never
+/// summarized twice.
+///
+/// This deliberately does not go through the chat pipeline: that path validates
+/// its input as a user-typed query (10k characters), generates a title, and runs
+/// the whole router and retrieval stack — none of which applies to an internal
+/// summarization, and the length cap alone would reject every conversation long
+/// enough to be worth compacting.
+pub async fn compact_conversation_impl(
+    request: CompactConversationRequestDto,
+    container: &Container,
+) -> Result<CompactConversationResponseDto, ApiError> {
+    let conversation_id = request.conversation_id.trim();
+    if conversation_id.is_empty() {
+        return Err(ApiError::from(
+            crate::shared::error::AppError::InvalidInput(
+                "Conversation ID is required to compact".to_string(),
+            ),
+        ));
+    }
+
+    let keep_recent = request
+        .keep_recent_messages
+        .unwrap_or(COMPACT_KEEP_RECENT_DEFAULT)
+        .max(COMPACT_KEEP_RECENT_MIN);
+
+    // Load the aggregate (messages + any existing compaction) via the service.
+    let service = container.conversation_service();
+    let aggregate = service
+        .get_conversation(conversation_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::from(crate::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            )))
+        })?;
+
+    // Everything but the last `keep_recent` messages is folded into the summary;
+    // its final message is the boundary. An empty fold means there is nothing to do.
+    let messages = aggregate.messages();
+    let (compacted, _kept) = messages.split_at(messages.len().saturating_sub(keep_recent as usize));
+    let Some(boundary) = compacted.last() else {
+        return Err(ApiError::from(
+            crate::shared::error::AppError::InvalidInput(format!(
+                "Nothing to compact: only {} message(s) present and the last {} are kept raw",
+                messages.len(),
+                keep_recent
+            )),
+        ));
+    };
+    let boundary_id = boundary.id.clone();
+
+    // Re-compaction only needs the messages an earlier pass did not already
+    // fold; its summary carries the rest. A boundary that moved backwards
+    // leaves nothing to skip, and the whole prefix is summarized again.
+    let already_folded = messages
+        .len()
+        .saturating_sub(aggregate.live_messages().len());
+    let fresh = compacted.get(already_folded..).unwrap_or(compacted);
+
+    let mut transcript = String::new();
+    if let Some(previous) = aggregate.context_preamble() {
+        transcript.push_str(&previous);
+        transcript.push('\n');
+    }
+    for message in fresh.iter().filter(|m| !m.content.trim().is_empty()) {
+        transcript.push_str(&format!("{}: {}\n", message.role, message.content.trim()));
+    }
+    if transcript.trim().is_empty() {
+        return Err(ApiError::from(
+            crate::shared::error::AppError::InvalidInput(
+                "Nothing to compact: the older messages carry no text".to_string(),
+            ),
+        ));
+    }
+
+    let prompt = format!(
+        "You are compressing an earlier portion of an ongoing conversation so the \
+         conversation can continue with only this summary as its context.\n\n\
+         Produce ONE dense summary that preserves:\n\
+         - the user's goals and requests,\n\
+         - key facts, decisions and constraints,\n\
+         - any code, commands or data that was produced,\n\
+         - open questions or unresolved items.\n\n\
+         Rules:\n\
+         - Write in the third person, as a context note for a future assistant turn.\n\
+         - Be information-dense; drop pleasantries and repetition.\n\
+         - Use short bullet points. No preamble, no headings, no meta-commentary.\n\
+         - If a detail matters, keep it verbatim.\n\n\
+         Conversation to summarize:\n\n{}",
+        transcript
+    );
+
+    let llm = container
+        .get_or_load_utility_llm()
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::from(crate::shared::error::AppError::ServiceNotAvailable(
+                "No model is available to summarize this conversation".to_string(),
+            ))
+        })?;
+
+    let summary_text = summarize(llm.as_ref(), prompt)
+        .await
+        .map_err(ApiError::from)?;
+    let summary_text = summary_text.trim().to_string();
+    if summary_text.is_empty() {
+        return Err(ApiError::from(crate::shared::error::AppError::Other(
+            "Compaction summarization returned no output".to_string(),
+        )));
+    }
+
+    let summary_tokens = estimate_tokens(&summary_text);
+    let record = service
+        .compact_conversation(conversation_id, summary_text, &boundary_id, summary_tokens)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(CompactConversationResponseDto {
+        compaction: crate::features::conversation::dto::CompactionRecordDto::from_record(&record),
+    })
+}
+
+/// Run a self-contained prompt against the utility model.
+///
+/// Mirrors the adapter split the rest of the app uses: typed completions where
+/// the provider supports them, the legacy text API otherwise.
+async fn summarize(
+    llm: &dyn crate::application::ports::llm_port::LLMPort,
+    prompt: String,
+) -> crate::shared::error::Result<String> {
+    use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
+
+    if !llm.supports_typed_completions() {
+        return llm.generate(&prompt, &[], None).await;
+    }
+    let response = llm
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: prompt,
+            }],
+            time_budget: Some(COMPACT_TIME_BUDGET),
+            ..Default::default()
+        })
+        .await?;
+    Ok(response.text)
+}
+
+/// Rough token estimate (4 chars/token) for summary bookkeeping.
+fn estimate_tokens(text: &str) -> i64 {
+    (text.chars().count() as i64 / COMPACT_CHARS_PER_TOKEN).max(1)
 }

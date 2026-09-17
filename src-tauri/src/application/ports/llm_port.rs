@@ -36,6 +36,10 @@ use crate::shared::result::Result;
 use async_trait::async_trait;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// Wall-clock allowance for one completion, across retries, when the caller sets none.
+pub const DEFAULT_COMPLETION_TIME_BUDGET: Duration = Duration::from_secs(10 * 60);
 
 /// Tool definition for LLM function calling.
 ///
@@ -359,6 +363,16 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// Caps wall-clock time across all attempts. Stalls are detected separately,
+    /// so this only needs to exceed the longest legitimate generation.
+    #[serde(skip)]
+    pub time_budget: Option<Duration>,
+}
+
+impl CompletionRequest {
+    pub fn effective_time_budget(&self) -> Duration {
+        self.time_budget.unwrap_or(DEFAULT_COMPLETION_TIME_BUDGET)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

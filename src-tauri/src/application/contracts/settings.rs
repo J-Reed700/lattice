@@ -300,7 +300,12 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub llama_cpp: LlamaCppSettingsDto,
 
-    /// Request timeout in seconds
+    /// Longest silence tolerated inside a response, in seconds.
+    ///
+    /// The clock resets on every chunk the backend sends, so this bounds how
+    /// long a request may produce *nothing* before it is treated as dead. It
+    /// does not cap how long an answer may take — total generation time is
+    /// governed by the per-turn time budget.
     pub timeout_seconds: u32,
 
     /// Enable streaming responses
@@ -978,6 +983,20 @@ impl Default for RetrievalTuningSettingsDto {
     }
 }
 
+/// Shortest silence worth calling a stall. A backend that is ingesting a large
+/// prompt, or loading weights on a cold cache, legitimately emits nothing for
+/// several seconds; below this the retry path kills healthy requests and can
+/// livelock on the re-ingest of the same prompt.
+pub const MIN_LLM_STALL_TIMEOUT_SECONDS: u32 = 15;
+
+/// Longest silence worth waiting through. Past this a hung backend is
+/// indistinguishable from a slow one, which is what stall detection is for.
+pub const MAX_LLM_STALL_TIMEOUT_SECONDS: u32 = 180;
+
+/// Long enough to cover prompt ingestion on a local model, short enough that a
+/// dead backend surfaces while the user is still looking at the answer.
+pub const DEFAULT_LLM_STALL_TIMEOUT_SECONDS: u32 = 30;
+
 impl Default for LLMSettingsDto {
     fn default() -> Self {
         Self {
@@ -994,7 +1013,7 @@ impl Default for LLMSettingsDto {
             ollama_auth_header_name: String::new(),
             ollama_auth_header_value: String::new(),
             llama_cpp: LlamaCppSettingsDto::default(),
-            timeout_seconds: 30,
+            timeout_seconds: DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
             stream_responses: true,
             prompts: LLMPromptSettingsDto::default(),
             verification: LLMVerificationSettingsDto::default(),

@@ -4,7 +4,9 @@ use std::future::Future;
 use crate::application::contracts::settings::LLMProvider;
 use crate::shared::error::{AppError, Result};
 
-/// Explicit choices never fall back. Auto tries local, configured llama.cpp, then Ollama.
+/// Explicit choices never fall back. Auto tries local, configured llama.cpp, then Ollama;
+/// when all of them fail, a local model that failed to load is the error worth
+/// reporting, not "nothing is installed".
 pub async fn select_model<T, Local, LlamaCpp, Remote, LocalFuture, LlamaCppFuture, RemoteFuture>(
     provider: LLMProvider,
     local: Local,
@@ -26,11 +28,17 @@ where
         LLMProvider::Ollama => ollama().await,
         LLMProvider::Llamacpp | LLMProvider::Openai | LLMProvider::Anthropic => Err(AppError::InvalidConfig("Explicit providers must be resolved by their native adapter".into())),
         LLMProvider::Auto => {
-            match local().await {
+            let local_error = match local().await {
                 Ok(Some(model)) => return Ok(model),
-                Ok(None) => tracing::debug!("No active downloaded model configured, trying remote providers"),
-                Err(error) => tracing::warn!("Failed to load active model: {}, trying remote providers", error),
-            }
+                Ok(None) => {
+                    tracing::debug!("No active downloaded model configured, trying remote providers");
+                    None
+                }
+                Err(error) => {
+                    tracing::warn!("Failed to load active model: {}, trying remote providers", error);
+                    Some(error)
+                }
+            };
             match llama_cpp().await {
                 Ok(Some(model)) => return Ok(model),
                 Ok(None) => tracing::debug!("No llama.cpp model configured, trying Ollama"),
@@ -40,11 +48,11 @@ where
                 Ok(model) => Ok(model),
                 Err(error) => {
                     tracing::debug!("Ollama not available: {}", error);
-                    Err(AppError::AiModelsNotInstalled(
+                    Err(local_error.unwrap_or_else(|| AppError::AiModelsNotInstalled(
                         "No LLM available. Please either:\n\
                          1. Download and activate a model in Settings → Model Catalog, OR\n\
                          2. Configure a llama.cpp or Ollama server in Settings → Chat".to_string(),
-                    ))
+                    )))
                 }
             }
         }
@@ -156,6 +164,24 @@ mod tests {
         .await;
         assert!(matches!(result, Err(AppError::AiModelsNotInstalled(_))));
         assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+    }
+
+    #[tokio::test]
+    async fn auto_reports_the_local_failure_when_nothing_else_answers() {
+        for local in [
+            AppError::ModelLoadFailed("broken".into()),
+            AppError::ServiceNotAvailable("bundled llama-server can't run".into()),
+        ] {
+            let expected = local.to_string();
+            let (result, calls) = run(
+                LLMProvider::Auto,
+                Err(local),
+                Err(AppError::ServiceNotAvailable("offline".into())),
+            )
+            .await;
+            assert_eq!(result.unwrap_err().to_string(), expected);
+            assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+        }
     }
 
     #[tokio::test]

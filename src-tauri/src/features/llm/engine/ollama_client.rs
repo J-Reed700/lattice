@@ -2,6 +2,16 @@
 //!
 //! Provides async HTTP client for interacting with Ollama's REST API.
 //! Supports both non-streaming and streaming generation requests.
+//!
+//! # Timeout policy
+//!
+//! Every bound is per request; the shared client deliberately has none.
+//! `ClientBuilder::timeout` is a *total* deadline that includes the response
+//! body, so a client-wide value silently truncates any generation that takes
+//! longer than it — exactly what a long answer does. Probes and non-streaming
+//! generation therefore pass `.timeout(..)` themselves, while streaming
+//! bounds the wait for response headers with `stream_timeout` and then bounds
+//! silence between chunks. Do not reintroduce a client-wide timeout.
 
 use crate::features::llm::engine::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
@@ -250,7 +260,7 @@ impl OllamaClient {
         stream_timeout: Duration,
         auth_header: Option<(String, String)>,
     ) -> Result<Self> {
-        let mut builder = reqwest_client_builder().timeout(timeout);
+        let mut builder = reqwest_client_builder();
         if let Some((name, value)) = auth_header {
             let header_name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|e| {
                 AppError::InvalidInput(format!("Invalid Ollama header name: {}", e))
@@ -290,15 +300,20 @@ impl OllamaClient {
         })
     }
 
-    /// Check if Ollama server is reachable.
+    /// Check if an Ollama server is reachable.
+    ///
+    /// Probes `/api/tags`, an Ollama-only route, rather than the bare base
+    /// URL: a llama.cpp server answers the base URL with its web UI and would
+    /// otherwise pass as Ollama, only to 404 on the first generation call.
     ///
     /// # Returns
     ///
     /// Returns `Ok(true)` if server responds to health check, `Ok(false)` otherwise.
     pub async fn health_check_with_result(&self) -> Result<bool> {
-        debug!("Performing Ollama health check at {}", self.base_url);
+        let url = format!("{}/api/tags", self.base_url);
+        debug!("Performing Ollama health check at {}", url);
 
-        match self.client.get(&self.base_url).send().await {
+        match self.client.get(&url).timeout(self.timeout).send().await {
             Ok(response) => {
                 let is_healthy = response.status() == StatusCode::OK;
                 if is_healthy {
@@ -331,10 +346,16 @@ impl OllamaClient {
         debug!("Listing Ollama models");
 
         let url = format!("{}/api/tags", self.base_url);
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            error!("Failed to list models: {}", e);
-            OllamaClientError::from(e)
-        })?;
+        let response = self
+            .client
+            .get(&url)
+            .timeout(self.timeout)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to list models: {}", e);
+                OllamaClientError::from(e)
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -538,13 +559,12 @@ impl OllamaClient {
             .circuit_breaker
             .call(async {
                 let url = format!("{}/api/generate", self.base_url);
-                let response = self
-                    .client
-                    .post(&url)
-                    .json(&request)
-                    .timeout(self.stream_timeout)
-                    .send()
+                let send = self.client.post(&url).json(&request).send();
+                // No total timeout: it would cut off long answers. Bound the wait for
+                // headers here; the stream below bounds silence between chunks.
+                let response = timeout(self.stream_timeout, send)
                     .await
+                    .map_err(|_| OllamaClientError::Timeout("Ollama did not respond".into()))?
                     .map_err(|e| {
                         error!("Streaming request failed: {}", e);
                         OllamaClientError::from(e)
@@ -983,13 +1003,12 @@ impl OllamaClient {
             .circuit_breaker
             .call(async {
                 let url = format!("{}/api/chat", self.base_url);
-                let response = self
-                    .client
-                    .post(&url)
-                    .json(&request)
-                    .timeout(self.stream_timeout)
-                    .send()
+                let send = self.client.post(&url).json(&request).send();
+                // No total timeout: it would cut off long answers. Bound the wait for
+                // headers here; the stream below bounds silence between chunks.
+                let response = timeout(self.stream_timeout, send)
                     .await
+                    .map_err(|_| OllamaClientError::Timeout("Ollama did not respond".into()))?
                     .map_err(|e| {
                         error!("Streaming chat request failed: {}", e);
                         OllamaClientError::from(e)
@@ -1437,13 +1456,12 @@ impl LLMPort for OllamaClient {
             .circuit_breaker
             .call(async {
                 let url = format!("{}/api/chat", self.base_url);
-                let response = self
-                    .client
-                    .post(&url)
-                    .json(&request)
-                    .timeout(self.stream_timeout)
-                    .send()
+                let send = self.client.post(&url).json(&request).send();
+                // No total timeout: it would cut off long answers. Bound the wait for
+                // headers here; the stream below bounds silence between chunks.
+                let response = timeout(self.stream_timeout, send)
                     .await
+                    .map_err(|_| OllamaClientError::Timeout("Ollama did not respond".into()))?
                     .map_err(|e| {
                         error!("Tool-enabled chat request failed: {}", e);
                         OllamaClientError::from(e)
@@ -1680,6 +1698,81 @@ mod tests {
         if let Ok(text) = result {
             assert!(!text.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn health_check_requires_an_ollama_route_not_just_a_listening_port() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        // A llama.cpp server answers "/" with its web UI but has no /api/tags.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>llama.cpp</html>"))
+            .mount(&server)
+            .await;
+        let client = OllamaClient::with_model(server.uri(), "any-model").unwrap();
+        assert!(!client.health_check_with_result().await.unwrap());
+
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"models":[]})),
+            )
+            .mount(&server)
+            .await;
+        assert!(client.health_check_with_result().await.unwrap());
+    }
+
+    /// A client-wide `timeout` covers the response body, so it would truncate a
+    /// generation that is still producing bytes.
+    #[tokio::test]
+    async fn a_streamed_body_outlives_the_non_streaming_timeout() {
+        use futures::StreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // Drain the request headers; the body is irrelevant to this test.
+            let mut buffer = [0u8; 4096];
+            let read = socket.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "client sent no request");
+            let chunks = [
+                "{\"model\":\"m\",\"created_at\":\"\",\"response\":\"Slow \",\"done\":false}\n",
+                "{\"model\":\"m\",\"created_at\":\"\",\"response\":\"answer\",\"done\":true}\n",
+            ];
+            let size: usize = chunks.iter().map(|chunk| chunk.len()).sum();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {size}\r\n\r\n").as_bytes()).await.unwrap();
+            for chunk in chunks {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                socket.write_all(chunk.as_bytes()).await.unwrap();
+            }
+        });
+
+        let client = OllamaClient::with_model_and_timeouts(
+            format!("http://{address}"),
+            "any-model",
+            Duration::from_millis(150),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let mut stream = Box::pin(
+            client
+                .generate_stream_raw(OllamaGenerateRequest::new("any-model", "Question"))
+                .await
+                .unwrap(),
+        );
+        let mut answer = String::new();
+        while let Some(chunk) = stream.next().await {
+            answer.push_str(&chunk.unwrap().response);
+        }
+        assert_eq!(answer, "Slow answer");
+        server.await.unwrap();
     }
 
     #[tokio::test]

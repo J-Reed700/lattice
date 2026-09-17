@@ -9,12 +9,18 @@
 use opentelemetry::{global, trace::TracerProvider, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_appender::rolling;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Global handle to the OTEL tracer provider, used for graceful shutdown.
 static TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
+
+/// Worker guards for the background log writers, owned for the process so
+/// `shutdown_tracing` can flush them. Leaking them instead truncates the log at
+/// exit, and the tail is exactly where a stall or a timeout shows up.
+static WRITER_GUARDS: OnceLock<Mutex<Vec<WorkerGuard>>> = OnceLock::new();
 
 /// Check whether OpenTelemetry export is enabled via environment.
 ///
@@ -109,15 +115,14 @@ pub fn init_otel_tracing(
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(stdout_writer())
         .with_target(true)
         .with_file(true)
         .with_line_number(true);
 
     // Rotating file log
-    let (file_writer, _guard) = create_file_writer();
-    std::mem::forget(_guard); // Keep writer alive for process lifetime
     let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_writer)
+        .with_writer(file_writer())
         .with_target(true)
         .with_file(true)
         .with_line_number(true)
@@ -146,16 +151,15 @@ pub fn init_regular_tracing() {
         .unwrap_or_else(|_| EnvFilter::new("info,lattice=debug,lattice_desktop=debug"));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(stdout_writer())
         .with_target(true)
         .with_thread_ids(false)
         .with_file(true)
         .with_line_number(true);
 
     // Rotating file log
-    let (file_writer, _guard) = create_file_writer();
-    std::mem::forget(_guard); // Keep writer alive for process lifetime
     let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_writer)
+        .with_writer(file_writer())
         .with_target(true)
         .with_file(true)
         .with_line_number(true)
@@ -187,16 +191,27 @@ pub fn shutdown_tracing() {
             tracing::info!("OpenTelemetry tracer provider shut down successfully");
         }
     }
+
+    // Last, so the lines above make it out: dropping a guard drains its worker.
+    if let Some(guards) = WRITER_GUARDS.get() {
+        match guards.lock() {
+            Ok(mut guards) => guards.clear(),
+            Err(poisoned) => poisoned.into_inner().clear(),
+        }
+    }
 }
 
-/// Create a non-blocking file writer with daily rotation.
+/// Stdout through a background writer, so a slow terminal (a busy dev console)
+/// is absorbed by the buffer rather than stalling the async workers that log.
+fn stdout_writer() -> NonBlocking {
+    background_writer(std::io::stdout())
+}
+
+/// The rotating file log, written through a background worker.
 ///
-/// Logs are written to `<data_local_dir>/lattice/logs/lattice.log`.
+/// Logs go to `<data_local_dir>/lattice/logs/lattice.log`.
 /// If the directory cannot be determined, falls back to the system temp dir.
-fn create_file_writer() -> (
-    tracing_appender::non_blocking::NonBlocking,
-    tracing_appender::non_blocking::WorkerGuard,
-) {
+fn file_writer() -> NonBlocking {
     let log_dir = log_directory();
 
     // Ensure the directory exists (best-effort)
@@ -204,8 +219,27 @@ fn create_file_writer() -> (
 
     eprintln!("[lattice] Log files: {}", log_dir.display());
 
-    let file_appender = rolling::daily(&log_dir, "lattice.log");
-    tracing_appender::non_blocking(file_appender)
+    background_writer(rolling::daily(&log_dir, "lattice.log"))
+}
+
+/// Hand `writer` to a background worker and retain its guard for the process.
+///
+/// `lossy(false)` because the default silently discards lines once the buffer
+/// fills, and a burst of them is what a stall or a timeout looks like — the
+/// dropped lines would be the ones worth reading. A full buffer therefore backs
+/// pressure up onto the caller instead.
+fn background_writer<W>(writer: W) -> NonBlocking
+where
+    W: std::io::Write + Send + 'static,
+{
+    let (writer, guard) = NonBlockingBuilder::default().lossy(false).finish(writer);
+
+    match WRITER_GUARDS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        Ok(mut guards) => guards.push(guard),
+        Err(poisoned) => poisoned.into_inner().push(guard),
+    }
+
+    writer
 }
 
 /// Determine the log directory path.

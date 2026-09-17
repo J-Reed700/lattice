@@ -29,7 +29,7 @@ interface FileItem {
   name: string;
   size: number;
   type: string;
-  status: 'pending' | 'queued' | 'importing' | 'success' | 'error';
+  status: 'pending' | 'queued' | 'importing' | 'success' | 'cancelled' | 'error';
   errorMessage?: string;
   jobId?: string;
 }
@@ -48,7 +48,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   onClose,
   onReviewFailures,
 }) => {
-  const { startBatchImport, getOperation, operations, historyError } = useIndexing();
+  const { startBatchImport, cancelBatchImport, getOperation, operations, historyError } = useIndexing();
   const { toast } = useToast();
   // `useToast()` hands back a fresh object every render; depending on it would
   // recreate `addFilePaths` and re-register the drag-drop listener forever.
@@ -62,6 +62,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   const [sourceGroup, setSourceGroup] = useState<SourceGroup | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [spaces, setSpaces] = useState<
@@ -348,15 +349,38 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     setSourceGroup(null);
   }, []);
 
-  // Cancel import
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback(async () => {
+    if (isImporting && currentJobId) {
+      setIsCancelling(true);
+      try {
+        const result = await cancelBatchImport(currentJobId);
+        if (!result.ok) {
+          toastRef.current.error(`Couldn't cancel import: ${result.error}`);
+          return;
+        }
+        setFiles((current) => current.map((file) =>
+          ['queued', 'importing'].includes(file.status)
+            ? { ...file, status: 'cancelled' as const }
+            : file
+        ));
+        setIsImporting(false);
+        setCurrentJobId(null);
+        toastRef.current.info('Import cancelled');
+      } catch (error) {
+        toastRef.current.error(`Couldn't cancel import: ${getErrorMessage(error)}`);
+      } finally {
+        setIsCancelling(false);
+      }
+      return;
+    }
+
     if (onClose) {
       onClose();
     } else {
       startNewImport();
       setFiles([]);
     }
-  }, [onClose, startNewImport]);
+  }, [cancelBatchImport, currentJobId, isImporting, onClose, startNewImport]);
 
   // Restore failures as well as active work after navigation or a restart.
   useEffect(() => {
@@ -393,6 +417,8 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
               ? 'success'
               : normalized === 'failed'
                 ? 'error'
+                : normalized === 'cancelled' || normalized === 'canceled' || normalized === 'skipped'
+                  ? 'cancelled'
                 : normalized === 'pending'
                   ? 'queued'
                   : 'importing';
@@ -442,6 +468,14 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         successful: operation.successfulFiles,
         failed: operation.failedFiles,
       });
+    } else if (operation.status === 'cancelled') {
+      setFiles((prev) => prev.map((file) =>
+        ['importing', 'queued'].includes(file.status)
+          ? { ...file, status: 'cancelled' as const }
+          : file
+      ));
+      setIsImporting(false);
+      setCurrentJobId(null);
     } else if (operation.status === 'error') {
       console.error('[BatchFileImport] Job failed:', operation.error);
 
@@ -620,8 +654,13 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
 
 
       <div className="mt-6 flex shrink-0 items-center justify-end gap-2">
-        <Button variant="ghost" onClick={handleCancel} disabled={isImporting} className="h-9">
-          Cancel
+        <Button
+          variant="ghost"
+          onClick={handleAsyncEvent(handleCancel)}
+          disabled={isCancelling || (isImporting && !currentJobId)}
+          className="h-9"
+        >
+          {isCancelling ? 'Cancelling…' : 'Cancel'}
         </Button>
         <Button onClick={handleAsyncEvent(handleStartImport)} disabled={!canImport} className="h-9">
           {isImporting
@@ -653,6 +692,8 @@ const statusLabel = (file: FileItem): string => {
       return 'Processing…';
     case 'success':
       return 'Imported';
+    case 'cancelled':
+      return 'Cancelled';
     case 'error':
       return file.errorMessage ? `Failed — ${file.errorMessage}` : 'Failed';
     default:
