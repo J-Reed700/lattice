@@ -2,8 +2,9 @@
 //!
 //! Implements the `LLMClient` trait by talking to a local llama-server
 //! process over loopback HTTP, using the OpenAI-compatible
-//! `/v1/chat/completions` endpoint. Owns the `SidecarHandle` so the
-//! sidecar process dies with the client.
+//! `/v1/chat/completions` endpoint. Holds a share of the `SidecarHandle`, so
+//! the process dies once no client is left on it — one server can be serving
+//! several roles.
 //!
 //! # Architecture
 //!
@@ -20,6 +21,12 @@
 //! terminated by `data: [DONE]`. Each chunk's
 //! `choices[0].delta.content` is the next token piece.
 //!
+//! # Authentication
+//!
+//! The sidecar is launched with a per-process `--api-key`, so every request —
+//! `/health` included — carries it as a bearer token. It goes on as a default
+//! header rather than at each call site so a route added later cannot forget it.
+//!
 //! # Why we don't use llama.cpp's native `/completion`
 //!
 //! The native endpoint is older, has a different streaming format
@@ -35,8 +42,10 @@ use crate::features::llm::engine::types::LLMError;
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::StreamExt;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,6 +94,21 @@ struct ChatCompletionRequest<'a> {
     /// Repetition penalty. llama-server-specific extension.
     repeat_penalty: f32,
     max_tokens: usize,
+    /// Mirrors what the remote llama.cpp adapter sends, so a model behaves the
+    /// same whether it is reached through the bundled sidecar or a server the
+    /// user runs themselves. Recent llama-server builds read it; older ones
+    /// ignore unknown fields, which is why the template kwarg below carries the
+    /// actual guarantee.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
+    /// Qwen3-style chat templates gate their `<think>` block on
+    /// `enable_thinking`. The template is the only layer that can stop the
+    /// tokens from being generated at all — sampling knobs cannot — so a caller
+    /// asking for no reasoning gets the flag flipped here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,11 +120,23 @@ struct WireMessage<'a> {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatChoiceMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct Usage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,14 +162,40 @@ struct ChatDelta {
     content: String,
 }
 
+/// Per-request knobs the `LLMClient` trait has no room for.
+///
+/// The typed `LLMPort` path fills these in from a `CompletionRequest`; the
+/// legacy text API leaves them empty and the fields then stay off the wire.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RequestTuning<'a> {
+    pub reasoning_effort: Option<&'a str>,
+    pub json_schema: Option<&'a Value>,
+    /// Wall-clock allowance for the whole exchange, when the caller sets one.
+    pub time_budget: Option<Duration>,
+}
+
+/// A non-streaming completion, with the bookkeeping the typed port reports.
+#[derive(Debug, Default)]
+pub struct CompletionOutcome {
+    pub text: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub finish_reason: String,
+}
+
 /// LLM client that talks to a bundled llama-server sidecar.
 ///
-/// Owns the `SidecarHandle`; dropping the client kills the process.
+/// Shares the `SidecarHandle`; the process dies with its last holder.
 pub struct SidecarLLMClient {
-    /// Process handle. Wrapped in `Arc` because `SidecarHandle`'s drop
-    /// kills the process; if multiple clones existed, dropping one
-    /// would orphan the others. We hold exactly one Arc so the process
-    /// outlives all clones until the last drop.
+    /// Process handle. `Arc` because `SidecarHandle`'s drop kills the
+    /// process, so the count is the process's lifetime: dropping one holder
+    /// while another still has it would orphan that one.
+    ///
+    /// The other holders are not just clones of this client. Roles that
+    /// resolve to the same model share one server through
+    /// [`SidecarManager::start_shared`](super::sidecar_manager::SidecarManager::start_shared),
+    /// each with its own client and generation settings over it, so dropping
+    /// this client stops the process only if no other role is on it.
     sidecar: Arc<SidecarHandle>,
 
     /// HTTP client. Reused across calls for connection pooling.
@@ -300,10 +362,21 @@ impl SidecarLLMClient {
         model_name: impl Into<String>,
         config: GenerationConfig,
     ) -> Result<Self, LLMError> {
+        // The sidecar's token goes on as a default header rather than at each
+        // call site: llama-server rejects every route but `/health` without it,
+        // and a request added later must not be able to forget it. Marked
+        // sensitive so reqwest keeps it out of debug output.
+        let mut headers = HeaderMap::new();
+        let mut bearer = HeaderValue::from_str(&format!("Bearer {}", sidecar.api_token()))
+            .map_err(|_| LLMError::Other("Sidecar API token is not a valid header".to_string()))?;
+        bearer.set_sensitive(true);
+        headers.insert(AUTHORIZATION, bearer);
+
         let http = Client::builder()
             // Streaming responses can be long. Don't set a global timeout;
             // we apply per-call timeouts via `tokio::time::timeout` instead.
             .pool_idle_timeout(Some(Duration::from_secs(90)))
+            .default_headers(headers)
             .build()
             .map_err(|err| {
                 LLMError::Other(format!("Failed to build HTTP client for sidecar: {err}"))
@@ -335,10 +408,13 @@ impl SidecarLLMClient {
         msgs
     }
 
+    /// Takes the config rather than `&self` so the wire shape can be asserted
+    /// without a live sidecar process behind it.
     fn build_request<'a>(
-        &'a self,
+        config: &GenerationConfig,
         messages: &'a [(&'a str, String)],
         stream: bool,
+        tuning: RequestTuning<'a>,
     ) -> ChatCompletionRequest<'a> {
         ChatCompletionRequest {
             model: "local",
@@ -350,11 +426,22 @@ impl SidecarLLMClient {
                 })
                 .collect(),
             stream,
-            temperature: self.config.temperature,
-            top_p: self.config.top_p,
-            top_k: self.config.top_k,
-            repeat_penalty: self.config.repeat_penalty,
-            max_tokens: self.config.max_tokens,
+            temperature: config.temperature,
+            top_p: config.top_p,
+            top_k: config.top_k,
+            repeat_penalty: config.repeat_penalty,
+            max_tokens: config.max_tokens,
+            reasoning_effort: tuning.reasoning_effort,
+            chat_template_kwargs: tuning.reasoning_effort.map(|effort| {
+                if effort == "none" {
+                    json!({"enable_thinking": false})
+                } else {
+                    json!({"reasoning_effort": effort})
+                }
+            }),
+            response_format: tuning.json_schema.map(|schema| {
+                json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}})
+            }),
         }
     }
 
@@ -362,12 +449,18 @@ impl SidecarLLMClient {
         &self,
         messages: &[(&str, String)],
         stream: bool,
+        tuning: RequestTuning<'_>,
     ) -> Result<reqwest::Response, LLMError> {
-        let body = self.build_request(messages, stream);
+        let body = Self::build_request(&self.config, messages, stream, tuning);
         let request_timeout = if stream {
             FIRST_TOKEN_TIMEOUT
         } else {
-            NON_STREAM_TIMEOUT
+            // A caller's own budget is the tighter of the two whenever it has
+            // one: a query rewrite that is allowed twenty seconds must not sit
+            // here for two minutes because this constant says it may.
+            tuning
+                .time_budget
+                .map_or(NON_STREAM_TIMEOUT, |budget| budget.min(NON_STREAM_TIMEOUT))
         };
 
         let response = timeout(
@@ -392,17 +485,43 @@ impl SidecarLLMClient {
         Ok(response)
     }
 
-    async fn extract_completion_text(response: reqwest::Response) -> Result<String, LLMError> {
+    async fn extract_completion(
+        response: reqwest::Response,
+    ) -> Result<CompletionOutcome, LLMError> {
         let parsed: ChatCompletionResponse = response.json().await.map_err(|err| {
             LLMError::GenerationFailed(format!("Failed to parse sidecar response: {err}"))
         })?;
 
-        parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .ok_or_else(|| LLMError::GenerationFailed("Sidecar returned zero choices".to_string()))
+        let usage = parsed.usage.unwrap_or_default();
+        let choice =
+            parsed.choices.into_iter().next().ok_or_else(|| {
+                LLMError::GenerationFailed("Sidecar returned zero choices".into())
+            })?;
+
+        Ok(CompletionOutcome {
+            text: choice.message.content,
+            input_tokens: usage.prompt_tokens,
+            output_tokens: usage.completion_tokens,
+            finish_reason: choice.finish_reason.unwrap_or_else(|| "stop".to_string()),
+        })
+    }
+
+    async fn extract_completion_text(response: reqwest::Response) -> Result<String, LLMError> {
+        Self::extract_completion(response).await.map(|out| out.text)
+    }
+
+    /// Typed-completion entry point for the `LLMPort` adapter.
+    ///
+    /// Separate from `generate_chat` because the trait cannot carry a reasoning
+    /// effort or a response schema, and dropping them is what let a reasoning
+    /// model spend minutes thinking about a one-line query rewrite.
+    pub async fn complete_messages(
+        &self,
+        messages: &[(&str, String)],
+        tuning: RequestTuning<'_>,
+    ) -> Result<CompletionOutcome, LLMError> {
+        let response = self.post_chat_completion(messages, false, tuning).await?;
+        Self::extract_completion(response).await
     }
 
     fn normalize_chat_messages(messages: Vec<ChatMessage>) -> Vec<(&'static str, String)> {
@@ -473,7 +592,9 @@ impl LLMClient for SidecarLLMClient {
         _images: Option<Vec<String>>,
     ) -> Result<String, LLMError> {
         let messages = Self::build_messages(system, prompt);
-        let response = self.post_chat_completion(&messages, false).await?;
+        let response = self
+            .post_chat_completion(&messages, false, RequestTuning::default())
+            .await?;
         Self::extract_completion_text(response).await
     }
 
@@ -484,7 +605,9 @@ impl LLMClient for SidecarLLMClient {
         _images: Option<Vec<String>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let messages = Self::build_messages(system, prompt);
-        let response = self.post_chat_completion(&messages, true).await?;
+        let response = self
+            .post_chat_completion(&messages, true, RequestTuning::default())
+            .await?;
         Ok(Self::parse_sse_stream(response))
     }
 
@@ -510,7 +633,9 @@ impl LLMClient for SidecarLLMClient {
 
     async fn generate_chat(&self, messages: Vec<ChatMessage>) -> Result<String, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
-        let response = self.post_chat_completion(&pairs, false).await?;
+        let response = self
+            .post_chat_completion(&pairs, false, RequestTuning::default())
+            .await?;
         Self::extract_completion_text(response).await
     }
 
@@ -519,7 +644,9 @@ impl LLMClient for SidecarLLMClient {
         messages: Vec<ChatMessage>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, LLMError>> + Send + '_>>, LLMError> {
         let pairs = Self::normalize_chat_messages(messages);
-        let response = self.post_chat_completion(&pairs, true).await?;
+        let response = self
+            .post_chat_completion(&pairs, true, RequestTuning::default())
+            .await?;
         Ok(Self::parse_sse_stream(response))
     }
 
@@ -699,6 +826,9 @@ mod tests {
             top_k: cfg.top_k,
             repeat_penalty: cfg.repeat_penalty,
             max_tokens: cfg.max_tokens,
+            reasoning_effort: None,
+            chat_template_kwargs: None,
+            response_format: None,
         };
 
         let json = serde_json::to_value(&body).expect("serialize");
@@ -710,6 +840,66 @@ mod tests {
         assert_eq!(messages_json[0]["content"], "You are helpful.");
         assert_eq!(messages_json[1]["role"], "user");
         assert_eq!(messages_json[1]["content"], "Hi.");
+    }
+
+    /// The llama.cpp chat template is the only layer that can stop a Qwen3-style
+    /// GGUF emitting its `<think>` block, so "no reasoning" has to reach it as
+    /// `enable_thinking: false` — matching what the remote llama.cpp adapter
+    /// sends to the same server.
+    #[test]
+    fn no_reasoning_disables_thinking_in_the_chat_template() {
+        let messages = [("user", "Rewrite this.".to_string())];
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            &messages,
+            false,
+            RequestTuning {
+                reasoning_effort: Some("none"),
+                json_schema: None,
+                time_budget: None,
+            },
+        );
+
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["reasoning_effort"], "none");
+        assert_eq!(json["chat_template_kwargs"]["enable_thinking"], false);
+    }
+
+    #[test]
+    fn a_real_reasoning_effort_reaches_the_chat_template_as_itself() {
+        let messages = [("user", "Think about this.".to_string())];
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            &messages,
+            false,
+            RequestTuning {
+                reasoning_effort: Some("low"),
+                json_schema: None,
+                time_budget: None,
+            },
+        );
+
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert_eq!(json["reasoning_effort"], "low");
+        assert_eq!(json["chat_template_kwargs"]["reasoning_effort"], "low");
+    }
+
+    /// The legacy text API has no reasoning hint; those fields must then stay
+    /// off the wire entirely rather than going out as nulls.
+    #[test]
+    fn an_untuned_request_sends_no_reasoning_fields() {
+        let messages = [("user", "Hi.".to_string())];
+        let body = SidecarLLMClient::build_request(
+            &GenerationConfig::default(),
+            &messages,
+            false,
+            RequestTuning::default(),
+        );
+
+        let json = serde_json::to_value(&body).expect("serialize");
+        assert!(json.get("reasoning_effort").is_none(), "{json}");
+        assert!(json.get("chat_template_kwargs").is_none(), "{json}");
+        assert!(json.get("response_format").is_none(), "{json}");
     }
 
     #[test]

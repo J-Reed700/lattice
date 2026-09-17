@@ -41,7 +41,7 @@ Files that already match the lock are not downloaded again.
 1. In `scripts/llama-server.lock`, set `llama_cpp_tag` (for a rebuild, keep it), set `release` to `llama/<llama_cpp_tag>-r<N>` with a new `N`, and delete the `sha256` lines.
 2. Optional dry run: run **Build llama-server sidecar binaries** from the Actions tab on your branch. It builds and verifies all five binaries without publishing. Pull requests that touch the pipeline do the same automatically.
 3. Commit the lock, then push the matching tag: `git tag llama/<llama_cpp_tag>-r<N> && git push origin llama/<llama_cpp_tag>-r<N>`. The workflow checks that the tag equals the lock's `release` and publishes the release.
-4. Pin it: `bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock`. This downloads the release, checks it against its `SHA256SUMS.txt`, verifies every binary and writes the `sha256` lines.
+4. Pin it: `bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock`. This downloads the release, checks it against its `SHA256SUMS.txt`, verifies every binary, prints the pins it is about to change and writes the `sha256` lines. It pins only binaries it actually ran, and it refuses to overwrite a hash that is already in the lock: a published release is immutable, so a changed hash means something is wrong. Re-pinning anyway takes `--repin`.
 5. Commit the updated lock. Until then CI's `sidecar-binaries` job and release builds fail on purpose.
 
-When raising `macos_min`, raise `bundle.macOS.minimumSystemVersion` in `tauri.conf.json` to match; `build.rs` rejects release builds where they differ.
+When raising `macos_min`, raise `bundle.macOS.minimumSystemVersion` in `tauri.conf.json` to match; `build.rs` rejects release builds where they differ. `macos_min` also gates Metal `bfloat`: the build enables `GGML_METAL_USE_BF16` only from 14.0, because its shaders are compiled on the user's machine and fail there on 13.x.

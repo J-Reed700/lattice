@@ -7,7 +7,7 @@ import { listAllBatchJobs } from '../utils/batchHistory';
 
 import type { ApiResult, BatchJobItem, BatchJobStatus } from '../types';
 
-interface IndexingOperation {
+export interface IndexingOperation {
   id: string;
   totalFiles: number;
   processedFiles: number;
@@ -18,6 +18,19 @@ interface IndexingOperation {
   error?: string;
   items?: BatchJobItem[];
 }
+
+/** The statuses the backend stops writing to an item. */
+const TERMINAL_ITEM_STATUSES = ['completed', 'failed', 'cancelled'];
+
+/**
+ * True while the backend has not yet recorded an outcome for every file.
+ *
+ * Cancelling a job does not decide the file that was already in flight: the
+ * worker still finishes or abandons it, and only the item status says which.
+ */
+export const hasUnsettledItems = (operation: IndexingOperation): boolean =>
+  operation.items === undefined ||
+  operation.items.some((item) => !TERMINAL_ITEM_STATUSES.includes(item.status.toLowerCase()));
 
 interface UseIndexingReturn {
   operations: Map<string, IndexingOperation>;
@@ -76,7 +89,10 @@ export function useIndexing(): UseIndexingReturn {
       if (polling) return;
       polling = true;
       const activeOperations = Array.from(operationsRef.current.values()).filter(
-        (op) => op.status === 'pending' || op.status === 'processing'
+        (op) =>
+          op.status === 'pending' ||
+          op.status === 'processing' ||
+          (op.status === 'cancelled' && hasUnsettledItems(op))
       );
 
       for (const operation of activeOperations) {
@@ -182,20 +198,14 @@ export function useIndexing(): UseIndexingReturn {
   const cancelBatchImport = useCallback(async (id: string): Promise<ApiResult<number>> => {
     const result = await VaultAPI.cancelBatchJob(id);
     if (result.ok) {
+      // The job is cancelled, but each file's outcome stays whatever the
+      // backend last reported: the file in flight may still finish indexing,
+      // and polling continues until every item has settled.
       updateOperations((prev) => {
         const next = new Map(prev);
         const operation = next.get(id);
         if (operation) {
-          next.set(id, {
-            ...operation,
-            status: 'cancelled',
-            error: undefined,
-            items: operation.items?.map((item) =>
-              ['pending', 'running', 'processing'].includes(item.status.toLowerCase())
-                ? { ...item, status: 'cancelled' }
-                : item
-            ),
-          });
+          next.set(id, { ...operation, status: 'cancelled', error: undefined });
         }
         return next;
       });

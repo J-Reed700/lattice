@@ -113,7 +113,7 @@ pub mod vector_search_port;
 pub use backup_port::{BackupInfoData, BackupPort};
 pub use backup_scheduler_port::BackupSchedulerPort;
 pub use batch_job_repository_port::{
-    BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus,
+    BatchItemState, BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus,
 };
 pub use chunk_repository_port::ChunkRepositoryPort;
 pub use content_addressed_storage_port::{

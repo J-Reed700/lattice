@@ -257,9 +257,17 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         let batch_repo = container.batch_job_repository();
         match batch_repo.list_batch_jobs(Some(500), Some(0)).await {
             Ok(jobs) => {
-                let active: Vec<_> = jobs.into_iter()
-                    .filter(|job| matches!(job.status.as_str(), "pending" | "running"))
-                    .collect();
+                // A job cancelled while a file was in flight left that file at
+                // `processing`: settling it needs no embedding model and no
+                // worker, only the reconciliation pass.
+                let (cancelled, active): (Vec<_>, Vec<_>) = jobs.into_iter()
+                    .filter(|job| matches!(job.status.as_str(), "pending" | "running" | "cancelled"))
+                    .partition(|job| job.status == "cancelled");
+                for job in cancelled.iter().filter(|job| job.job_type == "file_import") {
+                    if let Err(error) = container.start_batch_file_import_use_case().resume_interrupted(job.id.clone()).await {
+                        tracing::warn!(job_id = %job.id, %error, "Failed to reconcile a cancelled file import");
+                    }
+                }
                 let needs_embedding = active.iter().any(|job| job.job_type == "file_import");
                 let embedding_ready = if needs_embedding {
                     match container.get_or_load_embedding().await {

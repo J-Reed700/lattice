@@ -6,7 +6,7 @@ import { X, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
-import { useIndexing } from '@/hooks/useIndexing';
+import { hasUnsettledItems, useIndexing } from '@/hooks/useIndexing';
 import { useToast } from '@/hooks/useToast';
 import VaultAPI from '@/lib/api';
 import type { SourceGroup } from '@/lib/bindings';
@@ -358,13 +358,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           toastRef.current.error(`Couldn't cancel import: ${result.error}`);
           return;
         }
-        setFiles((current) => current.map((file) =>
-          ['queued', 'importing'].includes(file.status)
-            ? { ...file, status: 'cancelled' as const }
-            : file
-        ));
-        setIsImporting(false);
-        setCurrentJobId(null);
+        // A successful cancel says the job stopped, not what became of each
+        // file. The file already in flight may still finish indexing, so keep
+        // watching the job and let its item statuses decide.
         toastRef.current.info('Import cancelled');
       } catch (error) {
         toastRef.current.error(`Couldn't cancel import: ${getErrorMessage(error)}`);
@@ -417,7 +413,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
               ? 'success'
               : normalized === 'failed'
                 ? 'error'
-                : normalized === 'cancelled' || normalized === 'canceled' || normalized === 'skipped'
+                : normalized === 'cancelled'
                   ? 'cancelled'
                 : normalized === 'pending'
                   ? 'queued'
@@ -468,7 +464,9 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         successful: operation.successfulFiles,
         failed: operation.failedFiles,
       });
-    } else if (operation.status === 'cancelled') {
+    } else if (operation.status === 'cancelled' && !hasUnsettledItems(operation)) {
+      // Every file now carries a backend outcome; whatever is still queued here
+      // was never started and is the only thing cancellation applies to.
       setFiles((prev) => prev.map((file) =>
         ['importing', 'queued'].includes(file.status)
           ? { ...file, status: 'cancelled' as const }

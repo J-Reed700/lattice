@@ -209,7 +209,7 @@ pub struct BatchJobItemDto {
     /// Target URL or file path
     pub target: String,
 
-    /// Item status: "pending", "running", "completed", "failed", "cancelled"
+    /// Item status: "pending", "processing", "completed", "failed", "cancelled"
     pub status: String,
 
     /// Error message if status is "failed"

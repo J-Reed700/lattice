@@ -42,6 +42,7 @@
 //! - It does not download model files — that's the existing model
 //!   storage layer, untouched by this migration.
 
+use crate::features::llm::engine::sidecar_pool::{Liveness, Origin, SharedProcesses};
 use crate::features::llm::engine::system::SystemCapabilities;
 use crate::features::llm::engine::types::LLMError;
 use parking_lot::Mutex as SyncMutex;
@@ -198,7 +199,13 @@ impl SidecarBinary {
 }
 
 /// Configuration for spawning a llama-server sidecar.
-#[derive(Debug, Clone)]
+///
+/// Equality is identity for a running server: two roles whose configurations
+/// compare equal are asking for the same process, and the pool in
+/// [`sidecar_pool`](super::sidecar_pool) hands them one. Any field added here
+/// that changes what the server *is* must therefore be part of the key —
+/// which deriving `Eq`/`Hash` over the whole struct takes care of.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SidecarConfig {
     /// Path to the GGUF model file.
     pub model_path: PathBuf,
@@ -298,6 +305,12 @@ pub struct SidecarHandle {
     /// `127.0.0.1:<port>` — the HTTP base URL the LLM client posts to.
     endpoint: String,
 
+    /// Bearer token this server was launched with. Loopback is not a trust
+    /// boundary: without it any local process — including a page in the user's
+    /// browser, which can reach 127.0.0.1 — could generate on the user's GPU
+    /// and read back the model path. Never logged.
+    api_token: String,
+
     /// Process handle. Sync `Mutex` because `CommandChild::kill()` is
     /// itself synchronous (a syscall, no `.await`) and the shutdown
     /// path runs from a sync Tauri callback. `Option` so the kill
@@ -356,6 +369,12 @@ impl SidecarHandle {
         &self.endpoint
     }
 
+    /// Bearer token every request to this sidecar must carry, `/health`
+    /// included. Treat as a secret: it must not reach a log or an error body.
+    pub fn api_token(&self) -> &str {
+        &self.api_token
+    }
+
     /// Context window, in tokens, that this sidecar was launched with.
     pub fn context_size(&self) -> u32 {
         self.context_size
@@ -377,6 +396,17 @@ impl SidecarHandle {
         self.degraded.as_deref()
     }
 
+    /// Whether the server behind this handle is still up.
+    ///
+    /// The child slot is emptied by exactly two things: `stop`, and the event
+    /// drain when it sees `Terminated`. So this is false for a handle that was
+    /// stopped *and* for one whose server exited or crashed on its own — which
+    /// is what the pool needs, since a crashed server's handle stays alive as
+    /// an `Arc` for as long as any role holds it.
+    pub fn is_running(&self) -> bool {
+        self.child.lock().is_some()
+    }
+
     /// Explicitly kill the sidecar. After this returns, the handle is
     /// inert; `Drop` becomes a no-op. Idempotent — second call is fine.
     pub fn stop(&self) {
@@ -391,6 +421,12 @@ impl SidecarHandle {
                 tracing::info!("Stopped llama-server sidecar at {}", self.endpoint);
             }
         }
+    }
+}
+
+impl Liveness for SidecarHandle {
+    fn is_running(&self) -> bool {
+        SidecarHandle::is_running(self)
     }
 }
 
@@ -439,12 +475,17 @@ impl SpawnedChild {
         binary: SidecarBinary,
         args: Vec<String>,
         endpoint: &str,
+        api_token: &str,
     ) -> Result<(Receiver<CommandEvent>, Self), AttemptError> {
+        // The key goes in the environment, not `--api-key`: argv is world-
+        // readable through `ps` to every process on the machine, which is the
+        // same set of processes the key exists to keep off the port.
         let (rx, child) = app
             .shell()
             .sidecar(binary.label())
             .map_err(|err| spawn_failure(binary, &err))?
             .args(args)
+            .env("LLAMA_API_KEY", api_token)
             .spawn()
             .map_err(|err| spawn_failure(binary, &err))?;
 
@@ -489,10 +530,12 @@ impl SpawnedChild {
         config: &SidecarConfig,
         binary: SidecarBinary,
         port: PortReservation,
+        api_token: String,
     ) -> SidecarHandle {
         self.armed = false;
         SidecarHandle {
             endpoint: self.endpoint.clone(),
+            api_token,
             child: Arc::clone(&self.child),
             context_size: config.context_size,
             binary,
@@ -579,6 +622,17 @@ impl Drop for SpawnedChild {
 pub struct SidecarRegistry {
     entries: SyncMutex<Vec<RegistryEntry>>,
 
+    /// Live servers keyed by the configuration that started them, so the
+    /// chat, router and utility roles pointing at one GGUF share a process
+    /// instead of loading the same weights once each. Lives here because
+    /// this type is already the process-wide truth about sidecars, and
+    /// sharing is a fact about the set as a whole, not about any one child.
+    ///
+    /// Orthogonal to `entries`: that is the kill list, this is the sharing
+    /// map. A shared server holds exactly one `entries` slot however many
+    /// roles are using it.
+    shared: SharedProcesses<SidecarConfig, SidecarHandle>,
+
     /// Windows Job Object (no-op on other platforms). Sidecar PIDs
     /// get assigned to this object on spawn so Windows kernel kills
     /// them automatically when our process handle closes — even on
@@ -621,6 +675,7 @@ impl SidecarRegistry {
 
         Self {
             entries: SyncMutex::new(Vec::new()),
+            shared: SharedProcesses::new(),
             #[cfg(windows)]
             job: SyncMutex::new(job),
         }
@@ -1015,6 +1070,63 @@ pub fn spawn_binary_preflight(app: &AppHandle) {
 pub struct SidecarManager;
 
 impl SidecarManager {
+    /// Get the sidecar serving `config`, starting one if nothing is.
+    ///
+    /// This is the entry point production code should use. `config` is the
+    /// identity of a server, so two roles that resolve to the same model file
+    /// on the same hardware settings — the chat model also being the utility
+    /// or router model, which is the common setup, not an edge case — share
+    /// one process. Before this, each role's cache loaded independently and a
+    /// 4 GB model was resident two or three times over.
+    ///
+    /// What is *not* shared is per-role generation settings: those travel on
+    /// each request, so the roles keep their own `SidecarLLMClient` (and its
+    /// own `GenerationConfig`) over one server.
+    ///
+    /// Sharing costs much less concurrency than it looks like it should. We
+    /// pass no `--parallel`, and this build's default is auto, which picks
+    /// several slots over a unified KV cache — the pinned b8981 logs
+    /// `n_parallel = 4 and kv_unified = true` — so two roles are served side by
+    /// side rather than one queueing behind the other. What they do share is
+    /// the single `--ctx-size` window behind those slots, so concurrent long
+    /// prompts can crowd each other. That is a far cheaper failure than a
+    /// second multi-gigabyte copy of the same weights, which on the machines
+    /// this matters for does not fit at all.
+    ///
+    /// Falls back to an unshared server when no [`SidecarRegistry`] is managed
+    /// (tests, or any host that never called `manage`) so sharing is an
+    /// optimization rather than a requirement.
+    pub async fn start_shared(
+        app: &AppHandle,
+        config: SidecarConfig,
+    ) -> Result<Arc<SidecarHandle>, LLMError> {
+        let Some(registry) = app.try_state::<SidecarRegistry>() else {
+            tracing::debug!("SidecarRegistry not managed; starting an unshared sidecar");
+            return Self::start_with_fallback(app, config).await.map(Arc::new);
+        };
+
+        let key = config.clone();
+        let (handle, origin) = registry
+            .shared
+            .get_or_start(key, || Self::start_with_fallback(app, config))
+            .await?;
+
+        if origin == Origin::Reused {
+            // The whole point of the change, so it says so out loud: without
+            // this line a regression to duplicate loads looks identical in
+            // the log to the fix working.
+            tracing::info!(
+                endpoint = %handle.endpoint(),
+                binary = handle.binary().label(),
+                n_gpu_layers = handle.n_gpu_layers(),
+                context_size = handle.context_size(),
+                "Reusing the running llama-server for this model; no second load"
+            );
+        }
+
+        Ok(handle)
+    }
+
     /// Spawn a llama-server sidecar, falling back until something runs.
     ///
     /// The first attempt uses `config` on the primary build. Each failure
@@ -1193,7 +1305,9 @@ impl SidecarManager {
         let port = reservation.port();
         let endpoint = format!("http://127.0.0.1:{port}");
 
-        // 4. Build the args. Order doesn't matter to llama-server.
+        // 4. Build the args. Order doesn't matter to llama-server. The token is
+        //    minted per spawn, so a leaked one dies with its process.
+        let api_token = new_api_token();
         let args = build_server_args(&config, port);
         tracing::info!(
             "Spawning llama-server sidecar: binary={} model={} port={} ngl={} ctx={}",
@@ -1210,7 +1324,7 @@ impl SidecarManager {
         //    binary cannot run at all. The guard returned owns the child:
         //    every path out of this function from here on either kills it
         //    or converts it into a handle.
-        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint)?;
+        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint, &api_token)?;
 
         // 6. Spawn the long-lived event drain task.
         //    The drain owns the receiver for the rest of the sidecar's
@@ -1230,7 +1344,7 @@ impl SidecarManager {
 
         // 7. Await readiness: `/health` answering 200, or the readiness line.
         //    On failure the guard's Drop kills the child.
-        if let Err(end) = await_ready(ready_rx, &endpoint, &signals, deadline).await {
+        if let Err(end) = await_ready(ready_rx, &endpoint, &api_token, &signals, deadline).await {
             tracing::warn!(
                 endpoint = %endpoint,
                 binary = binary.label(),
@@ -1251,7 +1365,7 @@ impl SidecarManager {
             "llama-server ready; prompt budgeting will use this context window"
         );
 
-        Ok(spawned.into_handle(&config, binary, reservation))
+        Ok(spawned.into_handle(&config, binary, reservation, api_token))
     }
 }
 
@@ -2204,11 +2318,36 @@ fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String> {
         port.to_string(),
         "--host".to_string(),
         "127.0.0.1".to_string(), // explicit — never bind public iface
+        // Binding loopback keeps the port off the network but not away from
+        // other software on the machine: any local process, and any page the
+        // user has open, can reach 127.0.0.1. The key makes the port ours
+        // (passed as `LLAMA_API_KEY`, never argv — see `SpawnedChild::spawn`),
+        // and dropping the bundled web UI removes a whole HTML surface we
+        // neither ship on purpose nor audit.
+        "--no-webui".to_string(),
         "-ngl".to_string(),
         config.n_gpu_layers.to_string(),
         "--ctx-size".to_string(),
         config.context_size.to_string(),
     ]
+}
+
+/// Mint a bearer token for one sidecar process.
+///
+/// 128 bits from the OS entropy source, hex-encoded so it can be spliced into
+/// an `Authorization` header and an environment variable without escaping. A new
+/// one per spawn means the window in which a leaked token is worth anything
+/// closes when the process does.
+fn new_api_token() -> String {
+    use std::fmt::Write;
+
+    let mut bytes = [0u8; 16];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    bytes.iter().fold(String::with_capacity(32), |mut out, b| {
+        // Writing into a String cannot fail.
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Spawn a long-lived event-drain task for a sidecar. Returns once the
@@ -2376,8 +2515,14 @@ enum HealthProbe {
     Unreachable,
 }
 
-async fn probe_health(http: &reqwest::Client, endpoint: &str) -> HealthProbe {
-    let request = http.get(format!("{endpoint}/health")).send();
+async fn probe_health(http: &reqwest::Client, endpoint: &str, api_token: &str) -> HealthProbe {
+    // Current llama.cpp exempts `/health` from the API-key check, but an
+    // unauthenticated probe would turn any future tightening of that list into a
+    // model load that never finishes starting.
+    let request = http
+        .get(format!("{endpoint}/health"))
+        .bearer_auth(api_token)
+        .send();
     match timeout(HEALTH_PROBE_TIMEOUT, request).await {
         Ok(Ok(response)) if response.status().is_success() => HealthProbe::Ready,
         Ok(Ok(_)) => HealthProbe::Loading,
@@ -2399,6 +2544,7 @@ async fn probe_health(http: &reqwest::Client, endpoint: &str) -> HealthProbe {
 async fn await_ready(
     ready_rx: tokio::sync::oneshot::Receiver<Result<(), StartupEnd>>,
     endpoint: &str,
+    api_token: &str,
     signals: &StartupSignals,
     deadline: Instant,
 ) -> Result<(), StartupEnd> {
@@ -2435,7 +2581,7 @@ async fn await_ready(
         }
 
         if let Some(http) = http.as_ref() {
-            match probe_health(http, endpoint).await {
+            match probe_health(http, endpoint, api_token).await {
                 HealthProbe::Ready => {
                     tracing::info!("llama-server sidecar answered /health on {endpoint}");
                     return Ok(());
@@ -2545,6 +2691,31 @@ mod tests {
             platform: Platform::Linux,
             os_version: None,
         }
+    }
+
+    /// Sharing is keyed on the whole config, so two roles only reuse one
+    /// server if their configs compare equal. That holds because
+    /// `from_capabilities` is a pure function of the path and the machine —
+    /// if it ever grows a nondeterministic input (a timestamp, a port, a
+    /// counter), every role silently gets its own copy of the weights again
+    /// and the only symptom is memory.
+    #[test]
+    fn the_same_model_on_one_machine_is_one_key() {
+        use crate::features::llm::engine::system::GPUVendor;
+        let caps = make_caps(Some(GPUVendor::Apple), 16.0);
+        let chat = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        let utility = SidecarConfig::from_capabilities(PathBuf::from("/tmp/m.gguf"), &caps);
+        assert_eq!(
+            chat, utility,
+            "the roles must agree on the key or they will not share"
+        );
+
+        let other_model = SidecarConfig::from_capabilities(PathBuf::from("/tmp/other.gguf"), &caps);
+        assert_ne!(chat, other_model, "a different model needs its own server");
+
+        // A degraded fallback is a different server, not the same one with a
+        // note on it: it holds a different context window.
+        assert_ne!(chat, chat.without_gpu_offload());
     }
 
     #[test]
@@ -3249,6 +3420,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         await_ready(
             rx,
             DEAD_ENDPOINT,
+            "token",
             &signals,
             Instant::now() + Duration::from_secs(30),
         )
@@ -3289,7 +3461,7 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
     async fn await_ready_stops_at_the_shared_budget() {
         let (_tx, rx) = tokio::sync::oneshot::channel::<Result<(), StartupEnd>>();
         let signals = StartupSignals::default();
-        let end = await_ready(rx, DEAD_ENDPOINT, &signals, Instant::now()).await;
+        let end = await_ready(rx, DEAD_ENDPOINT, "token", &signals, Instant::now()).await;
         assert!(
             matches!(end, Err(StartupEnd::TimedOut(TimeoutKind::Budget(_)))),
             "{end:?}"
@@ -3506,5 +3678,31 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         assert!(args.iter().any(|a| a == "127.0.0.1"));
         assert!(args.iter().any(|a| a == "-ngl"));
         assert!(args.iter().any(|a| a == "99"));
+    }
+
+    /// An unauthenticated loopback port is reachable from every other process
+    /// on the machine, browsers included, and the bundled web UI is an HTML
+    /// surface we never meant to serve. The key authenticates the port, so it
+    /// must not travel in argv, where `ps` hands it to those same processes.
+    #[test]
+    fn build_server_args_drop_the_web_ui_and_keep_the_key_out_of_argv() {
+        let cfg = SidecarConfig::for_model(PathBuf::from("/models/llama.gguf"));
+        let args = build_server_args(&cfg, 12345);
+
+        assert!(args.iter().any(|a| a == "--no-webui"));
+        assert!(
+            !args.iter().any(|a| a == "--api-key"),
+            "the key belongs in LLAMA_API_KEY, not on the command line"
+        );
+    }
+
+    #[test]
+    fn api_tokens_are_unguessable_and_never_repeat() {
+        let first = new_api_token();
+        let second = new_api_token();
+
+        assert_eq!(first.len(), 32, "128 bits of entropy, hex-encoded");
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second, "a token is minted per spawn");
     }
 }

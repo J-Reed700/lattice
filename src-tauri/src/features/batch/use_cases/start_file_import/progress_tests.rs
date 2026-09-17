@@ -166,12 +166,12 @@ async fn batch_progress_is_committed_before_next_file_and_survives_later_failure
     let items = repo.get_pending_items(&recovered).await?;
     repo.update_item_status(
         &items[0].id,
-        "completed",
+        BatchItemState::Completed,
         completed[0].document_id.as_deref(),
         None,
     )
     .await?;
-    repo.update_item_status(&items[1].id, "processing", None, None)
+    repo.update_item_status(&items[1].id, BatchItemState::Processing, None, None)
         .await?;
     repo.update_job_status(&recovered, "running", None, None)
         .await?;
@@ -259,6 +259,193 @@ async fn batch_progress_is_committed_before_next_file_and_survives_later_failure
             .fetch_one(db.pool())
             .await?,
         3
+    );
+    Ok(())
+}
+
+/// Everything a file-import worker needs, over one real database and library.
+struct ImportHarness {
+    db: DatabaseConnection,
+    repo: Arc<BatchJobRepository>,
+    worker: StartBatchFileImportUseCase,
+    library: std::path::PathBuf,
+}
+
+impl ImportHarness {
+    async fn new(dir: &std::path::Path, embedding: Arc<GatedEmbedding>) -> anyhow::Result<Self> {
+        let db = DatabaseConnection::new(dir.join("test.db")).await?;
+        initialize_database(db.pool()).await?;
+        let repo = Arc::new(BatchJobRepository::new(db.pool().clone()));
+        let uow = Arc::new(SqliteUnitOfWorkFactory::new(db.pool().clone()));
+        let library = dir.join("library");
+        let indexer = Arc::new(IndexFileUseCase::new(
+            Arc::new(ContentAddressedStorage::with_root(library.clone())),
+            Arc::new(SecureFileStorage::new()),
+            Arc::new(ContentExtractionAdapter::new()),
+            embedding,
+            Arc::new(DocumentRepositoryImpl::new(db.pool().clone())),
+            Arc::new(EmbeddingRepository::new(db.pool().clone())),
+            uow.clone(),
+        ));
+        let worker = StartBatchFileImportUseCase::new(repo.clone(), indexer, uow);
+        Ok(Self {
+            db,
+            repo,
+            worker,
+            library,
+        })
+    }
+
+    /// Blob directories currently on disk.
+    fn blobs(&self) -> usize {
+        std::fs::read_dir(&self.library)
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+
+    async fn item_statuses(&self, job_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .repo
+            .get_batch_job(job_id)
+            .await?
+            .items
+            .into_iter()
+            .map(|item| item.status)
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn cancelling_mid_file_releases_its_library_blob_and_cancels_the_file_it_stopped(
+) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let embedding = Arc::new(GatedEmbedding {
+        entered: Notify::new(),
+        release: Notify::new(),
+    });
+    let harness = ImportHarness::new(dir.path(), embedding.clone()).await?;
+    let paths = ["in_flight.txt", "queued.txt"].map(|name| dir.path().join(name));
+    for (path, text) in paths.iter().zip([
+        "pause here while this document is prepared",
+        "this document is never reached",
+    ]) {
+        std::fs::write(path, text)?;
+    }
+    let job = harness
+        .worker
+        .execute(StartBatchFileImportRequestDto {
+            indexing: None,
+            file_paths: paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+            space_id: None,
+        })
+        .await?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        embedding.entered.notified(),
+    )
+    .await?;
+    // The blob is already in the library, and nothing references it yet.
+    assert_eq!(harness.blobs(), 1);
+
+    let cancelled = crate::features::batch::use_cases::CancelBatchJobUseCase::new(
+        harness.repo.clone() as Arc<dyn BatchJobRepositoryPort>,
+    )
+    .execute(crate::features::batch::dto::CancelBatchJobRequestDto {
+        job_id: job.job_id.clone(),
+    })
+    .await?;
+    assert_eq!(cancelled.cancelled_count, 1);
+    embedding.release.notify_one();
+
+    let statuses = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let statuses = harness.item_statuses(&job.job_id).await?;
+            if statuses.iter().all(|status| status != "processing") {
+                return Ok::<_, anyhow::Error>(statuses);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    assert_eq!(statuses, vec!["cancelled".to_string(); 2]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM documents")
+            .fetch_one(harness.db.pool())
+            .await?,
+        0
+    );
+    assert_eq!(
+        harness.blobs(),
+        0,
+        "the blob copied for the cancelled file is released at cancel time"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn startup_settles_the_file_a_cancelled_import_left_in_flight() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(
+        dir.path(),
+        Arc::new(GatedEmbedding {
+            entered: Notify::new(),
+            release: Notify::new(),
+        }),
+    )
+    .await?;
+    let paths = ["interrupted.txt", "never_started.txt"].map(|name| dir.path().join(name));
+    for path in &paths {
+        std::fs::write(path, "the app exited while this import was being cancelled")?;
+    }
+    // The shape a cancel leaves behind when the app exits before the worker
+    // reaches its next safe point, and before the queue was cancelled.
+    harness
+        .repo
+        .create_batch_job("interrupted", "file_import", 2, None)
+        .await?;
+    harness
+        .repo
+        .create_batch_items(
+            "interrupted",
+            paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+        )
+        .await?;
+    let items = harness.repo.get_pending_items("interrupted").await?;
+    harness
+        .repo
+        .update_item_status(&items[0].id, BatchItemState::Processing, None, None)
+        .await?;
+    harness
+        .repo
+        .update_job_status("interrupted", "cancelled", None, None)
+        .await?;
+
+    harness
+        .worker
+        .resume_interrupted("interrupted".to_string())
+        .await?;
+
+    assert_eq!(
+        harness.item_statuses("interrupted").await?,
+        ["cancelled", "cancelled"]
+    );
+    // Recovery settles the record; it must not restart work the user cancelled.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        harness.item_statuses("interrupted").await?,
+        ["cancelled", "cancelled"]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM documents")
+            .fetch_one(harness.db.pool())
+            .await?,
+        0
     );
     Ok(())
 }

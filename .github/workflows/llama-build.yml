@@ -7,8 +7,13 @@ name: Build llama-server sidecar binaries
 # Everything is driven by src-tauri/scripts/llama-server.lock:
 #   llama_cpp_tag  upstream tag to compile
 #   release        release tag to publish (must equal the pushed tag)
-#   macos_min      deployment target for the macOS binary
+#   macos_min      deployment target for the macOS binary, and the floor that
+#                  decides whether Metal bfloat (macOS 14+) may be enabled
 #   glibc_max      newest glibc the Linux binaries may require
+#
+# Which files a release contains, on which runner, with which backend flags,
+# comes from verify_llama_binaries.py --print-targets: the build matrix and the
+# release notes are generated from it rather than repeating it.
 #
 # Every binary must be a single self-contained file: Tauri bundles exactly one
 # file per sidecar, so anything it links dynamically must already exist on a
@@ -58,8 +63,19 @@ jobs:
     outputs:
       llama_cpp_tag: ${{ steps.lock.outputs.llama_cpp_tag }}
       release: ${{ steps.lock.outputs.release }}
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
+
+      # The verifier's TARGETS table is the only list of release files; the
+      # build matrix is generated from it so it cannot go stale.
+      - name: Read the build matrix
+        id: targets
+        shell: bash
+        run: |
+          matrix="$(python3 "$VERIFY" --print-targets matrix)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$matrix"
 
       - name: Read lock
         id: lock
@@ -98,36 +114,11 @@ jobs:
     name: ${{ matrix.name }}
     needs: pin
     runs-on: ${{ matrix.os }}
+    # Every field (runner image, cmake backend flags, whether the build needs
+    # the Vulkan SDK) comes from verify_llama_binaries.py's TARGETS table.
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Apple Silicon only: Intel Macs would need a CPU-only binary.
-          - name: macOS arm64 (Metal)
-            os: macos-14
-            file: llama-server-aarch64-apple-darwin
-            backend: -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_METAL_USE_BF16=ON
-          # Vulkan covers NVIDIA, AMD and Intel GPUs without the CUDA toolchain.
-          - name: Windows x64 (Vulkan)
-            os: windows-2022
-            file: llama-server-x86_64-pc-windows-msvc.exe
-            vulkan: true
-            backend: -DGGML_VULKAN=ON
-          # Spawned when the Vulkan binary cannot start or initialise.
-          - name: Windows x64 (CPU)
-            os: windows-2022
-            file: llama-server-cpu-x86_64-pc-windows-msvc.exe
-            backend: ''
-          # ubuntu-22.04 keeps the glibc requirement at 2.35 (lock glibc_max).
-          - name: Linux x64 (Vulkan)
-            os: ubuntu-22.04
-            file: llama-server-x86_64-unknown-linux-gnu
-            vulkan: true
-            backend: -DGGML_VULKAN=ON
-          - name: Linux x64 (CPU)
-            os: ubuntu-22.04
-            file: llama-server-cpu-x86_64-unknown-linux-gnu
-            backend: ''
+      matrix: ${{ fromJSON(needs.pin.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -187,7 +178,15 @@ jobs:
           )
           case "$RUNNER_OS" in
             macOS)
-              args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_min") ;;
+              args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_min")
+              # Metal's `bfloat` needs Metal 3.1, i.e. macOS 14. The Metal
+              # shaders are compiled by the *user's* Metal compiler at startup
+              # (GGML_METAL_EMBED_LIBRARY embeds the source), so on macOS 13.x
+              # the flag turns into a shader-compile failure that no CI job
+              # ever sees. It is therefore tied to the advertised floor.
+              if [[ "${macos_min%%.*}" -ge 14 ]]; then
+                args+=(-DGGML_METAL_USE_BF16=ON)
+              fi ;;
             Windows)
               # Static MSVC runtime: no VCRUNTIME140.dll / MSVCP140.dll needed.
               args+=(-DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded) ;;
@@ -269,6 +268,10 @@ jobs:
 
       - name: Verify the complete set
         run: |
+          # upload-artifact zips without POSIX modes, so the executable bit the
+          # build job set does not survive the round trip. Restore it before
+          # verifying: what is published must be spawnable as it is.
+          chmod +x release/llama-server-*
           grep -v '^sha256 ' "$LOCK" > "$RUNNER_TEMP/unhashed.lock"
           python "$VERIFY" --lock "$RUNNER_TEMP/unhashed.lock" --expect-all release
 
@@ -284,20 +287,18 @@ jobs:
           RELEASE: ${{ needs.pin.outputs.release }}
           LLAMA_CPP_TAG: ${{ needs.pin.outputs.llama_cpp_tag }}
         run: |
-          cat > notes.md <<EOF
-          llama-server sidecar binaries for Lattice, built from llama.cpp \`$LLAMA_CPP_TAG\`.
-
-          | File | Platform | Backend |
-          |---|---|---|
-          | \`llama-server-aarch64-apple-darwin\` | macOS Apple Silicon | Metal |
-          | \`llama-server-x86_64-pc-windows-msvc.exe\` | Windows x64 | Vulkan |
-          | \`llama-server-cpu-x86_64-pc-windows-msvc.exe\` | Windows x64 | CPU (AVX2) |
-          | \`llama-server-x86_64-unknown-linux-gnu\` | Linux x64 | Vulkan |
-          | \`llama-server-cpu-x86_64-unknown-linux-gnu\` | Linux x64 | CPU (AVX2) |
-
-          Each file is self-contained and was verified by \`verify_llama_binaries.py\`.
-          Pin these checksums with \`bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock\`.
-          EOF
+          # The file table comes from the verifier, so the notes cannot
+          # advertise a set that differs from the one that was built.
+          {
+            echo "llama-server sidecar binaries for Lattice, built from llama.cpp \`$LLAMA_CPP_TAG\`."
+            echo
+            echo "| File | Platform | Backend |"
+            echo "|---|---|---|"
+            python "$VERIFY" --print-targets markdown
+            echo
+            echo "Each file is self-contained and was verified by \`verify_llama_binaries.py\`."
+            echo "Pin these checksums with \`bash src-tauri/scripts/fetch-llama-binaries.sh --update-lock\`."
+          } > notes.md
           # `gh release create` fails if the release exists, so a tag can never
           # be republished with different bytes.
           gh release create "$RELEASE" release/* \

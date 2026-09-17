@@ -183,7 +183,7 @@ impl ListBatchJobsUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::batch_job_repository_port::{
-        BatchJobItem, BatchJobStatus, BatchJobSummary,
+        BatchItemState, BatchJobItem, BatchJobStatus, BatchJobSummary,
     };
     use async_trait::async_trait;
 
@@ -236,7 +236,7 @@ mod tests {
         async fn update_item_status(
             &self,
             _item_id: &str,
-            _status: &str,
+            _status: BatchItemState,
             _document_id: Option<&str>,
             _error_message: Option<&str>,
         ) -> Result<()> {

@@ -1,6 +1,6 @@
 use super::ops;
 use crate::application::ports::batch_job_repository_port::{
-    BatchJobItem, BatchJobRepositoryPort, BatchJobStatus, BatchJobSummary,
+    BatchItemState, BatchJobItem, BatchJobRepositoryPort, BatchJobStatus, BatchJobSummary,
 };
 use crate::shared::error::AppError;
 use async_trait::async_trait;
@@ -76,7 +76,7 @@ impl BatchJobRepositoryPort for SqliteBatchJobRepository {
     async fn update_item_status(
         &self,
         item_id: &str,
-        status: &str,
+        status: BatchItemState,
         document_id: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<(), AppError> {

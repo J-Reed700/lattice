@@ -2,6 +2,40 @@ use crate::shared::error::AppError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// The complete vocabulary of `batch_job_items.status`.
+///
+/// Writes go through this type so an outcome has exactly one spelling: a
+/// second name for "the user cancelled this item" cannot be written because it
+/// cannot be named. The same words are the table's `CHECK` constraint, which
+/// rejects anything else that reaches the column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchItemState {
+    /// Queued, not yet claimed by a worker.
+    Pending,
+    /// A worker is on it right now.
+    Processing,
+    /// Indexed and committed.
+    Completed,
+    /// The worker gave up on this item; `error_message` says why.
+    Failed,
+    /// The user cancelled the job before this item finished.
+    Cancelled,
+}
+
+impl BatchItemState {
+    /// The single stored spelling of this state.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Processing => "processing",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 /// Repository port for batch job persistence
 #[async_trait]
 pub trait BatchJobRepositoryPort: Send + Sync {
@@ -55,7 +89,7 @@ pub trait BatchJobRepositoryPort: Send + Sync {
     async fn update_item_status(
         &self,
         item_id: &str,
-        status: &str,
+        status: BatchItemState,
         document_id: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<(), AppError>;

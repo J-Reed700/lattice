@@ -531,6 +531,27 @@ impl IndexFileUseCase {
         }
     }
 
+    /// Abandon a prepared document that will never be committed.
+    ///
+    /// Cancellation lands between preparation and the commit, and from there
+    /// nothing will ever reference the blob this import copied. Hand it back
+    /// through the same [`LibraryGc`] path a failed commit uses, rather than
+    /// leaving an orphan for the next startup sweep.
+    pub async fn discard_prepared(&self, prepared: PreparedDocument) {
+        let PreparedDocument {
+            imported_new,
+            lease,
+            ..
+        } = prepared;
+        let library_hash = lease.hash().to_string();
+        // Release the lease first, or the collector would refuse its own
+        // caller's blob as still being imported.
+        drop(lease);
+        if imported_new {
+            self.release_failed_import(&library_hash).await;
+        }
+    }
+
     /// Commit a prepared document atomically, then publish it to runtime search.
     /// Preparation never holds a database transaction or another file's data.
     pub async fn commit_prepared(

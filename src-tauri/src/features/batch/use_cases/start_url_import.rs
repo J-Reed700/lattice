@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::application::ports::BatchJobRepositoryPort;
+use crate::application::ports::{BatchItemState, BatchJobRepositoryPort};
 use crate::features::batch::dto::{StartBatchUrlImportRequestDto, StartBatchUrlImportResponseDto};
 use crate::features::web::dto::IngestWebUrlRequestDto;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
@@ -233,7 +233,7 @@ impl StartBatchUrlImportUseCase {
 
                 // Mark item as running
                 let _ = batch_repo
-                    .update_item_status(&item.id, "running", None, None)
+                    .update_item_status(&item.id, BatchItemState::Processing, None, None)
                     .await;
 
                 // Ingest the URL
@@ -247,7 +247,7 @@ impl StartBatchUrlImportUseCase {
                         let _ = batch_repo
                             .update_item_status(
                                 &item.id,
-                                "completed",
+                                BatchItemState::Completed,
                                 Some(&response.document_id),
                                 None,
                             )
@@ -258,7 +258,12 @@ impl StartBatchUrlImportUseCase {
                         // Mark item as failed with error message
                         let error_msg = e.to_string();
                         let _ = batch_repo
-                            .update_item_status(&item.id, "failed", None, Some(&error_msg))
+                            .update_item_status(
+                                &item.id,
+                                BatchItemState::Failed,
+                                None,
+                                Some(&error_msg),
+                            )
                             .await;
                         failed += 1;
                     }
@@ -443,14 +448,14 @@ mod tests {
         async fn update_item_status(
             &self,
             item_id: &str,
-            status: &str,
+            status: BatchItemState,
             document_id: Option<&str>,
             error_message: Option<&str>,
         ) -> Result<()> {
             let mut jobs = self.jobs.lock().unwrap();
             for job in jobs.values_mut() {
                 if let Some(item) = job.items.iter_mut().find(|item| item.id == item_id) {
-                    item.status = status.to_string();
+                    item.status = status.as_str().to_string();
                     item.document_id = document_id.map(str::to_string);
                     item.error_message = error_message.map(str::to_string);
                     return Ok(());

@@ -78,7 +78,9 @@ impl CloudLlm {
                     json!({"format":{"type":"json_schema","name":"response","schema":schema,"strict":true}}),
                 )?;
             }
-            if let Some(effort) = &request.reasoning_effort {
+            if let Some(effort) =
+                openai_reasoning_effort(&self.model, request.reasoning_effort.as_deref())
+            {
                 set_field(&mut body, "reasoning", json!({"effort":effort}))?;
             }
             Ok(body)
@@ -107,11 +109,17 @@ impl CloudLlm {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
             }
             if let Some(effort) = &request.reasoning_effort {
-                // Anthropic has no "none" effort, and disabling thinking is rejected
-                // by some models; the lowest effort is the portable equivalent.
-                let effort = if effort == "none" { "low" } else { effort };
-                set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
-                set_field(&mut body, "output_config", json!({"effort":effort}))?;
+                // Extended thinking is off unless a `thinking` block asks for it,
+                // so "none" is expressed by leaving that block out — requesting
+                // adaptive thinking turned "do not think" into its opposite.
+                // Anthropic has no "none" effort of its own, so the answer itself
+                // is held at the lowest setting instead.
+                if effort == "none" {
+                    set_field(&mut body, "output_config", json!({"effort":"low"}))?;
+                } else {
+                    set_field(&mut body, "thinking", json!({"type":"adaptive"}))?;
+                    set_field(&mut body, "output_config", json!({"effort":effort}))?;
+                }
             }
             if let Some(schema) = &request.json_schema {
                 let mut config = field(&body, "output_config").clone();
@@ -495,6 +503,30 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
     Ok(())
 }
 
+/// What, if anything, belongs in the Responses API's `reasoning` block.
+///
+/// The field is not universally accepted: a model without reasoning controls
+/// rejects the whole request with a 400, and the retrieval callers swallow that
+/// with `.ok()`, so every turn would quietly lose its query rewrites and plans
+/// with nothing in the log to say why. Only models that have the control are
+/// sent one.
+///
+/// There is also no "off" switch: the floor is `minimal` on the gpt-5 family and
+/// `low` on the o-series, so a request for no reasoning is clamped to whichever
+/// the target model understands. A non-reasoning model needs no clamp — it never
+/// thinks in the first place.
+fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
+    let effort = effort?;
+    let floor = if model.starts_with("gpt-5") {
+        "minimal"
+    } else if model.starts_with('o') {
+        "low"
+    } else {
+        return None;
+    };
+    Some(if effort == "none" { floor } else { effort })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,20 +562,85 @@ mod tests {
         );
     }
 
-    #[test]
-    fn anthropic_maps_no_reasoning_to_its_lowest_effort() {
+    fn anthropic_body(effort: &str) -> Value {
         let settings = LLMSettingsDto {
             provider: LLMProvider::Anthropic,
             ..Default::default()
         };
         let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
-        let request = CompletionRequest {
-            reasoning_effort: Some("none".into()),
+        anthropic
+            .body(
+                &CompletionRequest {
+                    reasoning_effort: Some(effort.into()),
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+    }
+
+    /// A `thinking` block is what switches extended thinking on, so asking for
+    /// no reasoning must not send one.
+    #[test]
+    fn anthropic_omits_the_thinking_block_when_no_reasoning_is_asked_for() {
+        let body = anthropic_body("none");
+        assert!(body.get("thinking").is_none(), "{body}");
+        assert_eq!(body["output_config"]["effort"], "low");
+    }
+
+    #[test]
+    fn anthropic_still_enables_thinking_for_a_real_effort() {
+        let body = anthropic_body("medium");
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    fn openai_body(model: &str, effort: Option<&str>) -> Value {
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Openai,
+            model: model.into(),
             ..Default::default()
         };
-        let body = anthropic.body(&request, false).unwrap();
-        assert_eq!(body["output_config"]["effort"], "low");
-        assert_eq!(body["thinking"]["type"], "adaptive");
+        let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+        openai
+            .body(
+                &CompletionRequest {
+                    reasoning_effort: effort.map(str::to_owned),
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+    }
+
+    /// A `reasoning` block on a model without reasoning controls is a 400, and
+    /// the retrieval callers discard errors — so the field must never be sent
+    /// speculatively.
+    #[test]
+    fn openai_sends_no_reasoning_block_to_a_model_that_has_no_reasoning() {
+        let body = openai_body("gpt-4o-mini", Some("none"));
+        assert!(body.get("reasoning").is_none(), "{body}");
+    }
+
+    #[test]
+    fn openai_clamps_no_reasoning_to_each_family_floor() {
+        assert_eq!(
+            openai_body("gpt-5.1", Some("none"))["reasoning"]["effort"],
+            "minimal"
+        );
+        assert_eq!(
+            openai_body("o3", Some("none"))["reasoning"]["effort"],
+            "low"
+        );
+    }
+
+    #[test]
+    fn openai_forwards_a_real_effort_unchanged() {
+        assert_eq!(
+            openai_body("gpt-5.1", Some("high"))["reasoning"]["effort"],
+            "high"
+        );
+        assert!(openai_body("gpt-5.1", None).get("reasoning").is_none());
     }
 }
 

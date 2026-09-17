@@ -4,11 +4,12 @@
 //! live in a build script, so `tests/sidecar_guard_test.rs` includes it a
 //! second time to run the unit tests at the bottom under `cargo test`.
 //!
-//! For the target being compiled the guard checks that the Tauri config
-//! bundles exactly the sidecars the policy requires, that each sidecar file
-//! is byte-for-byte the build pinned in `scripts/llama-server.lock`, and that
-//! the app's declared macOS minimum matches the sidecar's. It only reports
-//! problems; `build.rs` decides whether they fail the build.
+//! `scripts/llama-server.lock` is the list: for the target being compiled the
+//! guard checks that the Tauri config bundles exactly the sidecars the lock
+//! pins for that triple, that each of those files is byte-for-byte the build
+//! the lock pins and is executable, and that the app's declared macOS minimum
+//! is the lock's. It only reports problems; `build.rs` decides whether they
+//! fail the build.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -18,17 +19,19 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// Set to `1` to downgrade release-build failures to warnings (local
-/// experiments only).
+/// Set to `1` to build with a sidecar the lock does not vouch for. Debug
+/// builds only, and loudly: `build.rs` refuses it outright for a release
+/// build, so no bundle can be produced this way.
 pub const ALLOW_UNPINNED_ENV: &str = "LATTICE_ALLOW_UNPINNED_SIDECAR";
 /// The pin file, relative to the crate root (`src-tauri/`).
 pub const LOCK_PATH: &str = "scripts/llama-server.lock";
 
 const FETCH_FIX: &str = "fix: bash src-tauri/scripts/fetch-llama-binaries.sh";
-const PRIMARY_BIN: &str = "binaries/llama-server";
-const CPU_BIN: &str = "binaries/llama-server-cpu";
 /// Keys every lock carries exactly once, besides the `sha256` lines.
 const LOCK_KEYS: [&str; 5] = ["llama_cpp_tag", "release", "repo", "macos_min", "glibc_max"];
+/// Lock keys whose value is a dotted version. `verify_llama_binaries.py`
+/// applies the same rule, so a lock is valid for both parsers or for neither.
+const LOCK_VERSION_KEYS: [&str; 2] = ["macos_min", "glibc_max"];
 
 /// The parts of `llama-server.lock` the guard consumes.
 #[derive(Debug)]
@@ -83,6 +86,14 @@ pub fn parse_lock(text: &str) -> Result<SidecarLock, String> {
     if let Some(missing) = LOCK_KEYS.iter().find(|key| !values.contains_key(*key)) {
         return Err(format!("missing required key `{missing}`"));
     }
+    for key in LOCK_VERSION_KEYS {
+        let value = values.get(key).copied().unwrap_or_default();
+        if parse_version(value).is_none() {
+            return Err(format!(
+                "{key} must be a dotted version like 13.3, got `{value}`"
+            ));
+        }
+    }
     let macos_min = values
         .get("macos_min")
         .ok_or("missing required key `macos_min`")?;
@@ -94,6 +105,25 @@ pub fn parse_lock(text: &str) -> Result<SidecarLock, String> {
 
 fn is_sha256_hex(text: &str) -> bool {
     text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// A dotted version of one to three numbers, padded so that `13.3` and
+/// `13.3.0` are the same version. `verify_llama_binaries.py` pads the same
+/// way, so neither parser can call a lock value good that the other rejects.
+pub fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = Vec::new();
+    for field in text.split('.') {
+        if field.is_empty() || !field.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        parts.push(field.parse::<u32>().ok()?);
+    }
+    match parts.as_slice() {
+        [major] => Some((*major, 0, 0)),
+        [major, minor] => Some((*major, *minor, 0)),
+        [major, minor, patch] => Some((*major, *minor, *patch)),
+        _ => None,
+    }
 }
 
 /// Tauri's platform for a target triple. Mirrors
@@ -134,14 +164,24 @@ impl Platform {
     }
 }
 
-/// The `bundle.externalBin` entries a build for `platform` must ship: the
-/// primary sidecar everywhere, plus the CPU fallback where the primary is
-/// the Vulkan build (Windows, Linux).
-pub fn required_external_bins(platform: Platform) -> Vec<&'static str> {
-    match platform {
-        Platform::Windows | Platform::Linux => vec![PRIMARY_BIN, CPU_BIN],
-        Platform::MacOS | Platform::Android | Platform::Ios => vec![PRIMARY_BIN],
-    }
+/// The `bundle.externalBin` entries a build for `triple` must ship, read off
+/// the sidecars the lock pins for that triple. The lock is the list, so the
+/// guard cannot hold a stale copy of which platform ships which file.
+pub fn required_external_bins(lock: &SidecarLock, triple: &str, platform: Platform) -> Vec<String> {
+    let extension = if platform == Platform::Windows {
+        ".exe"
+    } else {
+        ""
+    };
+    let suffix = format!("-{triple}{extension}");
+    let mut bins: Vec<String> = lock
+        .checksums
+        .keys()
+        .filter_map(|file| file.strip_suffix(&suffix))
+        .map(|stem| format!("binaries/{stem}"))
+        .collect();
+    bins.sort();
+    bins
 }
 
 /// The file Tauri bundles for an `externalBin` entry, relative to the crate
@@ -221,13 +261,13 @@ pub fn check_config(config: &Value, triple: &str, lock: &SidecarLock) -> Vec<Str
         })
         .unwrap_or_default();
     bundled.sort();
-    let mut required = required_external_bins(platform);
-    required.sort_unstable();
-    if !bundled
-        .iter()
-        .map(String::as_str)
-        .eq(required.iter().copied())
-    {
+    let required = required_external_bins(lock, triple, platform);
+    if required.is_empty() {
+        problems.push(format!(
+            "src-tauri/{LOCK_PATH} pins no sidecar for {triple}; the lock's sha256 lines are \
+             the list of files a build must bundle"
+        ));
+    } else if bundled != required {
         problems.push(format!(
             "bundle.externalBin for {triple} is {bundled:?}, expected {required:?} \
              (tauri.conf.json merged with {})",
@@ -238,7 +278,7 @@ pub fn check_config(config: &Value, triple: &str, lock: &SidecarLock) -> Vec<Str
     let macos_min = config
         .pointer("/bundle/macOS/minimumSystemVersion")
         .and_then(Value::as_str);
-    if macos_min != Some(lock.macos_min.as_str()) {
+    if macos_min.and_then(parse_version) != parse_version(&lock.macos_min) {
         problems.push(format!(
             "tauri.conf.json bundle.macOS.minimumSystemVersion is {} but src-tauri/{LOCK_PATH} \
              macos_min is \"{}\"; keep them equal",
@@ -254,18 +294,29 @@ pub fn check_config(config: &Value, triple: &str, lock: &SidecarLock) -> Vec<Str
 pub enum SidecarProblem {
     Missing,
     Empty,
+    NotExecutable,
     Unpinned,
     Mismatch { expected: String, actual: String },
     Unreadable(String),
 }
 
 impl SidecarProblem {
+    /// True when the file is simply absent. There is nothing to verify and
+    /// nothing that could ship, so a non-release build may go on without it.
+    pub fn is_placeholder(&self) -> bool {
+        matches!(self, Self::Missing | Self::Empty)
+    }
+
     /// One line naming the file, what is wrong, and the fix.
     pub fn describe(&self, display_path: &str, file_name: &str) -> String {
         match self {
             Self::Missing => format!("{display_path} is missing; {FETCH_FIX}"),
             Self::Empty => format!(
                 "{display_path} is empty (a placeholder, not a llama-server build); {FETCH_FIX}"
+            ),
+            Self::NotExecutable => format!(
+                "{display_path} is not executable; Tauri bundles it as it is, so the app could \
+                 only discover that when it tries to spawn it (fix: chmod +x)"
             ),
             Self::Unpinned => format!(
                 "{display_path}: lock has no checksum for {file_name}; publish the release and \
@@ -282,15 +333,35 @@ impl SidecarProblem {
     }
 }
 
+/// True unless the file carries POSIX modes and none of them grant execute.
+/// Windows has no such bit, in its own sidecars or on a Windows host.
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &fs::Metadata) -> bool {
+    true
+}
+
 /// Checks one sidecar file against the lock; `None` means it may ship.
-pub fn check_sidecar(path: &Path, lock: &SidecarLock) -> Option<SidecarProblem> {
-    let len = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
+pub fn check_sidecar(
+    path: &Path,
+    lock: &SidecarLock,
+    platform: Platform,
+) -> Option<SidecarProblem> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Some(SidecarProblem::Missing),
         Err(err) => return Some(SidecarProblem::Unreadable(err.to_string())),
     };
-    if len == 0 {
+    if metadata.len() == 0 {
         return Some(SidecarProblem::Empty);
+    }
+    if platform != Platform::Windows && !is_executable(&metadata) {
+        return Some(SidecarProblem::NotExecutable);
     }
     let file_name = path
         .file_name()
@@ -325,8 +396,12 @@ pub fn sha256_file(path: &Path) -> io::Result<String> {
 pub struct Evaluation {
     /// Files the verdict depends on (for `cargo:rerun-if-changed`).
     pub watched: Vec<PathBuf>,
-    /// One line per problem; empty means the sidecars are safe to ship.
+    /// One line per problem that must fail any build: bytes that disagree
+    /// with the lock, a sidecar the lock does not vouch for, config drift.
     pub problems: Vec<String>,
+    /// Sidecars that are simply absent. Nothing can ship, so only a release
+    /// build has to refuse them.
+    pub placeholders: Vec<String>,
 }
 
 /// Runs every check for `triple` against the crate at `crate_dir`.
@@ -335,6 +410,7 @@ pub fn evaluate(crate_dir: &Path, triple: &str, config_override: Option<&str>) -
     let lock_path = crate_dir.join(LOCK_PATH);
     let mut watched = vec![lock_path.clone()];
     let mut problems = Vec::new();
+    let mut placeholders = Vec::new();
 
     let lock = match fs::read_to_string(&lock_path)
         .map_err(|err| err.to_string())
@@ -357,17 +433,33 @@ pub fn evaluate(crate_dir: &Path, triple: &str, config_override: Option<&str>) -
         Err(err) => problems.push(err),
     }
 
-    for bin in required_external_bins(platform) {
-        let relative = sidecar_path(bin, triple, platform);
+    let required = lock
+        .as_ref()
+        .map(|lock| required_external_bins(lock, triple, platform))
+        .unwrap_or_default();
+    for bin in required {
+        let relative = sidecar_path(&bin, triple, platform);
         let path = crate_dir.join(&relative);
-        if let Some(problem) = lock.as_ref().and_then(|lock| check_sidecar(&path, lock)) {
+        if let Some(problem) = lock
+            .as_ref()
+            .and_then(|lock| check_sidecar(&path, lock, platform))
+        {
             let file_name = relative.rsplit('/').next().unwrap_or_default();
-            problems.push(problem.describe(&format!("src-tauri/{relative}"), file_name));
+            let line = problem.describe(&format!("src-tauri/{relative}"), file_name);
+            if problem.is_placeholder() {
+                placeholders.push(line);
+            } else {
+                problems.push(line);
+            }
         }
         watched.push(path);
     }
 
-    Evaluation { watched, problems }
+    Evaluation {
+        watched,
+        problems,
+        placeholders,
+    }
 }
 
 #[cfg(test)]
@@ -385,12 +477,29 @@ mod tests {
     const WINDOWS: &str = "x86_64-pc-windows-msvc";
     const LINUX: &str = "x86_64-unknown-linux-gnu";
     const HELLO_SHA: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    const PRIMARY_BIN: &str = "binaries/llama-server";
+    const CPU_BIN: &str = "binaries/llama-server-cpu";
 
     fn lock_text(extra: &str) -> String {
         format!(
             "# comment\n\nllama_cpp_tag b1\nrelease llama/b1-r1\nrepo o/r\n\
              macos_min 13.3\nglibc_max 2.35\n{extra}"
         )
+    }
+
+    /// A lock that pins the sidecars `triple` ships, which is what tells the
+    /// guard which `externalBin` entries the config must declare.
+    fn lock_pinning(triple: &str, files: &[&str]) -> SidecarLock {
+        let extension = if triple.contains("windows") {
+            ".exe"
+        } else {
+            ""
+        };
+        let lines: String = files
+            .iter()
+            .map(|stem| format!("sha256 {HELLO_SHA} {stem}-{triple}{extension}\n"))
+            .collect();
+        parse_lock(&lock_text(&lines)).unwrap()
     }
 
     #[test]
@@ -457,19 +566,57 @@ mod tests {
         assert!(err.contains("missing required key `release`"), "{err}");
     }
 
+    /// The Python verifier and this parser must accept exactly the same locks.
+    #[test]
+    fn lock_semantics_match_the_python_verifier() {
+        for text in ["13", "13.3", "13.3.0"] {
+            assert!(parse_version(text).is_some(), "{text}");
+        }
+        // Trailing zeros are padding, not a different version.
+        assert_eq!(parse_version("13.3"), parse_version("13.3.0"));
+        assert_ne!(parse_version("13.3"), parse_version("13.4"));
+        for text in ["", "13.", "13.3.0.1", "thirteen", "13.3-beta", "v13"] {
+            assert_eq!(parse_version(text), None, "{text}");
+        }
+        for (pinned, bad) in [
+            ("macos_min 13.3", "macos_min thirteen"),
+            ("glibc_max 2.35", "glibc_max 2.35.1.0"),
+        ] {
+            let err = parse_lock(&lock_text("").replace(pinned, bad)).unwrap_err();
+            assert!(err.contains("dotted version"), "{bad}: {err}");
+        }
+        // Uppercase hex is a hand edit: both parsers reject it rather than
+        // one normalising what the other refuses.
+        let err = parse_lock(&lock_text(&format!(
+            "sha256 {} f\n",
+            HELLO_SHA.to_uppercase()
+        )))
+        .unwrap_err();
+        assert!(err.contains("lowercase hex sha256"), "{err}");
+    }
+
     #[test]
     fn platform_policy_and_file_names_follow_tauri() {
         assert_eq!(Platform::from_triple(MAC), Platform::MacOS);
         assert_eq!(Platform::from_triple(WINDOWS), Platform::Windows);
         assert_eq!(Platform::from_triple(LINUX), Platform::Linux);
-        assert_eq!(required_external_bins(Platform::MacOS), [PRIMARY_BIN]);
+        // The lock's file names, not a second copy of the policy, decide what
+        // a target bundles.
+        let lock = parse_lock(include_str!("../scripts/llama-server.lock")).unwrap();
         assert_eq!(
-            required_external_bins(Platform::Windows),
+            required_external_bins(&lock, MAC, Platform::MacOS),
+            [PRIMARY_BIN]
+        );
+        assert_eq!(
+            required_external_bins(&lock, WINDOWS, Platform::Windows),
             [PRIMARY_BIN, CPU_BIN]
         );
         assert_eq!(
-            required_external_bins(Platform::Linux),
+            required_external_bins(&lock, LINUX, Platform::Linux),
             [PRIMARY_BIN, CPU_BIN]
+        );
+        assert!(
+            required_external_bins(&lock, "aarch64-linux-android", Platform::Android).is_empty()
         );
         assert_eq!(
             sidecar_path(CPU_BIN, WINDOWS, Platform::Windows),
@@ -496,7 +643,7 @@ mod tests {
 
     #[test]
     fn config_drift_is_reported() {
-        let lock = parse_lock(&lock_text("")).unwrap();
+        let lock = lock_pinning(LINUX, &["llama-server", "llama-server-cpu"]);
         let config = json!({"bundle": {
             "externalBin": [PRIMARY_BIN],
             "macOS": {"minimumSystemVersion": "10.15"}
@@ -507,41 +654,65 @@ mod tests {
             .contains("expected [\"binaries/llama-server\", \"binaries/llama-server-cpu\"]"));
         assert!(problems[1].contains("is \"10.15\" but"));
         assert!(problems[1].contains("macos_min is \"13.3\""));
-        assert_eq!(check_config(&config, MAC, &lock).len(), 1);
+
+        // The same version written to a different precision is not drift.
+        let padded = json!({"bundle": {
+            "externalBin": [PRIMARY_BIN, CPU_BIN],
+            "macOS": {"minimumSystemVersion": "13.3.0"}
+        }});
+        assert_eq!(check_config(&padded, LINUX, &lock), Vec::<String>::new());
+
+        // A lock that pins nothing for the target cannot say what to bundle.
+        let problems = check_config(&padded, MAC, &lock);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("pins no sidecar for aarch64-apple-darwin"));
     }
 
     #[test]
     fn sidecar_files_are_classified() {
         let dir = tempfile::tempdir().unwrap();
         let lock = parse_lock(&lock_text(&format!(
-            "sha256 {HELLO_SHA} good\nsha256 {HELLO_SHA} tampered\nsha256 {HELLO_SHA} empty\n"
+            "sha256 {HELLO_SHA} good\nsha256 {HELLO_SHA} tampered\nsha256 {HELLO_SHA} empty\n\
+             sha256 {HELLO_SHA} not_executable\n"
         )))
         .unwrap();
-        fs::write(dir.path().join("good"), "hello").unwrap();
+        let check = |name: &str| check_sidecar(&dir.path().join(name), &lock, Platform::Linux);
+        for name in ["good", "unpinned", "not_executable"] {
+            fs::write(dir.path().join(name), "hello").unwrap();
+        }
         fs::write(dir.path().join("tampered"), "hellO").unwrap();
         fs::write(dir.path().join("empty"), "").unwrap();
-        fs::write(dir.path().join("unpinned"), "hello").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for name in ["good", "tampered", "unpinned"] {
+                fs::set_permissions(dir.path().join(name), fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+        }
 
-        assert_eq!(check_sidecar(&dir.path().join("good"), &lock), None);
-        assert_eq!(
-            check_sidecar(&dir.path().join("empty"), &lock),
-            Some(SidecarProblem::Empty)
-        );
-        assert_eq!(
-            check_sidecar(&dir.path().join("absent"), &lock),
-            Some(SidecarProblem::Missing)
-        );
-        assert_eq!(
-            check_sidecar(&dir.path().join("unpinned"), &lock),
-            Some(SidecarProblem::Unpinned)
-        );
-        let Some(SidecarProblem::Mismatch { expected, actual }) =
-            check_sidecar(&dir.path().join("tampered"), &lock)
-        else {
+        assert_eq!(check("good"), None);
+        assert_eq!(check("empty"), Some(SidecarProblem::Empty));
+        assert_eq!(check("absent"), Some(SidecarProblem::Missing));
+        assert_eq!(check("unpinned"), Some(SidecarProblem::Unpinned));
+        let Some(SidecarProblem::Mismatch { expected, actual }) = check("tampered") else {
             panic!("tampered file must mismatch");
         };
         assert_eq!(expected, HELLO_SHA);
         assert_eq!(actual, sha256_file(&dir.path().join("tampered")).unwrap());
+
+        // A sidecar that ships without +x only fails when the app spawns it.
+        #[cfg(unix)]
+        {
+            assert_eq!(check("not_executable"), Some(SidecarProblem::NotExecutable));
+            assert!(!SidecarProblem::NotExecutable.is_placeholder());
+            assert!(SidecarProblem::Empty.is_placeholder());
+            // Windows sidecars carry no such bit.
+            assert_eq!(
+                check_sidecar(&dir.path().join("not_executable"), &lock, Platform::Windows),
+                None
+            );
+        }
     }
 
     #[test]
@@ -574,6 +745,7 @@ mod tests {
 
         let clean = evaluate(root, WINDOWS, None);
         assert_eq!(clean.problems, Vec::<String>::new());
+        assert_eq!(clean.placeholders, Vec::<String>::new());
         assert!(clean
             .watched
             .contains(&root.join("tauri.windows.conf.json")));
@@ -583,10 +755,16 @@ mod tests {
         let dropped = json!({"bundle": {"externalBin": [PRIMARY_BIN]}}).to_string();
         assert_eq!(evaluate(root, WINDOWS, Some(&dropped)).problems.len(), 1);
 
+        // An absent sidecar is reported apart from the rest: build.rs lets a
+        // debug build continue without one, but never a release build.
         fs::write(root.join("binaries").join(&cpu), "").unwrap();
-        let problems = evaluate(root, WINDOWS, None).problems;
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(problems[0].starts_with(&format!("src-tauri/binaries/{cpu} is empty")));
+        let evaluation = evaluate(root, WINDOWS, None);
+        assert_eq!(evaluation.problems, Vec::<String>::new());
+        assert_eq!(evaluation.placeholders.len(), 1, "{evaluation:?}");
+        assert!(
+            evaluation.placeholders[0].starts_with(&format!("src-tauri/binaries/{cpu} is empty"))
+        );
+        fs::write(root.join("binaries").join(&cpu), "hello").unwrap();
 
         fs::write(root.join(LOCK_PATH), "bogus line\n").unwrap();
         let problems = evaluate(root, WINDOWS, None).problems;

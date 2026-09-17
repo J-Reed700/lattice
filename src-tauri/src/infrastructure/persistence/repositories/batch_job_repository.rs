@@ -1,5 +1,5 @@
 use crate::application::ports::batch_job_repository_port::{
-    BatchJobItem, BatchJobRepositoryPort, BatchJobStatus, BatchJobSummary,
+    BatchItemState, BatchJobItem, BatchJobRepositoryPort, BatchJobStatus, BatchJobSummary,
 };
 use crate::shared::error::AppError;
 use async_trait::async_trait;
@@ -138,36 +138,19 @@ impl BatchJobRepositoryPort for BatchJobRepository {
     async fn update_item_status(
         &self,
         item_id: &str,
-        status: &str,
+        status: BatchItemState,
         document_id: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<(), AppError> {
-        let processed_at = if status != "pending" {
-            Some(chrono::Utc::now().to_rfc3339())
-        } else {
-            None
-        };
-
-        sqlx::query!(
-            r#"
-            UPDATE batch_job_items
-            SET status = ?1,
-                document_id = COALESCE(?2, document_id),
-                error_message = ?3,
-                processed_at = COALESCE(?4, processed_at)
-            WHERE id = ?5
-            "#,
+        let mut conn = self.pool.acquire().await?;
+        super::batch_job::ops::update_item_status(
+            &mut conn,
+            item_id,
             status,
             document_id,
             error_message,
-            processed_at,
-            item_id
         )
-        .execute(&self.pool)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to update item status: {}", e)))?;
-
-        Ok(())
     }
 
     async fn get_batch_job(&self, job_id: &str) -> Result<BatchJobStatus, AppError> {
@@ -195,19 +178,8 @@ impl BatchJobRepositoryPort for BatchJobRepository {
     }
 
     async fn cancel_pending_items(&self, job_id: &str) -> Result<usize, AppError> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE batch_job_items
-            SET status = 'cancelled'
-            WHERE job_id = ?1 AND status = 'pending'
-            "#,
-            job_id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to cancel items: {}", e)))?;
-
-        Ok(result.rows_affected() as usize)
+        let mut conn = self.pool.acquire().await?;
+        super::batch_job::ops::cancel_pending_items(&mut conn, job_id).await
     }
 
     async fn list_batch_jobs(
