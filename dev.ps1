@@ -390,48 +390,9 @@ function Invoke-RunFrontend {
     }
 }
 
-function Sync-SidecarsToTarget {
-    # Tauri's `tauri-plugin-shell` resolves sidecars relative to the
-    # running exe's directory: `<exe-dir>/<SIDECAR_BIN>.exe`. In Lattice
-    # SIDECAR_BIN is `binaries/llama-server` (see tauri.conf.json
-    # externalBin + SIDECAR_BIN in sidecar_manager.rs), so the plugin
-    # probes `<exe-dir>/binaries/llama-server.exe` -- NO host-triple
-    # suffix is added by the plugin's resolver (verified by reading
-    # tauri-plugin-shell-2.3.4/src/process/mod.rs::relative_command_path).
-    # In dev that resolves to target/debug/binaries/llama-server.exe.
-    # `cargo run` does not create that subdirectory, so first-time spawn
-    # fails with "The system cannot find the path/file specified.".
-    $srcDir   = Join-Path $TauriDir 'binaries'
-    $debugDir = Join-Path $TauriDir 'target/debug'
-    if (-not (Test-Path $debugDir)) { return }
-
-    $hostExe = Join-Path $srcDir 'llama-server-x86_64-pc-windows-msvc.exe'
-    if (-not (Test-Path $hostExe)) {
-        Show-Warn "Sidecar source missing: $hostExe - skipping sync"
-        return
-    }
-
-    $destDir = Join-Path $debugDir 'binaries'
-    if (-not (Test-Path $destDir)) {
-        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-    }
-    $destExe = Join-Path $destDir 'llama-server.exe'
-    $needsCopy = $true
-    if (Test-Path $destExe) {
-        $srcMtime  = (Get-Item $hostExe).LastWriteTime
-        $destMtime = (Get-Item $destExe).LastWriteTime
-        if ($destMtime -ge $srcMtime) { $needsCopy = $false }
-    }
-    if ($needsCopy) {
-        Copy-Item -LiteralPath $hostExe -Destination $destExe -Force
-        Show-Info "Synced llama-server sidecar to target/debug/binaries/llama-server.exe"
-    }
-}
-
 function Invoke-RunTauriDev {
     Show-Header 'Running Tauri dev'
     Ensure-NpmRuntimeDeps
-    Sync-SidecarsToTarget
     Push-Location $ProjectRoot
     try {
         Show-Info 'Starting Tauri dev mode...'
@@ -445,7 +406,6 @@ function Invoke-RunTauriDev {
 function Invoke-QuickStart {
     Show-Header 'Quick Start (Testing Mode)'
     Ensure-NpmRuntimeDeps
-    Sync-SidecarsToTarget
 
     Push-Location $ProjectRoot
     try {
@@ -468,7 +428,6 @@ function Invoke-QuickStart {
 function Invoke-RunTauriDevLogs {
     Show-Header 'Running Tauri dev with logs'
     Ensure-NpmRuntimeDeps
-    Sync-SidecarsToTarget
 
     $stamp   = Get-Date -Format 'yyyyMMdd_HHmmss'
     $logFile = Join-Path $LogDir "tauri_dev_$stamp.log"
@@ -621,14 +580,15 @@ function Invoke-HealthCheck {
         'llama-server-aarch64-apple-darwin',
         'llama-server-x86_64-pc-windows-msvc.exe',
         'llama-server-cpu-x86_64-pc-windows-msvc.exe',
-        'llama-server-x86_64-unknown-linux-gnu'
+        'llama-server-x86_64-unknown-linux-gnu',
+        'llama-server-cpu-x86_64-unknown-linux-gnu'
     )
     $missing = $expected | Where-Object { -not (Test-Path (Join-Path $binaries $_)) }
     if ($missing.Count -eq 0) {
-        Show-Success 'Sidecar binaries: all 4 present'
+        Show-Success "Sidecar binaries: all $($expected.Count) present (verify with: bash src-tauri/scripts/fetch-llama-binaries.sh --check)"
     } else {
         Show-Warn "Sidecar binaries missing: $($missing -join ', ')"
-        Show-Info 'Fetch with: bash src-tauri/scripts/fetch-llama-binaries.sh (or gh release download)'
+        Show-Info 'Install with: bash src-tauri/scripts/fetch-llama-binaries.sh'
     }
 }
 

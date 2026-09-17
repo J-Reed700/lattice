@@ -4000,6 +4000,7 @@ dependencies = [
  "ndarray",
  "notify",
  "notify-debouncer-full",
+ "objc",
  "ollama-rs",
  "once_cell",
  "opener",

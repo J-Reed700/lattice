@@ -39,6 +39,10 @@ path = "src/export_bindings.rs"
 [build-dependencies]
 tauri-build = { version = "2.5", features = [] }
 tauri-specta = { version = "2.0.0-rc.14", features = ["derive"] }
+# build_support/sidecar_guard.rs: same versions as [dependencies], so the lock
+# gains nothing.
+serde_json = "1.0"
+sha2 = "0.10"
 
 [dependencies]
 tauri = { version = "=2.9.5", features = ["protocol-asset"] }
@@ -187,6 +191,9 @@ base64 = "0.23"
 candle-core = { version = "=0.10.2", features = ["metal"] }
 candle-nn = { version = "=0.10.2", features = ["metal"] }
 candle-transformers = { version = "=0.10.2", features = ["metal"] }
+# Drains the Objective-C objects Candle's Metal dispatches autorelease
+# (see shared/utils/autorelease.rs). Already in the tree through `metal`.
+objc = "0.2"
 
 
 [target.'cfg(windows)'.dependencies]

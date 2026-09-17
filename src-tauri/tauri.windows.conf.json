@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/llama-server",
+      "binaries/llama-server-cpu"
+    ]
+  }
+}
