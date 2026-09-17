@@ -357,7 +357,7 @@ impl BatchJobRepositoryPort for MockBatchJobRepository {
     async fn update_item_status(
         &self,
         _item_id: &str,
-        _status: &str,
+        _status: crate::application::ports::BatchItemState,
         _document_id: Option<&str>,
         _error_message: Option<&str>,
     ) -> Result<()> {

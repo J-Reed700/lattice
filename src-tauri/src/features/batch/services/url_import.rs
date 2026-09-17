@@ -9,7 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::application::ports::batch_job_repository_port::{
-    BatchJobRepositoryPort, BatchJobStatus,
+    BatchItemState, BatchJobRepositoryPort, BatchJobStatus,
 };
 use crate::features::batch::BatchUrlImportServiceTrait;
 use crate::features::web::WebIngestionServiceTrait;
@@ -115,14 +115,19 @@ impl BatchUrlImportService {
 
         for item in items {
             batch_job_repository
-                .update_item_status(&item.id, "processing", None, None)
+                .update_item_status(&item.id, BatchItemState::Processing, None, None)
                 .await?;
 
             match Self::process_single_url(web_ingestion_service.clone(), &item.url).await {
                 Ok(document_id) => {
                     // Success
                     batch_job_repository
-                        .update_item_status(&item.id, "completed", Some(&document_id), None)
+                        .update_item_status(
+                            &item.id,
+                            BatchItemState::Completed,
+                            Some(&document_id),
+                            None,
+                        )
                         .await?;
                     completed += 1;
 
@@ -141,7 +146,12 @@ impl BatchUrlImportService {
                     // Failure - continue with next item
                     tracing::error!("Failed to process {}: {}", item.url, e);
                     batch_job_repository
-                        .update_item_status(&item.id, "failed", None, Some(&e.to_string()))
+                        .update_item_status(
+                            &item.id,
+                            BatchItemState::Failed,
+                            None,
+                            Some(&e.to_string()),
+                        )
                         .await?;
                     failed += 1;
 
@@ -408,7 +418,7 @@ mod tests {
         async fn update_item_status(
             &self,
             _item_id: &str,
-            _status: &str,
+            _status: BatchItemState,
             _document_id: Option<&str>,
             _error_message: Option<&str>,
         ) -> Result<(), AppError> {

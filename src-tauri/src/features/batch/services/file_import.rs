@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use super::file_import_trait::BatchFileImportServiceTrait;
 use crate::application::factories::FileMetadataFactory;
-use crate::application::ports::batch_job_repository_port::BatchJobRepositoryPort;
+use crate::application::ports::batch_job_repository_port::{
+    BatchItemState, BatchJobRepositoryPort,
+};
 use crate::domain::value_objects::file_metadata::FileMetadata;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::engine::extraction::ContentExtractor;
@@ -173,7 +175,7 @@ impl BatchFileImportService {
                 let item_id = &item.id;
 
                 if let Err(e) = batch_job_repo
-                    .update_item_status(item_id, "processing", None, None)
+                    .update_item_status(item_id, BatchItemState::Processing, None, None)
                     .await
                 {
                     tracing::error!(
@@ -197,7 +199,12 @@ impl BatchFileImportService {
                         );
 
                         if let Err(e) = batch_job_repo
-                            .update_item_status(item_id, "completed", Some(&document_id), None)
+                            .update_item_status(
+                                item_id,
+                                BatchItemState::Completed,
+                                Some(&document_id),
+                                None,
+                            )
                             .await
                         {
                             tracing::error!(
@@ -213,7 +220,12 @@ impl BatchFileImportService {
                         tracing::error!("{}", error_msg);
 
                         if let Err(e) = batch_job_repo
-                            .update_item_status(item_id, "failed", None, Some(&error_msg))
+                            .update_item_status(
+                                item_id,
+                                BatchItemState::Failed,
+                                None,
+                                Some(&error_msg),
+                            )
                             .await
                         {
                             tracing::error!(
@@ -469,7 +481,7 @@ mod tests {
         async fn update_item_status(
             &self,
             _item_id: &str,
-            _status: &str,
+            _status: BatchItemState,
             _document_id: Option<&str>,
             _error_message: Option<&str>,
         ) -> Result<(), AppError> {

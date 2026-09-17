@@ -1,5 +1,5 @@
 //! File imports prepare and commit one document at a time so progress is durable.
-use crate::application::ports::{BatchJobRepositoryPort, UnitOfWorkFactory};
+use crate::application::ports::{BatchItemState, BatchJobRepositoryPort, UnitOfWorkFactory};
 use crate::features::batch::dto::{
     StartBatchFileImportRequestDto, StartBatchFileImportResponseDto,
 };
@@ -16,6 +16,8 @@ use uuid::Uuid;
 
 const MIN_BATCH_SIZE: usize = 1;
 const MAX_BATCH_SIZE: usize = 100;
+/// Recorded on every item the user's cancellation stopped.
+const CANCELLED_MESSAGE: &str = "Import cancelled";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,21 +143,48 @@ impl StartBatchFileImportUseCase {
 
     /// Called only during startup, before new imports can start. Completed files
     /// remain committed; an interrupted current file is safely deduplicated on retry.
+    ///
+    /// A cancelled job needs reconciling too: cancellation only reaches the
+    /// worker at its next safe point, so a shutdown in between leaves the item
+    /// that was in flight at `processing` with nobody left to finish it.
     pub async fn resume_interrupted(&self, job_id: String) -> Result<()> {
         let job = self.batch_repo.get_batch_job(&job_id).await?;
-        if job.job_type != "file_import" || !matches!(job.status.as_str(), "pending" | "running") {
+        if job.job_type != "file_import" {
             return Ok(());
         }
-        for item in job
-            .items
-            .iter()
-            .filter(|item| matches!(item.status.as_str(), "running" | "processing"))
-        {
-            self.batch_repo
-                .update_item_status(&item.id, "pending", None, None)
-                .await?;
+        match job.status.as_str() {
+            "cancelled" => {
+                // Nothing will ever pick these up again: the cancellation may
+                // also have been interrupted before it reached the queue.
+                for item in job
+                    .items
+                    .iter()
+                    .filter(|item| matches!(item.status.as_str(), "pending" | "processing"))
+                {
+                    self.batch_repo
+                        .update_item_status(
+                            &item.id,
+                            BatchItemState::Cancelled,
+                            None,
+                            Some(CANCELLED_MESSAGE),
+                        )
+                        .await?;
+                }
+            }
+            "pending" | "running" => {
+                for item in job
+                    .items
+                    .iter()
+                    .filter(|item| item.status == BatchItemState::Processing.as_str())
+                {
+                    self.batch_repo
+                        .update_item_status(&item.id, BatchItemState::Pending, None, None)
+                        .await?;
+                }
+                self.spawn_job(job_id);
+            }
+            _ => {}
         }
-        self.spawn_job(job_id);
         Ok(())
     }
 
@@ -170,12 +199,19 @@ impl StartBatchFileImportUseCase {
                         return;
                     }
                     let mut failed = job.failed_items;
-                    for item in job.items.iter().filter(|item| {
-                        matches!(item.status.as_str(), "pending" | "running" | "processing")
-                    }) {
+                    for item in job
+                        .items
+                        .iter()
+                        .filter(|item| matches!(item.status.as_str(), "pending" | "processing"))
+                    {
                         if worker
                             .batch_repo
-                            .update_item_status(&item.id, "failed", None, Some(&error.to_string()))
+                            .update_item_status(
+                                &item.id,
+                                BatchItemState::Failed,
+                                None,
+                                Some(&error.to_string()),
+                            )
                             .await
                             .is_ok()
                         {
@@ -248,7 +284,7 @@ impl StartBatchFileImportUseCase {
                 return Ok(());
             }
             self.batch_repo
-                .update_item_status(&item.id, "processing", None, None)
+                .update_item_status(&item.id, BatchItemState::Processing, None, None)
                 .await?;
             let request = IndexFileRequestDto {
                 path: item.url.clone(),
@@ -288,8 +324,19 @@ impl StartBatchFileImportUseCase {
             };
             let outcome = self.index_file_use_case.prepare_for_indexing(request).await;
             if self.batch_repo.get_batch_job(job_id).await?.status == "cancelled" {
+                // Preparation already copied the blob into the library for a
+                // document row that will never be written. Give it back now
+                // instead of leaving an orphan for the next startup sweep.
+                if let Ok(PrepareForIndexingOutcome::Prepared(prepared)) = outcome {
+                    self.index_file_use_case.discard_prepared(*prepared).await;
+                }
                 self.batch_repo
-                    .update_item_status(&item.id, "skipped", None, Some("Import cancelled"))
+                    .update_item_status(
+                        &item.id,
+                        BatchItemState::Cancelled,
+                        None,
+                        Some(CANCELLED_MESSAGE),
+                    )
                     .await?;
                 return Ok(());
             }
@@ -317,14 +364,24 @@ impl StartBatchFileImportUseCase {
             match result {
                 Ok(document_id) => {
                     self.batch_repo
-                        .update_item_status(&item.id, "completed", Some(&document_id), None)
+                        .update_item_status(
+                            &item.id,
+                            BatchItemState::Completed,
+                            Some(&document_id),
+                            None,
+                        )
                         .await?;
                     completed += 1;
                 }
                 Err(error) => {
                     tracing::warn!(%job_id, file = %item.url, %error, "File import failed");
                     self.batch_repo
-                        .update_item_status(&item.id, "failed", None, Some(&error.to_string()))
+                        .update_item_status(
+                            &item.id,
+                            BatchItemState::Failed,
+                            None,
+                            Some(&error.to_string()),
+                        )
                         .await?;
                     failed += 1;
                 }
@@ -454,7 +511,7 @@ mod tests {
         async fn update_item_status(
             &self,
             _item_id: &str,
-            _status: &str,
+            _status: BatchItemState,
             _document_id: Option<&str>,
             _error_message: Option<&str>,
         ) -> Result<()> {

@@ -53,11 +53,11 @@ describe('useIndexing progress', () => {
     expect(result.current.getOperation('job')).toMatchObject({ status: 'completed', successfulFiles: 1, error: undefined });
   });
 
-  it('cancels an active batch and marks unfinished items as cancelled immediately', async () => {
+  it('cancels an active batch without inventing an outcome for the file still in flight', async () => {
     api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'job', jobType: 'file_import', status: 'running', totalItems: 2, completedItems: 0, failedItems: 0 }] });
     api.getBatchJobStatus.mockResolvedValue({ ok: true, data: {
       status: 'running', totalItems: 2, completedItems: 0, failedItems: 0,
-      items: [{ target: '/one.pdf', status: 'running' }, { target: '/two.pdf', status: 'pending' }],
+      items: [{ target: '/one.pdf', status: 'processing' }, { target: '/two.pdf', status: 'pending' }],
     } });
     api.cancelBatchJob.mockResolvedValue({ ok: true, data: 1 });
     const { result } = renderHook(() => useIndexing());
@@ -68,9 +68,24 @@ describe('useIndexing progress', () => {
     expect(api.cancelBatchJob).toHaveBeenCalledWith('job');
     expect(result.current.getOperation('job')).toMatchObject({
       status: 'cancelled',
-      items: [{ status: 'cancelled' }, { status: 'cancelled' }],
+      items: [{ status: 'processing' }, { status: 'pending' }],
     });
-    expect(result.current.isIndexing).toBe(false);
+
+    // That file finished indexing before the worker saw the cancellation.
+    api.getBatchJobStatus.mockResolvedValue({ ok: true, data: {
+      status: 'cancelled', totalItems: 2, completedItems: 1, failedItems: 0,
+      items: [{ target: '/one.pdf', status: 'completed' }, { target: '/two.pdf', status: 'cancelled' }],
+    } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(result.current.getOperation('job')).toMatchObject({
+      status: 'cancelled', successfulFiles: 1,
+      items: [{ status: 'completed' }, { status: 'cancelled' }],
+    });
+    // Both items are settled, so the job stops being polled.
+    api.getBatchJobStatus.mockClear();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(api.getBatchJobStatus).not.toHaveBeenCalled();
   });
 
 });

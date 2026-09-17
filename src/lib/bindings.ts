@@ -3524,7 +3524,7 @@ itemId: string;
  */
 target: string;
 /**
- * Item status: "pending", "running", "completed", "failed", "cancelled"
+ * Item status: "pending", "processing", "completed", "failed", "cancelled"
  */
 status: string;
 /**

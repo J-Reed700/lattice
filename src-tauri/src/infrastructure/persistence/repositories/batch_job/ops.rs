@@ -1,5 +1,5 @@
 use crate::application::ports::batch_job_repository_port::{
-    BatchJobItem, BatchJobItemStatus, BatchJobStatus, BatchJobSummary,
+    BatchItemState, BatchJobItem, BatchJobItemStatus, BatchJobStatus, BatchJobSummary,
 };
 use crate::shared::error::AppError;
 use sqlx::SqliteConnection;
@@ -193,15 +193,16 @@ pub async fn update_progress(
 pub async fn update_item_status(
     conn: &mut SqliteConnection,
     item_id: &str,
-    status: &str,
+    status: BatchItemState,
     document_id: Option<&str>,
     error_message: Option<&str>,
 ) -> Result<(), AppError> {
-    let processed_at = if status != "pending" {
-        Some(chrono::Utc::now().to_rfc3339())
-    } else {
+    let processed_at = if status == BatchItemState::Pending {
         None
+    } else {
+        Some(chrono::Utc::now().to_rfc3339())
     };
+    let status = status.as_str();
 
     sqlx::query!(
         r#"
@@ -303,6 +304,8 @@ pub async fn cancel_pending_items(
     conn: &mut SqliteConnection,
     job_id: &str,
 ) -> Result<usize, AppError> {
+    // The literals are the same words as `BatchItemState`; the table's CHECK
+    // constraint is what keeps them from drifting apart.
     let result = sqlx::query!(
         r#"
         UPDATE batch_job_items

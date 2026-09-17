@@ -583,7 +583,7 @@ CREATE TABLE IF NOT EXISTS batch_job_items (
     job_id TEXT NOT NULL,
     item_url TEXT NOT NULL,
     document_id TEXT,
-    status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'skipped')),
+    status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
     error_message TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     processed_at TEXT,

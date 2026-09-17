@@ -220,7 +220,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
                 {items.map(item => <div key={item.itemId} className="border-t border-border-subtle py-3">
                   <p className="break-words text-sm text-text-primary">{job.jobType === 'file_import' ? fileName(item.target) : item.target}</p>
                   {job.jobType === 'file_import' && <p className="break-all text-xs text-text-muted">{item.target}</p>}
-                  <p className="mt-1 whitespace-pre-wrap break-words text-xs text-text-secondary">{item.status === 'completed' ? 'Imported' : item.status === 'failed' ? `Failed — ${item.errorMessage || 'Import failed'}` : ['running', 'processing'].includes(item.status) ? 'Processing — not ready to search yet' : item.status === 'cancelled' || item.status === 'skipped' ? 'Cancelled' : 'Queued'}</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-xs text-text-secondary">{item.status === 'completed' ? 'Imported' : item.status === 'failed' ? `Failed — ${item.errorMessage || 'Import failed'}` : ['running', 'processing'].includes(item.status) ? 'Processing — not ready to search yet' : item.status === 'cancelled' ? 'Cancelled' : 'Queued'}</p>
                   {item.status === 'failed' && job.jobType === 'file_import' && <>
                     <p className="mt-1 text-xs text-text-muted">{recoveryHint(item.errorMessage ?? null)}</p>
                     <div className="mt-2 flex gap-4">

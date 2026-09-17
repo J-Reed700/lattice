@@ -19,7 +19,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ onDragDropEvent: async () => () => {} }),
 }));
-vi.mock('@/hooks/useIndexing', () => ({
+vi.mock('@/hooks/useIndexing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useIndexing')>()),
   useIndexing: () => ({ startBatchImport: mocks.startBatchImport, cancelBatchImport: mocks.cancelBatchImport, getOperation: mocks.getOperation, operations: mocks.operations }),
 }));
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }) }));
@@ -94,27 +95,43 @@ describe('BatchFileImport', () => {
     expect(mocks.startBatchImport).not.toHaveBeenCalled();
   });
 
-  it('keeps Cancel enabled during an import and cancels the durable batch', async () => {
+  it('keeps Cancel enabled during an import and reports each file as the backend finishes it', async () => {
     const user = userEvent.setup();
     const operation = {
       id: 'running-job', status: 'processing', totalFiles: 3,
       processedFiles: 1, successfulFiles: 1, failedFiles: 0,
       items: [
         { target: '/Downloads/one.pdf', status: 'completed' },
-        { target: '/Downloads/two.pdf', status: 'running' },
+        { target: '/Downloads/two.pdf', status: 'processing' },
         { target: '/Downloads/three.pdf', status: 'pending' },
       ],
     };
     mocks.operations.set(operation.id, operation);
     mocks.getOperation.mockReturnValue(operation);
-    render(<TooltipProvider><BatchFileImport /></TooltipProvider>);
+    const { rerender } = render(<TooltipProvider><BatchFileImport /></TooltipProvider>);
 
     const cancel = await screen.findByRole('button', { name: 'Cancel' });
     expect(cancel).toBeEnabled();
     await user.click(cancel);
 
     await waitFor(() => expect(mocks.cancelBatchImport).toHaveBeenCalledWith('running-job'));
-    expect(screen.getAllByText('Cancelled')).toHaveLength(2);
+    // A cancel command that returns ok says nothing about the file in flight.
+    expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
+    expect(screen.getByText('Processing…')).toBeInTheDocument();
+
+    // two.pdf finished indexing before the worker saw the cancellation.
+    mocks.getOperation.mockReturnValue({
+      ...operation, status: 'cancelled', processedFiles: 2, successfulFiles: 2,
+      items: [
+        { target: '/Downloads/one.pdf', status: 'completed' },
+        { target: '/Downloads/two.pdf', status: 'completed' },
+        { target: '/Downloads/three.pdf', status: 'cancelled' },
+      ],
+    });
+    rerender(<TooltipProvider><BatchFileImport onImportComplete={() => {}} /></TooltipProvider>);
+
+    expect(await screen.findAllByText('Imported')).toHaveLength(2);
+    expect(screen.getAllByText('Cancelled')).toHaveLength(1);
   });
 
   it('restores a finished failed PDF and offers retry after reopening Import', async () => {
