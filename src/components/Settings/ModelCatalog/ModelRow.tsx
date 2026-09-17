@@ -71,9 +71,14 @@ export function ModelRow({
 
     if (blockReason) {
       return (
-        <span className="text-xs text-text-muted" title={blockReason}>
+        <button
+          type="button"
+          onClick={onDownload}
+          className="text-xs text-text-muted hover:text-text-primary hover:underline"
+          title={blockReason}
+        >
           Unsupported
-        </span>
+        </button>
       );
     }
 

@@ -4,9 +4,9 @@
 //! whether the cited passages actually entail the claim, which is the only way
 //! to catch a sentence that borrows a source's wording and inverts its meaning.
 //!
-//! Every safeguard here exists because a judge that fails must fail quiet: a
-//! timed-out, malformed, or unparseable response leaves the lexical verdict
-//! standing rather than downgrading a turn the user already read.
+//! Failed, timed-out, or unparseable judgments return no outcome. The verifier
+//! leaves those escalated claims unresolved rather than certifying them from
+//! vocabulary overlap alone.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -86,8 +86,8 @@ impl ClaimJudge {
 
     /// Judge the claims at `pending` indices, keyed back by those indices.
     ///
-    /// Claims missing from the result kept their lexical verdict — because the
-    /// budget ran out, the call failed, or the model did not answer for them.
+    /// Missing claims remain unresolved: the budget ran out, the call failed,
+    /// or the model did not return a usable judgment.
     pub(super) async fn judge_claims(
         &self,
         claims: &[LexicalClaim],
@@ -107,7 +107,7 @@ impl ClaimJudge {
                     judged = outcomes.len(),
                     remaining_claims = pending.len().saturating_sub(outcomes.len()),
                     budget_ms = self.time_budget.as_millis(),
-                    "Claim judge time budget exhausted — remaining claims keep their lexical verdict"
+                    "Claim judge time budget exhausted — remaining claims stay unresolved"
                 );
                 break;
             }
@@ -138,13 +138,13 @@ impl ClaimJudge {
             let response = match tokio::time::timeout(remaining, self.request(&prompt)).await {
                 Ok(Ok(text)) => text,
                 Ok(Err(e)) => {
-                    warn!(error = %e, batch = batch.len(), "Claim judge call failed — keeping lexical verdicts for this batch");
+                    warn!(error = %e, batch = batch.len(), "Claim judge call failed — leaving this batch unresolved");
                     continue;
                 }
                 Err(_) => {
                     warn!(
                         batch = batch.len(),
-                        "Claim judge call exceeded the remaining time budget — keeping lexical verdicts"
+                        "Claim judge call exceeded the remaining time budget — leaving claims unresolved"
                     );
                     break;
                 }
@@ -155,7 +155,7 @@ impl ClaimJudge {
                 warn!(
                     batch = batch.len(),
                     response_chars = response.len(),
-                    "Claim judge returned no parseable verdicts — keeping lexical verdicts for this batch"
+                    "Claim judge returned no parseable verdicts — leaving this batch unresolved"
                 );
                 continue;
             }
@@ -177,6 +177,14 @@ impl ClaimJudge {
                     .quote
                     .as_deref()
                     .and_then(|quote| batch_input.verified_quote(quote, citations));
+                // A positive verdict without a real supporting span is not evidence.
+                // Do not fall back to lexical support: the judge may be certifying
+                // exactly the numeric/negated claim the lexical pass cannot settle.
+                let verdict = if verdict == ClaimVerdict::Supported && quote.is_none() {
+                    ClaimVerdict::Unsupported
+                } else {
+                    verdict
+                };
                 outcomes.insert(*claim_index, JudgeOutcome { verdict, quote });
             }
         }
@@ -284,7 +292,10 @@ impl<'a> BatchInput<'a> {
 /// Evidence offered for one claim: the passages it cites, or the top sources
 /// when it cites none — the same passages the lexical pass scored against.
 fn passages_for(claim: &LexicalClaim, sources: &[SourceDto]) -> Vec<(u32, String)> {
-    let indices: Vec<usize> = if claim.cited_source_indices.is_empty() {
+    if claim.citation_ids.len() != claim.cited_source_indices.len() {
+        return Vec::new();
+    }
+    let indices: Vec<usize> = if claim.citation_ids.is_empty() {
         (0..sources.len().min(MAX_PASSAGES_PER_CLAIM)).collect()
     } else {
         claim

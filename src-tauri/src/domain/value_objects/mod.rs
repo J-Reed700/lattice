@@ -8,6 +8,7 @@
 //! - Implement equality by value
 //! - Have no identity (defined by their attributes)
 
+pub mod artifact_identity;
 pub mod checksum;
 pub mod chunking_strategy;
 pub mod file_metadata;
@@ -19,6 +20,7 @@ pub mod section_identifier;
 pub mod source_context;
 pub mod sparse_embedding;
 
+pub use artifact_identity::{ArtifactIdentity, ArtifactIdentityError};
 pub use checksum::Checksum;
 pub use chunking_strategy::ChunkingStrategy;
 pub use file_metadata::FileMetadata;

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
+#[derive(Clone)]
 pub struct DownloadRequest {
     pub url: String,
     pub destination: PathBuf,
@@ -21,6 +22,11 @@ pub struct DownloadRequest {
     /// This may contain a safe subdirectory such as `onnx/model.onnx` and
     /// must not be re-derived from the destination basename.
     pub model_file_name: Option<String>,
+}
+
+/// One file in a model batch, with URLs ordered from preferred to fallback.
+pub struct DownloadBatchItem {
+    pub requests: Vec<DownloadRequest>,
 }
 
 #[derive(Clone)]
@@ -54,6 +60,17 @@ pub enum DownloadEvent {
 #[async_trait]
 pub trait DownloadManager: Send + Sync {
     async fn start_download(&self, request: DownloadRequest) -> Result<String, DownloadError>;
+
+    /// Register one request without promoting the queue. Batch orchestration
+    /// uses this primitive while holding the manager's queue gate.
+    #[doc(hidden)]
+    async fn enqueue_download(&self, request: DownloadRequest) -> Result<String, DownloadError>;
+
+    /// Register every file before releasing the batch to the worker queue.
+    async fn start_download_batch(
+        &self,
+        items: Vec<DownloadBatchItem>,
+    ) -> Result<Vec<String>, DownloadError>;
 
     async fn pause_download(&self, id: &str) -> Result<(), DownloadError>;
 

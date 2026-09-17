@@ -328,6 +328,4 @@ pub struct RetryFailedItemsResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct FileIndexingOptionsDto {
     pub source_group: Option<crate::domain::value_objects::source_context::SourceGroup>,
-    #[serde(default)]
-    pub rebuild_existing: bool,
 }

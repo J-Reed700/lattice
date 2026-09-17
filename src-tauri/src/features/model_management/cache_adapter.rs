@@ -63,7 +63,7 @@ use crate::shared::error::AppError;
 /// Cache-key schema version.
 ///
 /// Bump this when cached payload semantics change to avoid stale result reuse.
-const CACHE_KEY_VERSION: &str = "v4";
+const CACHE_KEY_VERSION: &str = "v5";
 
 /// Model catalog cache adapter.
 ///
@@ -381,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn test_normalize_query() {
         let normalized = ModelCacheAdapter::normalize_query("  LLaMa  ", 10);
-        assert_eq!(normalized, "v4:llama:10");
+        assert_eq!(normalized, format!("{CACHE_KEY_VERSION}:llama:10"));
     }
 
     #[tokio::test]

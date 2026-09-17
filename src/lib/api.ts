@@ -184,7 +184,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   read_file_bytes: { domain: 'file', command: 'read_file_bytes' },
   show_in_folder: { domain: 'file', command: 'show_in_folder' },
   get_indexed_folders: { domain: 'file', command: 'get_indexed_folders' },
-  remove_indexed_folder: { domain: 'file', command: 'remove_indexed_folder' },
   get_indexing_activities: { domain: 'file', command: 'get_indexing_activities' },
 
   // Health domain
@@ -380,7 +379,6 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   ingest_web_url: { domain: 'web', command: 'ingest_web_url' },
   fetch_url_preview: { domain: 'web', command: 'fetch_url_preview' },
   extract_article: { domain: 'web', command: 'extract_article' },
-  reindex_web_archive: { domain: 'web', command: 'reindex_web_archive' },
   check_for_updates: { domain: 'updates', command: 'check_for_updates' },
   execute_function: { domain: 'functions', command: 'execute_function' },
   list_available_functions: { domain: 'functions', command: 'list_available_functions' },
@@ -1165,15 +1163,6 @@ const VaultAPI = {
   getIndexedFolders: async (): Promise<ApiResult<IndexedFolder[]>> => apiCall<Wire.IndexedFolder[]>('get_indexed_folders'),
 
   /**
-   * Removes an entire folder from the index.
-   * Deletes all documents, embeddings, and metadata for files in that folder.
-   *
-   * @param path - Absolute path to folder to remove
-   * @returns Void on success
-   */
-  removeIndexedFolder: async (path: string): Promise<ApiResult<void>> => apiCall<void>('remove_indexed_folder', { path }),
-
-  /**
    * Retrieves recent indexing activity history.
    * Shows files indexed, errors, and timestamps for debugging and monitoring.
    *
@@ -1447,27 +1436,6 @@ const VaultAPI = {
   // registered Tauri command and its `BatchIngestSummary` type was never
   // defined, so every call would have failed at runtime. Nothing referenced
   // it. Re-add it together with the backend command if batch ingest is built.
-
-  /**
-   * Reindexes all web archive files for searchability.
-   * Scans the web archive directory (`~/.recall/web-archive/`) and reindexes all
-   * markdown files found within. This ensures archived web content is searchable
-   * and appears in FileBrowser.
-   *
-   * Useful for:
-   * - Making archived content searchable after upgrading the app
-   * - Recovering from indexing failures
-   * - Rebuilding the index after database corruption
-   *
-   * @returns Number of files successfully reindexed
-   *
-   * @example
-   * const result = await VaultAPI.reindexWebArchive();
-   * if (result.ok) {
-   *   console.log(`Reindexed ${result.data} web archive files`);
-   * }
-   */
-  reindexWebArchive: async (): Promise<ApiResult<number>> => apiCall<number>('reindex_web_archive'),
 
 
   /**

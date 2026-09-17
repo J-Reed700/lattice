@@ -306,50 +306,6 @@ pub async fn activate_chat_model(conn: &mut SqliteConnection, model_id: &str) ->
     Ok(())
 }
 
-pub async fn deactivate_all_embedding_models(conn: &mut SqliteConnection) -> Result<()> {
-    sqlx::query!(
-        r#"
-        UPDATE models
-        SET is_active_for_embedding = 0
-        WHERE is_active_for_embedding = 1
-        "#
-    )
-    .execute(conn)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "Failed to deactivate other embedding models");
-        AppError::Database(format!("Failed to deactivate embedding models: {}", e))
-    })?;
-
-    Ok(())
-}
-
-pub async fn activate_embedding_model(conn: &mut SqliteConnection, model_id: &str) -> Result<()> {
-    let updated_at = Utc::now().to_rfc3339();
-    let result = sqlx::query!(
-        r#"
-        UPDATE models
-        SET is_active_for_embedding = 1, updated_at = ?1
-        WHERE model_id = ?2
-        "#,
-        updated_at,
-        model_id
-    )
-    .execute(conn)
-    .await
-    .map_err(|e| {
-        error!(error = %e, model_id = %model_id, "Failed to set active embedding model");
-        AppError::Database(format!("Failed to set active embedding model: {}", e))
-    })?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
-    }
-
-    info!(model_id = %model_id, "Set active embedding model");
-    Ok(())
-}
-
 pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Model>> {
     let records = sqlx::query_as::<_, ModelRow>(
         r#"

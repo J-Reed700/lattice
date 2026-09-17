@@ -27,8 +27,8 @@ impl Container {
         crate::infrastructure::embedding_loading::EmbeddingLoader {
             downloaded_models: self.ai.downloaded_model_repo().clone(),
             security: self.core.security_context().clone(),
-            expected_dimension: self.search.vector_search().dimension(),
-            expected_identity: self.search.embedding_identity().map(str::to_owned),
+            index: self.search.runtime_index(),
+            pool: self.db_pool().clone(),
             strategy: self.search.embedding_strategy(),
         }
         .load()

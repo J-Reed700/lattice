@@ -4,7 +4,8 @@
 //!
 //! - [`format`] — on-disk layout, header, manifest, error type (the contract)
 //! - [`crypto`] — key envelope (passphrase + recovery code) and streaming AEAD
-//! - [`snapshot`] — SQLite snapshot with derivable tables cleared, tar+zstd payload
+//! - [`snapshot`] — SQLite snapshot with derivable tables cleared, the set of
+//!   blobs that snapshot references, and the tar+zstd payload built from it
 //! - [`placeholder`] — cloud placeholder (dataless file) and cloud-folder detection
 
 pub mod config;

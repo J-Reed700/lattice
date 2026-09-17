@@ -3993,12 +3993,6 @@
           "markdownDescription": "Enables the remove_indexed_file command without any pre-configured scope."
         },
         {
-          "description": "Enables the remove_indexed_folder command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:allow-remove-indexed-folder",
-          "markdownDescription": "Enables the remove_indexed_folder command without any pre-configured scope."
-        },
-        {
           "description": "Enables the rename_document command without any pre-configured scope.",
           "type": "string",
           "const": "file:allow-rename-document",
@@ -4189,12 +4183,6 @@
           "type": "string",
           "const": "file:deny-remove-indexed-file",
           "markdownDescription": "Denies the remove_indexed_file command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the remove_indexed_folder command without any pre-configured scope.",
-          "type": "string",
-          "const": "file:deny-remove-indexed-folder",
-          "markdownDescription": "Denies the remove_indexed_folder command without any pre-configured scope."
         },
         {
           "description": "Denies the rename_document command without any pre-configured scope.",
@@ -5499,12 +5487,6 @@
           "markdownDescription": "Enables the ingest_web_url command without any pre-configured scope."
         },
         {
-          "description": "Enables the reindex_web_archive command without any pre-configured scope.",
-          "type": "string",
-          "const": "web:allow-reindex-web-archive",
-          "markdownDescription": "Enables the reindex_web_archive command without any pre-configured scope."
-        },
-        {
           "description": "Denies the extract_article command without any pre-configured scope.",
           "type": "string",
           "const": "web:deny-extract-article",
@@ -5521,12 +5503,6 @@
           "type": "string",
           "const": "web:deny-ingest-web-url",
           "markdownDescription": "Denies the ingest_web_url command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the reindex_web_archive command without any pre-configured scope.",
-          "type": "string",
-          "const": "web:deny-reindex-web-archive",
-          "markdownDescription": "Denies the reindex_web_archive command without any pre-configured scope."
         }
       ]
     },

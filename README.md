@@ -4,8 +4,7 @@ Lattice is a local-first desktop knowledge base. It indexes files on your
 computer, supports keyword and semantic search, and uses local language models
 for retrieval and chat.
 
-The project is under active development. Expect schema and API changes before
-the first stable release.
+The project is under active development.
 
 ## Features
 

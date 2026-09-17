@@ -341,6 +341,7 @@ async fn sync_external_model_directories(
             false,
             Some(metadata),
             false,
+            None,
         );
 
         if let Err(e) = repository.save(&external_model).await {
@@ -993,6 +994,9 @@ pub async fn clear_active_utility_model_impl(container: &Container) -> Result<()
 ///
 /// Sets which downloaded model should be used for embeddings.
 /// Only one model can be active at a time (enforced by database trigger).
+/// The new model's vector generation is prepared before the switch, so a
+/// failed prepare leaves the previous model active. Its artifact identity is
+/// established once, up front, and used both to prepare and to activate.
 /// Called by gateway - async dispatch.
 pub async fn set_active_embedding_model_impl(
     container: &Container,
@@ -1026,13 +1030,29 @@ pub async fn set_active_embedding_model_impl(
         .location()
         .enclosing_dir()
         .ok_or_else(|| "Select a downloaded embedding model".to_owned())?;
-    let model = crate::features::embedding::candle_service::CandleEmbeddingService::new(&dir)
-        .map_err(|e| e.to_string())?;
+    let identity = match use_case.establish(&validated_model_id).await {
+        Ok(Some(identity)) => identity,
+        Ok(None) => return Err("Select a downloaded embedding model".to_owned()),
+        Err(e) => return Err(embedding_activation_failed(&validated_model_id, e).await),
+    };
+    let load_identity = identity.clone();
+    let model = task::spawn_blocking(move || {
+        crate::features::embedding::candle_service::CandleEmbeddingService::open(
+            &dir,
+            load_identity,
+        )
+    })
+    .await
+    .map_err(|e| format!("Embedding model load task failed: {}", e))?
+    .map_err(|e| e.to_string())?;
     crate::features::embedding::generation::prepare(container.db_pool(), &model)
         .await
         .map_err(|e| e.to_string())?;
 
-    match use_case.execute(&validated_model_id).await {
+    match use_case
+        .activate(&validated_model_id, Some(&identity))
+        .await
+    {
         Ok(()) => {
             info!(model_id = %validated_model_id, "Active embedding model set");
             audit_success!(
@@ -1048,18 +1068,21 @@ pub async fn set_active_embedding_model_impl(
             info!("Embedding cache invalidated - new model will be loaded on next access");
             Ok(())
         }
-        Err(e) => {
-            error!(error = %e, model_id = %validated_model_id, "Failed to set active embedding model");
-            audit_failure!(
-                logger,
-                AuditAction::ModelSetActive,
-                "active_embedding_model",
-                format!("Failed: {}", e),
-                "model_id" => validated_model_id.as_str()
-            )
-            .await
-            .ok();
-            Err(format!("Failed to set active embedding model: {}", e))
-        }
+        Err(e) => Err(embedding_activation_failed(&validated_model_id, e).await),
     }
+}
+
+/// Log and audit a rejected embedding activation; returns the command error.
+async fn embedding_activation_failed(model_id: &str, e: AppError) -> String {
+    error!(error = %e, model_id = %model_id, "Failed to set active embedding model");
+    audit_failure!(
+        get_audit_logger(),
+        AuditAction::ModelSetActive,
+        "active_embedding_model",
+        format!("Failed: {}", e),
+        "model_id" => model_id
+    )
+    .await
+    .ok();
+    format!("Failed to set active embedding model: {}", e)
 }

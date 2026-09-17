@@ -101,7 +101,7 @@ impl EmbeddingGenerator {
             }
         };
 
-        let svc = Arc::new(CandleEmbeddingService::new(&dir)?);
+        let svc = Arc::new(CandleEmbeddingService::open_unregistered(&dir)?);
         *guard = Some(svc.clone());
         Ok(svc)
     }

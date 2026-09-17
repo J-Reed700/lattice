@@ -513,6 +513,7 @@ impl DownloadEventBridge {
             };
 
             files.push(FileSnapshot {
+                id: session.id().to_string(),
                 filename,
                 bytes_downloaded: session.progress().bytes_downloaded(),
                 total_bytes: session.progress().total_bytes().unwrap_or(0),

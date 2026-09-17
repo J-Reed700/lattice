@@ -34,7 +34,7 @@ use crate::domain::model_file_validator::ModelFileValidator;
 use crate::domain::model_paths::ModelPaths;
 use crate::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
-use crate::features::download::manager::{DownloadManager, DownloadRequest};
+use crate::features::download::manager::{DownloadBatchItem, DownloadManager, DownloadRequest};
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::shared::error::AppError;
 use chrono::Utc;
@@ -455,7 +455,7 @@ impl DownloadModelUseCase {
                 Some(EmbeddingCompatibility::Unknown) => {
                     return Err(AppError::InvalidInput(format!(
                         "Embedding model '{}' has an unrecognized architecture. \
-                         The local runtime can only load BERT-family models today.",
+                         The local embedding runtime cannot safely load it.",
                         model_metadata.name
                     )));
                 }
@@ -987,6 +987,7 @@ impl DownloadModelUseCase {
             None
         };
 
+        let mut batch_items = Vec::with_capacity(curated.files.len());
         for (index, file) in curated.files.iter().enumerate() {
             let destination = paths.manifest_file_path(&file.filename)?;
 
@@ -1026,86 +1027,35 @@ impl DownloadModelUseCase {
                 }
             }
 
-            let mut download_id: Option<String> = None;
-            let mut final_error: Option<crate::domain::download::DownloadError> = None;
-
-            for (attempt_idx, attempt_url) in attempt_urls.iter().enumerate() {
-                let download_request = DownloadRequest {
+            let requests = attempt_urls
+                .into_iter()
+                .map(|attempt_url| DownloadRequest {
                     url: attempt_url.clone(),
                     destination: destination.clone(),
                     checksum: checksum.clone(),
                     auth_token: auth_token.clone(),
-                    model_name: Some(format!(
-                        "{} (file {}/{})",
-                        model_name,
-                        index + 1,
-                        curated.files.len()
-                    )),
+                    model_name: Some(model_name.clone()),
                     model_id: Some(model_id.to_string()),
                     model_file_name: Some(file.filename.clone()),
-                };
+                })
+                .collect();
+            batch_items.push(DownloadBatchItem { requests });
+        }
 
-                match self.download_manager.start_download(download_request).await {
-                    Ok(id) => {
-                        if attempt_idx > 0 {
-                            warn!(
-                                model_id = %model_id,
-                                file = %file.filename,
-                                url = %attempt_url,
-                                "Primary URL returned 404; fallback URL succeeded"
-                            );
-                        }
-                        download_id = Some(id);
-                        break;
-                    }
-                    Err(e) => {
-                        let is_404 = matches!(
-                            e,
-                            crate::domain::download::DownloadError::HttpError { status: 404, .. }
-                        );
-                        let has_next_attempt = attempt_idx + 1 < attempt_urls.len();
+        let ids = match self
+            .download_manager
+            .start_download_batch(batch_items)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(error) => {
+                let mut uow = self.uow_factory.create().await?;
+                let update_result = {
+                    let model_repo = uow.model_repository()?;
+                    let model_file_repo = uow.model_file_repository()?;
 
-                        if is_404 && has_next_attempt {
-                            warn!(
-                                model_id = %model_id,
-                                file = %file.filename,
-                                url = %attempt_url,
-                                "Received 404 for model file URL, retrying with fallback URL"
-                            );
-                            final_error = Some(e);
-                            continue;
-                        }
-
-                        final_error = Some(e);
-                        break;
-                    }
-                }
-            }
-
-            let download_id = match download_id {
-                Some(id) => id,
-                None => {
-                    let e = final_error.unwrap_or_else(|| {
-                        crate::domain::download::DownloadError::NetworkError(
-                            "Unknown download initialization error".to_string(),
-                        )
-                    });
-
-                    let mapped_error = AppError::Network(format!(
-                        "Failed to start download for {} (file {}/{}): {}",
-                        file.filename,
-                        index + 1,
-                        curated.files.len(),
-                        e
-                    ));
-
-                    // Mark model + file as failed before returning error
-                    let mut uow = self.uow_factory.create().await?;
-                    let update_result = {
-                        let model_repo = uow.model_repository()?;
-                        let model_file_repo = uow.model_file_repository()?;
-
-                        model_repo.update_status_failed(model_id).await?;
+                    model_repo.update_status_failed(model_id).await?;
+                    for file in &curated.files {
                         model_file_repo
                             .update_file_status_by_model_and_name(
                                 model_id,
@@ -1114,37 +1064,34 @@ impl DownloadModelUseCase {
                                 Some(file.size_bytes as i64),
                             )
                             .await?;
-                        Ok::<(), AppError>(())
-                    };
-
-                    match update_result {
-                        Ok(()) => {
-                            uow.commit().await?;
-                        }
-                        Err(err) => {
-                            if let Err(rollback_err) = uow.rollback().await {
-                                return Err(AppError::Database(format!(
-                                    "Failed to mark download failed: {}; rollback failed: {}",
-                                    err, rollback_err
-                                )));
-                            }
-                            return Err(err);
-                        }
                     }
+                    Ok::<(), AppError>(())
+                };
 
-                    return Err(mapped_error);
+                match update_result {
+                    Ok(()) => uow.commit().await?,
+                    Err(err) => {
+                        if let Err(rollback_err) = uow.rollback().await {
+                            return Err(AppError::Database(format!(
+                                "Failed to mark download failed: {}; rollback failed: {}",
+                                err, rollback_err
+                            )));
+                        }
+                        return Err(err);
+                    }
                 }
-            };
 
-            // MODULE 4: Log download ID after initiation
-            info!(
-                download_id = %download_id,
-                file = %file.filename,
-                "File download initiated"
-            );
+                return Err(AppError::Network(format!(
+                    "Failed to prepare model download: {}",
+                    error
+                )));
+            }
+        };
 
-            download_ids.push((download_id, file.filename.clone()));
-        }
+        download_ids.extend(
+            ids.into_iter()
+                .zip(curated.files.iter().map(|file| file.filename.clone())),
+        );
 
         info!(
             model_id = %model_id,

@@ -230,6 +230,19 @@ impl WebArchiveService {
         Ok(Self { base_dir })
     }
 
+    /// Create a service rooted at an explicit directory.
+    ///
+    /// Used by tests and by anything that needs an archive somewhere other
+    /// than the user's home directory.
+    pub fn with_base_dir(base_dir: PathBuf) -> Self {
+        Self { base_dir }
+    }
+
+    /// Root of this archive.
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
+    }
+
     /// Initialize the archive directory structure
     ///
     /// Creates the base directory and README.md if they don't exist.
@@ -750,6 +763,17 @@ impl WebArchiveServiceTrait for WebArchiveService {
                 kind: format!("{:?}", e.kind()),
             }),
         }
+    }
+
+    fn owns(&self, path: &Path) -> bool {
+        // Component-wise, and never through a `..` that climbs back out.
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        path.starts_with(&self.base_dir)
     }
 
     async fn list_articles(&self) -> Result<Vec<PathBuf>> {

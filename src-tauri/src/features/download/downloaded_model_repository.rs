@@ -4,6 +4,7 @@
 
 use crate::domain::downloaded_model::{DownloadedModel, ModelLocation};
 use crate::domain::model_metadata::ModelType;
+use crate::domain::value_objects::ArtifactIdentity;
 use crate::features::embedding::candle_service::{WEIGHTS_PYTORCH_BIN, WEIGHTS_SAFETENSORS};
 use crate::shared::error::{AppError, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -33,6 +34,7 @@ struct DownloadedModelRecord {
     is_active_for_embedding: i64,
     metadata: Option<String>,
     is_active_for_utility: i64,
+    embedding_artifact_identity: Option<String>,
 }
 
 /// Read columns directly from `models`. The previous version of this
@@ -57,7 +59,8 @@ SELECT
     m.is_active_for_chat,
     m.is_active_for_embedding,
     m.metadata,
-    m.is_active_for_utility
+    m.is_active_for_utility,
+    m.embedding_artifact_identity
 FROM models m
 "#;
 
@@ -153,6 +156,20 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
                 ))
             })?;
 
+        // Only activation writes this column, so a malformed value is
+        // corruption, not something to read past.
+        let embedding_artifact_identity = record
+            .embedding_artifact_identity
+            .as_deref()
+            .map(ArtifactIdentity::parse)
+            .transpose()
+            .map_err(|e| {
+                AppError::InvalidData(format!(
+                    "Invalid embedding_artifact_identity for model_id '{}': {}",
+                    record.model_id, e
+                ))
+            })?;
+
         Ok(DownloadedModel::from_db(
             record.id,
             record.model_name,
@@ -168,6 +185,7 @@ impl TryFrom<DownloadedModelRecord> for DownloadedModel {
             is_active_embedding,
             metadata_val,
             is_active_utility,
+            embedding_artifact_identity,
         ))
     }
 }
@@ -198,6 +216,9 @@ impl DownloadedModelRepository {
     /// - Uses UPSERT to handle both insert and update
     /// - Updates all fields on conflict
     /// - If setting is_active_for_chat=1, trigger deactivates other models
+    /// - Writes `embedding_artifact_identity` as the model carries it, so a
+    ///   freshly constructed model (a re-download) clears the stored identity
+    ///   and the next activation hashes the new files
     ///
     /// # Errors
     ///
@@ -238,6 +259,9 @@ impl DownloadedModelRepository {
         };
         let metadata_json = model.metadata_to_json();
         let total_size_bytes = model.file_size_bytes();
+        let embedding_artifact_identity = model
+            .embedding_artifact_identity()
+            .map(|identity| identity.as_str().to_string());
 
         let mut tx = self.pool.begin().await.map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to begin transaction for model save");
@@ -251,9 +275,9 @@ impl DownloadedModelRepository {
                 total_size_bytes, status, model_type, architecture,
                 downloaded_at, last_used_at, use_count,
                 is_active_for_chat, is_active_for_embedding, metadata,
-                backend, is_active_for_utility
+                backend, is_active_for_utility, embedding_artifact_identity
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'completed', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'completed', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(model_id) DO UPDATE SET
                 model_name = excluded.model_name,
                 storage_kind = excluded.storage_kind,
@@ -269,7 +293,8 @@ impl DownloadedModelRepository {
                 is_active_for_embedding = excluded.is_active_for_embedding,
                 metadata = excluded.metadata,
                 backend = excluded.backend,
-                is_active_for_utility = excluded.is_active_for_utility
+                is_active_for_utility = excluded.is_active_for_utility,
+                embedding_artifact_identity = excluded.embedding_artifact_identity
             "#,
         )
         .bind(id)
@@ -288,6 +313,7 @@ impl DownloadedModelRepository {
         .bind(metadata_json)
         .bind(backend_str)
         .bind(is_active_utility)
+        .bind(embedding_artifact_identity)
         .execute(&mut *tx)
         .await
         .map_err(|e| {
@@ -581,30 +607,35 @@ impl DownloadedModelRepository {
         Ok(())
     }
 
-    /// Set a model as the active embedding model
+    /// Activate `model_id` for embedding. `identity` is required for local
+    /// models; `None` is legal only for remote locations. The guard is in the
+    /// statement itself so the invariant holds even under concurrent callers.
     ///
-    /// # Arguments
-    ///
-    /// * `model_id` - The model_id to set as active
-    ///
-    /// # Business Logic
-    ///
-    /// - Sets is_active_for_embedding=1 for the specified model
-    /// - Database trigger automatically sets is_active_for_embedding=0 for all others
-    /// - Fails if model_id doesn't exist
+    /// A `Some` identity is recorded on the row; `None` keeps whatever the row
+    /// already carries. The database trigger deactivates every other model.
     ///
     /// # Errors
     ///
-    /// Returns NotFound error if model_id doesn't exist
-    pub async fn set_active_embedding_model(&self, model_id: &str) -> Result<()> {
-        let result = sqlx::query!(
+    /// `NotFound` if `model_id` doesn't exist; `InvalidState` if it is a local
+    /// model and neither `identity` nor the row carries an identity.
+    pub async fn set_active_embedding_model(
+        &self,
+        model_id: &str,
+        identity: Option<&ArtifactIdentity>,
+    ) -> Result<()> {
+        let result = sqlx::query(
             r#"
             UPDATE models
-            SET is_active_for_embedding = 1
+            SET is_active_for_embedding = 1,
+                embedding_artifact_identity = COALESCE(?2, embedding_artifact_identity),
+                updated_at = CURRENT_TIMESTAMP
             WHERE model_id = ?1
+              AND (storage_kind = 'remote_ollama'
+                   OR COALESCE(?2, embedding_artifact_identity) IS NOT NULL)
             "#,
-            model_id
         )
+        .bind(model_id)
+        .bind(identity.map(ArtifactIdentity::as_str))
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -613,7 +644,13 @@ impl DownloadedModelRepository {
         })?;
 
         if result.rows_affected() == 0 {
-            return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
+            if self.find_by_model_id(model_id).await?.is_none() {
+                return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
+            }
+            return Err(AppError::InvalidState(format!(
+                "Model '{}' has no recorded artifact identity and cannot be activated for embedding",
+                model_id
+            )));
         }
 
         info!(model_id = %model_id, "Set active embedding model");
@@ -640,7 +677,8 @@ impl DownloadedModelRepository {
         Ok(())
     }
 
-    /// Clear the active embedding model (set all to inactive)
+    /// Clear the active embedding model (set all to inactive). The artifact
+    /// identity stays on the row: it describes the files, not the activation.
     pub async fn clear_active_embedding_model(&self) -> Result<()> {
         sqlx::query!(
             r#"
@@ -816,7 +854,8 @@ impl DownloadedModelRepository {
               is_active_for_chat,
               is_active_for_embedding,
               metadata,
-              is_active_for_utility
+              is_active_for_utility,
+              embedding_artifact_identity
             "#,
         )
         .bind(id)
@@ -1255,6 +1294,283 @@ mod tests {
         .expect("create local embedding model")
     }
 
+    fn identity(byte: u8) -> ArtifactIdentity {
+        ArtifactIdentity::from_digest(&[byte; 32])
+    }
+
+    /// A local embedding model whose directory passes `is_downloaded`, so
+    /// `get_active_embedding_model` returns it.
+    fn directory_embedding_model(model_id: &str) -> (tempfile::TempDir, DownloadedModel) {
+        let directory = tempfile::tempdir().expect("create model directory");
+        std::fs::write(directory.path().join("model.safetensors"), b"weights")
+            .expect("write model weights");
+        let model = DownloadedModel::new(
+            uuid::Uuid::new_v4().to_string(),
+            format!("Embed {}", model_id),
+            model_id.to_string(),
+            ModelLocation::LocalDirectory {
+                path: directory.path().to_path_buf(),
+            },
+            7,
+            "bge".to_string(),
+            None,
+        )
+        .expect("create directory embedding model");
+        (directory, model)
+    }
+
+    async fn stored_embedding_state(
+        repo: &DownloadedModelRepository,
+        model_id: &str,
+    ) -> (i64, Option<String>) {
+        sqlx::query_as(
+            "SELECT is_active_for_embedding, embedding_artifact_identity FROM models WHERE model_id = ?1",
+        )
+        .bind(model_id)
+        .fetch_one(&repo.pool)
+        .await
+        .expect("read embedding state")
+    }
+
+    #[tokio::test]
+    async fn activating_local_model_without_identity_is_invalid_state() {
+        let repo = setup_repo().await;
+        repo.set_active_embedding_model("__ollama_server__", None)
+            .await
+            .expect("activate remote model");
+        let model = make_local_embedding_model("no-identity");
+        repo.save(&model).await.expect("save embedding model");
+
+        let err = repo
+            .set_active_embedding_model("no-identity", None)
+            .await
+            .expect_err("a local model needs an identity");
+        assert!(matches!(err, AppError::InvalidState(_)), "{err:?}");
+
+        assert_eq!(
+            stored_embedding_state(&repo, "no-identity").await,
+            (0, None)
+        );
+        assert_eq!(
+            stored_embedding_state(&repo, "__ollama_server__").await.0,
+            1,
+            "a refused activation must not deactivate the current model"
+        );
+    }
+
+    /// The rule holds for every write, not just the guarded UPDATE.
+    #[tokio::test]
+    async fn schema_rejects_an_active_local_model_without_identity() {
+        let repo = setup_repo().await;
+        let model = make_local_embedding_model("raw-write");
+        repo.save(&model).await.expect("save embedding model");
+
+        let result = sqlx::query(
+            "UPDATE models SET is_active_for_embedding = 1 WHERE model_id = 'raw-write'",
+        )
+        .execute(&repo.pool)
+        .await;
+        assert!(
+            result.is_err(),
+            "CHECK accepted an active local model without identity"
+        );
+
+        let identity = ArtifactIdentity::from_digest(&[7; 32]);
+        repo.set_active_embedding_model("raw-write", Some(&identity))
+            .await
+            .expect("activate with identity");
+        let result = sqlx::query(
+            "UPDATE models SET embedding_artifact_identity = NULL WHERE model_id = 'raw-write'",
+        )
+        .execute(&repo.pool)
+        .await;
+        assert!(
+            result.is_err(),
+            "CHECK let an active local model drop its identity"
+        );
+    }
+
+    #[tokio::test]
+    async fn activating_local_model_records_identity_and_reads_it_back() {
+        let repo = setup_repo().await;
+        let (_directory, model) = directory_embedding_model("with-identity");
+        repo.save(&model).await.expect("save embedding model");
+
+        repo.set_active_embedding_model("with-identity", Some(&identity(1)))
+            .await
+            .expect("activate with identity");
+
+        let active = repo
+            .get_active_embedding_model()
+            .await
+            .expect("read active model")
+            .expect("active embedding model");
+        assert_eq!(active.model_id(), "with-identity");
+        assert!(active.is_active_for_embedding());
+        assert_eq!(active.embedding_artifact_identity(), Some(&identity(1)));
+    }
+
+    #[tokio::test]
+    async fn remote_model_activates_without_identity() {
+        let repo = setup_repo().await;
+        repo.set_active_embedding_model("__ollama_server__", None)
+            .await
+            .expect("remote models carry no identity");
+
+        let active = repo
+            .get_active_embedding_model()
+            .await
+            .expect("read active model")
+            .expect("active embedding model");
+        assert_eq!(active.location(), &ModelLocation::RemoteOllama);
+        assert_eq!(active.embedding_artifact_identity(), None);
+    }
+
+    #[tokio::test]
+    async fn reactivating_without_identity_keeps_the_stored_one() {
+        let repo = setup_repo().await;
+        let model = make_local_embedding_model("reactivated");
+        repo.save(&model).await.expect("save embedding model");
+        repo.set_active_embedding_model("reactivated", Some(&identity(2)))
+            .await
+            .expect("first activation");
+        repo.set_active_embedding_model("__ollama_server__", None)
+            .await
+            .expect("switch away");
+
+        repo.set_active_embedding_model("reactivated", None)
+            .await
+            .expect("the stored identity satisfies the guard");
+
+        assert_eq!(
+            stored_embedding_state(&repo, "reactivated").await,
+            (1, Some(identity(2).to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_active_embedding_model_keeps_identity() {
+        let repo = setup_repo().await;
+        let model = make_local_embedding_model("cleared");
+        repo.save(&model).await.expect("save embedding model");
+        repo.set_active_embedding_model("cleared", Some(&identity(3)))
+            .await
+            .expect("activate");
+
+        repo.clear_active_embedding_model()
+            .await
+            .expect("clear active embedding model");
+
+        assert_eq!(
+            stored_embedding_state(&repo, "cleared").await,
+            (0, Some(identity(3).to_string()))
+        );
+        let loaded = repo
+            .find_by_model_id("cleared")
+            .await
+            .expect("find model")
+            .expect("model exists");
+        assert_eq!(loaded.embedding_artifact_identity(), Some(&identity(3)));
+    }
+
+    #[tokio::test]
+    async fn activating_unknown_model_is_not_found() {
+        let repo = setup_repo().await;
+        for candidate in [None, Some(identity(4))] {
+            let err = repo
+                .set_active_embedding_model("no-such-model", candidate.as_ref())
+                .await
+                .expect_err("unknown model");
+            assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn schema_rejects_malformed_identity() {
+        let repo = setup_repo().await;
+        let hex = "ab".repeat(32);
+        for malformed in [
+            format!("sha256:{}", hex.to_uppercase()),
+            format!("sha256:{}", &hex[..62]),
+            format!("sha256:{hex}0"),
+            hex.clone(),
+            format!("md5:{hex}"),
+            format!("sha256:{hex}\0x"),
+        ] {
+            let result = sqlx::query(
+                "UPDATE models SET embedding_artifact_identity = ?1 WHERE model_id = '__ollama_server__'",
+            )
+            .bind(&malformed)
+            .execute(&repo.pool)
+            .await;
+            assert!(result.is_err(), "CHECK accepted {malformed:?}");
+        }
+
+        let blob = sqlx::query(
+            "UPDATE models SET embedding_artifact_identity = ?1 WHERE model_id = '__ollama_server__'",
+        )
+        .bind(format!("sha256:{hex}").into_bytes())
+        .execute(&repo.pool)
+        .await;
+        assert!(blob.is_err(), "CHECK accepted a blob");
+
+        sqlx::query(
+            "UPDATE models SET embedding_artifact_identity = ?1 WHERE model_id = '__ollama_server__'",
+        )
+        .bind(format!("sha256:{hex}"))
+        .execute(&repo.pool)
+        .await
+        .expect("CHECK accepts a well-formed identity");
+    }
+
+    /// The CHECK constraint admits exactly what `ArtifactIdentity::parse`
+    /// accepts, so a corrupt value cannot be stored; the mapping is exercised
+    /// on a row read back and then corrupted in memory instead.
+    #[tokio::test]
+    async fn malformed_identity_fails_the_read() {
+        let repo = setup_repo().await;
+        let query = build_model_select_query("WHERE m.model_id = ?1");
+        let mut record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
+            .bind("__ollama_server__")
+            .fetch_one(&repo.pool)
+            .await
+            .expect("read synthetic row");
+        record.embedding_artifact_identity = Some(format!("sha256:{}", "AB".repeat(32)));
+
+        let err = DownloadedModel::try_from(record).expect_err("malformed identity");
+        assert!(matches!(err, AppError::InvalidData(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn saving_a_fresh_model_resets_the_stored_identity() {
+        let repo = setup_repo().await;
+        let model = make_local_embedding_model("redownloaded");
+        repo.save(&model).await.expect("save embedding model");
+        repo.set_active_embedding_model("redownloaded", Some(&identity(5)))
+            .await
+            .expect("activate");
+
+        // Saving the row as read keeps what it carries.
+        let loaded = repo
+            .find_by_model_id("redownloaded")
+            .await
+            .expect("find model")
+            .expect("model exists");
+        repo.save(&loaded).await.expect("save loaded model");
+        assert_eq!(
+            stored_embedding_state(&repo, "redownloaded").await,
+            (1, Some(identity(5).to_string()))
+        );
+
+        // A re-download saves a freshly constructed model over the row.
+        let fresh = make_local_embedding_model("redownloaded");
+        repo.save(&fresh).await.expect("save fresh model");
+        assert_eq!(
+            stored_embedding_state(&repo, "redownloaded").await,
+            (0, None)
+        );
+    }
+
     #[tokio::test]
     async fn synthetic_ollama_row_loads_via_find_by_model_id() {
         let repo = setup_repo().await;
@@ -1471,7 +1787,7 @@ mod tests {
         )
         .expect("create model");
         repo.save(&model).await.expect("save model");
-        repo.set_active_embedding_model(model.model_id())
+        repo.set_active_embedding_model(model.model_id(), Some(&identity(0)))
             .await
             .expect("select model");
 

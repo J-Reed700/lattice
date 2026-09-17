@@ -150,32 +150,6 @@ CREATE TABLE IF NOT EXISTS watch_folders (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS files (
-    id TEXT PRIMARY KEY NOT NULL,
-    content_hash TEXT NOT NULL UNIQUE,
-    file_name TEXT NOT NULL,
-    file_extension TEXT,
-    mime_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    storage_path TEXT NOT NULL,
-    is_indexed INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    accessed_at INTEGER NOT NULL,
-    ref_count INTEGER NOT NULL DEFAULT 1 CHECK (ref_count >= 0),
-    metadata TEXT
-);
-
-CREATE TABLE IF NOT EXISTS file_references (
-    id TEXT PRIMARY KEY NOT NULL,
-    file_id TEXT NOT NULL,
-    document_id TEXT NOT NULL,
-    reference_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
-    UNIQUE(file_id, document_id, reference_type)
-);
-
 -- =====================================================================
 -- Full-text search over chunks (the index every search query reads)
 -- =====================================================================
@@ -660,7 +634,23 @@ CREATE TABLE IF NOT EXISTS models (
         CHECK (is_active_for_utility IN (0, 1)),
     storage_kind TEXT NOT NULL DEFAULT 'local_file'
         CHECK (storage_kind IN ('local_file', 'local_dir', 'remote_ollama')),
-    storage_path TEXT
+    storage_path TEXT,
+    -- Content identity of the embedding artifacts, recorded on activation so
+    -- launch never rehashes model files. `sha256:` + 64 lowercase hex. The
+    -- type and byte-length terms reject blobs and embedded NULs, which the
+    -- character length and GLOB alone let through.
+    embedding_artifact_identity TEXT
+        CHECK (embedding_artifact_identity IS NULL
+               OR (typeof(embedding_artifact_identity) = 'text'
+                   AND length(embedding_artifact_identity) = 71
+                   AND length(CAST(embedding_artifact_identity AS BLOB)) = 71
+                   AND embedding_artifact_identity GLOB 'sha256:[0-9a-f]*'
+                   AND substr(embedding_artifact_identity, 8) NOT GLOB '*[^0-9a-f]*')),
+    -- Launch reads the identity instead of hashing, so a local model can only
+    -- be the active embedding model once its identity is on the row.
+    CHECK (is_active_for_embedding = 0
+           OR storage_kind = 'remote_ollama'
+           OR embedding_artifact_identity IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS model_files (
@@ -970,14 +960,8 @@ CREATE INDEX IF NOT EXISTS idx_document_mentions_document_id ON document_mention
 CREATE INDEX IF NOT EXISTS idx_document_mentions_mention_id ON document_mentions(mention_id);
 CREATE INDEX IF NOT EXISTS idx_document_mentions_composite ON document_mentions(document_id, mention_id);
 
--- File storage
+-- Watched folders
 CREATE INDEX IF NOT EXISTS idx_watch_folders_path ON watch_folders(path);
-CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
-CREATE INDEX IF NOT EXISTS idx_files_mime ON files(mime_type);
-CREATE INDEX IF NOT EXISTS idx_files_accessed ON files(accessed_at);
-CREATE INDEX IF NOT EXISTS idx_files_extension ON files(file_extension);
-CREATE INDEX IF NOT EXISTS idx_file_refs_file ON file_references(file_id);
-CREATE INDEX IF NOT EXISTS idx_file_refs_doc ON file_references(document_id);
 
 -- Favorites and recents
 CREATE INDEX IF NOT EXISTS idx_favorites_document_id ON favorites(document_id);

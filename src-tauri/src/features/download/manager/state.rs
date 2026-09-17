@@ -12,7 +12,7 @@ use crate::infrastructure::services::file_cleanup::FileCleanupService;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 /// Why a running download task is being told to stop.
@@ -47,6 +47,9 @@ pub struct DownloadManagerService {
     pub(super) engine: Arc<dyn DownloadEngine>,
     pub(super) active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
     pub(super) download_queue: Arc<RwLock<VecDeque<String>>>,
+    /// Serializes registration with queue promotion so a batch cannot become
+    /// observable until every one of its sessions exists.
+    pub(super) queue_gate: Arc<Mutex<()>>,
     pub(super) max_concurrent_downloads: usize,
     pub(super) event_tx: mpsc::UnboundedSender<DownloadEvent>,
     pub(super) event_rx: Arc<RwLock<Option<mpsc::UnboundedReceiver<DownloadEvent>>>>,
@@ -68,6 +71,7 @@ impl DownloadManagerService {
             engine,
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             download_queue: Arc::new(RwLock::new(VecDeque::new())),
+            queue_gate: Arc::new(Mutex::new(())),
             max_concurrent_downloads: 2,
             event_tx,
             event_rx: Arc::new(RwLock::new(Some(event_rx))),

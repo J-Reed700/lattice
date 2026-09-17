@@ -46,15 +46,29 @@ pub struct MockWebArchiveService {
     articles: Arc<Mutex<HashMap<PathBuf, CleanArticle>>>,
     /// Counter for generating unique paths
     counter: Arc<Mutex<usize>>,
+    /// Root this mock claims ownership of, for `owns`
+    base_dir: PathBuf,
 }
 
 impl MockWebArchiveService {
-    /// Create a new mock service
+    /// Create a new mock service rooted at `/mock/web-archive`.
     pub fn new() -> Self {
+        Self::with_base_dir(PathBuf::from("/mock/web-archive"))
+    }
+
+    /// Create a mock rooted at an explicit directory, so `owns` can be
+    /// exercised against real temporary paths.
+    pub fn with_base_dir(base_dir: PathBuf) -> Self {
         Self {
             articles: Arc::new(Mutex::new(HashMap::new())),
             counter: Arc::new(Mutex::new(0)),
+            base_dir,
         }
+    }
+
+    /// Root of this archive.
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
     }
 
     /// Configure a stored article at a specific path
@@ -107,9 +121,8 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
             *counter
         };
 
-        let path = PathBuf::from(format!(
-            "/mock/web-archive/{}/{}-{}.md",
-            domain,
+        let path = self.base_dir.join(domain).join(format!(
+            "{}-{}.md",
             article.title.replace(' ', "-").to_lowercase(),
             id
         ));
@@ -135,6 +148,16 @@ impl WebArchiveServiceTrait for MockWebArchiveService {
 
     async fn list_articles(&self) -> Result<Vec<PathBuf>> {
         Ok(self.articles.lock().keys().cloned().collect())
+    }
+
+    fn owns(&self, path: &Path) -> bool {
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        path.starts_with(&self.base_dir)
     }
 }
 

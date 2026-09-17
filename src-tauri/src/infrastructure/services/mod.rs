@@ -13,7 +13,6 @@ pub mod startup_reconciliation;
 pub mod validated_path;
 
 // Directory-backed service modules
-pub mod file_storage;
 #[cfg(test)]
 pub mod mocks;
 

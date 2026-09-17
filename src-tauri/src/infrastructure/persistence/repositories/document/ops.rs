@@ -265,6 +265,36 @@ pub async fn count_chunks(conn: &mut SqliteConnection) -> Result<i64> {
         .map_err(|e| AppError::Database(format!("Failed to count chunks: {}", e)))
 }
 
+/// How many documents reference this content checksum.
+pub async fn count_by_checksum(conn: &mut SqliteConnection, checksum: &str) -> Result<u64> {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE checksum = ?")
+        .bind(checksum)
+        .fetch_one(conn)
+        .await
+        .map(|count| count.max(0) as u64)
+        .map_err(|e| AppError::Database(format!("Failed to count documents by checksum: {}", e)))
+}
+
+/// Every distinct content checksum referenced by a document.
+pub async fn list_checksums(conn: &mut SqliteConnection) -> Result<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT checksum FROM documents WHERE checksum IS NOT NULL AND checksum <> ''",
+    )
+    .fetch_all(conn)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to list document checksums: {}", e)))
+}
+
+/// The content checksum of one document, without loading its aggregate.
+pub async fn find_checksum_by_id(conn: &mut SqliteConnection, id: &str) -> Result<String> {
+    sqlx::query_scalar::<_, String>("SELECT checksum FROM documents WHERE id = ?")
+        .bind(id)
+        .fetch_optional(conn)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to find document checksum: {}", e)))?
+        .ok_or_else(|| AppError::NotFound(format!("Document not found: {id}")))
+}
+
 pub async fn save(conn: &mut SqliteConnection, entity: &DocumentEntity) -> Result<()> {
     // Persist the full aggregate (document + chunks + tags).
     // Saving only the document row causes FK failures when embeddings are saved

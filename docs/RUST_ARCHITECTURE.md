@@ -48,6 +48,9 @@ belong to their respective adapters, not the sync contracts.
 - Consumers receive read-only loaded-model ports rather than mutable cache locks.
 - Model loaders own artifact opening and compatibility checks. The container
   supplies dependencies and settings instead of implementing model factories.
+- Embedding artifact identity is established when a model is activated and
+  stored on its `models` row. Launch and model load read it; nothing on the
+  launch path hashes model files.
 
 ## Persistence boundaries
 
@@ -116,6 +119,27 @@ belong to their respective adapters, not the sync contracts.
 - The schema is a single migration, `src-tauri/migrations/20260916000000_init_schema.sql`.
   There is no legacy data to migrate: change that file directly and delete
   local databases when the schema changes.
+
+## Library blobs
+
+- Imported files are copied into a content-addressed library,
+  `~/.lattice/files/{sha256}/{filename}`, and `documents.checksum` is that same
+  digest. Design: `docs/design/2026-09-16-library-blob-lifecycle.md`.
+- Ownership rule: Lattice deletes a file from disk only when it owns the file.
+  Library blobs are removed by hash through `ContentAddressedStoragePort`,
+  never by arbitrary path; web archive articles go through
+  `WebArchiveServiceTrait::delete_article`. Anything else — a vault note, a
+  user file indexed in place — is left alone and logged.
+- `LibraryGc` owns the reference check. `release(hash)` runs after a document
+  that referenced the hash is deleted (or after an import fails to commit) and
+  removes the blob only when no document references it; `sweep()` runs at
+  startup and does the same for every hash on disk.
+- An import holds a `BlobLease` from the moment it copies a blob until the
+  document row commits. A leased hash is never removed, so an import and a
+  concurrent delete of the previous document cannot race into a missing file.
+- Backups pack only the blobs the archived database references. The set comes
+  from `SELECT DISTINCT checksum FROM documents` read out of the snapshot
+  itself, so the tar and the manifest always agree, and orphans never travel.
 
 ## Verification commands
 

@@ -238,6 +238,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires OS keyring access - may not be available in CI"]
     async fn test_clear_all_credentials() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");

@@ -328,6 +328,28 @@ impl ArchiveWriter {
 
         let files_root = self.files_root.clone().filter(|root| path_exists(root));
 
+        // Which blobs are still the user's data is a question only the
+        // database can answer, and the snapshot is the version of it that is
+        // going into this archive — so an import or a delete landing while
+        // the backup runs can never make the manifest disagree with the tar.
+        // If the snapshot cannot answer, pack the library whole: a backup
+        // with a few orphans in it beats a backup missing files.
+        let referenced_blob_hashes = if files_root.is_some() {
+            match snapshot::referenced_blob_hashes(&report.path).await {
+                Ok(hashes) => hashes,
+                Err(error) => {
+                    warn!(
+                        %error,
+                        "could not read the referenced blob set from the snapshot; \
+                         archiving the whole files library"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let vault_root = if settings.vault.enabled {
             crate::features::vault::writeback::resolve_vault_root(&settings.vault.vault_path)
                 .filter(|root| path_exists(root))
@@ -342,6 +364,7 @@ impl ArchiveWriter {
             db_snapshot: report.path.clone(),
             migration_version: report.migration_version,
             files_root,
+            referenced_blob_hashes,
             vault_root,
             settings_file,
             // If the user pointed the backup destination at a folder inside

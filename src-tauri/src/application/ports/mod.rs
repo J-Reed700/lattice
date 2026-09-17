@@ -116,7 +116,10 @@ pub use batch_job_repository_port::{
     BatchJobItem, BatchJobItemStatus, BatchJobRepositoryPort, BatchJobStatus,
 };
 pub use chunk_repository_port::ChunkRepositoryPort;
-pub use content_addressed_storage_port::ContentAddressedStoragePort;
+pub use content_addressed_storage_port::{
+    is_blob_hash, BlobLease, BlobLeases, BlobReferenceCheck, BlobRemoval,
+    ContentAddressedStoragePort, ImportedBlob, RetainReason,
+};
 pub use content_extraction_port::{ContentExtractionPort, ExtractedContentData};
 pub use conversation_history_port::ConversationHistoryPort;
 pub use credentials_port::CredentialsPort;

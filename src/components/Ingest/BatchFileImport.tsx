@@ -60,7 +60,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     (state) => state.addDocumentsToCustomCollection
   );
   const [sourceGroup, setSourceGroup] = useState<SourceGroup | null>(null);
-  const [rebuildExisting, setRebuildExisting] = useState(false);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -304,8 +303,8 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       setIsImporting(true);
       const retryableFiles = files.filter((file) => isRetryableStatus(file.status) && !file.jobId);
       const filePaths = retryableFiles.map((file) => file.path);
-      const result = sourceGroup || rebuildExisting
-        ? await startBatchImport(filePaths, selectedSpaceId || undefined, { sourceGroup, rebuildExisting })
+      const result = sourceGroup
+        ? await startBatchImport(filePaths, selectedSpaceId || undefined, { sourceGroup })
         : await startBatchImport(filePaths, selectedSpaceId || undefined);
 
       if (result.ok && result.data) {
@@ -337,7 +336,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     files,
     selectedSpaceId,
     sourceGroup,
-    rebuildExisting,
     startBatchImport,
   ]);
 
@@ -348,8 +346,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     setFiles(current => current.filter(file => !file.jobId));
     setCurrentJobId(null);
     setSourceGroup(null);
-    setRebuildExisting(current => files.some(file => !file.jobId) && current);
-  }, [files]);
+  }, []);
 
   // Cancel import
   const handleCancel = useCallback(() => {
@@ -541,7 +538,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         </SettingsRow>
       </div>
 
-      <LibraryFilePicker disabled={isImporting} onAdd={paths => { addFilePaths(paths); setRebuildExisting(true); }} />
+      <LibraryFilePicker disabled={isImporting} onAdd={addFilePaths} />
       {!isImporting && files.some(file => Boolean(file.jobId)) && (
         <div className="mt-4 space-y-1">
           <Button variant="secondary" onClick={startNewImport}>Start a new import</Button>
@@ -549,11 +546,6 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         </div>
       )}
       <RelatedSourceOptions value={sourceGroup} onChange={setSourceGroup} disabled={isImporting || files.some(file => Boolean(file.jobId))} />
-      <label className="mt-4 flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={rebuildExisting} disabled={isImporting} onChange={event => setRebuildExisting(event.target.checked)} />
-        Rebuild search for files already indexed
-      </label>
-      {rebuildExisting && <p className="mt-1 text-xs text-text-muted">Uses saved files and preserves document links. Search stays available while files are prepared; failed files appear in History for retry.</p>}
       {selectedCount > 100 && <p role="alert" className="mt-2 text-sm text-danger-fg">Select up to 100 files per import.</p>}
 
       {isImporting && currentJobId && (() => {

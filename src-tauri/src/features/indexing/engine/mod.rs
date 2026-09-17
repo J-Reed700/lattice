@@ -34,12 +34,6 @@
 //!
 //! ## Components
 //!
-//! ### IndexingService (Actor)
-//! - **Concurrent Processing**: Tokio-based async actor
-//! - **Queue Management**: Priority queue for indexing tasks
-//! - **Progress Tracking**: Real-time progress events
-//! - **Error Recovery**: Automatic retries with exponential backoff
-//!
 //! ### Chunker
 //! - **Semantic Chunking**: Preserves meaning across chunk boundaries
 //! - **Contextual Retrieval**: Adds document context to each chunk
@@ -52,60 +46,33 @@
 //!
 //! ## Usage Examples
 //!
-//! ### Index a Single File
+//! ### Extract and Chunk a File
 //!
 //! ```rust,no_run
-//! use lattice::indexing::{IndexingService, IndexTask};
-//! use std::path::PathBuf;
-//!
-//! let service = IndexingService::new(
-//!     pool,
-//!     app_dir,
-//!     embedder,
-//!     tokenizer,
-//!     1000, // queue capacity
-//! );
-//!
-//! let task = IndexTask {
-//!     file_path: PathBuf::from("/path/to/document.pdf"),
-//!     priority: 1,
-//! };
-//!
-//! service.queue_task(task).await?;
-//! ```
-//!
-//! ### Index a Directory
-//!
-//! ```rust,no_run
-//! use lattice::indexing::IndexingService;
-//!
-//! service.index_directory("/path/to/docs").await?;
-//! // Recursively indexes all supported files
+//! # use lattice::features::indexing::engine::{ContentExtractor, SemanticChunker};
+//! # async fn example(
+//! #     extractor: &ContentExtractor,
+//! #     chunker: &SemanticChunker,
+//! # ) -> lattice::features::indexing::engine::Result<()> {
+//! let extracted = extractor
+//!     .extract_from_file(std::path::Path::new("/path/to/document.pdf"))
+//!     .await?;
+//! let chunks = chunker.chunk_text(&extracted.text)?;
+//! println!("{} chunks", chunks.len());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ### Monitor Progress
 //!
 //! ```rust,no_run
-//! use lattice::indexing::{IndexProgress, IndexingEvent};
-//!
-//! let mut events = service.subscribe_events();
-//!
-//! while let Some(event) = events.recv().await {
-//!     match event {
-//!         IndexingEvent::Started { file_path } => {
-//!             println!("Indexing: {:?}", file_path);
-//!         }
-//!         IndexingEvent::Progress { current, total } => {
-//!             println!("Progress: {}/{}", current, total);
-//!         }
-//!         IndexingEvent::Completed { file_id } => {
-//!             println!("Done: {}", file_id);
-//!         }
-//!         IndexingEvent::Failed { file_path, error } => {
-//!             eprintln!("Error: {:?} - {}", file_path, error);
-//!         }
-//!     }
+//! # use lattice::features::indexing::engine::IndexingState;
+//! # async fn example(state: &IndexingState) {
+//! let mut updates = state.subscribe();
+//! while let Ok(progress) = updates.recv().await {
+//!     println!("{}/{}", progress.processed, progress.total_files);
 //! }
+//! # }
 //! ```
 //!
 //! ## Chunking Strategy
@@ -158,13 +125,12 @@
 //!
 //! - **Content Extraction Fails**: Falls back to raw text
 //! - **Embedding Fails**: Retries up to 3 times with backoff
-//! - **Storage Fails**: Rolls back transaction, re-queues task
+//! - **Storage Fails**: Rolls back the transaction
 //! - **File Too Large**: Skips with warning
 //!
 //! ## Memory Management
 //!
 //! - **Streaming Processing**: Files processed in chunks, not loaded entirely
-//! - **Bounded Queue**: Prevents memory exhaustion (default: 1000 tasks)
 //! - **ONNX Model**: Loaded once, shared across all tasks
 //!
 //! ## Supported File Types
@@ -181,42 +147,28 @@
 //!
 //! 1. **Batch Processing**: Index directories, not individual files
 //! 2. **Filter Unsupported**: Skip non-text files before queuing
-//! 3. **Monitor Queue**: Use progress tracking to avoid overwhelming system
+//! 3. **Monitor Progress**: Watch `IndexingState` to avoid overwhelming the system
 //! 4. **Tune Chunk Size**: Balance between context and precision
 
 // Engine sub-modules (flattened from former `modules/` subdirectory).
-pub mod actor;
-pub mod builder;
 pub mod chunker;
 pub mod error;
-pub mod error_ext;
-pub mod events;
 pub mod extraction;
 pub mod metadata_extractor;
 pub mod progress;
-pub mod queue;
 pub mod state;
 pub mod storage;
-// Kept at root due SQLx offline query metadata path sensitivity.
-pub mod transaction;
 
 #[cfg(test)]
 mod indexer_tests;
 
-pub use actor::{IndexingActor, IndexingService};
-pub use builder::{
-    IndexingServiceBuilder, Ready as IndexingReady, Uninitialized as IndexingUninitialized,
-};
 pub use chunker::{ChunkerConfig, ContextualizedChunk, SemanticChunker, TextChunk};
 pub use error::{IndexingError, Result};
-pub use events::IndexingEvent;
 pub use extraction::{ContentExtractor, ExtractedContent};
 pub use metadata_extractor::{extract_metadata, DocumentMetadata};
 pub use progress::{IndexProgress, IndexStatus, ProgressTracker};
-pub use queue::{IndexTask, IndexingQueue};
 pub use state::IndexingState;
 pub use storage::IndexStorage;
-pub use transaction::FileIndexTransaction;
 
 #[cfg(test)]
 mod chunker_test;

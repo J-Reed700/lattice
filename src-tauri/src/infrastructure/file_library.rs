@@ -31,27 +31,6 @@ struct ActivityRow {
 
 #[async_trait::async_trait]
 impl FileLibraryPort for SqliteFileLibrary {
-    async fn remove_folder(&self, path: &str) -> Result<u64> {
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM watch_folders WHERE path = ?")
-            .bind(path)
-            .execute(&mut *tx)
-            .await?;
-        let count = sqlx::query(
-            r#"DELETE FROM documents WHERE id IN (
-            SELECT d.id FROM documents d
-            WHERE d.file_path = ?1
-               OR d.file_path LIKE ?2 ESCAPE '\'
-        )"#,
-        )
-        .bind(path)
-        .bind(directory_prefix_pattern(path))
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        tx.commit().await?;
-        Ok(count)
-    }
     async fn indexed_folders(&self) -> Result<Vec<IndexedFolder>> {
         let mut tx = self.pool.begin().await?;
         let rows = sqlx::query_as::<_, FolderRow>("SELECT path, recursive, enabled, last_scan, created_at FROM watch_folders ORDER BY created_at DESC")
@@ -113,38 +92,16 @@ mod tests {
         (pool, repo)
     }
 
+    /// The folder pattern must match documents inside `/vault/a%_` without
+    /// dragging in `/vault/abc` or `/vault/a%_-sibling`: `%` and `_` in the
+    /// path are literal, so the LIKE pattern has to escape them.
     #[tokio::test]
-    async fn document_paths_preserve_siblings_and_match_displayed_counts() {
-        let (pool, repo) = fixture().await;
+    async fn document_counts_match_the_folder_and_exclude_siblings() {
+        let (_, repo) = fixture().await;
         let folders = repo.indexed_folders().await.unwrap();
         assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].path, "/vault/a%_");
         assert_eq!(folders[0].document_count, 1);
-        assert_eq!(repo.remove_folder("/vault/a%_").await.unwrap(), 1);
-        assert!(repo.indexed_folders().await.unwrap().is_empty());
-        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM documents ORDER BY id")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-        assert_eq!(ids, vec!["d2", "d3"]);
-        let files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(files, 0); // Indexed documents do not require a separate file resource.
-    }
-
-    #[tokio::test]
-    async fn folder_removal_failure_restores_watch_entry_and_documents() {
-        let (pool, repo) = fixture().await;
-        sqlx::query("CREATE TRIGGER reject_document_delete BEFORE DELETE ON documents BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
-            .execute(&pool).await.unwrap();
-        assert!(repo.remove_folder("/vault/a%_").await.is_err());
-        assert_eq!(repo.indexed_folders().await.unwrap()[0].document_count, 1);
-        sqlx::query("DROP TRIGGER reject_document_delete")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(repo.remove_folder("/vault/a%_").await.unwrap(), 1);
     }
 
     #[tokio::test]

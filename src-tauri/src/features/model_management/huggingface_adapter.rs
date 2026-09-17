@@ -92,6 +92,11 @@ struct HuggingFaceModel {
     /// Pipeline tag (primary task)
     #[serde(rename = "pipeline_tag")]
     pipeline_tag: Option<String>,
+    /// Transformer configuration returned by the Hub when `full=true`.
+    /// `model_type` is more reliable than repository tags for deciding which
+    /// local embedding loader can open a model.
+    #[serde(default)]
+    config: Option<serde_json::Value>,
     /// Parsed model card metadata when available
     #[serde(rename = "cardData", default)]
     card_data: Option<serde_json::Value>,
@@ -134,6 +139,14 @@ impl HuggingFaceModel {
             .clone()
             .or_else(|| self.id.clone())
             .unwrap_or_else(|| "unknown".into())
+    }
+
+    fn config_model_type(&self) -> Option<&str> {
+        self.config
+            .as_ref()?
+            .get("model_type")?
+            .as_str()
+            .filter(|model_type| !model_type.trim().is_empty())
     }
 
     fn quantization_rank(filename: &str) -> u8 {
@@ -406,6 +419,11 @@ impl HuggingFaceModel {
                 tags.insert(0, pipeline.clone());
             }
         }
+        if let Some(model_type) = self.config_model_type() {
+            if !tags.iter().any(|tag| tag.eq_ignore_ascii_case(model_type)) {
+                tags.push(model_type.to_string());
+            }
+        }
         let preferred_is_gguf = preferred_file
             .as_ref()
             .is_some_and(|(f, _)| f.to_lowercase().ends_with(".gguf"));
@@ -431,7 +449,7 @@ impl HuggingFaceModel {
                 } if !has_weights => {
                     crate::features::embedding::compatibility::EmbeddingCompatibility::Incompatible {
                         architecture,
-                        reason: "Repo doesn't ship model.safetensors or pytorch_model.bin at its root. The local Candle runtime needs one of those weights files — look for the original sentence-transformers upstream of this model.".to_string(),
+                        reason: "Repo doesn't ship a single model.safetensors or pytorch_model.bin at its root. The local Candle runtime cannot load sharded weights yet — look for a single-file upstream or conversion of this model.".to_string(),
                     }
                 }
                 other => other,
@@ -490,6 +508,22 @@ impl HuggingFaceAdapter {
         }
     }
 
+    fn search_url(query: &str, limit: usize) -> String {
+        if let Some(filter) = query.strip_prefix("filter:") {
+            format!(
+                "https://huggingface.co/api/models?filter={}&limit={}&full=true&sort=downloads&direction=-1",
+                urlencoding::encode(filter),
+                limit
+            )
+        } else {
+            format!(
+                "https://huggingface.co/api/models?search={}&limit={}&full=true&sort=downloads&direction=-1",
+                urlencoding::encode(query),
+                limit
+            )
+        }
+    }
+
     /// Enforce rate limiting.
     ///
     /// Sleeps if necessary to maintain minimum interval between requests.
@@ -535,11 +569,11 @@ impl HuggingFaceAdapter {
     ) -> Result<Vec<HuggingFaceModel>, AppError> {
         self.enforce_rate_limit().await;
 
-        let url = format!(
-            "https://huggingface.co/api/models?search={}&limit={}&full=true&sort=downloads&direction=-1",
-            urlencoding::encode(query),
-            limit
-        );
+        // `filter:<tag>` is an internal catalog query used for category
+        // discovery. The Hub's filter searches model metadata, while its
+        // `search` parameter mostly searches repository names and leaves out
+        // many valid embedding models.
+        let url = Self::search_url(query, limit);
 
         let response = self
             .client
@@ -748,6 +782,14 @@ mod tests {
     }
 
     #[test]
+    fn task_discovery_uses_hub_filter_instead_of_name_search() {
+        let url = HuggingFaceAdapter::search_url("filter:feature-extraction", 500);
+        assert!(url.contains("filter=feature-extraction"), "{url}");
+        assert!(!url.contains("search="), "{url}");
+        assert!(url.contains("limit=500"), "{url}");
+    }
+
+    #[test]
     fn test_huggingface_model_to_external_metadata() {
         let hf_model = HuggingFaceModel {
             model_id: Some("test/model".into()),
@@ -761,6 +803,7 @@ mod tests {
             library_name: None,
             likes: 0,
             pipeline_tag: None,
+            config: None,
             card_data: None,
             gated: None,
             siblings: vec![],
@@ -790,6 +833,7 @@ mod tests {
             library_name: None,
             likes: 0,
             pipeline_tag: None,
+            config: None,
             card_data: None,
             siblings: vec![],
         };
@@ -835,6 +879,7 @@ mod tests {
             library_name: Some("gguf".into()),
             likes: 99,
             pipeline_tag: Some("text-generation".into()),
+            config: None,
             card_data: Some(serde_json::json!({
                 "summary": "A compact instruction-tuned model for chat and coding."
             })),
@@ -847,6 +892,31 @@ mod tests {
             external.description,
             "A compact instruction-tuned model for chat and coding."
         );
+    }
+
+    #[test]
+    fn config_model_type_drives_embedding_compatibility_when_tags_do_not() {
+        let model: HuggingFaceModel = serde_json::from_value(serde_json::json!({
+            "modelId": "org/modern-embedder",
+            "tags": ["sentence-transformers", "safetensors"],
+            "pipeline_tag": "feature-extraction",
+            "config": { "model_type": "modernbert" },
+            "siblings": [
+                { "rfilename": "model.safetensors", "size": 1000 },
+                { "rfilename": "tokenizer.json", "size": 100 },
+                { "rfilename": "config.json", "size": 100 }
+            ]
+        }))
+        .expect("deserialize model");
+
+        let metadata = model.to_external_metadata();
+        assert!(metadata.tags.iter().any(|tag| tag == "modernbert"));
+        assert!(matches!(
+            metadata.embedding_compatibility,
+            Some(crate::features::embedding::compatibility::EmbeddingCompatibility::Compatible {
+                ref architecture
+            }) if architecture == "modernbert"
+        ));
     }
 
     #[tokio::test]

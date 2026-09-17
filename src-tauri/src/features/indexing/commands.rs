@@ -15,7 +15,7 @@ use tauri::State;
 async fn ensure_embedding_ready(container: &Container) -> Result<(), String> {
     let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
         format!(
-            "AI embedding models not installed. Download and activate an embedding model in Settings -> Models. Details: {}",
+            "Could not load the active embedding model: {}",
             e
         )
     })?;
@@ -562,37 +562,17 @@ pub async fn cancel_indexing_impl(container: &Container) -> ApiResult<()> {
     ApiResult::success(())
 }
 
-/// Pauses both the directory run the UI is showing and the actor queue behind
-/// the file watcher. The two have independent progress trackers; pausing only
-/// the actor would leave the visible run running.
+/// Sets the pause flag on `IndexingState`. The indexing loop checks the flag
+/// between files, so an in-flight file finishes before the run stops.
 pub async fn pause_indexing_impl(container: &Container) -> ApiResult<()> {
     container.indexing.indexing_state().pause();
-
-    let indexing_service = container.indexing_service();
-    match indexing_service.pause_indexing().await {
-        Ok(_) => ApiResult::success(()),
-        Err(e) => {
-            // The state flag is already set; the visible run is genuinely
-            // paused. Report the service failure but don't roll the flag back
-            // and pretend nothing happened.
-            tracing::warn!(error = %e, "indexing actor refused pause; directory run is paused");
-            ApiResult::success(())
-        }
-    }
+    ApiResult::success(())
 }
 
-/// Mirror of `pause_indexing_impl`.
+/// Mirror of `pause_indexing_impl`: clears the pause flag and wakes the run.
 pub async fn resume_indexing_impl(container: &Container) -> ApiResult<()> {
     container.indexing.indexing_state().resume();
-
-    let indexing_service = container.indexing_service();
-    match indexing_service.resume_indexing().await {
-        Ok(_) => ApiResult::success(()),
-        Err(e) => {
-            tracing::warn!(error = %e, "indexing actor refused resume; directory run is running");
-            ApiResult::success(())
-        }
-    }
+    ApiResult::success(())
 }
 
 /// Drop one entry from the run's failure list.

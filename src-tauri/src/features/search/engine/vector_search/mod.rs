@@ -18,6 +18,7 @@
 pub mod compression;
 pub mod dimension_metadata;
 pub mod rescore_store;
+pub mod runtime_index;
 pub mod usearch_index;
 
 pub use compression::{VectorIndexCompression, VectorQuantization, DEFAULT_RESCORE_FACTOR};

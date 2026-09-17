@@ -19,7 +19,7 @@ incremental archives.
 | Content | Source | Tar entry |
 |---|---|---|
 | Notes, tags, decks, conversations, settings rows, everything non-derivable | `VACUUM INTO` snapshot of `lattice.db` with derivable tables cleared | `db/lattice.db` |
-| Imported source files | content-addressed library `~/.lattice/files/{sha256}/name` | `files/{sha256}/name` |
+| Imported source files the snapshot references | content-addressed library `~/.lattice/files/{sha256}/name` | `files/{sha256}/name` |
 | Vault markdown | `settings.vault.vault_path` when `settings.vault.enabled` | `vault/**` |
 | Settings file | `<app_data_dir>/settings.json` | `settings.json` |
 | Manifest | generated | `manifest.json` (first entry) |
@@ -203,7 +203,7 @@ Code lives in `src-tauri/src/features/backup/` (the repo was flattened from
 |---|---|
 | `archive/format.rs` | On-disk layout, header, manifest, `ArchiveError` |
 | `archive/crypto.rs` | Two-slot key envelope, BIP-39 recovery code, STREAM writer/reader |
-| `archive/snapshot.rs` | `VACUUM INTO` snapshot, derivable-table clearing, tar+zstd pack/unpack |
+| `archive/snapshot.rs` | `VACUUM INTO` snapshot, derivable-table clearing, referenced-blob set, tar+zstd pack/unpack |
 | `archive/placeholder.rs` | Dataless/placeholder detection, cloud-folder classification, hydration nudge |
 | `archive/config.rs`, `archive/key_store.rs` | `archive-config.json`, keyring with `0600` file fallback |
 | `archive/writer.rs`, `archive/restore.rs` | Create with retention; restore with DB swap, file merge, vault placement |
@@ -227,6 +227,17 @@ Differences from the plan above:
   `wrong passphrase or recovery code`, not an outcome.
 - **The files-library root is injected** into writer and restorer so tests
   never touch `~/.lattice/files`.
+- **Only referenced blobs are packed.** `snapshot::referenced_blob_hashes`
+  reads `SELECT DISTINCT checksum FROM documents` from the snapshot that is
+  about to be archived, and the payload planner packs a top-level directory of
+  the library only when its name is 64 lowercase hex characters and is in that
+  set. Orphan blobs and anything else under the library root are counted and
+  logged (`skipped_blobs`, `skipped_bytes`), not packed, and `files_count`
+  reports packed entries only. Reading the set from the snapshot rather than
+  the live database means a delete landing mid-backup can never leave the tar
+  and the manifest disagreeing. If the snapshot cannot answer — no `documents`
+  table, no `checksum` column — the whole library is packed, because shipping
+  orphans beats shipping a backup with files missing.
 - **The cloud-folder warning follows the database file**, not the app data root.
 - **Scheduling is independent of local auto-backup.** One ticker runs both
   jobs; each checks its own switch every tick. Choosing a destination starts
@@ -252,5 +263,10 @@ recovery words). `BackupSection.test.tsx` covers the wizard and restore flows.
 ## Not done yet
 
 - Progress events to the UI during create and restore; progress is logged only.
+- ~~Orphan blobs are packed into every archive.~~ Done: archives now carry only
+  the blobs the archived database references
+  (`docs/design/2026-09-16-library-blob-lifecycle.md`). Restore is unchanged —
+  it merges whatever blobs the archive contains into the content-addressed
+  library and skips ones already there.
 - Queuing a re-index automatically when late chunking is on after a restore.
 - Phase 2 direct upload (S3-compatible, OneDrive, Google Drive).

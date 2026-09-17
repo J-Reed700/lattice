@@ -308,11 +308,19 @@ impl DownloadSaga {
                     .await
                 {
                     Ok(None) => {
-                        if let Err(e) = self
-                            .downloaded_model_repo
-                            .set_active_embedding_model(&event.model_id)
-                            .await
-                        {
+                        // The completion write above has committed; hashing the
+                        // artifacts happens off the runtime thread, outside it.
+                        let activation = async {
+                            let identity =
+                                crate::features::embedding::artifact_identity::establish(
+                                    &downloaded_model,
+                                )
+                                .await?;
+                            self.downloaded_model_repo
+                                .set_active_embedding_model(&event.model_id, identity.as_ref())
+                                .await
+                        };
+                        if let Err(e) = activation.await {
                             warn!(
                                 model_id = %event.model_id,
                                 error = %e,
@@ -559,6 +567,95 @@ mod tests {
             ModelLocation::LocalDirectory {
                 path: PathBuf::from("/tmp/gemma-2-9b-it")
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn first_embedding_download_is_activated_with_its_identity() {
+        use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+        use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
+        use crate::features::embedding::artifact_identity;
+        use crate::infrastructure::event_bus::EventBus;
+        use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
+        use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
+        use std::sync::Arc;
+
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("create in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        let dir = tempfile::tempdir().expect("create model directory");
+        let files = [
+            ("config.json", &b"{}"[..]),
+            ("tokenizer.json", &b"{}"[..]),
+            ("model.safetensors", &b"weights"[..]),
+        ];
+        sqlx::query(
+            "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
+             VALUES ('row-1', 'test-embed-model', 'test-embed-model', ?1, 'embedding', 'bert', 'downloading')",
+        )
+        .bind(dir.path().to_string_lossy().into_owned())
+        .execute(&pool)
+        .await
+        .expect("insert model row");
+        for (name, contents) in files {
+            let path = dir.path().join(name);
+            std::fs::write(&path, contents).expect("write model file");
+            // config.json is the file whose completion finishes the download.
+            let status = if name == "config.json" {
+                "downloading"
+            } else {
+                "completed"
+            };
+            sqlx::query(
+                "INSERT INTO model_files
+                     (id, model_id, file_name, file_path, relative_path, size_bytes, download_url, status)
+                 VALUES (?1, 'test-embed-model', ?2, ?3, ?2, ?4, 'https://example.com', ?5)",
+            )
+            .bind(format!("file-{name}"))
+            .bind(name)
+            .bind(path.to_string_lossy().into_owned())
+            .bind(contents.len() as i64)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .expect("insert model file row");
+        }
+
+        let downloaded_models = Arc::new(DownloadedModelRepository::new(pool.clone()));
+        let saga = DownloadSaga::new(
+            Arc::new(EventBus::new()),
+            Arc::new(SqliteModelFileRepository::new(pool.clone())),
+            Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+            Arc::clone(&downloaded_models),
+        );
+
+        saga.handle_file_completed(FileDownloadCompletedEvent {
+            model_id: "test-embed-model".to_string(),
+            file_id: "file-config.json".to_string(),
+            file_name: "config.json".to_string(),
+            file_size: 2,
+            timestamp: Utc::now(),
+        })
+        .await
+        .expect("handle final file completion");
+
+        let active = downloaded_models
+            .get_active_embedding_model()
+            .await
+            .expect("read active embedding model")
+            .expect("the empty embedding slot is filled by the first download");
+        assert_eq!(active.model_id(), "test-embed-model");
+        assert_eq!(
+            active.embedding_artifact_identity(),
+            Some(&artifact_identity::compute(dir.path()).expect("compute identity")),
+            "a local embedding model is activated with the identity of its files"
         );
     }
 

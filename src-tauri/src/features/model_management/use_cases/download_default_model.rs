@@ -226,6 +226,29 @@ mod tests {
     #[async_trait]
     impl DownloadManager for MockDownloadManager {
         async fn start_download(&self, request: DownloadRequest) -> Result<String, DownloadError> {
+            self.enqueue_download(request).await
+        }
+
+        async fn start_download_batch(
+            &self,
+            items: Vec<crate::features::download::manager::DownloadBatchItem>,
+        ) -> Result<Vec<String>, DownloadError> {
+            let mut ids = Vec::with_capacity(items.len());
+            for item in items {
+                let request = item.requests.into_iter().next().ok_or_else(|| {
+                    DownloadError::NetworkError(
+                        "Download batch item has no candidate URLs".to_string(),
+                    )
+                })?;
+                ids.push(self.enqueue_download(request).await?);
+            }
+            Ok(ids)
+        }
+
+        async fn enqueue_download(
+            &self,
+            request: DownloadRequest,
+        ) -> Result<String, DownloadError> {
             if self.should_fail {
                 return Err(DownloadError::NetworkError("Mock failure".to_string()));
             }

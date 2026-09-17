@@ -23,6 +23,7 @@ import { z } from 'zod';
 export namespace EventSchemas {
   export namespace Downloads {
     export const FileSnapshot = z.object({
+      id: z.string(),
       filename: z.string(),
       bytesDownloaded: z.number(),
       totalBytes: z.number(),
@@ -279,6 +280,7 @@ export namespace TauriEvents {
      * Per-file progress information for batch downloads
      */
     export interface FileSnapshot {
+      id: string;
       filename: string;
       bytesDownloaded: number;
       totalBytes: number;

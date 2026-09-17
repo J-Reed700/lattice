@@ -45,21 +45,12 @@ pub async fn extract_article(
         .map_err(ApiError::from)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn reindex_web_archive(container: State<'_, Container>) -> Result<usize, ApiError> {
-    web_ingest::reindex_web_archive(container)
-        .await
-        .map_err(ApiError::from)
-}
-
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .invoke_handler(tauri::generate_handler![
             ingest_web_url,
             fetch_url_preview,
             extract_article,
-            reindex_web_archive,
         ])
         .build()
 }

@@ -1,17 +1,36 @@
 use crate::application::ports::SettingsRepositoryPort;
 use crate::features::download::events::infra_events::DownloadEventBridge;
 use crate::features::download::saga::DownloadSaga;
-use crate::features::indexing::engine as indexing;
 use crate::infrastructure::event_bus::EventBus;
 use crate::shared::utils::supervised_task::supervise_cancellable;
 use tokio_util::sync::CancellationToken;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
-use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use tauri::Manager;
+
+/// A startup failure, with the dialog title the user sees before the process exits.
+struct StartupFailure {
+    title: &'static str,
+    message: String,
+}
+
+impl StartupFailure {
+    fn setup(message: String) -> Self {
+        Self {
+            title: "Application Setup Failed",
+            message,
+        }
+    }
+
+    fn initialization(message: String) -> Self {
+        Self {
+            title: "Application Initialization Failed",
+            message,
+        }
+    }
+}
 
 /// Loads application configuration from the specified path.
 /// Creates a default configuration if the file doesn't exist or is invalid.
@@ -36,77 +55,6 @@ async fn initialize_database_layer(
         Err(e) => {
             tracing::error!(error = %e, "Database initialization failed");
             Err(e)
-        }
-    }
-}
-
-/// Initializes the embedding service layer with the model directory.
-///
-/// # Arguments
-/// * `model_dir` - Directory containing the embedding model files
-///
-/// # Returns
-/// * `Option<Arc<EmbeddingService>>` - Embedding service if successful, None otherwise
-async fn initialize_embedding_layer(
-    model_dir: &Path,
-) -> Option<Arc<crate::features::embedding::service::EmbeddingService>> {
-    tracing::info!("Loading embedding models...");
-    super::setup_embedding_service(model_dir).await
-}
-
-/// Initializes the tokenizer layer with the model directory.
-///
-/// # Arguments
-/// * `model_dir` - Directory containing the tokenizer files
-///
-/// # Returns
-/// * `Option<Arc<Tokenizer>>` - Tokenizer instance if available
-fn initialize_tokenizer_layer(model_dir: &Path) -> Option<std::sync::Arc<tokenizers::Tokenizer>> {
-    tracing::info!("Initializing tokenizer...");
-    match super::setup_tokenizer(model_dir) {
-        Some(tokenizer) => {
-            tracing::info!("Tokenizer initialized successfully");
-            Some(tokenizer)
-        }
-        None => {
-            tracing::info!(
-                "Optional ONNX tokenizer unavailable; configured model tokenizer loads separately"
-            );
-            None
-        }
-    }
-}
-
-/// Initializes the indexing service layer with all required dependencies.
-///
-/// # Arguments
-/// * `pool` - SQLite connection pool
-/// * `app_dir` - Application data directory
-/// * `embedder` - Embedding service instance (optional)
-/// * `tokenizer` - Tokenizer instance (optional)
-///
-/// # Returns
-/// * `Option<IndexingService>` - Initialized indexing service if both embedder and tokenizer are available
-fn initialize_indexing_layer(
-    pool: sqlx::SqlitePool,
-    app_dir: PathBuf,
-    embedder: Option<Arc<crate::features::embedding::service::EmbeddingService>>,
-    tokenizer: Option<Arc<tokenizers::Tokenizer>>,
-) -> Option<indexing::IndexingService> {
-    match (embedder, tokenizer) {
-        (Some(embedder), Some(tokenizer)) => {
-            tracing::info!("Starting indexing service...");
-            let service = indexing::IndexingService::new(pool, app_dir, embedder, tokenizer, 1000);
-            tracing::info!("Indexing service started successfully");
-            Some(service)
-        }
-        (None, _) => {
-            tracing::warn!("Optional ONNX indexing service not initialized; configured indexing uses the model loader");
-            None
-        }
-        (_, None) => {
-            tracing::warn!("Indexing service not initialized - tokenizer unavailable");
-            None
         }
     }
 }
@@ -187,8 +135,8 @@ async fn create_container(
 /// Orchestrates the sequential initialization of all application layers.
 ///
 /// This function is the main entry point for application initialization.
-/// It coordinates the setup of directories, database, embedding models,
-/// tokenizer, indexing service, security context, and configuration.
+/// It coordinates the setup of directories, database, security context,
+/// and configuration.
 ///
 /// # Architecture
 /// The initialization follows a layered approach where each layer is
@@ -197,30 +145,41 @@ async fn create_container(
 /// 1. **Directory Setup** - Ensures app and model directories exist
 /// 2. **Config Loading** - Loads or creates default configuration
 /// 3. **Database Layer** - Initializes SQLite database
-/// 4. **Embedding Layer** - Loads ONNX embedding models
-/// 5. **Tokenizer Layer** - Initializes text tokenizer
-/// 6. **Indexing Layer** - Creates document indexing service
-/// 7. **Security Layer** - Initializes security context
-/// 8. **Config Service** - Sets up configuration persistence
+/// 4. **Security Layer** - Initializes security context
+/// 5. **Config Service** - Sets up configuration persistence
 ///
 /// # Async Memory Model
 ///
 /// Async functions store their state on the HEAP (in Future objects), not the stack.
 /// Deep async call chains don't cause stack overflow - that's the whole point of async.
 /// Tauri's async runtime handles this correctly without needing custom runtimes.
+///
+/// # Failure
+///
+/// Does not return on failure. Tauri turns a setup-hook `Err` into a panic
+/// inside a macOS callback that cannot unwind, so the process would abort with
+/// a crash report. Instead the failure is logged, then shown in a dialog that
+/// blocks until dismissed, then the shared shutdown sequence runs and the
+/// process exits with status 1. `AppHandle::exit(1)` is not an option: the
+/// runtime reports any requested exit as status 0, and the run-event handler
+/// reads renderer-shutdown state that only a successful startup installs.
 #[tracing::instrument(skip(app))]
-pub fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn Error>> {
+pub fn initialize_app(app: &mut tauri::App) {
     let app_handle = app.handle().clone();
 
-    let result = tauri::async_runtime::block_on(async move {
+    let result = tauri::async_runtime::block_on(async {
         let future = Box::pin(initialize_app_async(app_handle.clone()));
         future.await
     });
 
-    result.map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn Error>)?;
+    if let Err(failure) = result {
+        tracing::error!(error = %failure.message, "{}", failure.title);
+        super::show_error_dialog(&app_handle, failure.title, &failure.message);
+        super::graceful_shutdown(&app_handle);
+        std::process::exit(1);
+    }
 
     tracing::info!("✅ Application initialization complete");
-    Ok(())
 }
 
 /// Async initialization logic
@@ -228,25 +187,13 @@ pub fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn Error>> {
 /// This async function stores state on the heap (in Future objects), not the stack.
 /// Components go directly to heap via Tauri State.
 #[tracing::instrument(skip(app_handle))]
-async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String> {
-    let app_dir = match super::setup_app_directories(&app_handle) {
-        Ok(dir) => dir,
-        Err(e) => {
-            super::show_error_dialog(&app_handle, "Application Setup Failed", &e);
-            return Err(e);
-        }
-    };
+async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), StartupFailure> {
+    let app_dir = super::setup_app_directories(&app_handle).map_err(StartupFailure::setup)?;
 
     crate::infrastructure::crash::set_crashes_directory(app_dir.clone());
     let settings_dir_for_summaries = app_dir.clone();
 
-    let model_dir = match super::setup_model_directory(&app_handle) {
-        Ok(dir) => dir,
-        Err(e) => {
-            super::show_error_dialog(&app_handle, "Application Setup Failed", &e);
-            return Err(e);
-        }
-    };
+    let model_dir = super::setup_model_directory(&app_handle).map_err(StartupFailure::setup)?;
 
     let db_path = app_dir.join("lattice.db");
 
@@ -254,18 +201,9 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
 
     let app_handle_for_container = app_handle.clone();
 
-    let container = match tokio::time::timeout(Duration::from_secs(30), async move {
+    let container = async move {
         // Sequential initialization with clear error propagation
         let conn = initialize_database_layer(db_path).await?;
-        let embedder = initialize_embedding_layer(&model_dir_for_init).await; // Returns Option
-        let tokenizer = initialize_tokenizer_layer(&model_dir_for_init); // Returns Option
-
-        let _indexing_service = initialize_indexing_layer(
-            conn.pool().clone(),
-            app_dir.clone(),
-            embedder.clone(),
-            tokenizer.clone(),
-        );
         let security_context = initialize_security_layer();
 
         // During DDD migration, we run BOTH containers:
@@ -347,29 +285,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
             Err(error) => tracing::warn!(%error, "Failed to recover batch jobs"),
         }
 
-        // Log AI model status
-        if embedder.is_none() {
-            tracing::info!("Optional ONNX embedding service is not loaded");
-            tracing::info!("Configured model availability is reported by provider prewarming");
-        } else {
-            tracing::info!("Optional ONNX embedding service initialized");
-        }
-
         Ok::<crate::interfaces::di::Container, String>(container)
-    })
+    }
     .await
-    {
-        Ok(Ok(container)) => container,
-        Ok(Err(e)) => {
-            super::show_error_dialog(&app_handle, "Application Initialization Failed", &e);
-            return Err(e);
-        }
-        Err(_) => {
-            let e = "Initialization timed out after 30 seconds".to_string();
-            super::show_error_dialog(&app_handle, "Application Initialization Failed", &e);
-            return Err(e);
-        }
-    };
+    .map_err(StartupFailure::initialization)?;
 
     if let Err(e) = container
         .system
@@ -392,9 +311,9 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
     );
     // IMPORTANT: Use the same DownloadManager instance the container/use-cases use.
     // This keeps model downloads and download drawer events in sync.
-    let download_manager = container
-        .download_manager()
-        .map_err(|e| format!("Failed to get shared download manager: {}", e))?;
+    let download_manager = container.download_manager().map_err(|e| {
+        StartupFailure::initialization(format!("Failed to get shared download manager: {}", e))
+    })?;
 
     // Background tasks use tokio::spawn - async state is on heap, not stack
 
@@ -454,6 +373,25 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), String
             }
             Err(e) => {
                 tracing::error!("Failed to clean orphaned model files: {}", e);
+            }
+        }
+    });
+
+    // Collect library blobs nothing references any more: an import that
+    // crashed before it committed, or a database that was reset out from under
+    // the files. Without this they stay on disk forever and get packed into
+    // every backup.
+    let library_gc = container.library_gc();
+    tokio::spawn(async move {
+        match library_gc.sweep().await {
+            Ok(report) => tracing::info!(
+                removed = report.removed,
+                retained = report.retained,
+                bytes_freed = report.bytes_freed,
+                "Swept the imported-file library"
+            ),
+            Err(error) => {
+                tracing::error!(%error, "Failed to sweep the imported-file library");
             }
         }
     });

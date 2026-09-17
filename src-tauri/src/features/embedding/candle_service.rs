@@ -44,7 +44,7 @@ use tokio::sync::Mutex;
 
 use crate::application::ports::embedding_port::{span_chunk_texts, sparse_not_supported};
 use crate::application::ports::EmbeddingPort;
-use crate::domain::value_objects::SparseEmbedding;
+use crate::domain::value_objects::{ArtifactIdentity, SparseEmbedding};
 use crate::features::embedding::late_chunking::{
     l2_normalize_in_place, mean_pool_rows, pooling_token_indices, strategy_identity,
     validate_chunk_ranges, EmbeddingStrategy, LateChunkingError,
@@ -199,7 +199,7 @@ pub struct CandleEmbeddingService {
     input_policy: super::input_policy::InputPolicy,
     /// Digest of the model artifacts. The public identity also folds in the
     /// embedding strategy, which is what actually decides vector comparability.
-    identity: String,
+    identity: ArtifactIdentity,
     strategy: EmbeddingStrategy,
     /// BGE-M3's learned sparse head, when this checkpoint ships one. `None`
     /// for every other model, which is what makes `supports_sparse()` false
@@ -209,7 +209,9 @@ pub struct CandleEmbeddingService {
 
 impl CandleEmbeddingService {
     /// Load a model from a directory containing `config.json`,
-    /// `tokenizer.json`, and either `model.safetensors` or `pytorch_model.bin`.
+    /// `tokenizer.json`, and either `model.safetensors` or `pytorch_model.bin`,
+    /// and label it with `identity`. Does not hash anything: `identity` comes
+    /// from the model's row, where activation recorded it.
     ///
     /// Tries Metal first on macOS, falls back to CPU on failure. Reads the
     /// model dimension from `config.json::hidden_size` and the pooling
@@ -225,7 +227,7 @@ impl CandleEmbeddingService {
     /// (`infrastructure/embedding_loading.rs`) and call `with_strategy`.
     /// Flipping it re-generates every vector, because `model_identity()`
     /// changes with the strategy.
-    pub fn new(model_dir: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(model_dir: impl AsRef<Path>, identity: ArtifactIdentity) -> Result<Self> {
         let dir = model_dir.as_ref();
 
         let config_path = dir.join("config.json");
@@ -307,7 +309,6 @@ impl CandleEmbeddingService {
         tokenizer
             .with_truncation(None)
             .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
-        let identity = artifact_identity(dir)?;
 
         let var_builder = if weights_path
             .file_name()
@@ -432,10 +433,20 @@ impl CandleEmbeddingService {
         })
     }
 
+    /// Compute the artifact identity of `model_dir`, then [`open`](Self::open)
+    /// it. For directories that have no `models` row: env-configured structure
+    /// models, eval tooling, tests. Never call this from a launch or
+    /// activation path; it streams every weights file through SHA-256.
+    pub fn open_unregistered(model_dir: impl AsRef<Path>) -> Result<Self> {
+        let dir = model_dir.as_ref();
+        let identity = crate::features::embedding::artifact_identity::compute(dir)?;
+        Self::open(dir, identity)
+    }
+
     /// Opt this service into a different [`EmbeddingStrategy`]. Off by default.
     ///
     /// ```ignore
-    /// let service = CandleEmbeddingService::new(model_dir)?
+    /// let service = CandleEmbeddingService::open(model_dir, identity)?
     ///     .with_strategy(EmbeddingStrategy::LateChunking);
     /// ```
     ///
@@ -652,7 +663,7 @@ impl CandleEmbeddingService {
             Some(_) => Some(
                 self.sparse_head
                     .as_ref()
-                    .ok_or_else(|| sparse_not_supported(&self.identity))?,
+                    .ok_or_else(|| sparse_not_supported(self.identity.as_str()))?,
             ),
             None => None,
         };
@@ -810,7 +821,7 @@ impl CandleEmbeddingService {
         texts: &[String],
     ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
         if self.sparse_head.is_none() {
-            return Err(sparse_not_supported(&self.identity));
+            return Err(sparse_not_supported(self.identity.as_str()));
         }
         let mut dense = Vec::with_capacity(texts.len());
         let mut sparse = Vec::with_capacity(texts.len());
@@ -891,7 +902,7 @@ impl EmbeddingPort for CandleEmbeddingService {
 
     async fn embed_sparse_query(&self, text: &str) -> Result<SparseEmbedding> {
         if self.sparse_head.is_none() {
-            return Err(sparse_not_supported(&self.identity));
+            return Err(sparse_not_supported(self.identity.as_str()));
         }
         // A query is pruned much harder than a passage: every surviving term
         // becomes a row in the scoring join.
@@ -902,7 +913,7 @@ impl EmbeddingPort for CandleEmbeddingService {
     }
 
     fn model_identity(&self) -> String {
-        strategy_identity(&self.identity, self.strategy)
+        strategy_identity(self.identity.as_str(), self.strategy)
     }
 
     fn dimension(&self) -> usize {
@@ -1132,68 +1143,103 @@ fn tensor_to_vec_of_vec(t: &Tensor) -> std::result::Result<Vec<Vec<f32>>, candle
 // Tensor indexing helper trait (candle uses an extension-trait pattern for `i`).
 use candle_core::IndexOp;
 
-/// Stream a file's bytes into `hash` so a multi-gigabyte weights file never
-/// lands in memory whole.
-fn fold_file_contents(hash: &mut sha2::Sha256, path: &Path) -> Result<()> {
-    use sha2::Digest;
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(|e| AppError::InvalidConfig(e.to_string()))?;
-    let mut buffer = [0u8; 65536];
-    loop {
-        let n = file
-            .read(&mut buffer)
-            .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
-        if n == 0 {
-            break;
-        }
-        hash.update(
-            buffer
-                .get(..n)
-                .ok_or_else(|| AppError::InvalidState("Invalid model read length".into()))?,
-        );
-    }
-    Ok(())
-}
-
-/// Content-address the complete model and preprocessing, not merely its output dimension.
-pub fn artifact_identity(dir: &Path) -> Result<String> {
-    use sha2::{Digest, Sha256};
-    let mut hash = Sha256::new();
-    hash.update(b"lattice-embedding-input-v2");
-    for name in [
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "sentence_bert_config.json",
-        "1_Pooling/config.json",
-        WEIGHTS_SAFETENSORS,
-    ] {
-        hash.update(name.as_bytes());
-        let path = dir.join(name);
-        if !path.exists() {
-            hash.update(b"absent");
-            continue;
-        }
-        fold_file_contents(&mut hash, &path)?;
-    }
-    // The pickle is folded in only when it is actually on disk. Appending it
-    // to the list above would have hashed an `absent` marker for every
-    // safetensors model and changed every identity already written into a
-    // vault's index filenames; contributing nothing when the file is missing
-    // keeps those byte-for-byte while still covering the weights of a
-    // checkpoint that ships only `pytorch_model.bin`.
-    let pickle = dir.join(WEIGHTS_PYTORCH_BIN);
-    if pickle.exists() {
-        hash.update(WEIGHTS_PYTORCH_BIN.as_bytes());
-        fold_file_contents(&mut hash, &pickle)?;
-    }
-    Ok(format!("sha256:{:x}", hash.finalize()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::embedding::artifact_identity;
     use tempfile::TempDir;
+
+    /// A one-layer, four-wide BERT with zero weights: enough for the loader
+    /// to accept, never run.
+    fn write_tiny_bert(dir: &Path) {
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{"model_type":"bert","vocab_size":2,"hidden_size":4,"num_hidden_layers":1,
+                "num_attention_heads":1,"intermediate_size":8,"hidden_act":"gelu",
+                "hidden_dropout_prob":0.0,"max_position_embeddings":8,"type_vocab_size":1,
+                "initializer_range":0.02,"layer_norm_eps":1e-12,"pad_token_id":0}"#,
+        )
+        .unwrap();
+        let vocab = [("[PAD]".to_owned(), 0), ("[UNK]".to_owned(), 1)]
+            .into_iter()
+            .collect();
+        Tokenizer::new(
+            tokenizers::models::wordlevel::WordLevel::builder()
+                .vocab(vocab)
+                .unk_token("[UNK]".into())
+                .build()
+                .unwrap(),
+        )
+        .save(dir.join("tokenizer.json"), false)
+        .unwrap();
+
+        let layer = "encoder.layer.0";
+        let shapes: Vec<(String, Vec<usize>)> = vec![
+            ("embeddings.word_embeddings.weight".into(), vec![2, 4]),
+            ("embeddings.position_embeddings.weight".into(), vec![8, 4]),
+            ("embeddings.token_type_embeddings.weight".into(), vec![1, 4]),
+            ("embeddings.LayerNorm.weight".into(), vec![4]),
+            ("embeddings.LayerNorm.bias".into(), vec![4]),
+            (format!("{layer}.attention.self.query.weight"), vec![4, 4]),
+            (format!("{layer}.attention.self.query.bias"), vec![4]),
+            (format!("{layer}.attention.self.key.weight"), vec![4, 4]),
+            (format!("{layer}.attention.self.key.bias"), vec![4]),
+            (format!("{layer}.attention.self.value.weight"), vec![4, 4]),
+            (format!("{layer}.attention.self.value.bias"), vec![4]),
+            (format!("{layer}.attention.output.dense.weight"), vec![4, 4]),
+            (format!("{layer}.attention.output.dense.bias"), vec![4]),
+            (
+                format!("{layer}.attention.output.LayerNorm.weight"),
+                vec![4],
+            ),
+            (format!("{layer}.attention.output.LayerNorm.bias"), vec![4]),
+            (format!("{layer}.intermediate.dense.weight"), vec![8, 4]),
+            (format!("{layer}.intermediate.dense.bias"), vec![8]),
+            (format!("{layer}.output.dense.weight"), vec![4, 8]),
+            (format!("{layer}.output.dense.bias"), vec![4]),
+            (format!("{layer}.output.LayerNorm.weight"), vec![4]),
+            (format!("{layer}.output.LayerNorm.bias"), vec![4]),
+        ];
+        let tensors: std::collections::HashMap<String, Tensor> = shapes
+            .into_iter()
+            .map(|(name, shape)| {
+                let tensor = Tensor::zeros(shape, DType::F32, &Device::Cpu).unwrap();
+                (name, tensor)
+            })
+            .collect();
+        candle_core::safetensors::save(&tensors, dir.join(WEIGHTS_SAFETENSORS)).unwrap();
+    }
+
+    #[test]
+    fn open_labels_the_service_with_the_identity_it_was_given() {
+        let dir = TempDir::new().unwrap();
+        write_tiny_bert(dir.path());
+        // Deliberately not the digest of these files: `open` takes the stored
+        // identity as given and never rehashes.
+        let stored = ArtifactIdentity::from_digest(&[7; 32]);
+        assert_ne!(stored, artifact_identity::compute(dir.path()).unwrap());
+
+        let service = CandleEmbeddingService::open(dir.path(), stored.clone()).unwrap();
+        assert_eq!(service.embedding_strategy(), EmbeddingStrategy::ChunkFirst);
+        assert_eq!(EmbeddingPort::model_identity(&service), stored.as_str());
+
+        let late = service.with_strategy(EmbeddingStrategy::LateChunking);
+        assert_eq!(
+            EmbeddingPort::model_identity(&late),
+            strategy_identity(stored.as_str(), EmbeddingStrategy::LateChunking)
+        );
+    }
+
+    #[test]
+    fn open_unregistered_labels_the_service_with_the_computed_identity() {
+        let dir = TempDir::new().unwrap();
+        write_tiny_bert(dir.path());
+        let service = CandleEmbeddingService::open_unregistered(dir.path()).unwrap();
+        assert_eq!(
+            EmbeddingPort::model_identity(&service),
+            artifact_identity::compute(dir.path()).unwrap().as_str()
+        );
+    }
 
     #[test]
     fn pooling_defaults_to_cls_when_no_hints() {
@@ -1277,7 +1323,8 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
 
-        let message = match CandleEmbeddingService::new(dir.path()) {
+        let identity = ArtifactIdentity::from_digest(&[0; 32]);
+        let message = match CandleEmbeddingService::open(dir.path(), identity) {
             Ok(_) => panic!("a directory with no weights must not load"),
             Err(error) => error.to_string(),
         };
@@ -1286,46 +1333,6 @@ mod tests {
         assert!(
             message.contains(&dir.path().display().to_string()),
             "{message}"
-        );
-    }
-
-    /// Identities are baked into on-disk index filenames, so the digest for a
-    /// safetensors checkpoint must not move when the loader learns a new
-    /// weights format. This is the value the hash produced before
-    /// `pytorch_model.bin` was accepted.
-    #[test]
-    fn artifact_identity_for_safetensors_models_is_unchanged() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("config.json"), b"{}").unwrap();
-        std::fs::write(dir.path().join(WEIGHTS_SAFETENSORS), b"weights").unwrap();
-        assert_eq!(
-            artifact_identity(dir.path()).unwrap(),
-            "sha256:ca19a491bee769f6c8e7a8a9bc8d1e3a6846116a4e1915e5e999a999cdc7d3e3"
-        );
-    }
-
-    #[test]
-    fn artifact_identity_covers_the_pickle_when_it_is_the_only_weights_file() {
-        let safetensors_dir = TempDir::new().unwrap();
-        std::fs::write(safetensors_dir.path().join("config.json"), b"{}").unwrap();
-        std::fs::write(safetensors_dir.path().join(WEIGHTS_SAFETENSORS), b"weights").unwrap();
-
-        let pickle_dir = TempDir::new().unwrap();
-        std::fs::write(pickle_dir.path().join("config.json"), b"{}").unwrap();
-        std::fs::write(pickle_dir.path().join(WEIGHTS_PYTORCH_BIN), b"weights").unwrap();
-
-        let pickle_identity = artifact_identity(pickle_dir.path()).unwrap();
-        assert_ne!(
-            pickle_identity,
-            artifact_identity(safetensors_dir.path()).unwrap(),
-            "a pickle checkpoint is a different artifact set than a safetensors one"
-        );
-
-        // And the pickle's bytes are actually hashed, not just its name.
-        std::fs::write(pickle_dir.path().join(WEIGHTS_PYTORCH_BIN), b"other").unwrap();
-        assert_ne!(
-            pickle_identity,
-            artifact_identity(pickle_dir.path()).unwrap()
         );
     }
 

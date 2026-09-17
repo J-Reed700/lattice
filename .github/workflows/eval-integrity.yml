@@ -1,0 +1,19 @@
+name: Eval integrity
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  eval-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test graders, artifact integrity, and statistical comparisons
+        run: python -m unittest discover -s scripts -p 'test_*rag_eval.py'
+      - name: Validate all retrieval datasets and answer labels
+        run: python scripts/validate_rag_evals.py

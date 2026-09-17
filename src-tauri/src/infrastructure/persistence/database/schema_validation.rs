@@ -28,8 +28,6 @@ mod tests {
             "documents_fts_docsize",
             "documents_fts_idx",
             "favorites",
-            "file_references",
-            "files",
             // Note: image_embeddings and image_metadata are planned features, not yet implemented
             "mentions",
             "recent_documents",
@@ -141,27 +139,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_storage_tables_exist() {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
-
-        let tables: Vec<String> = sqlx::query_scalar(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('files', 'file_references') ORDER BY name"
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-
-        assert_eq!(
-            tables.len(),
-            2,
-            "Both files and file_references tables should exist"
-        );
-        assert_eq!(tables[0], "file_references");
-        assert_eq!(tables[1], "files");
-    }
-
-    #[tokio::test]
 
     async fn test_indexes_created() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -183,9 +160,7 @@ mod tests {
             "idx_chunks_document", // Updated to match actual schema
             "idx_documents_file_path",
             "idx_embeddings_chunk", // Updated to match actual schema
-            "idx_files_hash",       // Updated to match actual schema (uses content_hash)
-            "idx_file_refs_file",
-            "idx_file_refs_doc",
+            "idx_watch_folders_path",
         ];
 
         for idx in &required_indexes {

@@ -244,6 +244,13 @@ quarantine_function_tests = []  # Function calling integration tests requiring r
 # - Recursive content extraction algorithms
 split-debuginfo = "unpacked"
 
+# Model downloads and embedding-generation identities stream SHA-256 over
+# multi-gigabyte artifacts. Leaving the hashing crate unoptimized makes a
+# 1.1 GB Qwen checkpoint take ~45 seconds to verify in `tauri dev`, while the
+# same work is hardware-speed in release builds.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 # Production optimizations with 8MB stack
 # LTO improves binary size and performance

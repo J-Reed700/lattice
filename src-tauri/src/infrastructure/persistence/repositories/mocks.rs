@@ -567,6 +567,33 @@ impl DocumentRepositoryPort for MockDocumentRepository {
         docs.truncate(limit);
         Ok(docs)
     }
+
+    async fn count_by_checksum(&self, checksum: &str) -> Result<u64> {
+        let docs = self.documents.read();
+        Ok(docs
+            .values()
+            .filter(|doc| doc.checksum().as_str() == checksum)
+            .count() as u64)
+    }
+
+    async fn list_checksums(&self) -> Result<Vec<String>> {
+        let docs = self.documents.read();
+        let mut checksums: Vec<String> = docs
+            .values()
+            .map(|doc| doc.checksum().as_str().to_string())
+            .collect();
+        checksums.sort();
+        checksums.dedup();
+        Ok(checksums)
+    }
+
+    async fn find_checksum_by_id(&self, document_id: &str) -> Result<String> {
+        self.documents
+            .read()
+            .get(document_id)
+            .map(|doc| doc.checksum().as_str().to_string())
+            .ok_or_else(|| AppError::NotFound(format!("Document not found: {document_id}")))
+    }
 }
 
 #[async_trait]

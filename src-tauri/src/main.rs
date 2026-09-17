@@ -23,8 +23,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             app.manage(lattice::features::llm::engine::sidecar_manager::SidecarRegistry::new());
             lattice::features::llm::engine::sidecar_manager::reap_orphan_sidecars();
 
-            // Plugins require the managed container.
-            setup::initialize_app(app)?;
+            // Plugins require the managed container. A failed initialization
+            // shows its dialog and exits the process from inside this call;
+            // an `Err` returned from this hook would abort the app instead.
+            setup::initialize_app(app);
 
             // The container is now available to each domain plugin.
             for plugin in lattice::plugins::init_plugins() {

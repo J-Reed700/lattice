@@ -590,6 +590,13 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
 
+    /// The blob every seeded document points at: it is in the archive.
+    const REFERENCED_BLOB: &str =
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    /// A blob no document points at: an import that never committed. It is
+    /// on disk, and it is not in the archive.
+    const ORPHAN_BLOB: &str = "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9";
+
     /// A file-backed pool with one row in it, built the way `adapter.rs`
     /// builds its fixtures.
     async fn seeded_pool(db_path: &Path, rows: u32) -> SqlitePool {
@@ -598,14 +605,19 @@ mod tests {
             .connect(&format!("sqlite://{}", db_path.display()))
             .await
             .unwrap();
-        sqlx::query("CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, checksum TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         for n in 0..rows {
-            sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
+            sqlx::query("INSERT INTO documents (id, title, checksum) VALUES (?, ?, ?)")
                 .bind(n.to_string())
                 .bind(format!("Doc {n}"))
+                // Every document shares the one referenced blob, which is
+                // what the library's deduplication would produce anyway.
+                .bind(REFERENCED_BLOB)
                 .execute(&pool)
                 .await
                 .unwrap();
@@ -646,8 +658,22 @@ mod tests {
         let app_data = source.path().join("app-data");
         let files_root = source.path().join("files-library");
         std::fs::create_dir_all(&app_data).unwrap();
-        std::fs::create_dir_all(files_root.join("deadbeef")).unwrap();
-        std::fs::write(files_root.join("deadbeef").join("paper.pdf"), b"pdf bytes").unwrap();
+        // A library as it really looks: the blob the documents reference, an
+        // orphan from an import that died, and something that is not a blob
+        // at all. Only the first is the user's data.
+        std::fs::create_dir_all(files_root.join(REFERENCED_BLOB)).unwrap();
+        std::fs::write(
+            files_root.join(REFERENCED_BLOB).join("paper.pdf"),
+            b"pdf bytes",
+        )
+        .unwrap();
+        std::fs::create_dir_all(files_root.join(ORPHAN_BLOB)).unwrap();
+        std::fs::write(
+            files_root.join(ORPHAN_BLOB).join("ghost.pdf"),
+            b"nothing points at this",
+        )
+        .unwrap();
+        std::fs::write(files_root.join("stray.txt"), b"not a blob").unwrap();
 
         let db_path = app_data.join("lattice.db");
         let pool = seeded_pool(&db_path, 3).await;
@@ -777,13 +803,26 @@ mod tests {
         };
         assert!(restart_required);
         assert!(reembed_required);
-        assert_eq!(files_restored, 1);
+        assert_eq!(
+            files_restored, 1,
+            "only the referenced blob should have been in the archive"
+        );
 
         assert_eq!(document_count(&target_db).await, 3, "rows should be back");
         assert_eq!(
-            std::fs::read(target_files_root.join("deadbeef").join("paper.pdf")).unwrap(),
+            std::fs::read(target_files_root.join(REFERENCED_BLOB).join("paper.pdf")).unwrap(),
             b"pdf bytes"
         );
+        assert!(
+            !target_files_root.join(ORPHAN_BLOB).exists(),
+            "an orphan blob was packed and restored"
+        );
+        assert!(
+            !target_files_root.join("stray.txt").exists(),
+            "a stray file was packed and restored"
+        );
+        // The source library keeps everything: a backup is not a sweep.
+        assert!(files_root.join(ORPHAN_BLOB).join("ghost.pdf").exists());
         assert!(
             target_app_data
                 .join(super::super::restore::REEMBED_MARKER)

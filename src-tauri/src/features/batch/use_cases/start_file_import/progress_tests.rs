@@ -597,7 +597,6 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
             space_id: None,
             indexing: Some(FileIndexingOptionsDto {
                 source_group: Some(group.clone()),
-                rebuild_existing: true,
             }),
         })
         .await?;

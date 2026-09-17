@@ -133,7 +133,6 @@ fn main() {
                     "get_file_path_by_id",
                     "show_in_folder",
                     "get_indexed_folders",
-                    "remove_indexed_folder",
                     "get_indexing_activities",
                     "get_recent_documents",
                     "get_document",
@@ -256,7 +255,6 @@ fn main() {
                     "ingest_web_url",
                     "fetch_url_preview",
                     "extract_article",
-                    "reindex_web_archive",
                 ]),
             )
             .plugin(

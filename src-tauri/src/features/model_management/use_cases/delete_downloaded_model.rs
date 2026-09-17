@@ -397,7 +397,8 @@ mod tests {
         let (_temp, weights) = model_dir_with_weights("test-model-c");
         let model = local_model("row-c", "test-model-c", &weights);
         repo.save(&model).await.expect("save model");
-        repo.set_active_embedding_model("test-model-c")
+        let identity = crate::domain::value_objects::ArtifactIdentity::from_digest(&[0; 32]);
+        repo.set_active_embedding_model("test-model-c", Some(&identity))
             .await
             .expect("activate for embedding");
 

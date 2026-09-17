@@ -243,4 +243,27 @@ describe('ModelRow', () => {
 
     expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
   });
+
+  it('offers an explanation action instead of download for unsupported embeddings', async () => {
+    const user = userEvent.setup();
+    const onDownload = vi.fn();
+    render(
+      <ModelRow
+        model={recommendation({
+          category: 'Embedding',
+          embedding_compatibility: {
+            kind: 'incompatible',
+            architecture: 'qwen3',
+            reason: 'Sharded weights are not supported yet.',
+          },
+        })}
+        {...rowProps}
+        onDownload={onDownload}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Unsupported' }));
+    expect(onDownload).toHaveBeenCalledTimes(1);
+  });
 });
