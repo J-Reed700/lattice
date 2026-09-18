@@ -73,6 +73,31 @@ jobs:
         working-directory: src-tauri
         run: cargo check --all-targets
 
+      # Prove the manifest is actually in the executables rather than inferring
+      # it from a green run. The first attempt at this fix emitted link args
+      # that Cargo silently dropped for the lib harness, and a passing job
+      # would have looked the same as a working one.
+      - name: Windows manifest is embedded in the test executables
+        if: matrix.os == 'windows-latest'
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
+                Sort-Object FullName | Select-Object -Last 1
+          if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
+          $exes = cargo test --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json |
+                  ConvertFrom-Json | Where-Object { $_.executable } | ForEach-Object { $_.executable }
+          if (-not $exes) { throw "cargo reported no test executables" }
+          foreach ($exe in $exes) {
+            $out = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($exe) + ".manifest")
+            & $mt.FullName -nologo -inputresource:"$exe;#1" -out:$out
+            if ($LASTEXITCODE -ne 0) { throw "no RT_MANIFEST #1 resource in $exe" }
+            if (-not (Select-String -Path $out -Pattern 'Microsoft.Windows.Common-Controls' -Quiet)) {
+              throw "$exe has a manifest but no Common-Controls v6 dependency"
+            }
+            Write-Host "OK $exe"
+          }
+
       - name: Desktop Rust unit and repository tests
         working-directory: src-tauri
         run: cargo test --lib --bin export_bindings --test sidecar_guard_test

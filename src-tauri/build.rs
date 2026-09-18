@@ -4,35 +4,46 @@ use std::path::PathBuf;
 #[path = "build_support/sidecar_guard.rs"]
 mod sidecar_guard;
 
-/// Give the test binaries the comctl32 v6 dependency the app binary gets from
-/// `tauri-build`.
+/// Embed the Windows application manifest into every executable this package
+/// links: the app, `export_bindings`, and each test harness.
 ///
 /// `rfd`, pulled in by `tauri-plugin-dialog`, statically imports
-/// `TaskDialogIndirect`, which only comctl32 version 6 exports. A `cargo test`
-/// harness is a plain rustc executable with no manifest, so the loader bound
-/// comctl32 to the 5.82 copy in System32, failed to resolve that import, and
-/// killed the process before `main` with STATUS_ENTRYPOINT_NOT_FOUND. The
-/// symptom was the whole Windows test run dying in under a second while
-/// `cargo check` stayed green, which is why it read as an environment problem.
-fn embed_test_manifest() {
+/// `TaskDialogIndirect`, which only comctl32 version 6 exports, and version 6
+/// is reached by declaring a dependency on it in a manifest. Without one the
+/// loader binds comctl32 to the 5.82 copy in System32, cannot resolve that
+/// import, and kills the process before `main` with
+/// STATUS_ENTRYPOINT_NOT_FOUND. The symptom was the whole Windows test run
+/// dying in under a second while `cargo check` stayed green, which is why it
+/// read as a broken runner rather than a missing manifest.
+///
+/// It has to be the un-suffixed `rustc-link-arg`. The `-tests` variant maps to
+/// Cargo's `LinkArgTarget::Test`, which matches by target *kind*, so it reaches
+/// `tests/*.rs` integration targets and never the lib's own unit-test harness
+/// -- the exact binary that was failing (rust-lang/cargo#10937). That was the
+/// first attempt at this fix and it was silently dropped.
+///
+/// Reaching every executable means also reaching the bins, which is why
+/// `tauri_build` is constructed with `new_without_app_manifest()` below: two
+/// `RT_MANIFEST` resources with id 1 make link.exe fail with CVT1100. Its
+/// default manifest is content-identical to this file, so nothing is lost.
+fn embed_windows_manifest() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
         return; // /MANIFEST is a link.exe flag
     }
-    let manifest =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests-common-controls.manifest");
-    println!("cargo::rerun-if-changed=tests-common-controls.manifest");
-    println!("cargo::rustc-link-arg-tests=/MANIFEST:EMBED");
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("windows-app.manifest");
+    println!("cargo::rerun-if-changed=windows-app.manifest");
+    println!("cargo::rustc-link-arg=/MANIFEST:EMBED");
     println!(
-        "cargo::rustc-link-arg-tests=/MANIFESTINPUT:{}",
+        "cargo::rustc-link-arg=/MANIFESTINPUT:{}",
         manifest.display()
     );
 }
 
 fn main() {
-    embed_test_manifest();
+    embed_windows_manifest();
 
     if !guard_llama_sidecar() {
         // The guard logged `cargo::error`s; Cargo fails the build once this
@@ -43,6 +54,10 @@ fn main() {
     // Register custom plugin commands for ACL (Tauri v2 requirement)
     if let Err(error) = tauri_build::try_build(
         tauri_build::Attributes::new()
+            // `embed_windows_manifest` above embeds the manifest for every
+            // executable, this one included; leaving tauri-build's copy in the
+            // resource file too would be a duplicate RT_MANIFEST id 1.
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest())
             .plugin(
                 "model",
                 tauri_build::InlinedPlugin::new().commands(&[
