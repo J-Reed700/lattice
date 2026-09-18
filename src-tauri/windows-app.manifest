@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The Windows application manifest for every executable this package links:
+  the app, `export_bindings`, and each test harness. It replaces the identical
+  default that tauri-build would embed for the bins only (tauri-build is
+  constructed with `new_without_app_manifest()`), because the lib's own
+  unit-test harness cannot be reached any other way -- see build.rs.
+
+  `rfd` (through tauri-plugin-dialog) statically imports TaskDialogIndirect.
+  That symbol is exported only by comctl32 version 6, the side-by-side
+  assembly declared below — never by the 5.82 copy in System32. Without this
+  dependency the loader binds comctl32 to System32, the import cannot be
+  resolved, and the process dies before main with STATUS_ENTRYPOINT_NOT_FOUND
+  (0xC0000139) rather than failing any individual test.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

@@ -649,6 +649,21 @@ class SingleSourceOfTruthTests(unittest.TestCase):
             self.assertEqual(entry["vulkan"], vb.TARGETS[entry["file"]].uses_vulkan)
         self.assertEqual(len(vb.print_targets("markdown").splitlines()), len(vb.EXPECTED_FILES))
 
+    def test_print_targets_writes_lf_only(self):
+        """The fetch script matches these filenames against the lock exactly,
+        so one platform-translated newline makes every binary look unpinned —
+        which is what happened on Windows, where text mode turns "\\n" into
+        "\\r\\n". Asserts on raw bytes, because `splitlines()` hides exactly
+        the character that broke it. Run as a subprocess so the real stdout
+        encoding is exercised rather than an in-process capture.
+        """
+        for fmt in ("files", "matrix", "markdown"):
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT_DIR / "verify_llama_binaries.py"),
+                 "--print-targets", fmt],
+                capture_output=True, check=True)
+            self.assertNotIn(b"\r", proc.stdout, f"--print-targets {fmt} must be LF-only")
+
     def test_consumers_do_not_name_the_release_files(self):
         for path in self.CONSUMERS:
             with self.subTest(file=path.name):

@@ -106,6 +106,10 @@ done
 # here is how the two drifted apart before.
 FILES=()
 while IFS= read -r file; do
+  # Strip a trailing CR: the lock lookup matches filenames exactly, so one
+  # stray carriage return makes every binary look unpinned. The verifier now
+  # writes LF on every host, and this keeps that from being load-bearing.
+  file="${file%$'\r'}"
   [[ -n "$file" ]] && FILES+=("$file")
 done < <("$PYTHON" "$VERIFY" --print-targets files)
 [[ ${#FILES[@]} -gt 0 ]] || die "$VERIFY --print-targets files listed no release files"
