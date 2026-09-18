@@ -632,7 +632,10 @@ mod tests {
             .and_then(|name| name.to_str())
             .expect("archive path must have a file name");
         assert!(file_name.contains("rust-guide"));
-        assert_eq!(relative.extension().and_then(|ext| ext.to_str()), Some("md"));
+        assert_eq!(
+            relative.extension().and_then(|ext| ext.to_str()),
+            Some("md")
+        );
     }
 
     #[test]

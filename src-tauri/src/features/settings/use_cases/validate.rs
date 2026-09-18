@@ -227,7 +227,8 @@ mod tests {
         assert!(is_valid);
 
         // Nonexistent path, spelled absolutely for this host.
-        let is_valid = use_case.validate_folder_path(&test_paths::abs_str("nonexistent/path/12345"));
+        let is_valid =
+            use_case.validate_folder_path(&test_paths::abs_str("nonexistent/path/12345"));
         assert!(!is_valid);
     }
 

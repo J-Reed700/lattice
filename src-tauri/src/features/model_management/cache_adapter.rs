@@ -476,22 +476,45 @@ mod tests {
         assert_eq!(stats.expired_entries, 0);
     }
 
-    #[tokio::test]
-    async fn test_clear_expired() {
+    /// Builds a cache over its own in-memory database with the given TTL.
+    async fn cache_with_ttl(ttl_seconds: i64) -> ModelCacheAdapter {
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("Failed to create in-memory database");
-
         let mock = Arc::new(MockModelCatalogPort::new());
-
-        let cache = ModelCacheAdapter::with_ttl(pool, mock as Arc<dyn ModelCatalogPort>, 1)
+        ModelCacheAdapter::with_ttl(pool, mock as Arc<dyn ModelCatalogPort>, ttl_seconds)
             .await
-            .expect("Failed to create cache");
+            .expect("Failed to create cache")
+    }
+
+    /// A fresh entry counts as valid.
+    ///
+    /// Split out of `test_clear_expired`, which used a one-second TTL and then
+    /// asserted the entry was *still valid* before sleeping. That is a race the
+    /// test cannot win: it only holds if fewer than a second passes between the
+    /// write and the read, and on a loaded CI runner it does not, which is how
+    /// this failed on Windows with `left: 0, right: 1`. Nothing here needs a
+    /// short TTL, so the window is made far larger than any scheduling stall
+    /// instead of being tuned against one.
+    #[tokio::test]
+    async fn a_fresh_entry_is_valid() {
+        let cache = cache_with_ttl(3600).await;
 
         cache.search_models("llama", 5).await.unwrap();
 
         let stats = cache.get_stats().await.unwrap();
         assert_eq!(stats.valid_entries, 1);
+        assert_eq!(stats.expired_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_clear_expired() {
+        // A short TTL is only needed for the half of this that waits, and here
+        // the wait is safe in one direction: a slow runner can only make the
+        // entry more expired, never less.
+        let cache = cache_with_ttl(1).await;
+
+        cache.search_models("llama", 5).await.unwrap();
 
         // Wait for expiration
         tokio::time::sleep(Duration::from_secs(2)).await;
