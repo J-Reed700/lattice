@@ -1,5 +1,5 @@
-# TEMPORARY diagnostic for cargo check (windows-latest) failing with
-# STATUS_ENTRYPOINT_NOT_FOUND. Delete once the cause is fixed.
+# TEMPORARY diagnostic for cargo check (windows-latest) STATUS_ENTRYPOINT_NOT_FOUND.
+# Round 2: the CRT theory was disproved, so stop guessing and name the symbol.
 name: win-diag
 on:
   push:
@@ -12,8 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-
-      # Reuse the CI job's cache so we don't pay a cold 12-minute build.
       - uses: actions/cache@v4
         with:
           path: |
@@ -35,8 +33,7 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib --no-run --message-format=json > build.json
 
-      - name: Locate the test exe
-        id: exe
+      - name: Find the missing export
         shell: pwsh
         working-directory: src-tauri
         run: |
@@ -44,56 +41,42 @@ jobs:
             Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'lattice' -and $_.profile.test -eq $true } |
             Select-Object -Last 1).executable
           Write-Host "EXE=$exe"
-          "exe=$exe" >> $env:GITHUB_OUTPUT
-
-      - name: Imported DLLs
-        shell: pwsh
-        run: |
+          $exeDir = Split-Path $exe
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
-          Write-Host "== dumpbin: $dumpbin"
-          & $dumpbin /dependents "${{ steps.exe.outputs.exe }}"
+          $dumpbin = (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1).FullName
 
-      - name: Versions of the usual suspects
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          foreach ($n in 'msvcp140.dll','msvcp140_1.dll','vcruntime140.dll','vcruntime140_1.dll','msvcp140_atomic_wait.dll') {
-            $p = "C:\Windows\System32\$n"
-            if (Test-Path $p) {
-              $v = (Get-Item $p).VersionInfo.FileVersion
-              Write-Host "System32 $n = $v"
-            } else { Write-Host "System32 $n = MISSING" }
+          # Parse `dumpbin /imports` into a map of DLL -> imported symbol names.
+          $imports = @{}
+          $curr = $null
+          foreach ($line in (& $dumpbin /imports $exe)) {
+            if ($line -match '^\s{4}(\S+\.dll)\s*$') { $curr = $Matches[1].ToLower(); $imports[$curr] = New-Object System.Collections.Generic.List[string]; continue }
+            # Symbol rows look like:  "  <hint> <name>" after the header block.
+            if ($curr -and $line -match '^\s+[0-9A-Fa-f]{1,4}\s+([A-Za-z_?@$][^\s]*)\s*$') { $imports[$curr].Add($Matches[1]) }
           }
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT\*.dll" |
-            ForEach-Object { Write-Host "redist $($_.Name) = $($_.VersionInfo.FileVersion)  [$($_.DirectoryName)]" }
 
-      - name: Run it as CI does (expected to fail)
-        id: plain
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          & "${{ steps.exe.outputs.exe }}" --list | Select-Object -First 3
-          Write-Host "EXITCODE=$LASTEXITCODE"
-
-      - name: HYPOTHESIS - run with the toolset redist on PATH
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $crt = (Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory | Select-Object -Last 1).FullName
-          Write-Host "Prepending: $crt"
-          $env:PATH = "$crt;$env:PATH"
-          & "${{ steps.exe.outputs.exe }}" --list | Select-Object -First 3
-          Write-Host "EXITCODE_WITH_REDIST=$LASTEXITCODE"
-
-      - name: HYPOTHESIS - copy redist DLLs next to the exe
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $crt = (Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory | Select-Object -Last 1).FullName
-          Copy-Item "$crt\*.dll" (Split-Path "${{ steps.exe.outputs.exe }}") -Force
-          & "${{ steps.exe.outputs.exe }}" --list | Select-Object -First 3
-          Write-Host "EXITCODE_WITH_LOCAL_DLLS=$LASTEXITCODE"
+          $problems = 0
+          foreach ($dll in $imports.Keys | Sort-Object) {
+            # Same search order the loader uses for these purposes: app dir, then System32.
+            $path = if (Test-Path (Join-Path $exeDir $dll)) { Join-Path $exeDir $dll }
+                    elseif (Test-Path "C:\Windows\System32\$dll") { "C:\Windows\System32\$dll" }
+                    else { $null }
+            if (-not $path) { Write-Host "UNRESOLVED DLL: $dll"; $problems++; continue }
+            $exports = New-Object 'System.Collections.Generic.HashSet[string]'
+            foreach ($line in (& $dumpbin /exports $path)) {
+              if ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+(\S+)') { [void]$exports.Add($Matches[1]) }
+              elseif ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+(\S+)\s*$')          { [void]$exports.Add($Matches[1]) }
+            }
+            if ($exports.Count -eq 0) { Write-Host "note: no exports parsed from $dll (apiset forwarder?)"; continue }
+            foreach ($sym in $imports[$dll]) {
+              if (-not $exports.Contains($sym)) {
+                Write-Host "MISSING: $dll does not export $sym   [resolved: $path]"
+                $problems++
+              }
+            }
+          }
+          Write-Host "PROBLEM_COUNT=$problems"
+          if ($problems -eq 0) {
+            Write-Host "All direct imports resolve; the failure is in a TRANSITIVE dependency."
+            Write-Host "Direct dependency list for reference:"
+            & $dumpbin /dependents $exe
+          }
