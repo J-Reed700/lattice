@@ -67,6 +67,9 @@ use self::source_citations::{
     merge_tool_sources as merge_tool_sources_impl,
 };
 use self::sufficiency::assess_sufficiency;
+/// The reason codes a [`SufficiencyVerdict`] carries, so the prompt can explain
+/// a weak-evidence turn in the same terms the trace records it.
+pub(in crate::features::conversation::chat) use self::sufficiency::reason as sufficiency_reason;
 pub(super) use self::sufficiency::SufficiencyVerdict;
 use self::tool_format::format_tool_result as format_tool_result_impl;
 

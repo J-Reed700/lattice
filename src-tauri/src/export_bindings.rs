@@ -113,6 +113,8 @@ fn main() {
             lattice::features::search::commands::find_similar_documents,
             lattice::features::search::commands::search_with_recency,
             lattice::features::search::commands::batch_search,
+            lattice::features::search::plugin::reranker_status,
+            lattice::features::search::plugin::download_reranker,
             lattice::features::function_calling::plugin::list_available_functions,
             lattice::features::function_calling::plugin::execute_function,
             lattice::features::function_calling::plugin::get_function_stats,

@@ -688,6 +688,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     .with_web_context(retrieval.web_context.clone())
     .with_web_search_error(retrieval.web_search_error.clone())
     .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
+    .with_kb_sufficiency(retrieval.sufficiency.as_ref())
     .build();
     flow_metrics.prompt_build_ms = elapsed_ms(prompt_build_start);
 

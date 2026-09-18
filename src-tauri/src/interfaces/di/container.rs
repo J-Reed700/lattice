@@ -343,6 +343,14 @@ impl Container {
         self.core.data_dir().join("models")
     }
 
+    /// The manager that fetches and inspects the models kept under
+    /// [`Self::models_path`].
+    pub fn model_manager(
+        &self,
+    ) -> Arc<dyn crate::infrastructure::services::traits::ModelManagerTrait> {
+        Arc::clone(self.system.model_manager())
+    }
+
     /// Get the backups directory path.
     ///
     /// Must stay in agreement with `BackupAdapter`, which derives the same

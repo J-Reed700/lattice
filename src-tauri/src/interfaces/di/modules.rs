@@ -1052,6 +1052,11 @@ pub struct SystemModule {
     stats: crate::features::stats::di::StatsDi,
     initialization: crate::features::initialization::di::InitializationDi,
 
+    // Retained, not just handed to initialization: the reranker is downloaded
+    // on demand rather than at boot, so a command needs to reach the manager
+    // long after startup is over.
+    model_manager: Arc<dyn ModelManagerTrait>,
+
     // System-info adapter stays here — it's a shared infra concern
     // with no dedicated feature slice.
     system_info: Arc<dyn SystemInfoPort>,
@@ -1078,7 +1083,7 @@ impl SystemModule {
         let models_path = core.data_dir().join("models");
         let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
         let initialization =
-            crate::features::initialization::di::build(db_pool.clone(), model_manager);
+            crate::features::initialization::di::build(db_pool.clone(), model_manager.clone());
 
         Ok(Self {
             settings,
@@ -1088,6 +1093,7 @@ impl SystemModule {
             health: crate::features::health::di::build(db_pool.clone()),
             stats: crate::features::stats::di::build(db_pool),
             initialization,
+            model_manager,
             system_info: Arc::new(SystemInfoAdapter::new()) as Arc<dyn SystemInfoPort>,
         })
     }
@@ -1103,6 +1109,10 @@ impl SystemModule {
 
     pub fn initialize_models_use_case(&self) -> &Arc<InitializeModelsUseCase> {
         &self.initialization.initialize_models_use_case
+    }
+
+    pub fn model_manager(&self) -> &Arc<dyn ModelManagerTrait> {
+        &self.model_manager
     }
 
     // Settings use case getters

@@ -47,7 +47,7 @@ const FLAT_SPREAD_EPSILON: f32 = 0.01;
 
 /// Why a turn's retrieval was judged sufficient or not. Codes, not prose: they
 /// go to the trace and to tests, and both want to match on them.
-pub(super) mod reason {
+pub(in crate::features::conversation::chat) mod reason {
     pub const NO_RESULTS: &str = "no_results";
     pub const LOW_TOP_SCORE: &str = "low_top_score";
     pub const FLAT_RERANK_SPREAD: &str = "flat_rerank_spread";

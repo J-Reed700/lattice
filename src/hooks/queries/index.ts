@@ -12,3 +12,4 @@ export * from './useArchiveQuery';
 export * from './useUpdateCheckQuery';
 export * from './useCorpusShapeQuery';
 export * from './useClustersQuery';
+export * from './useRerankerQuery';

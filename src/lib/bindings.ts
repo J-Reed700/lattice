@@ -939,6 +939,28 @@ async batchSearch(queries: string[], limit: number | null, searchMode: string | 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Report whether reranking is switched on and whether its model is present.
+ */
+async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reranker_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Download the reranker artifacts. Does not switch reranking on.
+ */
+async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_reranker") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listAvailableFunctions() : Promise<Result<ToolDefinition[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_available_functions") };
@@ -5528,6 +5550,26 @@ message: string;
  * The new name that was applied
  */
 new_name: string }
+/**
+ * Whether reranking is switched on, and whether it could run if it were.
+ *
+ * Both are needed to describe the state honestly: on-but-missing and
+ * off-but-installed are different situations with different next steps.
+ */
+export type RerankerStatusDto = {
+/**
+ * Every artifact the reranker needs is on disk.
+ */
+installed: boolean;
+/**
+ * The user's `search.enableReranking` setting.
+ */
+enabled: boolean;
+/**
+ * True only when reranking will actually happen. This is the field a UI
+ * should believe; the other two explain why.
+ */
+active: boolean; modelName: string; downloadBytes: number }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 /**
  * Response for link resolution (for frontend compatibility).

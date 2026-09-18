@@ -15,11 +15,11 @@ import { usePassageReferenceIds, useSettingsQuery } from '@/hooks/queries';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { toast } from '@/stores/toastStore';
 
+import { ActivityNote } from './ActivityNote';
 import { CitationFootnote } from './CitationFootnote';
 import { FilePreviewModal } from './FilePreviewModal';
 import { MessageActions } from './MessageActions';
 import { MessageEditor } from './MessageEditor';
-import { ActivityNote } from './ActivityNote';
 import { RetrievalTrace } from './RetrievalTrace';
 import { SourceCitations } from './SourceCitations';
 import { provenanceLabel, sourceProvenance } from './sourceProvenance';

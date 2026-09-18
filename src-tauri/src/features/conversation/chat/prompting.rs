@@ -15,6 +15,10 @@ pub(super) struct PromptMessageBuilder<'a> {
     web_context: Option<String>,
     web_search_error: Option<String>,
     kb_unavailable_reason: Option<String>,
+    /// Why the retrieved passages were judged too weak to answer from, when
+    /// they were. `None` means the evidence passed the sufficiency check, or
+    /// that no check ran.
+    thin_kb_reason: Option<String>,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -36,6 +40,7 @@ impl<'a> PromptMessageBuilder<'a> {
             web_context: None,
             web_search_error: None,
             kb_unavailable_reason: None,
+            thin_kb_reason: None,
         }
     }
 
@@ -75,6 +80,24 @@ impl<'a> PromptMessageBuilder<'a> {
         self
     }
 
+    /// Carry the sufficiency verdict into the prompt.
+    ///
+    /// The verdict already decides whether to search the web and what to write
+    /// in the trace, but it never reached the model. So a turn whose passages
+    /// the app had judged too weak to answer from was handed to the model under
+    /// the same heading, and with the same instruction to prefer them, as a
+    /// turn with strong evidence — which is how a confident answer gets written
+    /// off text that does not support it.
+    pub(super) fn with_kb_sufficiency(
+        mut self,
+        verdict: Option<&super::retrieval::SufficiencyVerdict>,
+    ) -> Self {
+        self.thin_kb_reason = verdict
+            .filter(|verdict| !verdict.sufficient)
+            .map(|verdict| describe_thin_evidence(&verdict.reasons));
+        self
+    }
+
     pub(super) fn build(self) -> String {
         if let Some(context_text) = self.followup_context {
             return render_prompt_template(
@@ -86,11 +109,28 @@ impl<'a> PromptMessageBuilder<'a> {
 
         let has_kb_context = self.kb_context.is_some();
         let has_web_context = self.web_context.is_some();
+        // Weak passages are only worth flagging when some were actually
+        // retrieved. With no knowledge-base section at all, the templates below
+        // already say there was nothing to go on.
+        let thin_kb_reason = self.thin_kb_reason.as_deref().filter(|_| has_kb_context);
         let mut context_sections: Vec<String> = Vec::new();
         if has_kb_context && has_web_context {
-            context_sections.push(
-                "Priority rule: Prefer Knowledge Base Results first. Use Web Results only to supplement missing details.".to_string(),
-            );
+            // Preferring the knowledge base is the right default, but not when
+            // the app has already judged that its passages do not answer the
+            // question. Insisting on them then ranks known-weak evidence above
+            // sources that may be better.
+            context_sections.push(if thin_kb_reason.is_some() {
+                "Priority rule: The Knowledge Base Results below were judged weak for this question. Weigh them against the Web Results on their merits rather than preferring them.".to_string()
+            } else {
+                "Priority rule: Prefer Knowledge Base Results first. Use Web Results only to supplement missing details.".to_string()
+            });
+        }
+        if let Some(reason) = thin_kb_reason {
+            context_sections.push(format!(
+                "Evidence quality: {reason} Answer only what these passages support, \
+say plainly which part of the question they do not cover, and do not fill the gap \
+from general knowledge as though it came from the user's documents."
+            ));
         }
         if let Some(context_text) = self.kb_context.as_ref() {
             context_sections.push(format!("Knowledge Base Results:\n{}", context_text));
@@ -152,6 +192,36 @@ Respond conversationally, explain this clearly in one sentence, and offer a conc
             "",
             self.question,
         )
+    }
+}
+
+/// Turn sufficiency reason codes into one sentence the model can act on.
+///
+/// Only the reasons that actually decide the verdict are described. A missing
+/// reranker or a flat spread says something about how the judgement was made,
+/// not about whether the passages answer the question, and telling the model
+/// its evidence is weak on that basis would be wrong.
+fn describe_thin_evidence(reasons: &[&'static str]) -> String {
+    use super::retrieval::sufficiency_reason as reason;
+
+    let mut parts: Vec<&str> = Vec::new();
+    if reasons.contains(&reason::LOW_TOP_SCORE) {
+        parts.push("nothing in the user's documents scored as clearly relevant");
+    }
+    if reasons.contains(&reason::LOW_TERM_COVERAGE) {
+        parts.push("the passages below do not mention much of what was asked about");
+    }
+    if reasons.contains(&reason::TOO_FEW_RESULTS) {
+        parts.push("only a couple of passages matched at all");
+    }
+
+    let Some(last) = parts.pop() else {
+        return "the retrieved passages were judged too weak to answer from.".to_string();
+    };
+    if parts.is_empty() {
+        format!("{last}.")
+    } else {
+        format!("{}, and {last}.", parts.join(", "))
     }
 }
 
@@ -543,5 +613,161 @@ mod citation_numbering_tests {
 
         let context = build_kb_context(&refs, &ids).expect("context");
         assert!(!context.contains("[1]"));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod thin_evidence_tests {
+    use super::*;
+    use crate::features::conversation::chat::retrieval::sufficiency_reason as reason;
+    use crate::features::conversation::chat::retrieval::SufficiencyVerdict;
+
+    fn flags() -> SearchFlags {
+        SearchFlags {
+            force_kb_search: false,
+            force_web_search: false,
+            force_wiki_search: false,
+            deep_research_mode: false,
+            force_followup_mode: false,
+        }
+    }
+
+    fn weak(reasons: Vec<&'static str>) -> SufficiencyVerdict {
+        SufficiencyVerdict {
+            sufficient: false,
+            reasons,
+            ..Default::default()
+        }
+    }
+
+    fn prompt_with(
+        settings: &LLMPromptSettingsDto,
+        kb: Option<&str>,
+        web: Option<&str>,
+        verdict: Option<&SufficiencyVerdict>,
+    ) -> String {
+        PromptMessageBuilder::new(settings, "Does silo hold up?", false, flags())
+            .with_kb_context(kb.map(str::to_string))
+            .with_web_context(web.map(str::to_string))
+            .with_kb_sufficiency(verdict)
+            .build()
+    }
+
+    #[test]
+    fn weak_passages_are_named_as_weak_in_the_prompt() {
+        let settings = LLMPromptSettingsDto::default();
+        let prompt = prompt_with(
+            &settings,
+            Some("[1] A passage about something else."),
+            None,
+            Some(&weak(vec![reason::LOW_TOP_SCORE])),
+        );
+
+        assert!(
+            prompt.contains("Evidence quality:"),
+            "a turn the app judged unanswerable must say so to the model:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("do not fill the gap"),
+            "the instruction that stops a confident answer off weak text is the \
+             point of the note:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn sufficient_passages_carry_no_warning() {
+        let settings = LLMPromptSettingsDto::default();
+        let prompt = prompt_with(
+            &settings,
+            Some("[1] Directly on point."),
+            None,
+            Some(&SufficiencyVerdict::default()),
+        );
+
+        assert!(!prompt.contains("Evidence quality:"), "{prompt}");
+    }
+
+    #[test]
+    fn a_turn_with_no_verdict_is_left_alone() {
+        let settings = LLMPromptSettingsDto::default();
+        let prompt = prompt_with(&settings, Some("[1] A passage."), None, None);
+
+        assert!(!prompt.contains("Evidence quality:"), "{prompt}");
+    }
+
+    #[test]
+    fn weak_passages_stop_outranking_the_web_by_rule() {
+        let settings = LLMPromptSettingsDto::default();
+        let strong = prompt_with(
+            &settings,
+            Some("[1] On point."),
+            Some("Web result"),
+            Some(&SufficiencyVerdict::default()),
+        );
+        let thin = prompt_with(
+            &settings,
+            Some("[1] Off point."),
+            Some("Web result"),
+            Some(&weak(vec![reason::LOW_TERM_COVERAGE])),
+        );
+
+        assert!(
+            strong.contains("Prefer Knowledge Base Results first"),
+            "{strong}"
+        );
+        assert!(
+            !thin.contains("Prefer Knowledge Base Results first"),
+            "ranking known-weak passages above the web is the failure this \
+             avoids:\n{thin}"
+        );
+        assert!(thin.contains("on their merits"), "{thin}");
+    }
+
+    #[test]
+    fn nothing_is_flagged_when_no_passages_were_retrieved() {
+        let settings = LLMPromptSettingsDto::default();
+        // The no-context templates already explain an empty knowledge base;
+        // adding a note about weak passages would describe passages that do
+        // not exist.
+        let prompt = prompt_with(&settings, None, None, Some(&weak(vec![reason::NO_RESULTS])));
+
+        assert!(!prompt.contains("Evidence quality:"), "{prompt}");
+    }
+
+    #[test]
+    fn each_deciding_reason_gets_its_own_words() {
+        let low_score = describe_thin_evidence(&[reason::LOW_TOP_SCORE]);
+        let low_coverage = describe_thin_evidence(&[reason::LOW_TERM_COVERAGE]);
+        let too_few = describe_thin_evidence(&[reason::TOO_FEW_RESULTS]);
+
+        assert_ne!(low_score, low_coverage);
+        assert_ne!(low_coverage, too_few);
+        for described in [&low_score, &low_coverage, &too_few] {
+            assert!(described.ends_with('.'), "{described}");
+        }
+    }
+
+    #[test]
+    fn reasons_about_the_judgement_are_not_reported_as_weak_evidence() {
+        // A missing reranker says how the call was made, not that the passages
+        // are poor. Describing it to the model would be a false claim about
+        // the user's documents.
+        let described = describe_thin_evidence(&[reason::NO_RERANKER, reason::FLAT_RERANK_SPREAD]);
+
+        assert!(!described.contains("rerank"), "{described}");
+        assert_eq!(
+            described, "the retrieved passages were judged too weak to answer from.",
+            "with nothing specific to report, the note stays general rather \
+             than inventing a cause"
+        );
+    }
+
+    #[test]
+    fn several_reasons_read_as_one_sentence() {
+        let described = describe_thin_evidence(&[reason::LOW_TOP_SCORE, reason::LOW_TERM_COVERAGE]);
+
+        assert!(described.contains(", and "), "{described}");
+        assert_eq!(described.matches('.').count(), 1, "{described}");
     }
 }

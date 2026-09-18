@@ -32,6 +32,7 @@ pub mod di;
 pub mod dto;
 pub mod mapper;
 pub mod plugin;
+pub mod reranker_setup;
 pub mod trait_def;
 pub mod use_cases;
 
