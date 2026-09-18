@@ -85,6 +85,11 @@ jobs:
           $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
                 Sort-Object FullName | Select-Object -Last 1
           if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
+          # The manifest is only valid if mt.exe can parse it, and link.exe
+          # reports a bad one as LNK1327 from inside a 12-minute build. Checking
+          # it as XML first turns that into an immediate, obvious failure.
+          try { [xml](Get-Content -Raw windows-app.manifest) | Out-Null }
+          catch { throw "windows-app.manifest is not well-formed XML: $_" }
           # Keep the JSON in a file: piping it straight into ConvertFrom-Json
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
