@@ -240,25 +240,22 @@ impl SystemInfoAdapter {
             .ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = output_str.trim().split(',').collect();
+        // "NVIDIA GeForce RTX 4090, 24564 MiB" -> ("NVIDIA GeForce RTX 4090", "24564 MiB").
+        // split_once gives us both halves without indexing, which `clippy::indexing_slicing`
+        // (denied crate-wide) rejects, and it returns None when nvidia-smi prints nothing.
+        let (name, vram_str) = output_str.trim().split_once(',')?;
+        let vram_gb = vram_str
+            .trim()
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|mb| mb / 1024.0);
 
-        if parts.len() >= 2 {
-            let name = parts[0].trim().to_string();
-            let vram_str = parts[1].trim();
-            let vram_gb = vram_str
-                .split_whitespace()
-                .next()
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|mb| mb / 1024.0);
-
-            Some(GpuInfo {
-                name,
-                vram_gb,
-                compute_type: ComputeType::Cuda,
-            })
-        } else {
-            None
-        }
+        Some(GpuInfo {
+            name: name.trim().to_string(),
+            vram_gb,
+            compute_type: ComputeType::Cuda,
+        })
     }
 }
 
