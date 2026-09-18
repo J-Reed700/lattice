@@ -1867,6 +1867,10 @@ fn spawn_failure_outcome(
 
 /// Where tauri-plugin-shell looks for a sidecar: next to the app
 /// executable, with `.exe` on Windows.
+///
+/// The result is only ever shown to somebody — it goes into the "reinstall
+/// Lattice" error text and the preflight log line — so it is deliberately
+/// [`plainly_spelled`], never Windows' verbatim form.
 fn resolved_sidecar_path(binary: SidecarBinary) -> PathBuf {
     let file_name = format!(
         "{}{}",
@@ -1876,7 +1880,42 @@ fn resolved_sidecar_path(binary: SidecarBinary) -> PathBuf {
     tauri::utils::platform::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(&file_name)))
+        .map(plainly_spelled)
         .unwrap_or_else(|| PathBuf::from(file_name))
+}
+
+/// A path spelled the way a person writes it, for messages and logs.
+///
+/// `tauri::utils::platform::current_exe` canonicalises, to resolve symlinks
+/// before trusting the executable's location, and on Windows canonicalisation
+/// yields a *verbatim* path: `\\?\D:\Program Files\Lattice\llama-server.exe`.
+/// That prefix turns off the Win32 path parser, which is why nobody should be
+/// asked to read it, retype it or paste it into a support thread — and why it
+/// is worth stripping before the path reaches a string, not merely cosmetic:
+/// plenty of programs and older Win32 entry points reject `\\?\` outright.
+#[cfg(not(windows))]
+fn plainly_spelled(path: PathBuf) -> PathBuf {
+    path
+}
+
+#[cfg(windows)]
+fn plainly_spelled(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+    // Only the drive form is safe to simplify. Verbatim UNC (`\\?\UNC\…`) and
+    // device paths (`\\?\PIPE\…`) are not the same path without their prefix,
+    // so they keep it even though they read badly.
+    let Prefix::VerbatimDisk(letter) = prefix.kind() else {
+        return path;
+    };
+    // The prefix is consumed; `RootDir` is the separator we just rewrote.
+    let mut plain = PathBuf::from(format!("{}:\\", letter as char));
+    plain.extend(components.filter(|component| !matches!(component, Component::RootDir)));
+    plain
 }
 
 fn describe_exit(code: Option<i32>, signal: Option<i32>) -> String {
@@ -3072,9 +3111,21 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         let err = spawn_failure(SidecarBinary::Primary, &denied);
         assert_eq!(err.kind, BROKEN);
         assert!(err.message.contains("can't run on this machine: starting "));
-        assert!(err
-            .message
-            .contains("llama-server failed: permission denied"));
+        // The two properties worth holding: the message names the exact file we
+        // tried to start, and it passes the OS's own explanation through. The
+        // wording of that explanation is the OS's business — POSIX says
+        // "permission denied" where Windows says "Access is denied. (os error
+        // 5)" — so it is asserted against the error's own `Display`, never
+        // spelled out here. Likewise the path is taken from
+        // `resolved_sidecar_path`, so the `.exe` suffix Windows adds is part of
+        // the expectation instead of breaking it.
+        let expected = resolved_sidecar_path(SidecarBinary::Primary);
+        assert!(
+            err.message
+                .contains(&format!("starting {} failed: {denied}", expected.display())),
+            "{}",
+            err.message
+        );
     }
 
     #[test]
@@ -3085,14 +3136,32 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
             .expect("exe dir")
             .to_path_buf();
         let suffix = if cfg!(windows) { ".exe" } else { "" };
-        assert_eq!(
-            resolved_sidecar_path(SidecarBinary::Primary),
-            exe_dir.join(format!("llama-server{suffix}"))
-        );
-        assert_eq!(
-            resolved_sidecar_path(SidecarBinary::Cpu),
-            exe_dir.join(format!("llama-server-cpu{suffix}"))
-        );
+        for (binary, name) in [
+            (SidecarBinary::Primary, format!("llama-server{suffix}")),
+            (SidecarBinary::Cpu, format!("llama-server-cpu{suffix}")),
+        ] {
+            let path = resolved_sidecar_path(binary);
+            assert_eq!(path.file_name(), Some(std::ffi::OsStr::new(name.as_str())));
+            // Compare the directories canonically rather than as strings: the
+            // production side resolves symlinks (and on macOS `/var` really is
+            // a symlink to `/private/var`), so two correct answers can be
+            // spelled differently. Canonicalising both sides asks the only
+            // question the test cares about — is this the *same* directory the
+            // test binary is in.
+            assert_eq!(
+                canonical_or_raw(path.parent().expect("sidecar dir")),
+                canonical_or_raw(&exe_dir),
+                "{}",
+                path.display()
+            );
+            // ...and the spelling handed onward stays fit to show a user, i.e.
+            // not the `\\?\D:\…` form canonicalisation returns on Windows.
+            assert!(
+                !path.to_string_lossy().starts_with(r"\\?\"),
+                "{}",
+                path.display()
+            );
+        }
     }
 
     const GPU: Attempt = Attempt {

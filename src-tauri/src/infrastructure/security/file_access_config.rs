@@ -375,10 +375,21 @@ mod tests {
     #[test]
     fn test_open_file_outside_allowed_root() {
         let temp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
         let config = FileAccessConfig::new(vec![temp.path().to_path_buf()]);
 
-        // Try to open /etc/passwd (outside allowed roots)
-        let result = config.open_file("/etc/passwd");
+        // The property under test: a file that exists but sits outside every
+        // allowed root is refused as a *security* denial, not merely reported
+        // as missing. `open_file` probes existence first, so the hostile path
+        // has to really exist or the assertion silently degrades into
+        // AppError::NotFound — which is exactly what `/etc/passwd` did here on
+        // Windows, where it resolves to a non-existent `C:\etc\passwd`. A
+        // second temp directory exists on every platform and is outside the
+        // allowed root.
+        let outside_file = outside.path().join("secret.txt");
+        fs::write(&outside_file, "secret").unwrap();
+
+        let result = config.open_file(&outside_file);
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::Security(_)));

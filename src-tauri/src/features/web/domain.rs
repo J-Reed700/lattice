@@ -617,10 +617,22 @@ mod tests {
         let doc_id = DocumentId::new();
         let path = WebArchivePath::new(&url, "Rust Guide", &doc_id).unwrap();
 
-        let path_str = path.as_str();
-        assert!(path_str.starts_with("github.com/"));
-        assert!(path_str.contains("rust-guide"));
-        assert!(path_str.ends_with(".md"));
+        // The domain is the archive path's first *component*, not a literal
+        // `github.com/` prefix: `relative_path` is a `PathBuf`, so on Windows it
+        // renders as `github.com\…` and a string prefix check fails even though
+        // the structure is correct. Assert on components and on the file name.
+        let relative = path.as_path();
+        assert!(
+            relative.starts_with("github.com"),
+            "{} should be under the domain directory",
+            relative.display()
+        );
+        let file_name = relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("archive path must have a file name");
+        assert!(file_name.contains("rust-guide"));
+        assert_eq!(relative.extension().and_then(|ext| ext.to_str()), Some("md"));
     }
 
     #[test]

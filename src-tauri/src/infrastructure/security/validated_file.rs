@@ -328,11 +328,20 @@ mod tests {
 
     #[test]
     fn test_blocks_absolute_path_escape() {
-        // Try to access /etc/passwd (outside scope)
+        // The property under test: an absolute path that contains no `..` and
+        // exists on disk is still refused when it lies outside every allowed
+        // root. `/etc/passwd` used to stand in for that, but it only proves it
+        // on Unix — on Windows the string has a root and no drive prefix, so it
+        // resolves against the current drive to `C:\etc\passwd`, which does not
+        // exist, and the failure becomes CanonicalizationFailed instead of the
+        // scope rejection we mean to assert. A second temp directory is outside
+        // the root and really exists on every platform.
         let temp_dir = TempDir::new().unwrap();
+        let outside_dir = TempDir::new().unwrap();
         let allowed = vec![temp_dir.path().to_path_buf()];
 
-        let result = ValidatedFile::open("/etc/passwd", &allowed);
+        let outside_file = create_test_file(outside_dir.path(), "secret.txt", "secret");
+        let result = ValidatedFile::open(&outside_file, &allowed);
 
         assert!(
             matches!(
@@ -341,7 +350,18 @@ mod tests {
                     ValidationError::PathOutsideScope { .. }
                 ))
             ),
-            "Should block access to /etc/passwd"
+            "Should block an existing absolute path outside the allowed root, got {result:?}"
+        );
+
+        // Separately: the rooted-but-prefixless spelling must never succeed
+        // either. On Unix it is `/etc/passwd` and is rejected as out of scope;
+        // on Windows it resolves against the current drive, which can never be
+        // the temp root, so it is rejected whether or not it exists. Asserting
+        // only `is_err` here keeps the weaker platform-dependent claim separate
+        // from the scope claim above instead of softening it.
+        assert!(
+            ValidatedFile::open("/etc/passwd", &allowed).is_err(),
+            "a rooted path outside the allowed root must never open"
         );
     }
 

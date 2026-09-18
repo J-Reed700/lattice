@@ -9,6 +9,8 @@ pub mod error;
 pub mod path_confinement;
 pub mod result;
 pub mod sql_like;
+#[cfg(test)]
+pub mod test_paths;
 pub mod text_utils;
 pub mod time;
 // REMOVED: pub mod traits; (5,125-line god object eliminated - traits migrated to infrastructure/services/traits/)

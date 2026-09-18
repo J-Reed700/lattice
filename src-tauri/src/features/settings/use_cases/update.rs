@@ -323,6 +323,7 @@ fn validate_http_url(url_str: &str) -> std::result::Result<(), String> {
 mod tests {
     use super::*;
     use crate::application::ports::MockSettingsRepository;
+    use crate::shared::test_paths;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -398,7 +399,10 @@ mod tests {
         let mut updates = HashMap::new();
         updates.insert(
             "indexedPaths".to_string(),
-            json!(["/Users/example/../../etc"]),
+            // Host-absolute apart from the traversal, so the rejection comes
+            // from the `..` components rather than from the path failing to
+            // look absolute on this platform.
+            json!([test_paths::abs_str("Users/example/../../etc")]),
         );
 
         let result = use_case
@@ -447,9 +451,15 @@ mod tests {
         let use_case = UpdateSettingsUseCase::new(repository);
 
         let mut updates = HashMap::new();
+        // Absolute in the host's spelling: a `/`-rooted string is not an
+        // absolute path on Windows, so the validator rejected it and the test
+        // was asserting acceptance of something no platform accepted.
         updates.insert(
             "indexedPaths".to_string(),
-            json!(["/Users/example/Documents", "/Users/example/Projects"]),
+            json!([
+                test_paths::abs_str("Users/example/Documents"),
+                test_paths::abs_str("Users/example/Projects"),
+            ]),
         );
 
         let result = use_case
@@ -520,7 +530,10 @@ mod tests {
         let mut updates = HashMap::new();
         updates.insert(
             "indexedPaths".to_string(),
-            json!(["/Users/example/../../etc"]),
+            // Host-absolute apart from the traversal, so the rejection comes
+            // from the `..` components rather than from the path failing to
+            // look absolute on this platform.
+            json!([test_paths::abs_str("Users/example/../../etc")]),
         );
         let request = UpdateSettingsRequestDto {
             category: Some(SettingsCategory::Indexing),
@@ -573,7 +586,7 @@ mod tests {
         let mut updates = HashMap::new();
         updates.insert(
             "indexing".to_string(),
-            json!({ "indexedPaths": ["/Users/example/../../etc"] }),
+            json!({ "indexedPaths": [test_paths::abs_str("Users/example/../../etc")] }),
         );
 
         let result = use_case.update_global(updates).await;

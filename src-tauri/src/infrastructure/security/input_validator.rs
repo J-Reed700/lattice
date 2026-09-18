@@ -535,6 +535,7 @@ impl InputValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::test_paths;
 
     #[test]
     fn test_search_query_validation() {
@@ -613,12 +614,14 @@ mod tests {
     fn test_directory_path_validation() {
         let validator = InputValidator::new();
 
-        // Valid absolute paths (existence not required)
+        // Valid absolute paths (existence not required). Spelled through the
+        // host's own convention: a POSIX root is not absolute on Windows, so
+        // hard-coding `/Users/...` here asserted nothing but "Unix".
         assert!(validator
-            .validate_directory_path("/Users/example/Documents", false)
+            .validate_directory_path(&test_paths::abs_str("Users/example/Documents"), false)
             .is_ok());
         assert!(validator
-            .validate_directory_path("/home/user/folder", false)
+            .validate_directory_path(&test_paths::abs_str("home/user/folder"), false)
             .is_ok());
 
         // Windows path only valid on Windows
@@ -631,12 +634,14 @@ mod tests {
         assert!(validator.validate_directory_path("", false).is_err());
         assert!(validator.validate_directory_path("   ", false).is_err());
 
-        // Invalid: path traversal (CWE-22)
+        // Invalid: path traversal (CWE-22). These are absolute on the host, so
+        // the rejection has to come from the `..` check rather than from the
+        // path incidentally failing the absoluteness check.
         assert!(validator
-            .validate_directory_path("/Users/example/../../../etc", false)
+            .validate_directory_path(&test_paths::abs_str("Users/example/../../../etc"), false)
             .is_err());
         assert!(validator
-            .validate_directory_path("/home/../root", false)
+            .validate_directory_path(&test_paths::abs_str("home/../root"), false)
             .is_err());
         assert!(validator
             .validate_directory_path("/var/log/..\\..\\etc", false)
@@ -662,9 +667,10 @@ mod tests {
         // Valid: exists and is a directory
         assert!(validator.validate_directory_path(temp_path, true).is_ok());
 
-        // Invalid: path doesn't exist
+        // Invalid: path doesn't exist. Absolute on the host, so the failure is
+        // the existence check and not the absoluteness check.
         assert!(validator
-            .validate_directory_path("/nonexistent/path/xyz123", true)
+            .validate_directory_path(&test_paths::abs_str("nonexistent/path/xyz123"), true)
             .is_err());
     }
 }

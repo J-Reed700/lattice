@@ -64,7 +64,26 @@ impl ReadFileContentUseCase {
         // Validation and open happen as one operation. All metadata and bytes
         // below come from this same handle, so a path cannot be swapped to an
         // out-of-scope symlink between validation and reading.
-        let mut validated_file = self.file_access_config.open_file(&request.path)?;
+        let mut validated_file = match self.file_access_config.open_file(&request.path) {
+            Ok(file) => file,
+            // Windows cannot open a directory as a file at all: `CreateFile`
+            // without FILE_FLAG_BACKUP_SEMANTICS fails with "Access is
+            // denied", so the `is_dir()` rejection below is unreachable there
+            // and callers would get an opaque `FileRead` instead of the
+            // "that's a folder" message Unix produces. Re-classify only the
+            // post-scope-check IO failure, so an out-of-scope path still
+            // reports `Security` and reveals nothing about what it points at.
+            Err(AppError::FileRead { path, reason }) => {
+                // repository-barrier-allow: classifying an error about this very
+                // file resource, after the scope check already granted access.
+                return Err(if std::path::Path::new(&request.path).is_dir() {
+                    AppError::InvalidInput(format!("Cannot read directory as file: {}", path))
+                } else {
+                    AppError::FileRead { path, reason }
+                });
+            }
+            Err(other) => return Err(other),
+        };
         let validated_path = validated_file.path().to_path_buf();
         // repository-barrier-allow: metadata comes from the already-open user file resource.
         let is_directory = validated_file.metadata().is_dir();

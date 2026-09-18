@@ -123,6 +123,13 @@ impl ModelPaths {
     /// accepts a frontend-decoded *bare filename*, while this method is for a
     /// trusted manifest identity that still needs traversal and symlink
     /// confinement.
+    ///
+    /// The returned path is **canonicalized**, because that is the form the
+    /// confinement check resolves symlinks in — so it is not always spelled the
+    /// same way as `unified_path().join(relative_path)` would be. On Windows in
+    /// particular `canonicalize` prepends the `\\?\` verbatim prefix. Callers
+    /// must therefore not compare this against a path assembled from
+    /// [`Self::unified_path`] textually; use it to open or create the file.
     pub fn manifest_file_path(&self, relative_path: &str) -> Result<PathBuf, AppError> {
         use std::path::Component;
 
@@ -242,8 +249,21 @@ mod tests {
         let resolved = paths
             .manifest_file_path("onnx/model.onnx")
             .expect("safe nested manifest path");
-        assert!(resolved.starts_with(paths.unified_path()));
-        assert!(resolved.ends_with(Path::new("onnx/model.onnx")));
+
+        // `manifest_file_path` returns what `confine_to_root` resolved, i.e. a
+        // *canonicalized* path, while `unified_path()` is the lexical join
+        // built before the directory exists. The two name the same location in
+        // different dialects: on Windows `canonicalize` prepends the `\\?\`
+        // verbatim prefix, so a `starts_with` against the lexical path can
+        // never match no matter how correct the confinement is. Compare
+        // canonical against canonical, as
+        // `file_path_accepts_a_plain_filename_and_stays_under_the_root` does.
+        let canonical_root = ModelPaths::models_root()
+            .expect("models root")
+            .canonicalize()
+            .expect("canonical root");
+        assert!(resolved.starts_with(canonical_root.join(paths.model_id())));
+        assert!(resolved.ends_with(Path::new("onnx").join("model.onnx")));
     }
 
     #[test]
@@ -281,10 +301,21 @@ mod tests {
         let paths = ModelPaths::new("phi-3-mini").unwrap();
 
         assert_eq!(paths.model_id(), "phi-3-mini");
-        assert!(paths
-            .unified_path()
-            .to_string_lossy()
-            .contains(".cache/lattice/models/phi-3-mini"));
+
+        // Assert on path *structure*, not on one platform's spelling of it: the
+        // rendered string is `…\.cache\lattice\models\phi-3-mini` on Windows, so
+        // a `/`-separated substring search fails there even though the path is
+        // exactly right. `Path::ends_with` matches whole components.
+        let expected_tail = Path::new(".cache")
+            .join("lattice")
+            .join("models")
+            .join("phi-3-mini");
+        assert!(
+            paths.unified_path().ends_with(&expected_tail),
+            "{} should end with {}",
+            paths.unified_path().display(),
+            expected_tail.display()
+        );
     }
 
     #[test]

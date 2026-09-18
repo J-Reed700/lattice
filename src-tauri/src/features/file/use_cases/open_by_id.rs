@@ -127,6 +127,12 @@ mod tests {
     use crate::application::ports::file_system_port::FileSystemPort;
     use crate::application::ports::{DocumentRepositoryPort, RepositoryPort};
     use crate::domain::entities::Document;
+    // The fake vault root has to be absolute *on the host*: `/lattice` has a
+    // root but no prefix, so Windows does not treat it as absolute and
+    // `validate_path` resolves it against the current directory, which then
+    // falls outside the configured root and turns every success case into an
+    // `InvalidInput`. `test_paths::abs` spells it per-platform instead.
+    use crate::shared::test_paths::{abs, abs_str};
     use async_trait::async_trait;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -352,9 +358,10 @@ mod tests {
         let doc_repo =
             Arc::new(MockDocumentRepository::new().with_document("doc-123", "docs/file.txt"));
         let file_system = Arc::new(MockFileSystem::new());
-        let file_storage = Arc::new(MockFileStorage::new().with_file("/lattice/docs/file.txt"));
-        let file_access_config = Arc::new(FileAccessConfig::new(vec![PathBuf::from("/lattice")]));
-        let vault_path = PathBuf::from("/lattice");
+        let file_storage =
+            Arc::new(MockFileStorage::new().with_file(&abs_str("lattice/docs/file.txt")));
+        let file_access_config = Arc::new(FileAccessConfig::new(vec![abs("lattice")]));
+        let vault_path = abs("lattice");
 
         let use_case = OpenFileByIdUseCase::new(
             doc_repo,
@@ -374,7 +381,7 @@ mod tests {
         assert_eq!(result.unwrap().action, "opened_external");
         assert_eq!(
             file_system.get_opened_files(),
-            vec!["/lattice/docs/file.txt"]
+            vec![abs_str("lattice/docs/file.txt")]
         );
     }
 
@@ -385,8 +392,8 @@ mod tests {
         let doc_repo = Arc::new(MockDocumentRepository::new()); // No documents
         let file_system = Arc::new(MockFileSystem::new());
         let file_storage = Arc::new(MockFileStorage::new());
-        let file_access_config = Arc::new(FileAccessConfig::new(vec![PathBuf::from("/lattice")]));
-        let vault_path = PathBuf::from("/lattice");
+        let file_access_config = Arc::new(FileAccessConfig::new(vec![abs("lattice")]));
+        let vault_path = abs("lattice");
 
         let use_case = OpenFileByIdUseCase::new(
             doc_repo,
@@ -414,8 +421,8 @@ mod tests {
             Arc::new(MockDocumentRepository::new().with_document("doc-123", "docs/missing.txt"));
         let file_system = Arc::new(MockFileSystem::new());
         let file_storage = Arc::new(MockFileStorage::new()); // File not on disk
-        let file_access_config = Arc::new(FileAccessConfig::new(vec![PathBuf::from("/lattice")]));
-        let vault_path = PathBuf::from("/lattice");
+        let file_access_config = Arc::new(FileAccessConfig::new(vec![abs("lattice")]));
+        let vault_path = abs("lattice");
 
         let use_case = OpenFileByIdUseCase::new(
             doc_repo,
