@@ -73,32 +73,6 @@ jobs:
         working-directory: src-tauri
         run: cargo check --all-targets
 
-      # The C++ dependencies (usearch through cxx) are compiled against the
-      # MSVC C++ runtime that ships with the installed VS toolset, which can be
-      # newer than the copy in System32. The test binary then loads the older
-      # System32 DLL and dies at startup with STATUS_ENTRYPOINT_NOT_FOUND
-      # before running a single test — it links fine, so this is a missing
-      # export, not a missing library.
-      #
-      # It has to be app-local: Windows searches the executable's own directory
-      # first but System32 before PATH, so putting the redist on PATH cannot
-      # override it. Cargo leaves files it does not own alone, so seeding the
-      # directories ahead of the build is enough.
-      - name: Put the toolset's C++ runtime beside the test binaries (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $crt = (Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
-                  Sort-Object Name | Select-Object -Last 1).FullName
-          if (-not $crt) { throw "no Microsoft.VC*.CRT redist found under $vs" }
-          Write-Host "Using C++ runtime from $crt"
-          Get-ChildItem "$crt\*.dll" | ForEach-Object { Write-Host "  $($_.Name) $($_.VersionInfo.FileVersion)" }
-          foreach ($d in 'src-tauri\target\debug', 'src-tauri\target\debug\deps') {
-            New-Item -ItemType Directory -Force -Path $d | Out-Null
-            Copy-Item "$crt\*.dll" $d -Force
-          }
-
       - name: Desktop Rust unit and repository tests
         working-directory: src-tauri
         run: cargo test --lib --bin export_bindings --test sidecar_guard_test
