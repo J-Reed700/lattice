@@ -4,7 +4,7 @@
   the app, `export_bindings`, and each test harness. It replaces the identical
   default that tauri-build would embed for the bins only (tauri-build is
   constructed with `new_without_app_manifest()`), because the lib's own
-  unit-test harness cannot be reached any other way -- see build.rs.
+  unit-test harness cannot be reached any other way (see build.rs).
 
   `rfd` (through tauri-plugin-dialog) statically imports TaskDialogIndirect.
   That symbol is exported only by comctl32 version 6, the side-by-side
