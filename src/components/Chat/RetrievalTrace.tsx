@@ -43,7 +43,14 @@ export function RetrievalTrace({ trace }: RetrievalTraceProps) {
   // how the composer learns *why*. But "Searched 0 documents" reads as a
   // search that came up empty, which is a different and untrue claim, so the
   // line stays off and `ChatModelNotice` says what actually happened.
-  if (trace.searchedDocuments === 0 && trace.passages === 0 && trace.files === 0) return null;
+  if (
+    trace.searchedDocuments === 0 &&
+    trace.passages === 0 &&
+    trace.files === 0 &&
+    !trace.webPages
+  ) {
+    return null;
+  }
 
   const note = retrievalNote(trace);
 
@@ -69,6 +76,13 @@ export function RetrievalTrace({ trace }: RetrievalTraceProps) {
         <span className="tabular-nums">{trace.files}</span>{' '}
         {trace.files === 1 ? 'file' : 'files'}
       </>}
+      {!!trace.webPages && (
+        <>
+          {trace.searchedDocuments > 0 || trace.passages > 0 || trace.files > 0 ? ' · ' : ' '}
+          <span className="tabular-nums">{trace.webPages}</span>{' '}
+          {trace.webPages === 1 ? 'web page' : 'web pages'}
+        </>
+      )}
       {trace.scope === 'linked' && ' · this space'}
     </p>
     {note && <p className="mb-2 text-xs text-[hsl(var(--text-tertiary))]">{note}</p>}

@@ -198,6 +198,19 @@ pub struct RetrievalTuningSettingsDto {
     pub wiki_context_limit: u32,
     pub web_search_max_results: u32,
     pub web_snippet_max_chars: u32,
+    /// How many of the top web results are opened and read in full for the
+    /// prompt. Search engines return a headline and roughly one sentence; a
+    /// question about what a page actually says cannot be answered from that.
+    /// 0 disables page reading and falls back to snippets alone.
+    #[serde(default = "default_web_fetch_page_count")]
+    pub web_fetch_page_count: u32,
+    /// Per-page character budget for fetched page text in the prompt.
+    #[serde(default = "default_web_page_max_chars")]
+    pub web_page_max_chars: u32,
+    /// Seconds any one page fetch may take before it is abandoned and the
+    /// result falls back to its snippet.
+    #[serde(default = "default_web_page_fetch_timeout_secs")]
+    pub web_page_fetch_timeout_secs: u32,
     #[serde(default = "default_deep_research_depth")]
     pub deep_research_depth: u32,
     #[serde(default = "default_deep_research_branch_queries")]
@@ -279,6 +292,17 @@ pub struct LLMSettingsDto {
 
     /// Context window size
     pub context_window: u32,
+
+    /// Context window for the bundled local model, in tokens.
+    ///
+    /// `None` means Auto: the window is sized from what the GGUF says the model
+    /// was trained for and how much memory the accelerator reports, which is
+    /// almost always the right answer. A number here overrides that and is used
+    /// as written — llama.cpp will rope-scale past the trained length, and an
+    /// allocation too large for the card falls back rather than being silently
+    /// shrunk. `context_window` above governs remote providers, not this.
+    #[serde(default)]
+    pub local_context_window: Option<u32>,
 
     /// Ollama server URL
     pub ollama_url: String,
@@ -806,6 +830,18 @@ fn default_repeat_penalty() -> f32 {
     1.1
 }
 
+fn default_web_fetch_page_count() -> u32 {
+    3
+}
+
+fn default_web_page_max_chars() -> u32 {
+    6000
+}
+
+fn default_web_page_fetch_timeout_secs() -> u32 {
+    12
+}
+
 fn default_deep_research_depth() -> u32 {
     3
 }
@@ -962,6 +998,9 @@ impl Default for RetrievalTuningSettingsDto {
             wiki_context_limit: 3,
             web_search_max_results: 5,
             web_snippet_max_chars: 1200,
+            web_fetch_page_count: default_web_fetch_page_count(),
+            web_page_max_chars: default_web_page_max_chars(),
+            web_page_fetch_timeout_secs: default_web_page_fetch_timeout_secs(),
             deep_research_depth: default_deep_research_depth(),
             deep_research_branch_queries: default_deep_research_branch_queries(),
             external_search_max_wiki_terms: 8,
@@ -1008,6 +1047,7 @@ impl Default for LLMSettingsDto {
             repeat_penalty: 1.1,
             max_tokens: 131072,
             context_window: 131072,
+            local_context_window: None,
             ollama_url: "http://localhost:11434".to_string(),
             ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),

@@ -783,3 +783,170 @@ async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_
     // The cap is the point: a rejected correction does not try again.
     assert_eq!(stub.calls(), 1);
 }
+
+/// A planner stub that budgets the way the sidecar adapter does and then bills
+/// the way llama-server really does.
+///
+/// `count_tokens` is the adapter's estimate, four characters per token. The
+/// server's own tokenizer is less generous on a catalog full of punctuation and
+/// opaque UUIDs — closer to three and a half — and that gap is what produced
+/// `request (8610 tokens) exceeds the available context size (8192 tokens)` in
+/// a real session. Modelling both rates is what makes an overflow visible here
+/// as a failed assertion instead of a 400 at runtime.
+fn server_tokens(text: &str) -> usize {
+    (text.len() * 2).div_ceil(7)
+}
+
+struct NarrowWindowStub {
+    prompts: std::sync::Mutex<Vec<String>>,
+    systems: std::sync::Mutex<Vec<Vec<String>>>,
+    window: usize,
+}
+
+impl NarrowWindowStub {
+    fn new(window: usize) -> Self {
+        Self {
+            prompts: std::sync::Mutex::new(Vec::new()),
+            systems: std::sync::Mutex::new(Vec::new()),
+            window,
+        }
+    }
+
+    /// What llama-server would count for the whole request: the system prompt
+    /// and the user turn both occupy the same window, billed at the server's
+    /// rate rather than the adapter's estimate.
+    fn request_tokens(&self) -> usize {
+        let prompt = self.prompts.lock().unwrap().last().cloned().unwrap();
+        let system: usize = self.systems.lock().unwrap()[0]
+            .iter()
+            .map(|entry| server_tokens(entry))
+            .sum();
+        server_tokens(&prompt) + system
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for NarrowWindowStub {
+    async fn generate(
+        &self,
+        prompt: &str,
+        context: &[String],
+        _images: Option<Vec<String>>,
+    ) -> Result<String> {
+        self.prompts.lock().unwrap().push(prompt.to_string());
+        self.systems.lock().unwrap().push(context.to_vec());
+        Ok(
+            r#"{"queries":["anything"],"opening_document_ids":[],"start_at_beginning":false}"#
+                .to_string(),
+        )
+    }
+
+    async fn generate_streaming(
+        &self,
+        _prompt: &str,
+        _context: &[String],
+        _images: Option<Vec<String>>,
+    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin + '_>> {
+        Ok(Box::new(Box::pin(futures::stream::empty())))
+    }
+
+    fn model_name(&self) -> &str {
+        "narrow-window-stub"
+    }
+
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len().div_ceil(4)
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A catalog the size of a real vault, with the opaque UUID-shaped IDs that
+/// make catalogs expensive to serialise.
+fn wide_catalog(count: usize) -> Vec<CorpusDocument> {
+    (0..count)
+        .map(|index| CorpusDocument {
+            sections: (0..8)
+                .map(|section| {
+                    format!(
+                        "{index}.{section} Statutory basis, related provisions and \
+                         examiner guidance for this portion of the chapter"
+                    )
+                })
+                .collect(),
+            source_context: None,
+            id: format!("e9fc3ea0-f987-4629-b7a8-f2e26ebb37{index:02}"),
+            name: format!("mpep-{index:04}-appendix-of-considerable-length.pdf"),
+            opening: "Table of contents and front matter".into(),
+            chapter_number: None,
+        })
+        .collect()
+}
+
+/// The reported failure: llama-server rejected the planning call with
+/// `request (8610 tokens) exceeds the available context size (8192 tokens)`, so
+/// corpus planning and the corrective retry both fell back silently. The
+/// catalog was sized against the question alone, leaving the system prompt and
+/// the conversation excerpt to overflow the window after the fact.
+#[tokio::test]
+async fn a_full_catalog_and_a_long_history_still_fit_the_window() {
+    let window = 8192;
+    let stub = NarrowWindowStub::new(window);
+    let history =
+        "user: tell me everything about this\nassistant: here is a long answer\n".repeat(200);
+
+    plan(
+        &stub,
+        "What exactly does the protagonist learn? Every detail",
+        Some(&history),
+        &wide_catalog(43),
+        &Default::default(),
+    )
+    .await
+    .unwrap();
+
+    let used = stub.request_tokens();
+    assert!(
+        used <= window,
+        "planner built a {used}-token request for a {window}-token window"
+    );
+}
+
+/// The correction block is evidence in the same user turn, so it competes for
+/// the same window and must be paid for out of the catalog's budget.
+#[tokio::test]
+async fn a_correction_block_is_charged_against_the_same_window() {
+    let window = 8192;
+    let stub = NarrowWindowStub::new(window);
+    let correction = CorrectionRequest {
+        queries_already_tried: (0..40)
+            .map(|i| format!("a failed query number {i}"))
+            .collect(),
+        top_result_titles: (0..40)
+            .map(|i| format!("An unhelpful document {i}"))
+            .collect(),
+        why_insufficient: vec!["low_term_coverage", "low_top_score"],
+    };
+
+    plan_correction(
+        &stub,
+        "What exactly does the protagonist learn?",
+        Some(&"user: earlier turn\n".repeat(200)),
+        &wide_catalog(43),
+        &correction,
+    )
+    .await
+    .unwrap();
+
+    let used = stub.request_tokens();
+    assert!(
+        used <= window,
+        "correction built a {used}-token request for a {window}-token window"
+    );
+}

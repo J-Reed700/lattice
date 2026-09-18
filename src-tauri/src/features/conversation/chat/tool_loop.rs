@@ -1,4 +1,5 @@
 mod document_progress;
+mod fetch_memory;
 mod scoped_document_tools;
 
 use crate::features::function_calling::dto::{
@@ -22,7 +23,7 @@ use tracing::{error, info, warn};
 use super::cancellation::is_cancel_requested;
 use super::prompting::render_tool_followup_prompt;
 use super::retrieval::{
-    build_web_source_citations, deduplicate_sources, format_tool_result,
+    build_web_source_citations, deduplicate_sources, format_tool_result, merge_tool_sources,
     record_tool_document_references,
 };
 use super::ChatStreamEventDto;
@@ -97,6 +98,21 @@ impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
         })
     }
 
+    /// Say what the turn is working on, for the stretches that produce no text.
+    ///
+    /// Best-effort: losing a progress note must never fail a generation that is
+    /// otherwise going fine, so the error is logged and swallowed rather than
+    /// propagated the way `content` propagates a dead frontend.
+    pub(super) fn activity(&self, detail: &str) {
+        if let Err(error) = self.emit(ChatStreamEventDto {
+            status: Some("activity".to_owned()),
+            detail: Some(detail.to_owned()),
+            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
+        }) {
+            warn!(%error, "Failed to emit activity update");
+        }
+    }
+
     /// Emit the terminal event. Idempotent, so belt-and-braces calls on
     /// several exit paths cannot produce duplicates.
     pub(super) fn done(&mut self) {
@@ -153,6 +169,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
 
     const MAX_TOOL_ITERATIONS: usize = 5;
     const CANCEL_POLL_INTERVAL_MS: u64 = 200;
+    /// How often to repeat the current activity while nothing else is happening.
+    /// Often enough to read as alive, rare enough not to spam the event channel.
+    const ACTIVITY_HEARTBEAT: Duration = Duration::from_secs(5);
     const EMPTY_RESPONSE_RETRY_HINT: &str =
         "Previous generation produced no text. Respond directly to the user query.";
     // One deadline for the whole turn: tool rounds and provider retries share it.
@@ -199,6 +218,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
 
+    // Dead links are remembered for the whole turn, not just the round that
+    // found them: the point is to stop the next round paying for them again.
+    let mut fetch_memory = fetch_memory::FetchMemory::default();
     for iteration in 0..MAX_TOOL_ITERATIONS {
         timings.iterations = (iteration + 1) as u32;
         if is_cancel_requested(request_id) {
@@ -232,16 +254,26 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     emitter.content(&text)
                 };
                 let on_retry = |attempt| emitter.status("retrying", attempt);
+                emitter.activity(thinking_label(iteration));
                 let completion = timeout(
                     remaining,
                     llm.complete_with_retry_progress(&native_request, &on_text, &on_retry),
                 );
                 tokio::pin!(completion);
+                let mut last_heartbeat = Instant::now();
                 loop {
                     tokio::select! {
                         result = &mut completion => break result.map_err(|_| budget_exhausted())?,
                         _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
                             if is_cancel_requested(request_id) { return Err(cancellation_error()); }
+                            // Until the first text arrives there is nothing else
+                            // to show, and on a slow model that can be minutes.
+                            if !first_text_received.load(std::sync::atomic::Ordering::Relaxed)
+                                && last_heartbeat.elapsed() >= ACTIVITY_HEARTBEAT
+                            {
+                                last_heartbeat = Instant::now();
+                                emitter.activity(thinking_label(iteration));
+                            }
                         }
                     }
                 }
@@ -455,6 +487,37 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 ));
                                 continue;
                             }
+                            // A URL this turn already failed on costs a request
+                            // to learn nothing. Answer it from memory so the
+                            // round can still spend its time somewhere useful.
+                            if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                                if let Some(reason) = fetch_memory.previous_failure(url) {
+                                    let notice = format!(
+                                        "Not retried: {url} already failed this turn ({reason}). Use a different source.",
+                                    );
+                                    warn!(
+                                        requested_function = tc.name.as_str(),
+                                        resolved_function = resolved_tool,
+                                        url,
+                                        reason,
+                                        "Skipping a URL that already failed this turn"
+                                    );
+                                    timings.tool_failure_count =
+                                        timings.tool_failure_count.saturating_add(1);
+                                    if let Some(id) = &tc.id {
+                                        native_request.input.push(CompletionInput::ToolResult {
+                                            id: id.clone(),
+                                            output: notice.clone(),
+                                        });
+                                    }
+                                    tool_context.push(format!("System: [{notice}]"));
+                                    timings.tool_execution_ms = timings
+                                        .tool_execution_ms
+                                        .saturating_add(elapsed_ms(tool_call_start));
+                                    continue;
+                                }
+                            }
+                            emitter.activity(&tool_activity_label(resolved_tool, &tc.arguments));
                             info!(
                                 requested_function = tc.name.as_str(),
                                 resolved_function = resolved_tool,
@@ -476,17 +539,18 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         highlight_terms,
                                         tool_output_settings,
                                     );
-                                    let tool_chunk_ids: std::collections::HashSet<_> =
-                                        tool_sources.iter().map(|s| s.chunk_id.clone()).collect();
+                                    let mut tool_chunk_ids = std::collections::HashSet::new();
                                     if !tool_sources.is_empty() {
-                                        let added = tool_sources.len();
-                                        sources.extend(tool_sources);
+                                        let offered = tool_sources.len();
+                                        let before = sources.len();
+                                        tool_chunk_ids = merge_tool_sources(sources, tool_sources);
                                         *sources = deduplicate_sources(std::mem::take(sources));
                                         super::retrieval::assign_citation_ids(sources);
                                         info!(
                                             requested_function = tc.name.as_str(),
                                             resolved_function = resolved_tool,
-                                            added_sources = added,
+                                            offered_sources = offered,
+                                            added_sources = sources.len().saturating_sub(before),
                                             merged_sources = sources.len(),
                                             "Tool call added verifiable sources"
                                         );
@@ -557,6 +621,18 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         "System: [Tool '{}' result (excerpted): {}]",
                                         resolved_tool, result_text
                                     ));
+                                    if !result.success {
+                                        if let Some(url) = fetch_memory::fetch_target(&tc.arguments)
+                                        {
+                                            fetch_memory.record_failure(
+                                                url,
+                                                result
+                                                    .error_message
+                                                    .as_deref()
+                                                    .unwrap_or("the fetch did not succeed"),
+                                            );
+                                        }
+                                    }
                                     info!(
                                         requested_function = tc.name.as_str(),
                                         resolved_function = resolved_tool,
@@ -579,6 +655,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                             output: format!("Tool failed: {e}"),
                                         });
                                     }
+                                    if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                                        fetch_memory.record_failure(url, &e.to_string());
+                                    }
                                     tool_context.push(format!(
                                         "System: [Tool '{}' failed: {}]",
                                         resolved_tool, e
@@ -588,6 +667,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             timings.tool_execution_ms = timings
                                 .tool_execution_ms
                                 .saturating_add(elapsed_ms(tool_call_start));
+                        }
+
+                        // Restate the whole dead list once per round. A single
+                        // failure line among several results is easy for the
+                        // model to read past; the standing list is not.
+                        if let Some(advisory) = fetch_memory.advisory() {
+                            tool_context.push(format!("System: [{advisory}]"));
                         }
 
                         let followup_prompt_start = Instant::now();
@@ -826,6 +912,39 @@ fn available_tool_names(
     names.retain(|name| seen.insert(name.clone()));
     names.sort();
     names
+}
+
+/// What to show while the model is producing no text.
+///
+/// The first round is plain thinking; later rounds follow tool results, and
+/// saying so is the difference between "stuck" and "on its third source".
+fn thinking_label(iteration: usize) -> &'static str {
+    if iteration == 0 {
+        "Thinking"
+    } else {
+        "Reading what it found and thinking"
+    }
+}
+
+/// What to show while one tool call runs. Names the host for a fetch, because
+/// "Reading thereviewgeek.com" is the difference between visible progress and a
+/// spinner, and a blocked site is then obvious rather than mysterious.
+fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
+    match tool {
+        "fetch_url_content" => match fetch_memory::fetch_target(arguments)
+            .and_then(|url| url::Url::parse(url).ok())
+            .and_then(|url| url.host_str().map(|host| host.to_string()))
+        {
+            Some(host) => format!("Reading {host}"),
+            None => "Reading a web page".to_string(),
+        },
+        "web_search" => "Searching the web".to_string(),
+        "wiki_search" | "wiki_summary" => "Checking Wikipedia".to_string(),
+        "semantic_search" => "Searching your documents".to_string(),
+        "list_documents" => "Looking through your documents".to_string(),
+        "get_document" => "Opening a document".to_string(),
+        other => format!("Running {other}"),
+    }
 }
 
 fn emit_cancelled_stream<R: tauri::Runtime>(

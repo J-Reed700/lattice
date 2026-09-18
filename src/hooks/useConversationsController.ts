@@ -755,7 +755,9 @@ export function useConversationsController(): ConversationsState {
       inFlightGenerations.set(requestConversationId, requestId);
       const liveRetrieval = new Map(current.liveRetrieval);
       liveRetrieval.delete(requestConversationId);
-      return { optimisticMessages, inFlightGenerations, liveRetrieval, error: null };
+      const liveActivity = new Map(current.liveActivity);
+      liveActivity.delete(requestConversationId);
+      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveActivity, error: null };
     });
 
     const settleOptimisticMessages = (error?: string) => {
@@ -788,6 +790,19 @@ export function useConversationsController(): ConversationsState {
           unlisten?.();
           return;
         }
+        // A round can run for minutes without a single character of text. This
+        // is the only thing distinguishing "still working" from "hung".
+        if (payload.status === 'activity') {
+          const detail = payload.detail;
+          if (detail) {
+            conversationUiStore.setState(current => {
+              const liveActivity = new Map(current.liveActivity);
+              liveActivity.set(requestConversationId, detail);
+              return { liveActivity };
+            });
+          }
+          return;
+        }
         // Tool searches can update the initial retrieval trace during generation.
         if (payload.status === 'retrieval' && payload.retrieval) {
           const parsed = RetrievalTraceSchema.safeParse(payload.retrieval);
@@ -799,6 +814,16 @@ export function useConversationsController(): ConversationsState {
             });
           }
           return;
+        }
+        // Real text supersedes the activity note: the answer itself is now the
+        // progress indicator.
+        if (payload.content) {
+          conversationUiStore.setState(current => {
+            if (!current.liveActivity.has(requestConversationId)) return current;
+            const liveActivity = new Map(current.liveActivity);
+            liveActivity.delete(requestConversationId);
+            return { liveActivity };
+          });
         }
         const nextChunk = payload.status === 'retrying'
           ? (typeof payload.attempt === 'number'
@@ -868,7 +893,13 @@ export function useConversationsController(): ConversationsState {
         const optimisticMessages = new Map(current.optimisticMessages);
         optimisticMessages.delete(userTempId);
         optimisticMessages.delete(assistantTempId);
-        return { activeConversationId: responseId, optimisticMessages };
+        // Adopting the id is only right for a turn that created the
+        // conversation. Doing it unconditionally yanked the user back to a
+        // finished turn they had already navigated away from.
+        const created = responseId !== requestConversationId;
+        return created
+          ? { activeConversationId: responseId, optimisticMessages }
+          : { optimisticMessages };
       });
       addRequestedId('requestedLinkedConversationIds', responseId);
       await Promise.all([
@@ -889,7 +920,9 @@ export function useConversationsController(): ConversationsState {
         }
         const liveRetrieval = new Map(current.liveRetrieval);
         liveRetrieval.delete(requestConversationId);
-        return { inFlightGenerations, liveRetrieval };
+        const liveActivity = new Map(current.liveActivity);
+        liveActivity.delete(requestConversationId);
+        return { inFlightGenerations, liveRetrieval, liveActivity };
       });
     }
   }, [invalidateLists, queryClient]);
@@ -1103,6 +1136,7 @@ export function useConversationsController(): ConversationsState {
     messageVerification: messageMetadata.verification,
     messageRetrieval: messageMetadata.retrieval,
     liveRetrieval: ui.liveRetrieval,
+    liveActivity: ui.liveActivity,
     composerDraft: ui.composerDraft,
     linkedDocumentsByConversationId,
     webSourcesByConversationId,
@@ -1156,7 +1190,7 @@ export function useConversationsController(): ConversationsState {
     setConversationSaved, setDocumentSpaceMembership, setFilterMode, setSearchQuery,
     setSelectedSpace, spacesQuery.data, truncateAfter, forkConversation,
     ui.activeConversationId, ui.composerDraft, ui.error, ui.filterMode,
-    ui.inFlightGenerations, ui.liveRetrieval, ui.optimisticMessages, ui.searchQuery,
+    ui.inFlightGenerations, ui.liveActivity, ui.liveRetrieval, ui.optimisticMessages, ui.searchQuery,
     ui.selectedSpaceId, unbookmarkMessage, webSourcesByConversationId,
   ]);
 }

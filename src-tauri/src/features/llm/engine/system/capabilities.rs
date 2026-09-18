@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
-use super::gpu::{detect_gpu, GPUInfo};
+use super::gpu::{detect_gpu, detect_gpu_with_sidecar, GPUInfo};
 use super::platform::Platform;
 
 /// Complete system hardware capabilities.
@@ -109,6 +109,18 @@ impl SystemCapabilities {
 /// # Returns
 /// A `SystemCapabilities` struct with detected hardware information.
 pub async fn detect_capabilities() -> SystemCapabilities {
+    detect_capabilities_inner(None).await
+}
+
+/// The form to use wherever an `AppHandle` is available: GPU detection then
+/// comes from the sidecar's own device list rather than from heuristics. This
+/// matters because the answer picks `n_gpu_layers`, and getting it wrong is
+/// silent — the model simply runs on CPU and everything is slow.
+pub async fn detect_capabilities_with_app(app: &tauri::AppHandle) -> SystemCapabilities {
+    detect_capabilities_inner(Some(app)).await
+}
+
+async fn detect_capabilities_inner(app: Option<&tauri::AppHandle>) -> SystemCapabilities {
     let mut sys = System::new();
     // Only refresh what we need instead of everything
     sys.refresh_memory();
@@ -147,7 +159,10 @@ pub async fn detect_capabilities() -> SystemCapabilities {
     let os_version = System::long_os_version();
 
     // Detect GPU
-    let gpu = detect_gpu().await;
+    let gpu = match app {
+        Some(app) => detect_gpu_with_sidecar(app).await,
+        None => detect_gpu().await,
+    };
 
     SystemCapabilities {
         total_ram_gb,

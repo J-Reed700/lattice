@@ -42,6 +42,7 @@ use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::stealth;
 use async_trait::async_trait;
+use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use futures::future::join_all;
 use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
@@ -277,56 +278,82 @@ impl WebService {
             .map(|element| element.text().collect::<String>().trim().to_string())
     }
 
-    /// Resolve DuckDuckGo redirect links and normalize extracted URLs.
+    /// Normalize an extracted search-result href into the URL of the page it
+    /// actually points at.
+    ///
+    /// Made of two steps on purpose. Making the href absolute and unwrapping a
+    /// search engine's redirect used to be tangled together, and a
+    /// protocol-relative `//duckduckgo.com/l/?uddg=...` — which is exactly what
+    /// DuckDuckGo's HTML endpoint emits — matched the "starts with //" arm
+    /// first and was returned as the result, redirect and all. Every fetch of
+    /// one of those comes back as an empty page, so the model is handed a
+    /// result it can never read and goes looking for the same page again.
     fn normalize_search_url(&self, raw: &str) -> Option<String> {
-        let trimmed = raw.trim();
+        let absolute = Self::absolutize_search_url(raw.trim())?;
+        Some(Self::unwrap_redirect_url(&absolute).unwrap_or(absolute))
+    }
+
+    /// Turn an href into an absolute URL, without interpreting it further.
+    fn absolutize_search_url(trimmed: &str) -> Option<String> {
         if trimmed.is_empty() {
             return None;
         }
-
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            return Some(trimmed.to_string());
+        }
+        if let Some(rest) = trimmed.strip_prefix("//") {
+            return Some(format!("https://{}", rest));
+        }
         if trimmed.starts_with("/ck/a?") {
             return Some(format!("https://www.bing.com{}", trimmed));
         }
-
-        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            if trimmed.contains("bing.com/ck/a?") {
-                return Some(trimmed.to_string());
-            }
-            if trimmed.contains("duckduckgo.com/l/?") || trimmed.contains("html.duckduckgo.com/l/?")
-            {
-                if let Ok(parsed) = Url::parse(trimmed) {
-                    for (k, v) in parsed.query_pairs() {
-                        if k == "uddg" && (v.starts_with("http://") || v.starts_with("https://")) {
-                            return Some(v.into_owned());
-                        }
-                    }
-                }
-            }
-            return Some(trimmed.to_string());
-        }
-
-        if trimmed.starts_with("//") {
-            return Some(format!("https:{}", trimmed));
-        }
-
         if trimmed.starts_with("/l/?") {
-            let redirect = format!("https://duckduckgo.com{}", trimmed);
-            if let Ok(parsed) = Url::parse(&redirect) {
-                for (k, v) in parsed.query_pairs() {
-                    if k == "uddg" && (v.starts_with("http://") || v.starts_with("https://")) {
-                        return Some(v.into_owned());
-                    }
-                }
-            }
-            return None;
+            return Some(format!("https://duckduckgo.com{}", trimmed));
         }
-
         // Fallback for host/path-like values.
-        if trimmed.contains('.') && !trimmed.contains(' ') {
+        if trimmed.contains('.') && !trimmed.contains(' ') && !trimmed.starts_with('/') {
             return Some(format!(
                 "https://{}",
                 trimmed.trim_start_matches('/').trim_end_matches('/')
             ));
+        }
+        None
+    }
+
+    /// The destination behind a search engine's click-tracking redirect, when
+    /// the URL is one. Returns `None` for an ordinary URL, so a caller can keep
+    /// what it already had.
+    ///
+    /// Both engines carry the destination in the link itself, so there is no
+    /// reason to spend a request finding out where it goes: DuckDuckGo puts it
+    /// in `uddg` as plain text, Bing in `u` as base64url behind a two-character
+    /// prefix. Fetching the wrapper instead returns a page of script with no
+    /// article text in it.
+    fn unwrap_redirect_url(url: &str) -> Option<String> {
+        let parsed = Url::parse(url).ok()?;
+        let host = parsed.host_str()?;
+
+        if host.ends_with("duckduckgo.com") && parsed.path() == "/l/" {
+            return parsed
+                .query_pairs()
+                .find(|(key, _)| key == "uddg")
+                .map(|(_, value)| value.into_owned())
+                .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
+        }
+
+        if host.ends_with("bing.com") && parsed.path() == "/ck/a" {
+            let raw = parsed
+                .query_pairs()
+                .find(|(key, _)| key == "u")
+                .map(|(_, value)| value.into_owned())?;
+            // The payload is base64url with the padding stripped and a short
+            // marker in front ("a1" today). Decode what follows the marker and
+            // accept it only if it really is a URL.
+            let encoded = raw.get(2..)?;
+            let decoded = BASE64_URL_SAFE_NO_PAD.decode(encoded).ok()?;
+            let decoded = String::from_utf8(decoded).ok()?;
+            return Some(decoded)
+                .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
         }
 
         None
@@ -1544,6 +1571,63 @@ mod tests {
             normalized.as_deref(),
             Some("https://www.bing.com/ck/a?!&&p=abc123")
         );
+    }
+
+    /// The exact href shape DuckDuckGo's HTML endpoint emits. This is the one
+    /// that used to slip through: protocol-relative, so it was made absolute
+    /// and returned without ever being unwrapped.
+    #[test]
+    fn a_protocol_relative_duckduckgo_redirect_resolves_to_its_destination() {
+        let service = WebService::new().unwrap();
+        let raw = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.thereviewgeek.com%2Fsilo%2Ds1e2review%2F&rut=c99505e363ada8be";
+        assert_eq!(
+            service.normalize_search_url(raw).as_deref(),
+            Some("https://www.thereviewgeek.com/silo-s1e2review/")
+        );
+    }
+
+    #[test]
+    fn an_absolute_duckduckgo_redirect_resolves_to_its_destination() {
+        let service = WebService::new().unwrap();
+        let raw = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%2Fb&rut=deadbeef";
+        assert_eq!(
+            service.normalize_search_url(raw).as_deref(),
+            Some("https://example.com/a/b")
+        );
+    }
+
+    /// Bing hides the destination in `u` as base64url behind a two-character
+    /// marker. Taken verbatim from a search that fetched the wrapper and got
+    /// back a page with no article text in it.
+    #[test]
+    fn a_bing_redirect_with_a_payload_resolves_to_its_destination() {
+        let service = WebService::new().unwrap();
+        let raw = "https://www.bing.com/ck/a?!&&p=fc5438df02&ptn=3&fclid=398e7e7c&u=a1aHR0cHM6Ly9lbi5tLndpa2lwZWRpYS5vcmcvd2lraS9TaWxvXyhUVl9zZXJpZXMp&ntb=1";
+        assert_eq!(
+            service.normalize_search_url(raw).as_deref(),
+            Some("https://en.m.wikipedia.org/wiki/Silo_(TV_series)")
+        );
+    }
+
+    /// A wrapper we cannot read is still a better result than no result: the
+    /// fetch may follow it server-side. Only a decodable payload is replaced.
+    #[test]
+    fn a_redirect_without_a_readable_destination_is_left_alone() {
+        let service = WebService::new().unwrap();
+        for raw in [
+            "https://www.bing.com/ck/a?!&&p=abc123",
+            "https://duckduckgo.com/l/?rut=deadbeef",
+            "https://www.bing.com/ck/a?u=a1bm90LWEtdXJs",
+        ] {
+            assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
+        }
+    }
+
+    #[test]
+    fn an_ordinary_result_url_passes_through_untouched() {
+        let service = WebService::new().unwrap();
+        let raw = "https://example.com/silo/recap?season=1";
+        assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
     }
 
     #[test]

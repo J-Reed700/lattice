@@ -16,6 +16,14 @@ export interface ConversationUiState {
    * the message metadata the moment the turn finishes.
    */
   liveRetrieval: Map<string, RetrievalTrace>;
+  /**
+   * What the in-flight turn says it is doing, per conversation.
+   *
+   * A tool round can run for minutes without emitting a single character, so
+   * without this the UI has only a spinner and no way to tell work from a hang.
+   * Cleared when the turn ends, like `liveRetrieval`.
+   */
+  liveActivity: Map<string, string>;
   /** Text the composer should adopt on its next render (deep links, retries). */
   composerDraft: string | null;
   error: string | null;
@@ -32,6 +40,7 @@ export const useConversationUiStore = create<ConversationUiState>(() => ({
   inFlightGenerations: new Map(),
   optimisticMessages: new Map(),
   liveRetrieval: new Map(),
+  liveActivity: new Map(),
   composerDraft: null,
   error: null,
   requestedLinkedConversationIds: new Set(),

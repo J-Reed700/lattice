@@ -2590,9 +2590,9 @@ async pluginRestoreArchive(request: RestoreArchiveRequestDto) : Promise<Result<R
     else return { status: "error", error: e  as any };
 }
 },
-async listWorkspaceNotes() : Promise<Result<ListWorkspaceNotesResponseDto, ApiError>> {
+async listWorkspaceNotes(request: ListWorkspaceNotesRequestDto | null) : Promise<Result<ListWorkspaceNotesResponseDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_workspace_notes") };
+    return { status: "ok", data: await TAURI_INVOKE("list_workspace_notes", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3687,7 +3687,17 @@ starters: ChatStarterDto[]; documentCount: number }
  * Every chat stream update identifies its conversation and generation. Other
  * producers share the event channel, so consumers must require both IDs.
  */
-export type ChatStreamEventDto = { conversationId: string; requestId: string; done: boolean; content?: string | null; status?: string | null; attempt?: number | null; retrieval?: RetrievalTraceDto | null }
+export type ChatStreamEventDto = { conversationId: string; requestId: string; done: boolean; content?: string | null; status?: string | null; attempt?: number | null; retrieval?: RetrievalTraceDto | null;
+/**
+ * What the turn is doing right now, in words meant for a person.
+ *
+ * A tool round emits no text at all while the model reasons and writes its
+ * tool calls — on a slow model that is minutes of a spinner with nothing
+ * behind it, which is indistinguishable from a hang. This is the only
+ * signal the UI has during that stretch, so it is sent when a phase starts
+ * and repeated on a heartbeat to show the turn is still alive.
+ */
+detail?: string | null }
 export type ChecksumRequest = { algorithm: string; value: string }
 /**
  * A conversation that has this document among its linked documents.
@@ -4022,7 +4032,11 @@ conversation: ConversationDto;
 status: string }
 export type CreateConversationSpaceRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null }
 export type CreatePassageReferenceRequestDto = { documentId: string; chunkId: string | null; filePath: string; fileName: string; locator: string | null; text: string; title: string | null; note: string | null }
-export type CreateWorkspaceNoteRequestDto = { title: string | null }
+export type CreateWorkspaceNoteRequestDto = { title: string | null;
+/**
+ * The journal this page belongs to. Omitted for an unfiled page.
+ */
+journalId: string | null }
 /**
  * User-defined tool configuration.
  *
@@ -4882,6 +4896,17 @@ maxTokens: number;
  */
 contextWindow: number;
 /**
+ * Context window for the bundled local model, in tokens.
+ *
+ * `None` means Auto: the window is sized from what the GGUF says the model
+ * was trained for and how much memory the accelerator reports, which is
+ * almost always the right answer. A number here overrides that and is used
+ * as written — llama.cpp will rope-scale past the trained length, and an
+ * allocation too large for the card falls back rather than being silently
+ * shrunk. `context_window` above governs remote providers, not this.
+ */
+localContextWindow: number | null;
+/**
  * Ollama server URL
  */
 ollamaUrl: string;
@@ -4996,6 +5021,13 @@ total: number }
 export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
 export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[]; total: number }
+export type ListWorkspaceNotesRequestDto = {
+/**
+ * List only the pages this journal owns. Omitted lists every page, which
+ * is what the cross-journal surfaces (reference inbox, weekly synthesis,
+ * vault sync) want.
+ */
+journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
 export type MentionDto = { id: string; name: string; mentionType: string; metadata: string | null; createdAt: string }
@@ -5563,6 +5595,16 @@ webSearchMs: number; totalMs: number }
  */
 export type RetrievalTraceDto = { searchedDocuments: number; passages: number; files: number;
 /**
+ * Web pages carried into the answer, counted apart from `files`.
+ *
+ * `files` means documents in the user's vault and nothing else. Web
+ * results used to be counted there too, so a web-only answer in a space
+ * holding no documents still reported "10 passages from 10 files" — which
+ * reads as though it had searched the vault, and is the sort of claim that
+ * makes a correctly scoped answer look like a leak.
+ */
+webPages: number;
+/**
  * "vault" | "linked"
  */
 scope: string;
@@ -5618,7 +5660,23 @@ shortlistGateMinCandidates: number; shortlistGateMinDocs: number;
 /**
  * External source retrieval limits and snippet shaping
  */
-wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number; deepResearchDepth: number; deepResearchBranchQueries: number;
+wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: number; webSearchMaxResults: number; webSnippetMaxChars: number;
+/**
+ * How many of the top web results are opened and read in full for the
+ * prompt. Search engines return a headline and roughly one sentence; a
+ * question about what a page actually says cannot be answered from that.
+ * 0 disables page reading and falls back to snippets alone.
+ */
+webFetchPageCount: number;
+/**
+ * Per-page character budget for fetched page text in the prompt.
+ */
+webPageMaxChars: number;
+/**
+ * Seconds any one page fetch may take before it is abandoned and the
+ * result falls back to its snippet.
+ */
+webPageFetchTimeoutSecs: number; deepResearchDepth: number; deepResearchBranchQueries: number;
 /**
  * External search query rewriting constraints
  */
@@ -6548,7 +6606,11 @@ export type WikiLinkDto = { target: string; displayText: string | null; header: 
  * One "word 7 was ___" answer.
  */
 export type WordConfirmationDto = { index: number; word: string }
-export type WorkspaceNoteDto = { id: string; title: string; content: string; linkedDocumentIds: string[]; linkedConversationIds: string[]; highlights: NoteHighlightDto[]; stickyNotes: StickyItemDto[]; conversationSnapshots: ConversationSnapshotDto[]; createdAt: string; updatedAt: string }
+export type WorkspaceNoteDto = { id: string; title: string;
+/**
+ * Owning journal, or `None` for an unfiled page.
+ */
+journalId: string | null; content: string; linkedDocumentIds: string[]; linkedConversationIds: string[]; highlights: NoteHighlightDto[]; stickyNotes: StickyItemDto[]; conversationSnapshots: ConversationSnapshotDto[]; createdAt: string; updatedAt: string }
 
 /** tauri-specta globals **/
 

@@ -19,6 +19,68 @@ fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
     }
 }
 
+/// Artifacts whose llama-server refused to start, keyed by path and stamped
+/// with the file's size and mtime.
+///
+/// Starting a local model means launching a sidecar and reading several
+/// gigabytes of tensors, and a file llama-server cannot parse fails only after
+/// paying all of that. The utility role retries on every single turn, so one
+/// unsupported GGUF taxes every message with a doomed load before falling back
+/// to the chat LLM. Remembering the failure makes the second turn cheap.
+///
+/// The stamp is what allows recovery without a restart: a re-downloaded or
+/// repaired file has a different size or mtime, so it is a different key and
+/// gets a fresh attempt.
+static UNLOADABLE_ARTIFACTS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, ArtifactStamp>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct ArtifactStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+fn artifact_stamp(path: &std::path::Path) -> Option<ArtifactStamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(ArtifactStamp {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+/// True when this exact file has already failed to start in this session.
+fn is_known_unloadable(path: &std::path::Path) -> bool {
+    let Some(stamp) = artifact_stamp(path) else {
+        return false;
+    };
+    let mut known = match UNLOADABLE_ARTIFACTS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    match known.get(path) {
+        Some(recorded) if *recorded == stamp => true,
+        // The file changed since it failed. Drop the stale entry so the new
+        // bytes are judged on their own.
+        Some(_) => {
+            known.remove(path);
+            false
+        }
+        None => false,
+    }
+}
+
+fn remember_unloadable(path: &std::path::Path) {
+    let Some(stamp) = artifact_stamp(path) else {
+        return;
+    };
+    let mut known = match UNLOADABLE_ARTIFACTS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    known.insert(path.to_path_buf(), stamp);
+}
+
 pub(crate) struct ModelLoader {
     downloaded_models: Arc<DownloadedModelRepository>,
     app_handle: Option<tauri::AppHandle>,
@@ -69,7 +131,7 @@ impl ModelLoader {
         let config = Self::generation_config_from_settings(settings);
         crate::application::services::model_selection::select_model(
             settings.provider,
-            || self.try_load_active_model(config.clone()),
+            || self.try_load_active_model(config.clone(), settings.local_context_window),
             || self.try_load_llama_cpp(settings),
             || self.try_load_ollama(settings, config.clone()),
         )
@@ -107,7 +169,11 @@ impl ModelLoader {
 
         // 1) Try local downloaded model by ID (if present).
         if let Some(local_llm) = self
-            .try_load_router_local_model(model_name, generation_config.clone())
+            .try_load_router_local_model(
+                model_name,
+                generation_config.clone(),
+                settings.local_context_window,
+            )
             .await?
         {
             return Ok(local_llm);
@@ -173,6 +239,7 @@ impl ModelLoader {
         &self,
         model_id: &str,
         generation_config: crate::features::llm::engine::GenerationConfig,
+        context_window: Option<u32>,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         use crate::features::llm::engine::factory::{create_llm, LLMConfig};
 
@@ -208,6 +275,7 @@ impl ModelLoader {
             // Populated when the app boots via Container::with_app_handle.
             // None in tests / sidecar-feature-off builds (where it's unused).
             app_handle: self.app_handle.clone(),
+            context_window,
         };
 
         match create_llm(llm_config).await {
@@ -226,6 +294,7 @@ impl ModelLoader {
         &self,
         active: &crate::domain::DownloadedModel,
         generation_config: crate::features::llm::engine::GenerationConfig,
+        context_window: Option<u32>,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         let model_id = active.model_id();
         let model_path = match active.loadable_path() {
@@ -247,11 +316,22 @@ impl ModelLoader {
             return Ok(None);
         }
 
+        if is_known_unloadable(&model_path) {
+            tracing::debug!(
+                model_id = %model_id,
+                path = %model_path.display(),
+                "Utility model already failed to start in this session — using the chat LLM \
+                 without retrying the load"
+            );
+            return Ok(None);
+        }
+
         let llm_config = crate::features::llm::engine::factory::LLMConfig::Local {
             model_path: model_path.clone(),
             n_gpu_layers: -1,
             generation_config,
             app_handle: self.app_handle.clone(),
+            context_window,
         };
 
         tracing::info!(
@@ -276,10 +356,17 @@ impl ModelLoader {
                     Err(error)
                 }
                 None => {
+                    // The sidecar itself works, so this file is the problem:
+                    // an unsupported architecture, a truncated download, or
+                    // one too large for this machine. Retrying it next turn
+                    // costs the same minute and fails the same way.
+                    remember_unloadable(&model_path);
                     tracing::warn!(
                         model_id = %model_id,
+                        path = %model_path.display(),
                         error = %e,
-                        "Failed to load utility LLM — falling back to chat LLM"
+                        "Failed to load utility LLM — falling back to chat LLM and not \
+                         retrying this file until it changes"
                     );
                     Ok(None)
                 }
@@ -351,6 +438,7 @@ impl ModelLoader {
     async fn try_load_active_model(
         &self,
         generation_config: crate::features::llm::engine::GenerationConfig,
+        context_window: Option<u32>,
     ) -> Result<Option<Arc<dyn LLMPort>>> {
         use crate::features::llm::engine::factory::{create_llm, LLMConfig};
 
@@ -395,6 +483,7 @@ impl ModelLoader {
             // Populated when the app boots via Container::with_app_handle.
             // None in tests / sidecar-feature-off builds (where it's unused).
             app_handle: self.app_handle.clone(),
+            context_window,
         };
 
         match create_llm(llm_config).await {
@@ -542,6 +631,22 @@ mod tests {
         assert_eq!(config.top_k, settings.top_k);
         assert_eq!(config.max_tokens, settings.max_tokens as usize);
         assert_eq!(config.repeat_penalty, settings.repeat_penalty);
+    }
+
+    #[test]
+    fn a_file_that_failed_to_start_is_retried_only_after_it_changes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("model.gguf");
+        std::fs::write(&path, b"broken").expect("write");
+
+        assert!(!is_known_unloadable(&path));
+        remember_unloadable(&path);
+        assert!(is_known_unloadable(&path));
+
+        // A repaired or re-downloaded file is different bytes, so the memo
+        // must not keep a working model from ever being tried again.
+        std::fs::write(&path, b"repaired and longer").expect("rewrite");
+        assert!(!is_known_unloadable(&path));
     }
 
     #[test]

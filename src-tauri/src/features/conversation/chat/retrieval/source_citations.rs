@@ -8,6 +8,13 @@ use crate::features::search::dto::SearchResultDto;
 use crate::interfaces::di::Container;
 use crate::shared::text_utils::build_excerpt;
 
+/// Marks a `SourceDto` that came from the web rather than the user's vault.
+///
+/// A web result is shaped like a document source so citations can treat both
+/// alike, which means the id prefix is the only thing telling them apart.
+/// Anything that counts, scopes or filters vault documents must check it.
+pub const WEB_SOURCE_PREFIX: &str = "web:";
+
 /// Number the sources the user will see, so the prompt can cite the same
 /// numbers.
 ///
@@ -36,6 +43,64 @@ pub(super) fn citation_ids_by_chunk(sources: &[SourceDto]) -> HashMap<String, u3
         .iter()
         .filter_map(|source| source.citation_id.map(|id| (source.chunk_id.clone(), id)))
         .collect()
+}
+
+/// Fold sources produced by a tool call into the turn's source list, returning
+/// the chunk ids the caller should quote back to the model as citable passages.
+///
+/// A web page is one source, no matter how often the turn reaches for it. The
+/// search results give a URL as a snippet; `fetch_url_content` then gives the
+/// same URL as full text. Appending both leaves two entries that the UI groups
+/// back into one card by URL — the list says ten sources while the citation
+/// numbers run to eleven, so the last footnote points at nothing the reader can
+/// open. Upgrading the entry in place keeps the number the model was already
+/// given and swaps a snippet for the article.
+///
+/// Only web sources fold this way. Two passages of the same vault document are
+/// genuinely two sources, and collapsing those would throw evidence away.
+pub(super) fn merge_tool_sources(
+    sources: &mut Vec<SourceDto>,
+    incoming: Vec<SourceDto>,
+) -> HashSet<String> {
+    let mut citable_chunk_ids = HashSet::new();
+
+    for source in incoming {
+        let existing = if is_web_document_id(&source.document_id) {
+            sources
+                .iter_mut()
+                .find(|candidate| candidate.document_id == source.document_id)
+        } else {
+            None
+        };
+
+        match existing {
+            Some(existing) => {
+                citable_chunk_ids.insert(existing.chunk_id.clone());
+                // The rank, the number and the identity stay; only the evidence
+                // improves, and only when the newcomer actually carries more.
+                if source.content.len() > existing.content.len() {
+                    existing.content = source.content;
+                    existing.excerpt = source.excerpt;
+                    existing.file_size_bytes = source.file_size_bytes;
+                    existing.mime_type = source.mime_type;
+                    if existing.file_name == existing.file_path && !source.file_name.is_empty() {
+                        existing.file_name = source.file_name;
+                    }
+                }
+            }
+            None => {
+                citable_chunk_ids.insert(source.chunk_id.clone());
+                sources.push(source);
+            }
+        }
+    }
+
+    citable_chunk_ids
+}
+
+/// Web sources are keyed by their URL, so one document id means one page.
+fn is_web_document_id(document_id: &str) -> bool {
+    document_id.starts_with("web:")
 }
 
 pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
@@ -224,7 +289,7 @@ pub(super) fn build_web_source_citations(
 
         sources.push(SourceDto {
             page_number: None,
-            document_id: format!("web:{}", url),
+            document_id: format!("{WEB_SOURCE_PREFIX}{url}"),
             chunk_id: format!("web-result-{}", idx + 1),
             content,
             score,
@@ -274,5 +339,117 @@ pub(super) fn infer_category(path: &str) -> String {
         "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" => "Image".to_string(),
         _ if ext.is_empty() => "Unknown".to_string(),
         other => format!("{} File", other.to_uppercase()),
+    }
+}
+
+#[cfg(test)]
+mod merge_tool_sources_tests {
+    use super::*;
+
+    fn source(document_id: &str, chunk_id: &str, content: &str) -> SourceDto {
+        SourceDto {
+            page_number: None,
+            document_id: document_id.to_string(),
+            chunk_id: chunk_id.to_string(),
+            content: content.to_string(),
+            score: 1.0,
+            path: Some(document_id.to_string()),
+            position: Some(1),
+            file_name: document_id.to_string(),
+            file_path: document_id.to_string(),
+            mime_type: "text/html".to_string(),
+            category: "Web Article".to_string(),
+            file_size_bytes: 0,
+            modified_at: String::new(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: Some(1),
+            chunk_excerpts: None,
+            citation_id: None,
+        }
+    }
+
+    /// The reported bug: the search snippet and the fetched article are the same
+    /// page, so they must stay one entry with one number. Two entries render as
+    /// one card, and the eleventh footnote then opens nothing.
+    #[test]
+    fn fetching_a_page_already_in_the_list_upgrades_it_instead_of_adding_a_source() {
+        let mut sources = vec![source(
+            "web:https://example.com/a",
+            "web-result-1",
+            "snippet",
+        )];
+        sources[0].citation_id = Some(1);
+
+        let citable = merge_tool_sources(
+            &mut sources,
+            vec![source(
+                "web:https://example.com/a",
+                "web-content-1",
+                "the full article text",
+            )],
+        );
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].citation_id, Some(1));
+        assert_eq!(sources[0].chunk_id, "web-result-1");
+        assert_eq!(sources[0].content, "the full article text");
+        assert!(citable.contains("web-result-1"));
+    }
+
+    #[test]
+    fn a_shorter_fetch_does_not_replace_the_evidence_already_held() {
+        let mut sources = vec![source(
+            "web:https://example.com/a",
+            "web-result-1",
+            "a long and detailed snippet",
+        )];
+
+        merge_tool_sources(
+            &mut sources,
+            vec![source(
+                "web:https://example.com/a",
+                "web-content-1",
+                "short",
+            )],
+        );
+
+        assert_eq!(sources[0].content, "a long and detailed snippet");
+    }
+
+    #[test]
+    fn a_new_page_is_still_appended() {
+        let mut sources = vec![source(
+            "web:https://example.com/a",
+            "web-result-1",
+            "snippet",
+        )];
+
+        let citable = merge_tool_sources(
+            &mut sources,
+            vec![source(
+                "web:https://example.com/b",
+                "web-content-1",
+                "other",
+            )],
+        );
+
+        assert_eq!(sources.len(), 2);
+        assert!(citable.contains("web-content-1"));
+    }
+
+    /// Two passages of one vault document are two pieces of evidence; folding
+    /// them together would silently drop one.
+    #[test]
+    fn vault_chunks_of_the_same_document_are_kept_apart() {
+        let mut sources = vec![source("doc-1", "chunk-1", "first passage")];
+
+        merge_tool_sources(
+            &mut sources,
+            vec![source("doc-1", "chunk-2", "a much longer second passage")],
+        );
+
+        assert_eq!(sources.len(), 2);
     }
 }

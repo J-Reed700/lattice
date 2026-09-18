@@ -238,6 +238,72 @@ const DEFAULT_GPU_CONTEXT_SIZE: u32 = 8192;
 /// with context-squared, so 4K is a more honest UX target than 8K.
 const DEFAULT_CPU_CONTEXT_SIZE: u32 = 4096;
 
+/// Share of reported accelerator memory the model and its KV cache may claim.
+/// llama.cpp also allocates compute buffers, and on unified memory (Apple
+/// Silicon) the same pool is the machine's RAM, so filling it would starve
+/// everything else.
+const VRAM_USABLE_FRACTION: f64 = 0.7;
+
+/// The largest window `Auto` will choose, however much memory is free. Prefill
+/// cost climbs with context, and the retrieval pipeline never builds a prompt
+/// near this size — past here the user is paying latency for nothing. Someone
+/// who genuinely wants more can say so in settings.
+const AUTO_MAX_CONTEXT_SIZE: u32 = 32_768;
+
+/// The smallest window worth starting. A card that cannot even afford this is
+/// going to struggle, but a too-small window that loads still beats the larger
+/// flat default that does not — and if it genuinely will not allocate, the
+/// sidecar's own fallback reports a degraded start.
+const AUTO_MIN_CONTEXT_SIZE: u32 = 4_096;
+
+/// Size the context window from the model's own dimensions and the memory the
+/// accelerator reports.
+///
+/// Returns `None` when anything needed is unknown — an unreadable GGUF, a
+/// header without KV dimensions, a GPU that does not report its memory — so the
+/// caller keeps the conservative flat default rather than acting on a guess.
+///
+/// The trained length is a ceiling, never a target: a model trained at 262144
+/// would need 34 GB of KV cache at full length, which no consumer card holds.
+fn auto_context_size(
+    model_path: &std::path::Path,
+    capabilities: &SystemCapabilities,
+) -> Option<u32> {
+    use crate::features::llm::engine::gguf_metadata;
+
+    let vram_gb = capabilities.gpu_vram_gb()?;
+    let info = gguf_metadata::read_model_info(model_path)?;
+    let weights_bytes = std::fs::metadata(model_path).ok()?.len();
+
+    context_size_for(vram_gb, weights_bytes, &info)
+}
+
+/// The arithmetic behind [`auto_context_size`], separated from reading the disk
+/// so the decision can be checked against known hardware and known models.
+fn context_size_for(
+    vram_gb: f64,
+    weights_bytes: u64,
+    info: &crate::features::llm::engine::gguf_metadata::GgufModelInfo,
+) -> Option<u32> {
+    let bytes_per_token = info.kv_cache_bytes_per_token()?;
+
+    let usable_bytes = (vram_gb * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+    let spare_bytes = usable_bytes.checked_sub(weights_bytes)?;
+    let affordable = u32::try_from(spare_bytes / bytes_per_token).unwrap_or(u32::MAX);
+
+    let ceiling = info
+        .trained_context_length
+        .unwrap_or(AUTO_MAX_CONTEXT_SIZE)
+        .min(AUTO_MAX_CONTEXT_SIZE);
+    // Whole thousands read better in a log line than 31_417 does.
+    let chosen = affordable.min(ceiling) / 1024 * 1024;
+
+    // Never hand back less than the floor while the model could still be
+    // trained for more: returning `None` here would hand the caller the larger
+    // flat default, which is the one thing guaranteed not to fit.
+    Some(chosen.max(AUTO_MIN_CONTEXT_SIZE.min(ceiling)))
+}
+
 impl SidecarConfig {
     /// A sensible default: GPU-offload everything, 8K context.
     /// Use `from_capabilities()` instead in production code paths so
@@ -271,8 +337,19 @@ impl SidecarConfig {
         let n_gpu_layers = if has_accelerator { 99 } else { 0 };
 
         let base_context = if has_accelerator {
-            DEFAULT_GPU_CONTEXT_SIZE
+            // Size from the model and the hardware when both can be read; the
+            // flat default is the fallback, not the plan. A 5 GB model on a
+            // 28 GB card ran an 8K window purely because nothing had looked.
+            auto_context_size(&model_path, capabilities).unwrap_or_else(|| {
+                tracing::debug!(
+                    "Could not size the context window from the model and GPU; \
+                     using the default {DEFAULT_GPU_CONTEXT_SIZE}"
+                );
+                DEFAULT_GPU_CONTEXT_SIZE
+            })
         } else {
+            // CPU prefill grows with context and there is no accelerator to
+            // absorb it, so a bigger window would buy latency, not capability.
             DEFAULT_CPU_CONTEXT_SIZE
         };
 
@@ -292,6 +369,55 @@ impl SidecarConfig {
             n_gpu_layers,
             context_size,
         }
+    }
+
+    /// Replace the automatic choice with the one the user asked for.
+    ///
+    /// The request is honoured as written. Silently clamping it is how the
+    /// existing `context_window` setting came to have no effect on the sidecar
+    /// at all, so an unreachable request is logged loudly and then attempted —
+    /// if it will not allocate, the sidecar's own fallback reports a degraded
+    /// start rather than this quietly deciding for the user.
+    pub fn with_context_override(
+        mut self,
+        requested: u32,
+        capabilities: &SystemCapabilities,
+    ) -> Self {
+        if requested == 0 || requested == self.context_size {
+            return self;
+        }
+
+        if let Some(affordable) = auto_context_size(&self.model_path, capabilities) {
+            if requested > affordable {
+                tracing::warn!(
+                    requested,
+                    affordable,
+                    "Configured context window is larger than this GPU and model can \
+                     comfortably hold; starting anyway and falling back if it will not allocate"
+                );
+            }
+        }
+        if let Some(trained) =
+            crate::features::llm::engine::gguf_metadata::read_model_info(&self.model_path)
+                .and_then(|info| info.trained_context_length)
+        {
+            if requested > trained {
+                tracing::warn!(
+                    requested,
+                    trained,
+                    "Configured context window exceeds what this model was trained for; \
+                     llama.cpp will extend it by rope scaling, which costs quality"
+                );
+            }
+        }
+
+        tracing::info!(
+            from = self.context_size,
+            to = requested,
+            "Context window set from settings"
+        );
+        self.context_size = requested;
+        self
     }
 }
 
@@ -1063,6 +1189,10 @@ pub fn spawn_binary_preflight(app: &AppHandle) {
         for &binary in SidecarBinary::bundled() {
             preflight(&app, binary, preflight_cache()).await;
         }
+        // Warm the device probe on the same startup pass. Callers that reach
+        // for it without an `AppHandle` can only read the cache, and the log
+        // line it emits is the record of what this machine can offload to.
+        crate::features::llm::engine::system::detect_backend_devices(&app).await;
     });
 }
 
@@ -3773,5 +3903,110 @@ terminate called after throwing an instance of 'vk::DeviceLostError'
         assert_eq!(first.len(), 32, "128 bits of entropy, hex-encoded");
         assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(first, second, "a token is minted per spawn");
+    }
+
+    use crate::features::llm::engine::gguf_metadata::GgufModelInfo;
+
+    /// The machine that reported the bug: an M3 Max with 28753 MiB of unified
+    /// memory running Ornith-1.5-9B — 32 blocks, 4 KV heads, 256-wide keys, so
+    /// 128 KiB of cache per token, and a 262144 trained length it cannot
+    /// possibly hold. It ran an 8192 window because nothing had looked.
+    fn ornith() -> GgufModelInfo {
+        GgufModelInfo {
+            architecture: Some("qwen35".into()),
+            trained_context_length: Some(262_144),
+            block_count: Some(32),
+            head_count_kv: Some(4),
+            head_count: Some(16),
+            key_length: Some(256),
+            value_length: Some(256),
+            embedding_length: Some(4096),
+        }
+    }
+
+    const ORNITH_BYTES: u64 = 5_629_109_248;
+
+    #[test]
+    fn a_large_gpu_gets_the_ceiling_not_the_trained_length() {
+        let chosen = context_size_for(28.1, ORNITH_BYTES, &ornith()).unwrap();
+
+        assert_eq!(chosen, AUTO_MAX_CONTEXT_SIZE);
+        assert!(chosen > DEFAULT_GPU_CONTEXT_SIZE, "the old flat default");
+    }
+
+    /// The trained length is a ceiling, never a target. Asking a 262144-trained
+    /// model for 262144 would want 34 GB of KV cache.
+    #[test]
+    fn the_trained_length_is_never_treated_as_achievable() {
+        let roomy = context_size_for(80.0, ORNITH_BYTES, &ornith()).unwrap();
+
+        assert_eq!(roomy, AUTO_MAX_CONTEXT_SIZE);
+    }
+
+    /// A mid-sized card must come back with a window its memory can hold.
+    #[test]
+    fn a_smaller_gpu_gets_a_window_that_fits_its_memory() {
+        let chosen = context_size_for(12.0, ORNITH_BYTES, &ornith()).unwrap();
+
+        let budget = (12.0 * VRAM_USABLE_FRACTION * 1024.0 * 1024.0 * 1024.0) as u64;
+        let cache = u64::from(chosen) * 131_072;
+        assert!(
+            cache + ORNITH_BYTES <= budget,
+            "{chosen} tokens needs {cache} bytes on top of the weights"
+        );
+        assert!(chosen < AUTO_MAX_CONTEXT_SIZE, "and below the ceiling");
+    }
+
+    /// A card that can barely hold the weights still gets a loadable window.
+    /// Declining here would hand back the larger flat default — the one size
+    /// guaranteed not to fit.
+    #[test]
+    fn a_cramped_gpu_gets_the_floor_rather_than_the_larger_default() {
+        let chosen = context_size_for(8.0, ORNITH_BYTES, &ornith()).unwrap();
+
+        assert_eq!(chosen, AUTO_MIN_CONTEXT_SIZE);
+        assert!(chosen < DEFAULT_GPU_CONTEXT_SIZE);
+    }
+
+    /// A model trained short must not be stretched by the automatic path.
+    #[test]
+    fn a_short_trained_model_caps_at_what_it_was_trained_for() {
+        let info = GgufModelInfo {
+            trained_context_length: Some(4096),
+            ..ornith()
+        };
+
+        assert_eq!(context_size_for(28.1, ORNITH_BYTES, &info), Some(4096));
+    }
+
+    /// No room left once the weights are in: better to decline and let the flat
+    /// default apply than to return a window that cannot allocate.
+    #[test]
+    fn a_gpu_too_small_for_the_weights_declines_to_choose() {
+        assert_eq!(context_size_for(4.0, ORNITH_BYTES, &ornith()), None);
+    }
+
+    /// A header without KV dimensions cannot be sized, and guessing would be
+    /// worse than the conservative default.
+    #[test]
+    fn an_unreadable_model_declines_to_choose() {
+        let info = GgufModelInfo {
+            trained_context_length: Some(32_768),
+            ..Default::default()
+        };
+
+        assert_eq!(context_size_for(28.1, ORNITH_BYTES, &info), None);
+    }
+
+    /// A missing file is the common case in tests and on a broken install; the
+    /// flat default has to survive it.
+    #[test]
+    fn a_missing_model_file_falls_back_to_the_flat_default() {
+        use crate::features::llm::engine::system::GPUVendor;
+        let caps = make_caps(Some(GPUVendor::Apple), 36.0);
+
+        let config = SidecarConfig::from_capabilities(PathBuf::from("/nonexistent/m.gguf"), &caps);
+
+        assert_eq!(config.context_size, DEFAULT_GPU_CONTEXT_SIZE);
     }
 }

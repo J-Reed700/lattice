@@ -133,7 +133,9 @@ describe('useJournalNote pages', () => {
       await result.current.createPage('Page · Sat, Sep 6');
     });
 
-    expect(createWorkspaceNote).toHaveBeenCalledWith('Page · Sat, Sep 6');
+    // A page is created owned by the journal it was created in, so deleting
+    // that journal takes the page with it.
+    expect(createWorkspaceNote).toHaveBeenCalledWith('Page · Sat, Sep 6', 'space_1');
     expect(result.current.activeNote?.id).toBe('note_new');
     expect(result.current.pages.map((page) => page.id)).toContain('note_new');
     expect(localStorage.getItem('journal.noteBySpace.space_1')).toBe('note_new');

@@ -215,7 +215,7 @@ export function useJournalNote(options: {
       setIsLoadingNote(true);
       setLoadError(null);
 
-      const listResult = await VaultAPI.listWorkspaceNotes();
+      const listResult = await VaultAPI.listWorkspaceNotes(journalSpaceId);
       if (cancelled) return;
       if (!listResult.ok) {
         setLoadError(listResult.error);
@@ -250,7 +250,10 @@ export function useJournalNote(options: {
 
       if (!target) {
         const titleBase = journalName ?? inferInitialJournalNameFromNotes(allPages) ?? 'Journal';
-        const created = await VaultAPI.createWorkspaceNote(defaultJournalTitle(titleBase));
+        const created = await VaultAPI.createWorkspaceNote(
+          defaultJournalTitle(titleBase),
+          journalSpaceId,
+        );
         if (cancelled) return;
         if (!created.ok) {
           setLoadError(created.error);
@@ -313,13 +316,14 @@ export function useJournalNote(options: {
   );
 
   const refreshPages = useCallback(async (): Promise<WorkspaceNote[]> => {
-    const result = await VaultAPI.listWorkspaceNotes();
+    if (!journalSpaceId) return pagesRef.current;
+    const result = await VaultAPI.listWorkspaceNotes(journalSpaceId);
     if (!result.ok) return pagesRef.current;
     const sorted = sortPages(result.data.notes);
     setPages(sorted);
     pagesRef.current = sorted;
     return sorted;
-  }, []);
+  }, [journalSpaceId]);
 
   /** Makes `note` the page being edited, remembering it for this journal. */
   const openPage = useCallback(
@@ -357,7 +361,7 @@ export function useJournalNote(options: {
   const createPage = useCallback(
     async (title: string): Promise<WorkspaceNote | null> => {
       if (!(await saveNow())) return null;
-      const created = await VaultAPI.createWorkspaceNote(title);
+      const created = await VaultAPI.createWorkspaceNote(title, journalSpaceId ?? undefined);
       if (!created.ok) {
         setSaveError(created.error);
         return null;
@@ -369,7 +373,7 @@ export function useJournalNote(options: {
       openPage(created.data);
       return created.data;
     },
-    [openPage, saveNow],
+    [journalSpaceId, openPage, saveNow],
   );
 
   const deleteActiveNote = useCallback(async (): Promise<boolean> => {

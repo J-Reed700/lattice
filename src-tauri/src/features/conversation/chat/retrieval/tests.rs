@@ -269,6 +269,31 @@ fn web_query_prefers_raw_user_text_for_non_followup_questions() {
 }
 
 #[test]
+fn web_query_condenses_a_rambling_message_instead_of_searching_it_verbatim() {
+    let raw = "Please go into depth on what happens in the second season of silo on \
+               apple tv. I watched it but need a deep recap. Season 1 and 2, really in \
+               depth recap. I've watched both but I just need a very deep deep deep in \
+               depth refresher";
+    let interpretation = crate::domain::qa::hyde::HyDEInterpretation::for_question(
+        raw,
+        "Episode-by-episode recaps of Silo seasons 1 and 2 on Apple TV+, covering plot, \
+         character arcs and the finale twists.",
+    );
+
+    let query = select_web_search_query(raw, &interpretation, None);
+
+    // A search engine weighs every word it is handed, so the paragraph must not
+    // reach it intact — the ranked terms carry the subject without the filler.
+    assert_ne!(query, raw);
+    assert!(
+        query.len() < raw.len() / 2,
+        "query was not condensed: {query}"
+    );
+    assert!(query.contains("silo"), "subject lost: {query}");
+    assert!(!query.contains("really"), "filler survived: {query}");
+}
+
+#[test]
 fn web_query_falls_back_to_terms_for_generic_search_command() {
     let interpretation = crate::domain::qa::hyde::HyDEInterpretation::hybrid(
         "search web",

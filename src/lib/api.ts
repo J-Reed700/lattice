@@ -1500,16 +1500,28 @@ const VaultAPI = {
     apiCall<void>('update_daily_note_content', { request: { noteId, content } }),
 
   /**
-   * Lists all persisted notes in the Daily Notes workspace.
+   * Lists persisted notes in the Daily Notes workspace.
+   *
+   * With a `journalId`, only the pages that journal owns — which is what a
+   * journal's sidebar wants. Without one, every page across every journal,
+   * for the cross-journal surfaces (reference inbox, weekly synthesis).
    */
-  listWorkspaceNotes: async (): Promise<ApiResult<ListWorkspaceNotesResponse>> =>
-    apiCall<Wire.ListWorkspaceNotesResponseDto>('list_workspace_notes'),
+  listWorkspaceNotes: async (journalId?: string): Promise<ApiResult<ListWorkspaceNotesResponse>> =>
+    apiCall<Wire.ListWorkspaceNotesResponseDto>('list_workspace_notes', {
+      request: { journalId: journalId ?? null },
+    }),
 
   /**
-   * Creates a new persisted workspace note.
+   * Creates a new persisted workspace note, owned by `journalId` when given.
+   * An unowned page is unfiled and appears in no journal's page list.
    */
-  createWorkspaceNote: async (title?: string): Promise<ApiResult<WorkspaceNote>> =>
-    apiCall<Wire.WorkspaceNoteDto>('create_workspace_note', { request: { title } }),
+  createWorkspaceNote: async (
+    title?: string,
+    journalId?: string,
+  ): Promise<ApiResult<WorkspaceNote>> =>
+    apiCall<Wire.WorkspaceNoteDto>('create_workspace_note', {
+      request: { title, journalId: journalId ?? null },
+    }),
 
   /**
    * Persists a workspace note update.

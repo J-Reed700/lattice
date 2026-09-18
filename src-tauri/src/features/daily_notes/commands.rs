@@ -69,6 +69,8 @@ pub struct ConversationSnapshotDto {
 pub struct WorkspaceNoteDto {
     pub id: String,
     pub title: String,
+    /// Owning journal, or `None` for an unfiled page.
+    pub journal_id: Option<String>,
     pub content: String,
     pub linked_document_ids: Vec<String>,
     pub linked_conversation_ids: Vec<String>,
@@ -83,6 +85,8 @@ pub struct WorkspaceNoteDto {
 #[serde(rename_all = "camelCase")]
 pub struct CreateWorkspaceNoteRequestDto {
     pub title: Option<String>,
+    /// The journal this page belongs to. Omitted for an unfiled page.
+    pub journal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -127,6 +131,15 @@ pub struct ListWorkspaceNotesResponseDto {
     pub notes: Vec<WorkspaceNoteDto>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ListWorkspaceNotesRequestDto {
+    /// List only the pages this journal owns. Omitted lists every page, which
+    /// is what the cross-journal surfaces (reference inbox, weekly synthesis,
+    /// vault sync) want.
+    pub journal_id: Option<String>,
+}
+
 /// Where a quick capture landed, so the UI can name the destination
 /// instead of saying "saved" and leaving the user to guess.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -162,6 +175,7 @@ fn row_to_dto(row: WorkspaceNoteRecord) -> Result<WorkspaceNoteDto> {
     Ok(WorkspaceNoteDto {
         id: row.id,
         title: row.title,
+        journal_id: row.journal_id,
         content: row.content,
         linked_document_ids: from_json(&row.linked_document_ids, "linked_document_ids")?,
         linked_conversation_ids: from_json(
@@ -186,9 +200,15 @@ async fn get_note_by_id(
     row_to_dto(repository.get(note_id).await?)
 }
 
-pub async fn list_workspace_notes_impl(container: &Container) -> Result<Vec<WorkspaceNoteDto>> {
+pub async fn list_workspace_notes_impl(
+    container: &Container,
+    journal_id: Option<&str>,
+) -> Result<Vec<WorkspaceNoteDto>> {
     let repository = DailyNotesRepository::new(container.db_pool().clone());
-    let rows = repository.list().await?;
+    let rows = match journal_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(journal_id) => repository.list_for_journal(journal_id).await?,
+        None => repository.list().await?,
+    };
 
     rows.into_iter().map(row_to_dto).collect()
 }
@@ -209,6 +229,10 @@ pub async fn create_workspace_note_impl(
         .insert(&WorkspaceNoteRecord {
             id: note_id.clone(),
             title,
+            journal_id: request
+                .journal_id
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty()),
             content: String::new(),
             linked_document_ids: "[]".to_string(),
             linked_conversation_ids: "[]".to_string(),
@@ -245,6 +269,9 @@ pub async fn update_workspace_note_impl(
         .update(&WorkspaceNoteRecord {
             id: note_id.clone(),
             title: note.title,
+            // `update` does not write this column: a page cannot change owner by
+            // being saved, and a stale client copy must not be able to reassign it.
+            journal_id: note.journal_id,
             content: note.content,
             linked_document_ids: to_json(&note.linked_document_ids)?,
             linked_conversation_ids: to_json(&note.linked_conversation_ids)?,
@@ -319,6 +346,8 @@ pub async fn get_today_note_impl(container: &Container) -> Result<DailyNoteCompa
         container,
         CreateWorkspaceNoteRequestDto {
             title: Some(today_daily_title()),
+            // The daily note is not a journal's page.
+            journal_id: None,
         },
     )
     .await?;
@@ -362,7 +391,11 @@ async fn resolve_capture_target(
     }
     let created = create_workspace_note_impl(
         container,
-        CreateWorkspaceNoteRequestDto { title: Some(title) },
+        CreateWorkspaceNoteRequestDto {
+            title: Some(title),
+            // Quick capture arrives with no journal context.
+            journal_id: None,
+        },
     )
     .await?;
     Ok((created, true))

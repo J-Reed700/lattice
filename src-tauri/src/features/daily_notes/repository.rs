@@ -6,6 +6,7 @@ use sqlx::{FromRow, SqlitePool};
 const NOTE_COLUMNS: &str = r#"
     id,
     title,
+    journal_id,
     content,
     linked_document_ids,
     linked_conversation_ids,
@@ -20,6 +21,8 @@ const NOTE_COLUMNS: &str = r#"
 pub struct WorkspaceNoteRecord {
     pub id: String,
     pub title: String,
+    /// Owning journal, or `None` for an unfiled page (quick capture, vault import).
+    pub journal_id: Option<String>,
     pub content: String,
     pub linked_document_ids: String,
     pub linked_conversation_ids: String,
@@ -68,6 +71,8 @@ impl DailyNotesRepository {
             .ok_or_else(|| AppError::NotFound(format!("Workspace note not found: {note_id}")))
     }
 
+    /// Every page, whichever journal owns it. The reference inbox, weekly
+    /// synthesis and vault sync all work across journals and want this.
     pub async fn list(&self) -> Result<Vec<WorkspaceNoteRecord>> {
         let query =
             format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC");
@@ -75,6 +80,21 @@ impl DailyNotesRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| AppError::Database(format!("Failed to list workspace notes: {error}")))
+    }
+
+    /// The pages one journal owns. This is what a journal's sidebar lists:
+    /// without the filter every journal shows every other journal's pages, and
+    /// its own landing page among them.
+    pub async fn list_for_journal(&self, journal_id: &str) -> Result<Vec<WorkspaceNoteRecord>> {
+        let query = format!(
+            "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace \
+             WHERE journal_id = ? ORDER BY updated_at DESC"
+        );
+        sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
+            .bind(journal_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| AppError::Database(format!("Failed to list journal pages: {error}")))
     }
 
     /// The page with this exact title, newest first when a title repeats.
@@ -161,14 +181,15 @@ impl DailyNotesRepository {
         sqlx::query(
             r#"
             INSERT INTO daily_notes_workspace (
-                id, title, content, linked_document_ids, linked_conversation_ids,
+                id, title, journal_id, content, linked_document_ids, linked_conversation_ids,
                 highlights_json, sticky_notes_json, conversation_snapshots_json,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&note.id)
         .bind(&note.title)
+        .bind(&note.journal_id)
         .bind(&note.content)
         .bind(&note.linked_document_ids)
         .bind(&note.linked_conversation_ids)

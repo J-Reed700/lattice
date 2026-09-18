@@ -585,6 +585,12 @@ impl Drop for USearchVectorIndex {
     }
 }
 
+/// How far a compressed vector's approximate rank may misrepresent its true
+/// cosine. Quantization perturbs each component slightly, so a candidate can
+/// rescore a little above or below its neighbours; the scoped search will not
+/// abandon a widening pass over a gap smaller than this.
+const RESCORE_ORDER_MARGIN: f32 = 0.05;
+
 impl VectorSearchPort for USearchVectorIndex {
     fn search(
         &self,
@@ -651,6 +657,12 @@ impl VectorSearchPort for USearchVectorIndex {
                 .map_err(|e| AppError::InternalError(format!("USearch search failed: {}", e)))?;
 
             let mut results = Vec::new();
+            // The best similarity any in-scope candidate reached this round.
+            // Widening is worth doing when the scope filter is what emptied the
+            // window, and pointless when the threshold is: USearch returns
+            // neighbours nearest first, so a wider window can only add vectors
+            // that score lower than the ones already rejected.
+            let mut best_in_scope: Option<f32> = None;
             for (&key, &distance) in matches.keys.iter().zip(matches.distances.iter()) {
                 let Some(id) = state.key_to_id.get(&key) else {
                     continue;
@@ -674,6 +686,8 @@ impl VectorSearchPort for USearchVectorIndex {
                 // replaces it with the exact full-precision cosine. Threshold
                 // is applied to the score we report, not to the lossy one.
                 let similarity = self.candidate_similarity(key, query_embedding, distance);
+                best_in_scope =
+                    Some(best_in_scope.map_or(similarity, |best: f32| best.max(similarity)));
                 if similarity < threshold {
                     continue;
                 }
@@ -701,6 +715,31 @@ impl VectorSearchPort for USearchVectorIndex {
                     results.truncate(top_k);
                 }
                 return Ok(results);
+            }
+
+            // Nothing in scope came close enough. USearch returns neighbours
+            // nearest first, so reaching further out can only find vectors that
+            // score lower than the ones just rejected — stop instead of
+            // rescanning the index one doubling at a time. A real session spent
+            // nine widening rounds over 29,766 vectors to return the empty list
+            // its first round had already established.
+            //
+            // When rescoring is active the approximate order USearch returns is
+            // not exactly the order of true cosine, so a vector further out can
+            // still rescore slightly higher. Give that reordering room: only
+            // stop when the nearest in-scope vector misses by more than
+            // quantization could explain.
+            if let Some(best) = best_in_scope {
+                let margin = if rescoring { RESCORE_ORDER_MARGIN } else { 0.0 };
+                if best + margin < threshold {
+                    tracing::debug!(
+                        candidate_k = candidate_k,
+                        best_similarity = best,
+                        threshold = threshold,
+                        "USearch scoped search stopping: nearest in-scope vector is below threshold"
+                    );
+                    return Ok(results);
+                }
             }
 
             let next_candidate_k = candidate_k.saturating_mul(2).min(index_size);
@@ -1581,5 +1620,79 @@ mod tests {
         let hits = VectorSearchPort::search(&index, &vector, 1, 0.0).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].score > 0.99, "score was {}", hits[0].score);
+    }
+
+    fn widening_corpus(dim: usize, count: u64) -> Vec<(String, Vec<f32>)> {
+        (0..count)
+            .map(|i| (format!("chunk{i}"), synthetic_vector(i, dim, 0.8)))
+            .collect()
+    }
+
+    fn widening_index(dim: usize, corpus: &[(String, Vec<f32>)]) -> USearchVectorIndex {
+        let index = USearchVectorIndex::new(dim, None).unwrap();
+        for (i, (id, vector)) in corpus.iter().enumerate() {
+            index
+                .add_embedding_with_content(
+                    id.clone(),
+                    vector.clone(),
+                    format!("passage {i}"),
+                    id.clone(),
+                    format!("doc{i}"),
+                )
+                .unwrap();
+        }
+        index
+    }
+
+    /// The logged waste: a scoped search whose scope was satisfiable but whose
+    /// threshold nothing could clear widened nine times across the whole index
+    /// before returning the empty list its first pass had already established.
+    /// The answer must stay empty — this pins the result, while the widening
+    /// loop now gives up once the nearest in-scope vector misses the bar.
+    #[test]
+    fn an_unreachable_threshold_still_returns_nothing() {
+        const DIM: usize = 16;
+        let corpus = widening_corpus(DIM, 128);
+        let index = widening_index(DIM, &corpus);
+        let query = synthetic_vector(7_777, DIM, 0.8);
+        let scope: HashSet<String> = (0..128).map(|i| format!("doc{i}")).collect();
+
+        let hits =
+            VectorSearchPort::search_scoped(&index, &query, 10, 0.999_9, Some(&scope)).unwrap();
+
+        assert!(hits.is_empty());
+    }
+
+    /// The property the early stop must not break. Here the scope — not the
+    /// threshold — is what empties the first candidate windows, so widening is
+    /// the only way to reach the answer and it has to keep going.
+    #[test]
+    fn a_scope_that_only_distant_documents_satisfy_is_still_reached() {
+        const DIM: usize = 16;
+        let corpus = widening_corpus(DIM, 128);
+        let index = widening_index(DIM, &corpus);
+        let query = synthetic_vector(7_777, DIM, 0.8);
+
+        // Scope to the single worst-ranked document that still clears the bar,
+        // so every early candidate window is filtered away entirely.
+        let ranked = exact_cosine_ranking(&query, &corpus);
+        let worst = ranked
+            .iter()
+            .rev()
+            .find(|id| {
+                corpus
+                    .iter()
+                    .find(|(candidate, _)| candidate == *id)
+                    .is_some_and(|(_, v)| cosine_similarity_naive(&query, v) > 0.05)
+            })
+            .expect("some chunk clears the bar")
+            .clone();
+        let doc = format!("doc{}", worst.trim_start_matches("chunk"));
+        let scope: HashSet<String> = [doc.clone()].into();
+
+        let hits = VectorSearchPort::search_scoped(&index, &query, 3, 0.05, Some(&scope)).unwrap();
+
+        assert_eq!(hits.len(), 1, "widening must still reach a distant scope");
+        assert_eq!(hits[0].doc_id, doc);
     }
 }

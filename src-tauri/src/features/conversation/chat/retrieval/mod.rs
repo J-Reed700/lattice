@@ -28,6 +28,7 @@ mod pipeline;
 mod policy;
 mod rerank;
 mod source_citations;
+pub use self::source_citations::WEB_SOURCE_PREFIX;
 mod sufficiency;
 mod tool_format;
 use self::conversation_helpers::{
@@ -63,6 +64,7 @@ use self::source_citations::{
     build_web_source_citations as build_web_source_citations_impl,
     citation_ids_by_chunk as citation_ids_by_chunk_impl,
     deduplicate_sources as deduplicate_sources_impl, infer_category as infer_category_impl,
+    merge_tool_sources as merge_tool_sources_impl,
 };
 use self::sufficiency::assess_sufficiency;
 pub(super) use self::sufficiency::SufficiencyVerdict;
@@ -283,6 +285,7 @@ pub(super) async fn run_retrieval_pipeline(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
+    request_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     router_settings: &RouterSettingsDto,
@@ -299,6 +302,7 @@ pub(super) async fn run_retrieval_pipeline(
         container,
         conv_service,
         conversation_id,
+        request_id,
         validated_message,
         llm,
         router_settings,
@@ -533,6 +537,15 @@ async fn load_followup_turn_anchor_terms(
 /// Deduplicate repeated chunks while retaining distinct passages from each document.
 pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
     deduplicate_sources_impl(sources)
+}
+
+/// Fold tool-supplied sources into the turn's list, collapsing repeat visits to
+/// the same web page onto the entry the model was already given.
+pub(super) fn merge_tool_sources(
+    sources: &mut Vec<SourceDto>,
+    incoming: Vec<SourceDto>,
+) -> std::collections::HashSet<String> {
+    merge_tool_sources_impl(sources, incoming)
 }
 
 /// Number the final source list so the prompt can cite the same numbers.

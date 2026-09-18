@@ -63,6 +63,8 @@ export interface ConversationsState {
   messageRetrieval: Map<string, RetrievalTrace>;
   /** Live retrieval trace per conversation id, while a turn is in flight. */
   liveRetrieval: Map<string, RetrievalTrace>;
+  /** What the in-flight turn is doing, per conversation id. */
+  liveActivity: Map<string, string>;
   /** Text the composer should adopt on its next render. */
   composerDraft: string | null;
   linkedDocumentsByConversationId: Map<string, ConversationLinkedDocumentDto[]>;

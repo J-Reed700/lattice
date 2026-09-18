@@ -1,4 +1,6 @@
 use super::*;
+use crate::features::conversation::chat::cancellation::is_cancel_requested;
+use std::time::Duration;
 
 use crate::domain::qa::hyde::HyDEInterpretation;
 
@@ -33,12 +35,21 @@ fn dominant_result_terms(
     (ranked.into_iter().take(limit).collect(), total)
 }
 
+/// Retrieval for one turn.
+///
+/// Cancellation is checked at the phase boundaries rather than by racing the
+/// phases themselves: an external search or a corrective retry dropped
+/// mid-await would abandon work the pipeline cannot clean up. A cancelled turn
+/// returns whatever the outcome holds so far, and the caller — which re-checks
+/// the flag the moment this returns — turns that into the cancellation error
+/// without ever reading it.
 // This orchestration boundary exposes the complete per-turn retrieval configuration.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
+    request_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     router_settings: &RouterSettingsDto,
@@ -119,6 +130,10 @@ pub(super) async fn run_retrieval_pipeline(
         sufficiency: None,
     };
     let tuning = &search_settings.retrieval_tuning;
+    // The embedding and utility models may both have been cold.
+    if is_cancel_requested(request_id) {
+        return outcome;
+    }
 
     let mut retrieval_plan = RetrievalPlan::from_router(
         router_settings,
@@ -155,6 +170,7 @@ pub(super) async fn run_retrieval_pipeline(
         container,
         conv_service,
         conversation_id,
+        request_id,
         validated_message,
         utility_llm: &utility_llm,
         search_flags,
@@ -183,6 +199,12 @@ pub(super) async fn run_retrieval_pipeline(
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
     };
+
+    // The phase below is the long one — KB retrieval with its corrective
+    // retries, and wiki/web lookups over the network.
+    if is_cancel_requested(request_id) {
+        return outcome;
+    }
 
     let run_kb = outcome.short_circuit_response.is_none() && retrieval_plan.should_search_kb;
     // KB and the external phase overlap only when no KB result can close the
@@ -274,6 +296,10 @@ pub(super) async fn run_retrieval_pipeline(
         );
     }
 
+    if is_cancel_requested(request_id) {
+        return outcome;
+    }
+
     if external_phase.is_none() && outcome.short_circuit_response.is_none() && external.is_planned()
     {
         let interpret = outcome.interpretation.hyde_text.is_none();
@@ -350,10 +376,23 @@ pub(super) async fn run_retrieval_pipeline(
 
 /// Borrowed inputs of the wiki/web phase, shared so the phase can run beside
 /// KB retrieval without copying turn state.
+/// Below this many characters of extracted text, a page is not carrying an
+/// article — it is a cookie wall, a paywall stub or pure navigation — and the
+/// search snippet says as much in less space.
+const MIN_USEFUL_PAGE_CHARS: usize = 400;
+
+/// One web result's page, read in full.
+struct FetchedPage {
+    text: String,
+    word_count: usize,
+    truncated: bool,
+}
+
 struct ExternalLookup<'a> {
     container: &'a Container,
     conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &'a str,
+    request_id: &'a str,
     validated_message: &'a str,
     utility_llm: &'a Arc<dyn crate::application::ports::LLMPort>,
     search_flags: SearchFlags,
@@ -670,6 +709,119 @@ impl ExternalLookup<'_> {
         searched
     }
 
+    /// Open the top web results and read them.
+    ///
+    /// A search provider returns a headline and about a sentence of context.
+    /// Answering "what does this page say" from that is not possible, so the
+    /// highest-ranked results are fetched and their article text is what the
+    /// prompt carries. Fetches run side by side — each one sleeps a randomised
+    /// moment before its request, so running them in sequence would add that
+    /// delay per page — and every one is individually fallible: a timeout, a
+    /// paywall or a page with no extractable article yields `None` for that
+    /// slot and the caller falls back to the snippet. The returned vector is
+    /// index-aligned with `results`.
+    async fn fetch_page_texts(
+        &self,
+        results: &[crate::features::function_calling::dto::WebSearchResult],
+    ) -> Vec<Option<FetchedPage>> {
+        let mut pages: Vec<Option<FetchedPage>> = (0..results.len()).map(|_| None).collect();
+
+        let count = (self.tuning.web_fetch_page_count as usize).min(results.len());
+        if count == 0 {
+            return pages;
+        }
+        // Reading pages is the slowest thing the external phase does. A stop
+        // press that landed during the search itself should not buy the user
+        // another round of network fetches.
+        if is_cancel_requested(self.request_id) {
+            debug!("Turn cancelled before page fetching — keeping snippets only");
+            return pages;
+        }
+
+        let started = Instant::now();
+        let executor = self.container.function_executor();
+        let timeout = Duration::from_secs(self.tuning.web_page_fetch_timeout_secs.max(1) as u64);
+        let max_chars = self.tuning.web_page_max_chars as usize;
+
+        let fetched = futures::future::join_all(results.iter().take(count).map(|result| {
+            let url = result.url.clone();
+            let executor = executor.clone();
+            async move {
+                let call = crate::features::function_calling::domain::FunctionCall::new(
+                    uuid::Uuid::new_v4().to_string(),
+                    "fetch_url_content",
+                    serde_json::json!({ "url": url }),
+                );
+                match tokio::time::timeout(timeout, executor.execute(call)).await {
+                    Ok(Ok(outcome)) if outcome.success => outcome.data,
+                    Ok(Ok(outcome)) => {
+                        debug!(
+                            url = url.as_str(),
+                            error = outcome.error_message.unwrap_or_default().as_str(),
+                            "Page fetch returned no content — falling back to snippet"
+                        );
+                        None
+                    }
+                    Ok(Err(e)) => {
+                        debug!(url = url.as_str(), error = %e, "Page fetch failed — falling back to snippet");
+                        None
+                    }
+                    Err(_) => {
+                        debug!(
+                            url = url.as_str(),
+                            timeout_secs = timeout.as_secs(),
+                            "Page fetch timed out — falling back to snippet"
+                        );
+                        None
+                    }
+                }
+            }
+        }))
+        .await;
+
+        let mut fetched_count = 0usize;
+        let mut total_words = 0usize;
+        for (slot, data) in fetched.into_iter().enumerate() {
+            let Some(data) = data else { continue };
+            let Ok(output) = serde_json::from_value::<
+                crate::features::function_calling::dto::FetchUrlContentOutput,
+            >(data) else {
+                continue;
+            };
+            // Extraction can succeed on a page that is all navigation. Below
+            // this the snippet is as informative and shorter.
+            if output.content.trim().len() < MIN_USEFUL_PAGE_CHARS {
+                debug!(
+                    url = output.url.as_str(),
+                    chars = output.content.trim().len(),
+                    "Extracted page text too thin to be worth carrying — keeping snippet"
+                );
+                continue;
+            }
+            let text = safe_truncate(output.content.trim(), max_chars);
+            let truncated = output.content_truncated || text.len() < output.content.trim().len();
+            let Some(page_slot) = pages.get_mut(slot) else {
+                continue;
+            };
+            fetched_count += 1;
+            total_words += output.word_count;
+            *page_slot = Some(FetchedPage {
+                text,
+                word_count: output.word_count,
+                truncated,
+            });
+        }
+
+        info!(
+            requested = count,
+            fetched = fetched_count,
+            total_words = total_words,
+            elapsed_ms = elapsed_ms(started),
+            "Web page content fetched for prompt context"
+        );
+        pages
+    }
+
     async fn web_search(&self, web_query: &str) -> ExternalSearchResult {
         let web_search_start = Instant::now();
         let tuning = self.tuning;
@@ -784,6 +936,7 @@ impl ExternalLookup<'_> {
                                     self.excerpt_chars,
                                 );
 
+                                let pages = self.fetch_page_texts(&output.results).await;
                                 let context_text = output
                                     .results
                                     .iter()
@@ -799,13 +952,27 @@ impl ExternalLookup<'_> {
                                             &result.snippet,
                                             tuning.web_snippet_max_chars as usize,
                                         );
+                                        // A page that was read in full replaces the
+                                        // search engine's one-line blurb. The snippet
+                                        // stays for the rest, so a fetch that failed
+                                        // degrades to what the old behaviour gave.
+                                        let body = match pages.get(i).and_then(Option::as_ref) {
+                                            Some(page) => format!(
+                                                "\nPage content ({} words{}):\n{}",
+                                                page.word_count,
+                                                if page.truncated { ", truncated" } else { "" },
+                                                page.text
+                                            ),
+                                            None => String::new(),
+                                        };
                                         format!(
-                                            "[{}] {}\nURL: {}\nSnippet: {}{}",
+                                            "[{}] {}\nURL: {}\nSnippet: {}{}{}",
                                             i + 1,
                                             result.title,
                                             result.url,
                                             snippet,
-                                            published_line
+                                            published_line,
+                                            body
                                         )
                                     })
                                     .collect::<Vec<_>>()

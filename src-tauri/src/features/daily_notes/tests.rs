@@ -14,16 +14,36 @@ use super::commands::{appended_capture, capture_snippet};
 use super::repository::{DailyNotesRepository, WorkspaceNoteRecord};
 use crate::shared::error::AppError;
 
-async fn fresh_repository() -> DailyNotesRepository {
+async fn fresh_pool() -> SqlitePool {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    DailyNotesRepository::new(pool)
+    // The app turns this on at connection time; the cascade from a deleted
+    // journal to its pages is silently a no-op without it.
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool
+}
+
+async fn fresh_repository() -> DailyNotesRepository {
+    DailyNotesRepository::new(fresh_pool().await)
+}
+
+async fn insert_journal(pool: &SqlitePool, id: &str, name: &str) {
+    sqlx::query("INSERT INTO journals (id, name) VALUES (?, ?)")
+        .bind(id)
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 fn record(id: &str, title: &str, content: &str, updated_at: &str) -> WorkspaceNoteRecord {
     WorkspaceNoteRecord {
         id: id.to_string(),
         title: title.to_string(),
+        journal_id: None,
         content: content.to_string(),
         linked_document_ids: "[]".to_string(),
         linked_conversation_ids: "[]".to_string(),
@@ -173,4 +193,72 @@ async fn find_by_title_matches_exactly_and_lists_newest_first() {
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn a_journal_lists_only_its_own_pages() {
+    let pool = fresh_pool().await;
+    insert_journal(&pool, "journal_one", "Journal 1").await;
+    insert_journal(&pool, "journal_two", "Journal 2").await;
+    let repository = DailyNotesRepository::new(pool);
+
+    let mut mine = record("mine", "My page", "", "2026-09-17T10:00:00.000Z");
+    mine.journal_id = Some("journal_one".to_string());
+    let mut theirs = record("theirs", "Their page", "", "2026-09-17T11:00:00.000Z");
+    theirs.journal_id = Some("journal_two".to_string());
+    // Quick capture and vault imports arrive owned by nothing.
+    let unfiled = record("unfiled", "Quick capture", "", "2026-09-17T12:00:00.000Z");
+
+    for note in [&mine, &theirs, &unfiled] {
+        repository.insert(note).await.unwrap();
+    }
+
+    let listed = repository.list_for_journal("journal_one").await.unwrap();
+    assert_eq!(
+        listed.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+        vec!["mine"],
+        "a journal must not show another journal's pages, nor unfiled ones"
+    );
+
+    // The cross-journal surfaces still see everything.
+    assert_eq!(repository.list().await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn deleting_a_journal_deletes_the_pages_it_owns() {
+    let pool = fresh_pool().await;
+    insert_journal(&pool, "journal_one", "Journal 1").await;
+    insert_journal(&pool, "journal_two", "Journal 2").await;
+    let repository = DailyNotesRepository::new(pool.clone());
+
+    let mut doomed = record("doomed", "Page", "", "2026-09-17T10:00:00.000Z");
+    doomed.journal_id = Some("journal_one".to_string());
+    let mut survivor = record("survivor", "Page", "", "2026-09-17T10:00:00.000Z");
+    survivor.journal_id = Some("journal_two".to_string());
+    let unfiled = record("unfiled", "Quick capture", "", "2026-09-17T10:00:00.000Z");
+
+    for note in [&doomed, &survivor, &unfiled] {
+        repository.insert(note).await.unwrap();
+    }
+
+    sqlx::query("DELETE FROM journals WHERE id = ?")
+        .bind("journal_one")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let remaining: Vec<String> = repository
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|note| note.id)
+        .collect();
+    assert!(
+        !remaining.contains(&"doomed".to_string()),
+        "a deleted journal must take its pages with it, or recreating one \
+         resurrects them"
+    );
+    assert!(remaining.contains(&"survivor".to_string()));
+    assert!(remaining.contains(&"unfiled".to_string()));
 }
