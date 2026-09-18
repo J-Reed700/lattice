@@ -1,5 +1,7 @@
 # TEMPORARY diagnostic for cargo check (windows-latest) STATUS_ENTRYPOINT_NOT_FOUND.
-# Round 2: the CRT theory was disproved, so stop guessing and name the symbol.
+# Round 3: round 2's export parser mishandled forwarders, so its output was
+# noise. Ask the loader directly (loader snaps under cdb), and redo the symbol
+# analysis with forwarders parsed correctly as a backup.
 name: win-diag
 on:
   push:
@@ -33,7 +35,8 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib --no-run --message-format=json > build.json
 
-      - name: Find the missing export
+      - name: Record the exe path
+        id: exe
         shell: pwsh
         working-directory: src-tauri
         run: |
@@ -41,42 +44,74 @@ jobs:
             Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'lattice' -and $_.profile.test -eq $true } |
             Select-Object -Last 1).executable
           Write-Host "EXE=$exe"
+          "exe=$exe" >> $env:GITHUB_OUTPUT
+
+      - name: Ask the loader (cdb + loader snaps)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $cdb = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe" -ErrorAction SilentlyContinue
+          if (-not $cdb) { $cdb = Get-ChildItem "C:\Program Files*\Windows Kits\**\Debuggers\x64\cdb.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          if (-not $cdb) { Write-Host "NO_CDB: Debugging Tools not on this image"; exit 0 }
+          Write-Host "CDB=$($cdb.FullName)"
+          # sxe ld prints each module load; the last one before the bail is the culprit's
+          # neighbourhood, and the loader's own error text names the missing procedure.
+          $out = & $cdb.FullName -c "sxe ld;g;!dlls -l;q" "${{ steps.exe.outputs.exe }}" "--list" 2>&1
+          $out | Select-String -Pattern "procedure entry point|entry point|ERROR_|c0000139|Unable to load|LdrpProcessWork|snap|could not be located" -Context 2,2 |
+            ForEach-Object { Write-Host $_ }
+          Write-Host "---- last 60 lines of cdb output ----"
+          $out | Select-Object -Last 60 | ForEach-Object { Write-Host $_ }
+
+      - name: Symbol analysis with forwarders handled
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe = "${{ steps.exe.outputs.exe }}"
           $exeDir = Split-Path $exe
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $dumpbin = (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1).FullName
 
-          # Parse `dumpbin /imports` into a map of DLL -> imported symbol names.
-          $imports = @{}
-          $curr = $null
-          foreach ($line in (& $dumpbin /imports $exe)) {
-            if ($line -match '^\s{4}(\S+\.dll)\s*$') { $curr = $Matches[1].ToLower(); $imports[$curr] = New-Object System.Collections.Generic.List[string]; continue }
-            # Symbol rows look like:  "  <hint> <name>" after the header block.
-            if ($curr -and $line -match '^\s+[0-9A-Fa-f]{1,4}\s+([A-Za-z_?@$][^\s]*)\s*$') { $imports[$curr].Add($Matches[1]) }
+          function Get-Exports($path) {
+            $set = New-Object 'System.Collections.Generic.HashSet[string]'
+            foreach ($l in (& $dumpbin /exports $path)) {
+              # "  ord hint RVA name" or, for a forwarder, "  ord hint      name (forwarded to x.y)"
+              if ($l -match '^\s+\d+\s+[0-9A-Fa-f]+\s+(?:[0-9A-Fa-f]{8}\s+)?([^\s(]+)') { [void]$set.Add($Matches[1]) }
+            }
+            return $set
+          }
+          function Get-Imports($path) {
+            $map = @{}; $curr = $null
+            foreach ($l in (& $dumpbin /imports $path)) {
+              if ($l -match '^\s{4}(\S+\.dll)\s*$') { $curr = $Matches[1]; $map[$curr] = New-Object 'System.Collections.Generic.List[string]'; continue }
+              if ($curr -and $l -match '^\s+[0-9A-Fa-f]{1,4}\s+([A-Za-z_?@$][^\s]*)\s*$') { $map[$curr].Add($Matches[1]) }
+            }
+            return $map
+          }
+          function Resolve-Dll($name) {
+            if ($name -like 'api-ms-*' -or $name -like 'ext-ms-*') { return $null }  # apisets: schema-resolved
+            foreach ($c in (Join-Path $exeDir $name), "C:\Windows\System32\$name") { if (Test-Path $c) { return $c } }
+            return 'MISSING_FILE'
           }
 
+          $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+          $queue = New-Object 'System.Collections.Generic.Queue[string]'
+          $queue.Enqueue($exe); [void]$seen.Add((Split-Path $exe -Leaf).ToLower())
           $problems = 0
-          foreach ($dll in $imports.Keys | Sort-Object) {
-            # Same search order the loader uses for these purposes: app dir, then System32.
-            $path = if (Test-Path (Join-Path $exeDir $dll)) { Join-Path $exeDir $dll }
-                    elseif (Test-Path "C:\Windows\System32\$dll") { "C:\Windows\System32\$dll" }
-                    else { $null }
-            if (-not $path) { Write-Host "UNRESOLVED DLL: $dll"; $problems++; continue }
-            $exports = New-Object 'System.Collections.Generic.HashSet[string]'
-            foreach ($line in (& $dumpbin /exports $path)) {
-              if ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+(\S+)') { [void]$exports.Add($Matches[1]) }
-              elseif ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+(\S+)\s*$')          { [void]$exports.Add($Matches[1]) }
-            }
-            if ($exports.Count -eq 0) { Write-Host "note: no exports parsed from $dll (apiset forwarder?)"; continue }
-            foreach ($sym in $imports[$dll]) {
-              if (-not $exports.Contains($sym)) {
-                Write-Host "MISSING: $dll does not export $sym   [resolved: $path]"
-                $problems++
+          while ($queue.Count -gt 0) {
+            $mod = $queue.Dequeue()
+            foreach ($dll in (Get-Imports $mod).Keys) {
+              $path = Resolve-Dll $dll
+              if ($null -eq $path) { continue }
+              if ($path -eq 'MISSING_FILE') { Write-Host "MISSING FILE: $dll (imported by $(Split-Path $mod -Leaf))"; $problems++; continue }
+              $exports = Get-Exports $path
+              foreach ($sym in (Get-Imports $mod)[$dll]) {
+                if (-not $exports.Contains($sym)) {
+                  Write-Host "MISSING EXPORT: $dll!$sym  (imported by $(Split-Path $mod -Leaf))  [$path]"
+                  $problems++
+                }
               }
+              if ($seen.Add($dll.ToLower())) { $queue.Enqueue($path) }
             }
           }
           Write-Host "PROBLEM_COUNT=$problems"
-          if ($problems -eq 0) {
-            Write-Host "All direct imports resolve; the failure is in a TRANSITIVE dependency."
-            Write-Host "Direct dependency list for reference:"
-            & $dumpbin /dependents $exe
-          }
+          Write-Host "MODULES_SCANNED=$($seen.Count)"
