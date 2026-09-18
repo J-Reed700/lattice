@@ -4,7 +4,36 @@ use std::path::PathBuf;
 #[path = "build_support/sidecar_guard.rs"]
 mod sidecar_guard;
 
+/// Give the test binaries the comctl32 v6 dependency the app binary gets from
+/// `tauri-build`.
+///
+/// `rfd`, pulled in by `tauri-plugin-dialog`, statically imports
+/// `TaskDialogIndirect`, which only comctl32 version 6 exports. A `cargo test`
+/// harness is a plain rustc executable with no manifest, so the loader bound
+/// comctl32 to the 5.82 copy in System32, failed to resolve that import, and
+/// killed the process before `main` with STATUS_ENTRYPOINT_NOT_FOUND. The
+/// symptom was the whole Windows test run dying in under a second while
+/// `cargo check` stayed green, which is why it read as an environment problem.
+fn embed_test_manifest() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        return; // /MANIFEST is a link.exe flag
+    }
+    let manifest =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests-common-controls.manifest");
+    println!("cargo::rerun-if-changed=tests-common-controls.manifest");
+    println!("cargo::rustc-link-arg-tests=/MANIFEST:EMBED");
+    println!(
+        "cargo::rustc-link-arg-tests=/MANIFESTINPUT:{}",
+        manifest.display()
+    );
+}
+
 fn main() {
+    embed_test_manifest();
+
     if !guard_llama_sidecar() {
         // The guard logged `cargo::error`s; Cargo fails the build once this
         // script exits, so skip tauri-build and keep the output to the fix.
