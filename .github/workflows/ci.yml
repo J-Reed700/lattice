@@ -85,8 +85,22 @@ jobs:
           $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
                 Sort-Object FullName | Select-Object -Last 1
           if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
-          $exes = cargo test --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json |
-                  ConvertFrom-Json | Where-Object { $_.executable } | ForEach-Object { $_.executable }
+          # Keep the JSON in a file: piping it straight into ConvertFrom-Json
+          # eats the compiler diagnostics, which live on the same stream, and
+          # turns a build failure into a misleading "no test executables".
+          $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
+          cargo test --lib --bin export_bindings --test sidecar_guard_test --no-run --message-format=json > $json
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content $json | ForEach-Object {
+              $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
+              if ($m -and $m.reason -eq 'compiler-message' -and $m.message.rendered) { Write-Host $m.message.rendered }
+            }
+            throw "building the test executables failed (diagnostics above)"
+          }
+          $exes = Get-Content $json | ForEach-Object {
+                    $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
+                    if ($m -and $m.executable) { $m.executable }
+                  }
           if (-not $exes) { throw "cargo reported no test executables" }
           foreach ($exe in $exes) {
             $out = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($exe) + ".manifest")
