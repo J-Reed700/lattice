@@ -129,8 +129,10 @@ token settings, given the indexer's `[Document: … | Section: …]` context pre
 re-split through the embedder's own input policy with that prefix, and embedded as
 the prefixed text — the sequence `IndexingActor::process_file` runs. Vectors go
 into a `USearchVectorIndex` (HNSW, cosine, f32) and chunk rows into an in-memory
-SQLite database whose production `chunks_fts_insert` trigger mirrors them into an
-FTS5 table. Queries then run through a real `HybridSearchService` built with the
+SQLite database whose production `chunks_fts_insert` trigger mirrors them into
+both FTS5 tables: the `porter unicode61` index every query reads, and the
+`trigram` index consulted only for a query that contains CJK. Queries then run
+through a real `HybridSearchService` built with the
 same dependencies `features::search::di::build` uses — the USearch index,
 `BM25Search`, and `SearchEnrichmentService` — so both branches, reciprocal-rank
 weighted fusion at k = 10, and the shared cross-encoder blend are the production code, not a
