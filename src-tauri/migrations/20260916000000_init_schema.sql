@@ -160,21 +160,40 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     tokenize='porter unicode61 remove_diacritics 2'
 );
 
+-- The same text, tokenized as overlapping 3-character windows.
+--
+-- `unicode61` splits on whitespace and punctuation, which Japanese and Chinese
+-- do not use between words: it indexes a whole run of Han or Kana as one token,
+-- so a query for a few characters of a long run matches nothing at all. FTS5's
+-- built-in trigram tokenizer is the standard answer. It is only consulted for a
+-- query that actually contains CJK (see `search::engine::fts_query`), and it
+-- costs roughly the content size again in index pages.
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_trigram USING fts5(
+    chunk_id UNINDEXED,
+    content,
+    tokenize='trigram'
+);
+
 -- Indexes the contextualized text when the chunker produced one, else the raw
--- chunk body.
+-- chunk body. Both chunk indexes are written together: a query that reaches
+-- only one of them must not see a different corpus.
 CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
   INSERT INTO chunks_fts(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+  INSERT INTO chunks_trigram(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
 END;
 
 CREATE TRIGGER chunks_fts_update AFTER UPDATE ON text_chunks BEGIN
   DELETE FROM chunks_fts WHERE chunk_id = old.id;
+  DELETE FROM chunks_trigram WHERE chunk_id = old.id;
   INSERT INTO chunks_fts(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+  INSERT INTO chunks_trigram(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
 END;
 
 CREATE TRIGGER chunks_fts_delete
 AFTER DELETE ON text_chunks
 BEGIN
     DELETE FROM chunks_fts WHERE chunk_id = old.id;
+    DELETE FROM chunks_trigram WHERE chunk_id = old.id;
 END;
 
 -- Legacy document-level FTS5 table. No search path reads it; it is retained

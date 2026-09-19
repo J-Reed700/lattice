@@ -10,7 +10,7 @@
 //!    embedder's own input policy with that prefix, and the prefixed text is what gets embedded —
 //!    the same sequence `IndexingActor::process_file` runs.
 //! 3. Vectors go into a `USearchVectorIndex` (HNSW, cosine, f32); chunk rows go into SQLite,
-//!    where the production `chunks_fts_insert` trigger mirrors them into an FTS5 table.
+//!    where the production `chunks_fts_insert` trigger mirrors them into both FTS5 tables.
 //! 4. `HybridSearchService` runs both branches — three, with `--sparse on` — and fuses them
 //!    with weighted `ReciprocalRankFusion` (k = 10 by default), then applies the shared cross-encoder
 //!    blend when a reranker is supplied.
@@ -112,8 +112,15 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
     content,
     tokenize='porter unicode61 remove_diacritics 2'
 );
+CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+    chunk_id UNINDEXED,
+    content,
+    tokenize='trigram'
+);
 CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
   INSERT INTO chunks_fts(chunk_id, content)
+  VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+  INSERT INTO chunks_trigram(chunk_id, content)
   VALUES(new.id, COALESCE(new.contextualized_content, new.content));
 END;
 CREATE TABLE IF NOT EXISTS chunk_sparse_terms (
@@ -350,7 +357,6 @@ impl ProductionIndex {
             // Direct search leaves reranking off by default; here it follows the CLI argument
             // so a reranked run exercises HybridSearchService's own blend stage.
             enable_reranking: reranker.is_some(),
-            recency_boost: 1.0,
             max_results: 100,
             // `HybridSearchService` still skips the branch unless a service is
             // attached *and* the loaded model has a sparse head, so this flag

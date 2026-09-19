@@ -1,11 +1,10 @@
+use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
 use crate::features::search::BM25SearchTrait;
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
-use rust_stemmers::{Algorithm, Stemmer};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 use tracing::warn;
@@ -47,43 +46,77 @@ impl From<BM25Result> for crate::features::search::engine::service::SearchResult
     }
 }
 
+/// Ranked lexical retrieval over the chunk FTS5 indexes.
+///
+/// Query construction lives in [`fts_query`], which also decides which of the
+/// two indexes a query can be answered from.
 #[derive(Debug)]
 pub struct BM25Search {
     pool: SqlitePool,
 }
 
-impl BM25Search {
-    const MIN_TERM_LEN: usize = 3;
-    const MAX_TERMS: usize = 16;
+/// One statement per index. Written out rather than built by string
+/// concatenation so `scripts/check-sql-contracts.py` can prepare both against
+/// the migration.
+const WORDS_SQL: &str = "SELECT
+        tc.id as chunk_id,
+        tc.document_id as document_id,
+        bm25(chunks_fts) as score,
+        d.file_name as filename,
+        d.mime_type,
+        d.size_bytes,
+        d.created_at,
+        tc.content
+     FROM chunks_fts
+     JOIN text_chunks tc ON chunks_fts.chunk_id = tc.id
+     LEFT JOIN documents d ON tc.document_id = d.id
+     WHERE chunks_fts MATCH ?
+     ORDER BY score
+     LIMIT ?";
 
+const TRIGRAM_SQL: &str = "SELECT
+        tc.id as chunk_id,
+        tc.document_id as document_id,
+        bm25(chunks_trigram) as score,
+        d.file_name as filename,
+        d.mime_type,
+        d.size_bytes,
+        d.created_at,
+        tc.content
+     FROM chunks_trigram
+     JOIN text_chunks tc ON chunks_trigram.chunk_id = tc.id
+     LEFT JOIN documents d ON tc.document_id = d.id
+     WHERE chunks_trigram MATCH ?
+     ORDER BY score
+     LIMIT ?";
+
+impl BM25Search {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<BM25Result>> {
-        let normalized_query = Self::normalize_fts_query(query);
-        if normalized_query.is_empty() {
+        let Some(normalized) = fts_query::normalize(query) else {
             return Ok(Vec::new());
-        }
+        };
 
-        let results: Vec<SqliteRow> = match self.execute_bm25_query(&normalized_query, top_k).await
-        {
+        let results: Vec<SqliteRow> = match self.execute_bm25_query(&normalized, top_k).await {
             Ok(rows) => rows,
             Err(error) if Self::is_fts_syntax_error(&error) => {
-                let fallback_query = Self::strict_tokenize_fts_query(query);
-                if fallback_query.is_empty() || fallback_query == normalized_query {
+                let fallback = fts_query::strict_tokenize(query);
+                let Some(fallback) = fallback.filter(|fallback| *fallback != normalized) else {
                     return Err(error);
-                }
+                };
 
                 warn!(
                     original_query = %query,
-                    normalized_query = %normalized_query,
-                    fallback_query = %fallback_query,
+                    normalized_query = %normalized.match_expression,
+                    fallback_query = %fallback.match_expression,
                     error = %error,
                     "BM25 primary FTS query failed with syntax error, retrying with strict tokenized fallback"
                 );
 
-                self.execute_bm25_query(&fallback_query, top_k).await?
+                self.execute_bm25_query(&fallback, top_k).await?
             }
             Err(error) => return Err(error),
         };
@@ -116,228 +149,28 @@ impl BM25Search {
         Ok(bm25_results)
     }
 
-    async fn execute_bm25_query(&self, query: &str, top_k: usize) -> Result<Vec<SqliteRow>> {
+    async fn execute_bm25_query(&self, query: &FtsQuery, top_k: usize) -> Result<Vec<SqliteRow>> {
         let pool = self.pool.clone();
-        let query_string = query.to_string();
+        let sql = match query.index {
+            FtsIndex::Words => WORDS_SQL,
+            FtsIndex::Trigram => TRIGRAM_SQL,
+        };
+        let match_expression = query.match_expression.clone();
 
         query_with_timeout(move || async move {
-            sqlx::query(
-                "SELECT
-                    tc.id as chunk_id,
-                    tc.document_id as document_id,
-                    bm25(chunks_fts) as score,
-                    d.file_name as filename,
-                    d.mime_type,
-                    d.size_bytes,
-                    d.created_at,
-                    tc.content
-                 FROM chunks_fts
-                 JOIN text_chunks tc ON chunks_fts.chunk_id = tc.id
-                 LEFT JOIN documents d ON tc.document_id = d.id
-                 WHERE chunks_fts MATCH ?
-                 ORDER BY score
-                 LIMIT ?",
-            )
-            .bind(query_string)
-            .bind(top_k as i64)
-            .fetch_all(&pool)
-            .await
+            sqlx::query(sql)
+                .bind(match_expression)
+                .bind(top_k as i64)
+                .fetch_all(&pool)
+                .await
         })
         .await
-    }
-
-    /// Normalize free-text input into an FTS5 query.
-    ///
-    /// FTS5 treats whitespace as implicit AND. For natural-language queries and
-    /// expanded synonym lists we prefer OR semantics to preserve recall.
-    /// If the input appears to already use FTS operators/syntax, keep it as-is.
-    fn normalize_fts_query(query: &str) -> String {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            return String::new();
-        }
-
-        if Self::looks_like_explicit_fts_syntax(trimmed) {
-            return trimmed.to_string();
-        }
-
-        Self::strict_tokenize_fts_query(trimmed)
-    }
-
-    fn strict_tokenize_fts_query(query: &str) -> String {
-        let mut terms: Vec<String> = Vec::new();
-        let mut current = String::new();
-        for ch in query.chars() {
-            if ch.is_alphanumeric() {
-                for lower in ch.to_lowercase() {
-                    current.push(lower);
-                }
-            } else if !current.is_empty() {
-                terms.push(current);
-                current = String::new();
-            }
-        }
-        if !current.is_empty() {
-            terms.push(current);
-        }
-
-        let mut seen = std::collections::HashSet::new();
-        let deduped_terms: Vec<String> = terms
-            .into_iter()
-            .filter_map(|term| {
-                if term.is_empty() || !seen.insert(term.clone()) {
-                    None
-                } else {
-                    Some(term)
-                }
-            })
-            .collect();
-
-        if deduped_terms.is_empty() {
-            return String::new();
-        }
-
-        let mut filtered_terms = Self::select_informative_terms(deduped_terms, Self::MAX_TERMS);
-        if filtered_terms.is_empty() {
-            return String::new();
-        }
-
-        let mut seen = filtered_terms
-            .iter()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>();
-        let selected_base = filtered_terms.clone();
-        for term in selected_base {
-            let stem = Self::stem_term(term.as_str());
-            if stem != term && stem.len() >= Self::MIN_TERM_LEN && seen.insert(stem.clone()) {
-                filtered_terms.push(stem);
-                if filtered_terms.len() >= Self::MAX_TERMS {
-                    break;
-                }
-            }
-        }
-
-        if filtered_terms.len() <= 1 {
-            filtered_terms.first().cloned().unwrap_or_default()
-        } else {
-            filtered_terms.join(" OR ")
-        }
-    }
-
-    fn looks_like_explicit_fts_syntax(query: &str) -> bool {
-        query.contains('"')
-            || query.contains('*')
-            || query.contains(" OR ")
-            || query.contains(" AND ")
-            || query.contains(" NOT ")
-            || query.contains(" NEAR ")
-            || query.contains(" NEAR(")
-    }
-
-    fn normalize_term(term: &str) -> Option<String> {
-        let trimmed = term.trim();
-        if trimmed.len() < Self::MIN_TERM_LEN {
-            return None;
-        }
-        if !trimmed.chars().any(|ch| ch.is_ascii_alphabetic()) {
-            return None;
-        }
-        Some(trimmed.to_string())
-    }
-
-    fn stem_term(term: &str) -> String {
-        static EN_STEMMER: Lazy<Stemmer> = Lazy::new(|| Stemmer::create(Algorithm::English));
-        EN_STEMMER.stem(term).to_string()
-    }
-
-    fn term_entropy(term: &str) -> f32 {
-        use std::collections::HashMap;
-
-        let len = term.len();
-        if len == 0 {
-            return 0.0;
-        }
-
-        let mut counts: HashMap<char, usize> = HashMap::new();
-        for ch in term.chars() {
-            *counts.entry(ch).or_insert(0) += 1;
-        }
-
-        let denom = len as f32;
-        counts.values().fold(0.0_f32, |acc, count| {
-            let p = (*count as f32) / denom;
-            if p <= f32::EPSILON {
-                acc
-            } else {
-                acc - p * p.log2()
-            }
-        })
-    }
-
-    fn term_salience(term: &str) -> f32 {
-        let entropy = Self::term_entropy(term);
-        let length_factor = ((term.len() as f32) + 1.0).ln();
-        entropy * (0.65 + 0.35 * length_factor)
-    }
-
-    fn select_informative_terms(terms: Vec<String>, max_terms: usize) -> Vec<String> {
-        let mut deduped = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for term in terms {
-            if let Some(normalized) = Self::normalize_term(&term) {
-                if seen.insert(normalized.clone()) {
-                    deduped.push(normalized);
-                }
-            }
-        }
-        if deduped.is_empty() {
-            return Vec::new();
-        }
-
-        let mut ranked: Vec<(String, f32)> = deduped
-            .into_iter()
-            .map(|term| {
-                let score = Self::term_salience(&term);
-                (term, score)
-            })
-            .collect();
-        ranked.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
-        });
-
-        let best_score = ranked.first().map(|(_, score)| *score).unwrap_or(0.0);
-        if best_score <= f32::EPSILON {
-            return ranked
-                .into_iter()
-                .take(max_terms)
-                .map(|(term, _)| term)
-                .collect();
-        }
-
-        let mut selected: Vec<String> = ranked
-            .iter()
-            .filter_map(|(term, score)| (*score >= best_score * 0.42).then_some(term.clone()))
-            .take(max_terms)
-            .collect();
-        if selected.is_empty() {
-            selected = ranked
-                .into_iter()
-                .take(max_terms.min(3))
-                .map(|(term, _)| term)
-                .collect();
-        }
-        selected
     }
 
     fn is_fts_syntax_error(error: &AppError) -> bool {
         matches!(
             error,
-            AppError::Database(message)
-                if message.contains("fts5: syntax error")
-                    || message.contains("malformed MATCH expression")
-                    || message.contains("unterminated string")
+            AppError::Database(message) if fts_query::is_syntax_error_message(message)
         )
     }
 
@@ -362,6 +195,9 @@ impl BM25Search {
         query_with_heavy_timeout(|| async {
             sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
                 .execute(&pool)
+                .await?;
+            sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('optimize')")
+                .execute(&pool)
                 .await
         })
         .await?;
@@ -373,6 +209,9 @@ impl BM25Search {
 
         query_with_heavy_timeout(|| async {
             sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+                .execute(&pool)
+                .await?;
+            sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('rebuild')")
                 .execute(&pool)
                 .await
         })
@@ -414,13 +253,34 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
 
+    /// The two chunk indexes and the triggers that keep them in step, copied
+    /// from `migrations/20260916000000_init_schema.sql`.
+    const FTS_SCHEMA: &str = "
+        CREATE VIRTUAL TABLE chunks_fts USING fts5(
+            chunk_id UNINDEXED,
+            content,
+            tokenize='porter unicode61 remove_diacritics 2'
+        );
+        CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+            chunk_id UNINDEXED,
+            content,
+            tokenize='trigram'
+        );
+        CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
+          INSERT INTO chunks_fts(chunk_id, content)
+          VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+          INSERT INTO chunks_trigram(chunk_id, content)
+          VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+        END;
+    ";
+
     async fn setup_test_db() -> Result<SqlitePool> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await?;
 
-        sqlx::query(
+        sqlx::raw_sql(
             "CREATE TABLE documents (
                 id TEXT PRIMARY KEY,
                 file_name TEXT NOT NULL,
@@ -428,38 +288,28 @@ mod tests {
                 mime_type TEXT,
                 size_bytes INTEGER,
                 created_at TEXT NOT NULL
-            )",
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE text_chunks (
+            );
+            CREATE TABLE text_chunks (
                 id TEXT PRIMARY KEY,
                 document_id TEXT NOT NULL,
                 content TEXT NOT NULL,
+                contextualized_content TEXT,
                 chunk_index INTEGER NOT NULL,
                 FOREIGN KEY (document_id) REFERENCES documents(id)
-            )",
+            );",
         )
         .execute(&pool)
         .await?;
-
-        sqlx::query(
-            "CREATE VIRTUAL TABLE chunks_fts USING fts5(
-                chunk_id UNINDEXED,
-                content,
-                tokenize='porter unicode61 remove_diacritics 2'
-            )",
-        )
-        .execute(&pool)
-        .await?;
+        sqlx::raw_sql(FTS_SCHEMA).execute(&pool).await?;
 
         sqlx::query(
             "INSERT INTO documents (id, file_name, mime_type, size_bytes, created_at) VALUES
              ('doc1', 'rust.txt', 'text/plain', 1024, '2024-01-01'),
              ('doc2', 'python.txt', 'text/plain', 2048, '2024-01-02'),
-             ('doc3', 'ml.txt', 'text/plain', 3072, '2024-01-03')",
+             ('doc3', 'ml.txt', 'text/plain', 3072, '2024-01-03'),
+             ('doc4', 'incidents.txt', 'text/plain', 512, '2024-01-04'),
+             ('doc5', 'support-ja.txt', 'text/plain', 512, '2024-01-05'),
+             ('doc6', 'policy-ru.txt', 'text/plain', 512, '2024-01-06')",
         )
         .execute(&pool)
         .await?;
@@ -468,16 +318,10 @@ mod tests {
             "INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES
              ('chunk1', 'doc1', 'Rust is a systems programming language', 0),
              ('chunk2', 'doc2', 'Python is a high-level programming language', 0),
-             ('chunk3', 'doc3', 'Machine learning with Python and neural networks', 0)",
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            "INSERT INTO chunks_fts (chunk_id, content) VALUES
-             ('chunk1', 'Rust is a systems programming language'),
-             ('chunk2', 'Python is a high-level programming language'),
-             ('chunk3', 'Machine learning with Python and neural networks')",
+             ('chunk3', 'doc3', 'Machine learning with Python and neural networks', 0),
+             ('chunk4', 'doc4', 'Incident ERR-4012 was raised in 2026 after a 429 response', 0),
+             ('chunk5', 'doc5', '日本語サポート時間。担当チームは日本標準時の月曜日から金曜日まで対応します。', 0),
+             ('chunk6', 'doc6', 'Политика хранения резервных копий рабочего пространства', 0)",
         )
         .execute(&pool)
         .await?;
@@ -527,53 +371,92 @@ mod tests {
         assert!(!BM25Search::supports_query("   "));
     }
 
-    #[test]
-    fn test_normalize_fts_query_tokenizes_natural_language() {
-        let normalized = BM25Search::normalize_fts_query("What has ICE been doing??");
-        let terms: Vec<&str> = normalized.split(" OR ").collect();
-        assert!(terms
-            .iter()
-            .all(|term| term.len() >= BM25Search::MIN_TERM_LEN));
+    /// The regression this file exists for: a query with no ASCII letter used
+    /// to produce an empty `MATCH` expression and no lexical branch at all.
+    #[tokio::test]
+    async fn a_digits_only_query_finds_its_chunk() {
+        let pool = setup_test_db().await.unwrap();
+        let search = BM25Search::new(pool);
+
+        for query in ["4012", "429", "2026"] {
+            let results = search.search(query, 10).await.unwrap();
+            assert_eq!(
+                results.first().map(|r| r.chunk_id.as_str()),
+                Some("chunk4"),
+                "query {query} found {results:?}"
+            );
+        }
     }
 
-    #[test]
-    fn test_strict_tokenize_fts_query_strips_fts_punctuation() {
-        let strict = BM25Search::strict_tokenize_fts_query(
-            "\"Immigration and Customs Enforcement (ICE): Operations\"",
-        );
-        let terms: Vec<&str> = strict.split(" OR ").collect();
-        assert!(terms.contains(&"immigration"));
-        assert!(terms.contains(&"customs"));
-        assert!(terms.contains(&"enforcement"));
-        assert!(terms.contains(&"operations"));
+    #[tokio::test]
+    async fn an_identifier_keeps_both_halves() {
+        let pool = setup_test_db().await.unwrap();
+        let results = BM25Search::new(pool).search("ERR-4012", 10).await.unwrap();
+        assert_eq!(results.first().map(|r| r.chunk_id.as_str()), Some("chunk4"));
     }
 
-    #[test]
-    fn test_is_fts_syntax_error_detects_database_error_string() {
-        let err = AppError::Database(
-            "Database query failed: error returned from database: (code: 1) fts5: syntax error near \"Operations\"".to_string(),
-        );
-        assert!(BM25Search::is_fts_syntax_error(&err));
+    #[tokio::test]
+    async fn a_cyrillic_query_finds_its_chunk() {
+        let pool = setup_test_db().await.unwrap();
+        let results = BM25Search::new(pool)
+            .search("политика хранения", 10)
+            .await
+            .unwrap();
+        assert_eq!(results.first().map(|r| r.chunk_id.as_str()), Some("chunk6"));
     }
 
-    #[test]
-    fn test_normalize_fts_query_does_not_treat_plain_punctuation_as_fts_syntax() {
-        let sentence = "Immigration and Customs Enforcement (ICE): Operations expanded.";
-        let normalized = BM25Search::normalize_fts_query(sentence);
-        assert_ne!(normalized, sentence);
-        let terms: Vec<&str> = normalized.split(" OR ").collect();
-        assert!(terms.contains(&"immigration"));
-        assert!(terms.contains(&"customs"));
-        assert!(terms.contains(&"enforcement"));
-        assert!(terms
-            .iter()
-            .all(|term| term.len() >= BM25Search::MIN_TERM_LEN));
+    /// `unicode61` indexes the whole Han/Kana run as one token, so this can
+    /// only be answered from the trigram index.
+    #[tokio::test]
+    async fn a_japanese_substring_query_finds_its_chunk() {
+        let pool = setup_test_db().await.unwrap();
+        let search = BM25Search::new(pool);
+        for query in ["日本語サポート", "担当チーム", "金曜日"] {
+            let results = search.search(query, 10).await.unwrap();
+            assert_eq!(
+                results.first().map(|r| r.chunk_id.as_str()),
+                Some("chunk5"),
+                "query {query} found {results:?}"
+            );
+        }
     }
 
-    #[test]
-    fn test_normalize_fts_query_preserves_phrase_syntax() {
-        let phrase_query = "\"blueberry anthocyanin\"";
-        let normalized = BM25Search::normalize_fts_query(phrase_query);
-        assert_eq!(normalized, phrase_query);
+    #[tokio::test]
+    async fn a_two_character_cjk_query_returns_nothing_rather_than_failing() {
+        let pool = setup_test_db().await.unwrap();
+        let results = BM25Search::new(pool).search("設定", 10).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hostile_and_empty_queries_do_not_error() {
+        let pool = setup_test_db().await.unwrap();
+        let search = BM25Search::new(pool);
+        for query in [
+            "",
+            "   ",
+            "???",
+            "rust\" OR chunks_fts MATCH \"python",
+            "alpha NEAR(beta gamma) AND NOT delta",
+            "programming*",
+            "col:value",
+        ] {
+            let results = search.search(query, 10).await;
+            assert!(results.is_ok(), "query {query:?} errored: {results:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn maintenance_commands_cover_both_indexes() {
+        let pool = setup_test_db().await.unwrap();
+        let search = BM25Search::new(pool);
+        search.rebuild_index().await.unwrap();
+        search.optimize_index().await.unwrap();
+        assert!(!search
+            .search("日本語サポート", 10)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(!search.search("programming", 10).await.unwrap().is_empty());
     }
 }
