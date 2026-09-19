@@ -14,8 +14,11 @@
 //! But `VectorSearchPort::search` is synchronous while `sqlx` is not, so the
 //! query path cannot reach those rows without blocking a runtime thread inside
 //! a lock. This store is instead written by the same `insert_internal` call
-//! that writes USearch, so the two cannot drift apart, and read with a plain
-//! positioned read at query time.
+//! that writes USearch, so the two cannot drift apart, and read at query time
+//! with a positional read — `pread` on Unix, `ReadFile` with an explicit
+//! offset on Windows. A positional read carries its own offset instead of
+//! moving the file cursor, so it needs no exclusive access to the handle and
+//! concurrent searches never queue behind one another.
 //!
 //! # Why not keep them in memory
 //!
@@ -40,16 +43,23 @@
 //! the USearch index file itself makes.
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 
 /// Width of one `f32` on disk. Matches `features::embedding::encoding`.
 const F32_BYTES: usize = 4;
+
+/// The lazily opened slot file.
+///
+/// `Arc` so a reader can take a clone under a read lock and then do its I/O
+/// with no lock held at all; `RwLock` so the only writer is the one call that
+/// opens the file, and every call after that is an uncontended read.
+type FileHandle = RwLock<Option<Arc<std::fs::File>>>;
 
 /// Compute the side store path from the index path
 /// (`foo.usearch` → `foo.usearch.vectors`).
@@ -64,10 +74,7 @@ enum Backing {
     /// transient indexes some feature tests build.
     Memory(Mutex<HashMap<u64, Vec<f32>>>),
     /// Slot file next to the USearch index.
-    File {
-        path: PathBuf,
-        handle: Mutex<Option<std::fs::File>>,
-    },
+    File { path: PathBuf, handle: FileHandle },
 }
 
 /// Full-precision vectors keyed by USearch key.
@@ -83,7 +90,7 @@ impl RescoreVectorStore {
         let backing = match index_path {
             Some(path) => Backing::File {
                 path: vectors_path_for(path),
-                handle: Mutex::new(None),
+                handle: RwLock::new(None),
             },
             None => Backing::Memory(Mutex::new(HashMap::new())),
         };
@@ -171,21 +178,18 @@ impl RescoreVectorStore {
                 map.lock().clear();
                 Ok(())
             }
-            Backing::File { path, handle } => {
-                let mut guard = handle.lock();
-                match Self::ensure_open(path, &mut guard) {
-                    Ok(file) => file.set_len(0).map_err(|e| {
-                        AppError::FileStorage(format!(
-                            "truncate rescore vector store {}: {}",
-                            path.display(),
-                            e
-                        ))
-                    }),
-                    // A store that was never created is already empty.
-                    Err(_) if !path.exists() => Ok(()),
-                    Err(e) => Err(e),
-                }
-            }
+            Backing::File { path, handle } => match Self::handle(path, handle) {
+                Ok(file) => file.set_len(0).map_err(|e| {
+                    AppError::FileStorage(format!(
+                        "truncate rescore vector store {}: {}",
+                        path.display(),
+                        e
+                    ))
+                }),
+                // A store that was never created is already empty.
+                Err(_) if !path.exists() => Ok(()),
+                Err(e) => Err(e),
+            },
         }
     }
 
@@ -199,54 +203,54 @@ impl RescoreVectorStore {
             })
     }
 
-    fn ensure_open<'a>(
-        path: &Path,
-        guard: &'a mut Option<std::fs::File>,
-    ) -> Result<&'a mut std::fs::File> {
-        if guard.is_none() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    AppError::FileStorage(format!(
-                        "create rescore vector store directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
-            }
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-                .map_err(|e| {
-                    AppError::FileStorage(format!(
-                        "open rescore vector store {}: {}",
-                        path.display(),
-                        e
-                    ))
-                })?;
-            *guard = Some(file);
+    /// The slot file, opened — and created — on first use.
+    ///
+    /// The steady state is a read lock plus an `Arc` clone, so the I/O itself
+    /// happens with no lock held. Opening still has to be lazy: the store is
+    /// constructed alongside every index, including ones that never get a
+    /// vector written to them, and creating the file eagerly would litter the
+    /// data directory.
+    fn handle(path: &Path, handle: &FileHandle) -> Result<Arc<std::fs::File>> {
+        if let Some(file) = handle.read().as_ref() {
+            return Ok(Arc::clone(file));
         }
-        guard.as_mut().ok_or_else(|| {
-            AppError::InternalError("Rescore vector store handle vanished".to_string())
-        })
+        let mut guard = handle.write();
+        // Another thread may have opened it while this one queued for the
+        // write lock; re-opening would leave two handles for the same path.
+        if let Some(file) = guard.as_ref() {
+            return Ok(Arc::clone(file));
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::FileStorage(format!(
+                    "create rescore vector store directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|e| {
+                AppError::FileStorage(format!(
+                    "open rescore vector store {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+        let file = Arc::new(file);
+        *guard = Some(Arc::clone(&file));
+        Ok(file)
     }
 
-    fn write_slot(
-        &self,
-        path: &Path,
-        handle: &Mutex<Option<std::fs::File>>,
-        key: u64,
-        bytes: &[u8],
-    ) -> Result<()> {
+    fn write_slot(&self, path: &Path, handle: &FileHandle, key: u64, bytes: &[u8]) -> Result<()> {
         let offset = self.slot_offset(key)?;
-        let mut guard = handle.lock();
-        let file = Self::ensure_open(path, &mut guard)?;
-        file.seek(SeekFrom::Start(offset)).map_err(|e| {
-            AppError::FileStorage(format!("seek rescore vector store to {}: {}", offset, e))
-        })?;
-        file.write_all(bytes).map_err(|e| {
+        let file = Self::handle(path, handle)?;
+        write_all_at(&file, bytes, offset).map_err(|e| {
             AppError::FileStorage(format!(
                 "write rescore vector store {}: {}",
                 path.display(),
@@ -258,27 +262,117 @@ impl RescoreVectorStore {
     fn read_slot(
         &self,
         path: &Path,
-        handle: &Mutex<Option<std::fs::File>>,
+        handle: &FileHandle,
         key: u64,
         buffer: &mut [u8],
     ) -> Result<()> {
         let offset = self.slot_offset(key)?;
-        let mut guard = handle.lock();
-        let file = Self::ensure_open(path, &mut guard)?;
-        file.seek(SeekFrom::Start(offset))
-            .map_err(|e| AppError::FileStorage(format!("seek rescore vector store: {}", e)))?;
-        file.read_exact(buffer)
+        let file = Self::handle(path, handle)?;
+        read_exact_at(&file, buffer, offset)
             .map_err(|e| AppError::FileStorage(format!("read rescore vector store: {}", e)))
     }
 
-    fn file_len(&self, path: &Path, handle: &Mutex<Option<std::fs::File>>) -> Result<u64> {
-        let mut guard = handle.lock();
-        let file = Self::ensure_open(path, &mut guard)?;
+    fn file_len(&self, path: &Path, handle: &FileHandle) -> Result<u64> {
+        let file = Self::handle(path, handle)?;
         let metadata = file
             .metadata()
             .map_err(|e| AppError::FileStorage(format!("stat rescore vector store: {}", e)))?;
         Ok(metadata.len())
     }
+}
+
+/// One positional read. `pread`-style on both platforms: the offset travels
+/// with the call, so nothing here touches the shared file cursor and no two
+/// readers can steal each other's position.
+#[cfg(unix)]
+fn read_once_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.read_at(buffer, offset)
+}
+
+/// Windows has no `pread`; `seek_read` is `ReadFile` with an explicit
+/// `OVERLAPPED` offset, which is equally safe to issue concurrently on a
+/// shared handle. It does move the file pointer as a side effect, which is
+/// harmless because nothing in this module reads or writes through it.
+#[cfg(windows)]
+fn read_once_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_read(buffer, offset)
+}
+
+/// One positional write, the mirror of [`read_once_at`].
+#[cfg(unix)]
+fn write_once_at(file: &std::fs::File, bytes: &[u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.write_at(bytes, offset)
+}
+
+#[cfg(windows)]
+fn write_once_at(file: &std::fs::File, bytes: &[u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_write(bytes, offset)
+}
+
+/// Fill `buffer` from `offset`, or fail.
+///
+/// Both positional primitives are allowed to come back short, so this loops
+/// the way [`std::io::Read::read_exact`] does. A slot that runs off the end of
+/// a truncated file must be an error rather than a partly filled buffer:
+/// `get` would otherwise hand back half a vector padded with zeros and score a
+/// candidate against it.
+fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    let mut remaining = buffer;
+    let mut offset = offset;
+    while !remaining.is_empty() {
+        match read_once_at(file, remaining, offset) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "rescore slot ends past the end of the file",
+                ))
+            }
+            Ok(read) => {
+                let rest = std::mem::take(&mut remaining);
+                // Clamping keeps a nonsensical return from the OS from
+                // running the split off the end of the buffer.
+                let read = read.min(rest.len());
+                let (_, tail) = rest.split_at_mut(read);
+                remaining = tail;
+                offset = offset.saturating_add(read as u64);
+            }
+            // A signal arriving mid-read is not a failure to read.
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Write all of `bytes` at `offset`, looping on short writes the way
+/// [`std::io::Write::write_all`] does. A short write here would leave a slot
+/// holding the head of the new vector and the tail of whatever preceded it.
+fn write_all_at(file: &std::fs::File, bytes: &[u8], offset: u64) -> std::io::Result<()> {
+    let mut remaining = bytes;
+    let mut offset = offset;
+    while !remaining.is_empty() {
+        match write_once_at(file, remaining, offset) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "rescore vector store accepted no bytes",
+                ))
+            }
+            Ok(written) => {
+                let written = written.min(remaining.len());
+                let (_, tail) = remaining.split_at(written);
+                remaining = tail;
+                offset = offset.saturating_add(written as u64);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -369,6 +463,61 @@ mod tests {
         }
         let reopened = RescoreVectorStore::new(4, Some(&index));
         assert_eq!(reopened.get(3), Some(vector(9.0, 4)));
+    }
+
+    #[test]
+    fn many_threads_read_the_same_store_without_crossing_slots() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = dir.path().join("index.usearch");
+        let store = Arc::new(RescoreVectorStore::new(16, Some(&index)));
+        for key in 1..=32u64 {
+            store.put(key, &vector(key as f32, 16)).unwrap();
+        }
+
+        // The point of the positional read: nothing below serializes, so a
+        // seek-then-read implementation would let one reader move another
+        // reader's cursor and return a neighbouring slot.
+        let readers: Vec<_> = (0..8)
+            .map(|_| {
+                let store = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        for key in 1..=32u64 {
+                            assert_eq!(store.get(key), Some(vector(key as f32, 16)));
+                        }
+                    }
+                })
+            })
+            .collect();
+        for reader in readers {
+            reader.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_slot_cut_in_half_by_truncation_reads_as_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = dir.path().join("index.usearch");
+        {
+            let store = RescoreVectorStore::new(8, Some(&index));
+            store.put(1, &vector(2.0, 8)).unwrap();
+        }
+
+        // Half a slot is what an interrupted copy or a torn file leaves
+        // behind, and it is also what a short read looks like from the
+        // inside: the first read returns some bytes, the next returns none.
+        let path = vectors_path_for(&index);
+        let half = (8 * F32_BYTES / 2) as u64;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(half)
+            .unwrap();
+
+        let store = RescoreVectorStore::new(8, Some(&index));
+        assert_eq!(store.get(1), None, "a partial slot is not a vector");
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), half);
     }
 
     #[test]
