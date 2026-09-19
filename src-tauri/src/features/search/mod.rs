@@ -1,8 +1,11 @@
 //! # Search feature
 //!
 //! Hybrid retrieval combining vector (USearch HNSW), keyword (SQLite
-//! FTS5 BM25), filename, and recency search — with reciprocal-rank
-//! fusion, optional reranking, and query expansion.
+//! FTS5 BM25), filename, and recency search — with weighted reciprocal-rank
+//! fusion and optional reranking.
+//!
+//! `engine::fusion::ReciprocalRankFusion` is the one rank-fusion
+//! implementation; every path that merges ranked lists goes through it.
 //!
 //! ## Public surface
 //!
@@ -13,7 +16,7 @@
 //! - `crate::features::search::plugin::init()` — Tauri plugin (directory-shaped)
 //!
 //! - `crate::features::search::engine` — retrieval engine (USearch +
-//!   BM25 + hybrid/fusion/reranker/query_expansion/etc.)
+//!   BM25 + hybrid/fusion/reranker/etc.)
 //!   consumed by qa, mentions, indexing, conversation chat retrieval
 //! - `crate::features::search::repository_tx` — transactional search
 //!   repository adapter
@@ -22,8 +25,7 @@
 //! Domain types used by the application layer live in the domain layer:
 //! `crate::domain::entities::SearchResult`,
 //! `crate::domain::value_objects::{SearchMode, SearchQuery}`,
-//! `crate::domain::repositories::SearchRepository`, and
-//! `crate::domain::services::SearchRankingService`.
+//! and `crate::domain::repositories::SearchRepository`.
 //!
 //! Public traits: `crate::features::search::{SearchServiceTrait, BM25SearchTrait, HybridSearchTrait}`.
 
