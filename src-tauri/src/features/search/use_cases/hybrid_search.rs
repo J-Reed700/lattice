@@ -42,14 +42,15 @@ use std::sync::Arc;
 
 use crate::application::ports::{EmbeddingPort, TextSearchPort, VectorSearchPort};
 use crate::domain::entities::search_result::SearchResult;
-use crate::domain::services::SearchRankingService;
 use crate::features::search::dto::{SearchModeDto, SearchRequestDto, SearchResponseDto};
+use crate::features::search::engine::fusion::{ReciprocalRankFusion, WeightedRanking};
 use crate::features::search::mapper::SearchMapper;
-use crate::shared::error::Result;
+use crate::features::search::SparseSearchTrait;
+use crate::shared::error::{AppError, Result};
 use crate::shared::text_utils::safe_truncate;
 use once_cell::sync::Lazy;
 use rust_stemmers::{Algorithm, Stemmer};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Hybrid search use case combining vector and text search.
 ///
@@ -66,7 +67,11 @@ pub struct HybridSearchUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     vector_search: Arc<dyn VectorSearchPort>,
     text_search: Arc<dyn TextSearchPort>,
-    ranking_service: SearchRankingService,
+    /// Learned sparse retrieval, when the composition root wired one and the
+    /// caller asked for it. Wired the same way as direct search, and gated the
+    /// same way: an explicit switch *and* the loaded model having a sparse head.
+    sparse_search: Option<Arc<dyn SparseSearchTrait>>,
+    sparse_enabled: bool,
 }
 
 impl HybridSearchUseCase {
@@ -86,8 +91,61 @@ impl HybridSearchUseCase {
             embedding_service,
             vector_search,
             text_search,
-            ranking_service: SearchRankingService::new(),
+            sparse_search: None,
+            sparse_enabled: false,
         }
+    }
+
+    /// Attach the learned sparse branch, mirroring
+    /// `HybridSearchService::with_sparse_search`.
+    ///
+    /// Wiring it is not the same as turning it on: `enabled` is the product
+    /// switch and [`SparseSearchTrait::is_available`] is the capability check,
+    /// so a user switching from BGE-M3 to a dense-only model simply goes back
+    /// to two-way fusion mid-session.
+    #[must_use]
+    pub fn with_sparse_search(
+        mut self,
+        sparse_search: Arc<dyn SparseSearchTrait>,
+        enabled: bool,
+    ) -> Self {
+        self.sparse_search = Some(sparse_search);
+        self.sparse_enabled = enabled;
+        self
+    }
+
+    /// The sparse branch to run for this query, or `None` to keep two-way fusion.
+    fn active_sparse_branch(&self) -> Option<&Arc<dyn SparseSearchTrait>> {
+        self.sparse_search
+            .as_ref()
+            .filter(|_| self.sparse_enabled)
+            .filter(|sparse| sparse.is_available())
+    }
+
+    /// Run the vector branch without blocking the executor.
+    ///
+    /// The USearch query is synchronous, CPU-bound and can take tens of
+    /// milliseconds over a large index. Awaiting it inline inside a `join!`
+    /// stalls the whole runtime thread — including the lexical branch that was
+    /// supposed to be running beside it.
+    async fn vector_branch(
+        &self,
+        query_embedding: Vec<f32>,
+        top_k: usize,
+        threshold: f32,
+        allowed_document_ids: Option<HashSet<String>>,
+    ) -> Result<Vec<crate::features::search::dto::SearchResultPortDto>> {
+        let vector_search = Arc::clone(&self.vector_search);
+        tokio::task::spawn_blocking(move || {
+            vector_search.search_scoped(
+                &query_embedding,
+                top_k,
+                threshold,
+                allowed_document_ids.as_ref(),
+            )
+        })
+        .await
+        .map_err(|error| AppError::InternalError(format!("Vector search task failed: {error}")))?
     }
 
     /// Execute hybrid search.
@@ -134,12 +192,14 @@ impl HybridSearchUseCase {
             SearchModeDto::Vector => {
                 let threshold = request.threshold.unwrap_or(0.5);
                 let query_embedding = self.embedding_service.embed_query(&request.query).await?;
-                let vector_port_dtos = self.vector_search.search_scoped(
-                    &query_embedding,
-                    limit,
-                    threshold,
-                    allowed_document_ids,
-                )?;
+                let vector_port_dtos = self
+                    .vector_branch(
+                        query_embedding,
+                        limit,
+                        threshold,
+                        allowed_document_ids.cloned(),
+                    )
+                    .await?;
                 let vector_results = SearchMapper::port_dtos_to_domain(vector_port_dtos);
                 debug!(
                     result_count = vector_results.len(),
@@ -165,36 +225,74 @@ impl HybridSearchUseCase {
                 vector_weight,
                 bm25_weight,
             } => {
-                // 1. Perform vector search (returns port DTOs)
+                // 1. Embed the query, then run every branch at once. They share
+                //    no state, and the lexical branch used to wait for the
+                //    whole vector search before it even issued its SQL.
                 let query_embedding = self.embedding_service.embed_query(&request.query).await?;
-                let vector_port_dtos = self.vector_search.search_scoped(
-                    &query_embedding,
-                    limit * 2,
-                    0.3,
-                    allowed_document_ids,
-                )?; // Fetch more for fusion
+                let candidate_limit = limit * 2; // Fetch more for fusion
+                let sparse_branch = self.active_sparse_branch();
+                let (core, sparse_outcome) = tokio::join!(
+                    async {
+                        tokio::try_join!(
+                            // `min_score` here is a cosine-similarity floor, the
+                            // same scale `search_with_threshold` filters on — not
+                            // a fused score.
+                            self.vector_branch(
+                                query_embedding,
+                                candidate_limit,
+                                0.3,
+                                allowed_document_ids.cloned(),
+                            ),
+                            self.text_search.search_scoped(
+                                &request.query,
+                                candidate_limit,
+                                space_id,
+                                allowed_document_ids,
+                            )
+                        )
+                    },
+                    async {
+                        match sparse_branch {
+                            Some(sparse) => {
+                                sparse
+                                    .search_scoped(
+                                        &request.query,
+                                        candidate_limit,
+                                        space_id,
+                                        allowed_document_ids,
+                                    )
+                                    .await
+                            }
+                            None => Ok(Vec::new()),
+                        }
+                    }
+                );
+                let (vector_port_dtos, text_port_dtos) = core?;
+                // A sparse failure costs this query its third branch, never its
+                // results, exactly as in direct search.
+                let sparse_port_dtos = sparse_outcome.unwrap_or_else(|error| {
+                    warn!(%error, "Sparse retrieval branch failed; fusing the other two");
+                    Vec::new()
+                });
 
-                // 2. Perform text search (BM25, returns port DTOs)
-                let text_port_dtos = self
-                    .text_search
-                    .search_scoped(&request.query, limit * 2, space_id, allowed_document_ids)
-                    .await?;
-
-                // 3. Map port DTOs to domain entities
+                // 2. Map port DTOs to domain entities
                 let vector_results = SearchMapper::port_dtos_to_domain(vector_port_dtos);
                 let text_results = SearchMapper::port_dtos_to_domain(text_port_dtos);
+                let sparse_results = SearchMapper::port_dtos_to_domain(sparse_port_dtos);
                 debug!(
                     vector_count = vector_results.len(),
                     bm25_count = text_results.len(),
+                    sparse_count = sparse_results.len(),
                     vector_preview = Self::summarize_domain_results(&vector_results, 6),
                     bm25_preview = Self::summarize_domain_results(&text_results, 6),
                     "Hybrid pre-merge candidate results"
                 );
 
-                // 4. Merge results using weighted Reciprocal Rank Fusion
-                let merged = self.merge_with_weighted_rrf(
+                // 3. Merge results using weighted Reciprocal Rank Fusion
+                let merged = Self::merge_with_weighted_rrf(
                     vector_results,
                     text_results,
+                    sparse_results,
                     limit,
                     vector_weight,
                     bm25_weight,
@@ -211,10 +309,17 @@ impl HybridSearchUseCase {
         }
     }
 
+    /// Fuse the branches through the canonical weighted RRF, then apply this
+    /// path's own lexical-support filter.
+    ///
+    /// The fusion arithmetic is not reimplemented here: `ReciprocalRankFusion`
+    /// owns it, and this function only decides the weights, keeps the payloads
+    /// and drops unsupported candidates.
+    #[allow(clippy::too_many_arguments)]
     fn merge_with_weighted_rrf(
-        &self,
         vector: Vec<SearchResult>,
         text: Vec<SearchResult>,
+        sparse: Vec<SearchResult>,
         limit: usize,
         vector_weight: f32,
         bm25_weight: f32,
@@ -222,55 +327,86 @@ impl HybridSearchUseCase {
     ) -> Vec<SearchResult> {
         use std::collections::HashMap;
 
-        // If caller provides degenerate weights, preserve previous balanced behavior.
+        // Degenerate weights mean "no preference", not "no fusion": fall back
+        // to the equal weights that reproduce unweighted RRF.
         let (mut vw, mut bw) = (vector_weight.max(0.0), bm25_weight.max(0.0));
         let total = vw + bw;
         if total <= f32::EPSILON {
-            return self.ranking_service.merge_with_rrf(vector, text, limit);
+            vw = 0.5;
+            bw = 0.5;
+        } else {
+            vw /= total;
+            bw /= total;
         }
-        vw /= total;
-        bw /= total;
         debug!(
             normalized_vector_weight = vw,
             normalized_bm25_weight = bw,
+            sparse_count = sparse.len(),
             query_len = query_text.len(),
             "Weighted RRF configuration"
         );
         let query_signal = Self::build_query_signal(query_text, &vector, &text);
 
-        let mut scores: HashMap<String, (f32, f32, f32, SearchResult)> = HashMap::new();
-        let rrf_k = crate::shared::constants::DEFAULT_RRF_K;
+        // Sparse and BM25 are both lexical signals over the same text, so they
+        // share the lexical weight instead of each getting a vote of its own.
+        let (bm25_branch_weight, sparse_branch_weight) = if sparse.is_empty() {
+            (bw, 0.0)
+        } else {
+            (bw / 2.0, bw / 2.0)
+        };
 
-        for (rank, result) in vector.into_iter().enumerate() {
-            let weighted_score = vw * (1.0 / (rrf_k + (rank + 1) as f32));
-            let id = result.id().to_string();
-            scores.insert(id, (weighted_score, weighted_score, 0.0, result));
+        // Keep one payload per id — the first branch that offered it wins, in
+        // vector, BM25, sparse order — and hand the fusion only the rankings.
+        let mut payloads: HashMap<String, SearchResult> = HashMap::new();
+        let mut branches = Vec::with_capacity(3);
+        for (weight, results) in [
+            (vw, vector),
+            (bm25_branch_weight, text),
+            (sparse_branch_weight, sparse),
+        ] {
+            let mut ids = Vec::with_capacity(results.len());
+            for result in results {
+                let id = result.id().to_string();
+                payloads.entry(id.clone()).or_insert(result);
+                ids.push(id);
+            }
+            branches.push(WeightedRanking::new(weight, ids));
         }
 
-        for (rank, result) in text.into_iter().enumerate() {
-            let weighted_score = bw * (1.0 / (rrf_k + (rank + 1) as f32));
-            let id = result.id().to_string();
-            scores
-                .entry(id)
-                .and_modify(|(score, _vector_score, bm25_score, _)| {
-                    *score += weighted_score;
-                    *bm25_score += weighted_score;
-                })
-                .or_insert((weighted_score, 0.0, weighted_score, result));
-        }
+        let lexical_branches = [1usize, 2];
+        let fused = ReciprocalRankFusion::with_default().fuse_ranked(branches);
 
         let bm25_heavy_mode = bw >= 0.7;
-        let candidate_count = scores.len();
+        let candidate_count = fused.len();
         let mut filtered_out = 0usize;
-        let mut merged: Vec<(f32, f32, SearchResult)> = Vec::with_capacity(candidate_count);
-        for (score, vector_score, bm25_score, result) in scores.into_values() {
+        let mut merged: Vec<SearchResult> = Vec::with_capacity(candidate_count.min(limit));
+        for entry in fused {
+            let Some(result) = payloads.remove(&entry.id) else {
+                continue;
+            };
             // In BM25-heavy mode, suppress vector-only hits that have no lexical support.
+            let has_lexical_rank = lexical_branches
+                .iter()
+                .any(|branch| entry.branch_rank(*branch).is_some());
             let keep = !bm25_heavy_mode
-                || (bm25_score > 0.0 && Self::has_meaningful_query_overlap(&result, &query_signal));
-            if keep {
-                merged.push((score, vector_score, result));
-            } else {
+                || (has_lexical_rank && Self::has_meaningful_query_overlap(&result, &query_signal));
+            if !keep {
                 filtered_out += 1;
+                continue;
+            }
+            merged.push(
+                SearchResult::with_metadata(
+                    result.id().to_string(),
+                    entry.score,
+                    result.snippet().map(|s| s.to_string()),
+                    result.document_id().map(|s| s.to_string()),
+                    result.file_path().map(|s| s.to_string()),
+                    result.position(),
+                )
+                .unwrap_or(result),
+            );
+            if merged.len() >= limit {
+                break;
             }
         }
         debug!(
@@ -281,23 +417,7 @@ impl HybridSearchUseCase {
             "Weighted RRF candidate filtering"
         );
 
-        merged.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
         merged
-            .into_iter()
-            .take(limit)
-            .map(|(score, _vector_score, result)| {
-                SearchResult::with_metadata(
-                    result.id().to_string(),
-                    score,
-                    result.snippet().map(|s| s.to_string()),
-                    result.document_id().map(|s| s.to_string()),
-                    result.file_path().map(|s| s.to_string()),
-                    result.position(),
-                )
-                .unwrap_or(result)
-            })
-            .collect()
     }
 
     fn summarize_domain_results(results: &[SearchResult], max_items: usize) -> String {
@@ -634,5 +754,69 @@ mod tests {
             &result,
             &query_signal
         ));
+    }
+
+    fn merged_ids(
+        vector: Vec<SearchResult>,
+        text: Vec<SearchResult>,
+        sparse: Vec<SearchResult>,
+        vector_weight: f32,
+        bm25_weight: f32,
+    ) -> Vec<String> {
+        HybridSearchUseCase::merge_with_weighted_rrf(
+            vector,
+            text,
+            sparse,
+            10,
+            vector_weight,
+            bm25_weight,
+            "retention policy",
+        )
+        .into_iter()
+        .map(|r| r.id().to_string())
+        .collect()
+    }
+
+    /// Turning the sparse branch on must not move the vector/lexical balance:
+    /// the two lexical branches share the keyword weight.
+    #[test]
+    fn a_sparse_branch_shares_the_lexical_weight_rather_than_adding_one() {
+        let vector = vec![make_result("dense", "retention policy overview", 0.9)];
+        let lexical = || vec![make_result("lexical", "retention policy appendix", 5.0)];
+
+        let without = merged_ids(vector.clone(), lexical(), Vec::new(), 0.7, 0.3);
+        assert_eq!(without.first().map(String::as_str), Some("dense"));
+
+        // Both lexical branches agree on the same chunk and still do not
+        // outvote one confident dense hit.
+        let with = merged_ids(vector, lexical(), lexical(), 0.7, 0.3);
+        assert_eq!(with.first().map(String::as_str), Some("dense"));
+        assert!(with.contains(&"lexical".to_string()));
+    }
+
+    #[test]
+    fn a_sparse_only_hit_still_reaches_the_merged_list() {
+        let merged = merged_ids(
+            vec![make_result("dense", "retention policy overview", 0.9)],
+            vec![make_result("lexical", "retention policy appendix", 5.0)],
+            vec![make_result("sparse", "policy for retained records", 3.0)],
+            0.7,
+            0.3,
+        );
+        assert!(merged.contains(&"sparse".to_string()), "{merged:?}");
+    }
+
+    /// Degenerate weights used to fall through to a second, unweighted copy of
+    /// RRF. They now mean "no preference" inside the one implementation.
+    #[test]
+    fn degenerate_weights_fuse_with_equal_weights() {
+        let merged = merged_ids(
+            vec![make_result("a", "retention policy overview", 0.9)],
+            vec![make_result("b", "retention policy appendix", 5.0)],
+            Vec::new(),
+            0.0,
+            0.0,
+        );
+        assert_eq!(merged.len(), 2);
     }
 }
