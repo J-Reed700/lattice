@@ -49,8 +49,15 @@ pub struct SearchEnrichmentService {
 /// Document metadata for a chunk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentMetadata {
-    /// Content snippet (max 200 chars)
+    /// Content snippet (max 200 chars), for display.
     pub snippet: String,
+    /// The chunk body as indexed.
+    ///
+    /// Kept beside the snippet because a cross-encoder handed a 200-character
+    /// window is not reranking the passage the retriever matched — it is
+    /// reranking a preview of it, which is how a reranker comes to disagree
+    /// with its own first stage.
+    pub content: String,
     /// Document ID
     pub document_id: String,
     /// Metadata fields
@@ -255,6 +262,7 @@ impl SearchEnrichmentService {
                 chunk_id,
                 DocumentMetadata {
                     snippet,
+                    content,
                     document_id,
                     metadata,
                 },

@@ -18,15 +18,28 @@ use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
+use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
-use crate::features::search::engine::vector_search::{USearchVectorIndex, VectorIndexCompression};
+use crate::features::search::engine::vector_search::persistence::open_or_rebuild;
+use crate::features::search::engine::vector_search::{
+    IndexPersistence, USearchVectorIndex, VectorIndexCompression,
+};
 use crate::features::search::enrichment_service::SearchEnrichmentService;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::search::{
+    BM25SearchTrait, HybridSearchTrait, SearchServiceTrait, SparseSearchTrait,
+};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
+
+/// Whether the learned sparse branch joins the fusion.
+///
+/// Off: `evals/retrieval/README.md` records the product decision to keep the
+/// BGE-M3 sparse branch out of the curated path. The service is still wired
+/// into both retrieval paths so the switch is the only thing that has to move.
+const SPARSE_BRANCH_ENABLED: bool = false;
 
 #[derive(Clone)]
 pub struct SearchDi {
@@ -44,6 +57,11 @@ pub struct SearchDi {
     // Ports (exported so IndexingModule can write to the same USearch index)
     pub vector_search: Arc<dyn VectorSearchPort>,
     pub document_repo: Arc<dyn DocumentRepository>,
+
+    /// Writes the index and its manifest. `None` until an embedding model is
+    /// active, because there is no generation to stamp a manifest with before
+    /// then. Held by the composition root so shutdown can flush.
+    pub index_persistence: Option<Arc<IndexPersistence>>,
 }
 
 pub async fn build(
@@ -151,15 +169,35 @@ pub async fn build_with_compression(
     })
     .await
     .map_err(|e| AppError::InternalError(format!("Vector index open task failed: {e}")))??;
-    let usearch_index = Arc::new(usearch_index);
+    // Indexing publishes into this index a document at a time; saving the
+    // whole corpus after each one is what made indexing a folder quadratic.
+    let usearch_index = Arc::new(usearch_index.with_coalesced_saves());
 
-    // SQLite is authoritative. An index that does not hold exactly what it holds
-    // — stale keys after an interrupted write, a vector re-embedded in place —
-    // is rebuilt from it. One that does is left alone: see `IndexFingerprint`.
+    // SQLite stays authoritative, but agreeing with it is now something the
+    // manifest can establish without reading every vector back. A rebuild is
+    // still what recovers from a crash between an SQLite commit and a save —
+    // it just no longer happens on launches where nothing changed.
     let mut coverage: Option<(usize, usize)> = None;
+    let mut index_persistence: Option<Arc<IndexPersistence>> = None;
     if let Some(identity) = &identity {
-        let mut rows =
-            crate::features::embedding::generation::restore(&db_pool, identity, dimension).await?;
+        let restore = || {
+            let pool = db_pool.clone();
+            let identity = identity.clone();
+            async move {
+                crate::features::embedding::generation::restore(&pool, &identity, dimension).await
+            }
+        };
+        open_or_rebuild(
+            &usearch_index,
+            &db_pool,
+            &usearch_index_path,
+            identity,
+            &generation,
+            dimension,
+            restore,
+        )
+        .await?;
+
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
             .fetch_one(&db_pool)
             .await?;
@@ -170,7 +208,7 @@ pub async fn build_with_compression(
         // pass, and the index would then mix the two. Late chunking therefore
         // starts from whatever that generation already holds and fills in as
         // documents are indexed.
-        if rows.len() < total as usize && !strategy.is_late_chunking() {
+        if usearch_index.count() < total as usize && !strategy.is_late_chunking() {
             // `identity` is only set for a local model with a recorded
             // artifact identity, so this always matches here.
             let stored = active.as_ref().and_then(|m| {
@@ -188,48 +226,38 @@ pub async fn build_with_compression(
                     AppError::InternalError(format!("Embedding model load task failed: {e}"))
                 })??;
                 crate::features::embedding::generation::prepare(&db_pool, &model).await?;
-                rows =
-                    crate::features::embedding::generation::restore(&db_pool, identity, dimension)
-                        .await?;
+                // The backfill moved SQLite, so this pass always rebuilds.
+                open_or_rebuild(
+                    &usearch_index,
+                    &db_pool,
+                    &usearch_index_path,
+                    identity,
+                    &generation,
+                    dimension,
+                    restore,
+                )
+                .await?;
             }
-        } else if rows.len() < total as usize {
+        } else if usearch_index.count() < total as usize {
             tracing::info!(
-                present = rows.len(),
+                present = usearch_index.count(),
                 total,
                 "Late chunking is on and this generation is incomplete; the missing chunks get \
                  their vectors when their documents are next indexed"
             );
         }
-        let expected = rows.len();
-        coverage = Some((expected, usize::try_from(total).unwrap_or(0)));
-        let index = Arc::clone(&usearch_index);
-        // Hashing every stored vector is a few hundred milliseconds; rebuilding
-        // the graph from them is about a second per thousand. Both are kept off
-        // the async runtime.
-        let reused = tokio::task::spawn_blocking(move || -> Result<bool> {
-            let in_database = super::engine::vector_search::IndexFingerprint::of_rows(
-                rows.iter()
-                    .map(|(id, vector, ..)| (id.as_str(), vector.as_slice())),
-            );
-            if index.holds_exactly(in_database) {
-                return Ok(true);
-            }
-            let added = index.rebuild_from_embeddings(rows)?;
-            if added != expected {
-                return Err(AppError::InvalidState(
-                    "Incomplete vector index rebuild".into(),
-                ));
-            }
-            Ok(false)
-        })
-        .await
-        .map_err(|e| AppError::InternalError(format!("Vector index rebuild task failed: {e}")))??;
-        if reused {
-            tracing::info!(
-                vectors = expected,
-                "Vector index on disk holds exactly what the database does; rebuild skipped"
-            );
-        }
+        coverage = Some((usearch_index.count(), usize::try_from(total).unwrap_or(0)));
+
+        let persistence = Arc::new(IndexPersistence::new(
+            Arc::clone(&usearch_index),
+            db_pool.clone(),
+            identity.clone(),
+            generation.clone(),
+            dimension,
+            usearch_index_path.clone(),
+        ));
+        tokio::spawn(Arc::clone(&persistence).run());
+        index_persistence = Some(persistence);
     }
 
     if let Some(marker) = reembed_marker.as_deref().filter(|m| m.exists()) {
@@ -274,16 +302,24 @@ pub async fn build_with_compression(
         // demonstrates a quality gain that justifies its latency. Chat uses
         // the same provider through its existing retrieval tuning setting.
         enable_reranking: false,
-        recency_boost: 1.0,
         max_results: 100,
         // Retained only for controlled experiments. The production evaluation
         // found that the third branch added cost without improving the good
         // two-way fusion configuration.
-        sparse_enabled: false,
+        sparse_enabled: SPARSE_BRANCH_ENABLED,
     };
 
     let dynamic_embedding =
         Arc::new(DynamicEmbedding::new(model_provider.clone())) as Arc<dyn EmbeddingPort>;
+    // Both retrieval paths get the same third branch, wired unconditionally and
+    // gated identically: `sparse_enabled` above is the product switch, and
+    // `SparseSearchTrait::is_available` tracks whether the loaded model has a
+    // sparse head at all. Neither path queried it before — direct search was
+    // never handed the service, and the chat use case had no slot for one.
+    let sparse_search = Arc::new(SparseSearchService::new(
+        db_pool.clone(),
+        Arc::clone(&dynamic_embedding),
+    )) as Arc<dyn SparseSearchTrait>;
     let hybrid_search_service = Arc::new(
         HybridSearchService::new(
             search_service.clone(),
@@ -292,18 +328,18 @@ pub async fn build_with_compression(
             search_enrichment_service.clone(),
             hybrid_config,
         )
-        .with_reranker(Arc::clone(&reranker)),
+        .with_reranker(Arc::clone(&reranker))
+        .with_sparse_search(Arc::clone(&sparse_search)),
     ) as Arc<dyn HybridSearchTrait>;
 
     let semantic_search_use_case = Arc::new(SemanticSearchUseCase::new(
         dynamic_embedding.clone(),
         vector_search.clone(),
     ));
-    let hybrid_search_use_case = Arc::new(HybridSearchUseCase::new(
-        dynamic_embedding,
-        vector_search.clone(),
-        text_search,
-    ));
+    let hybrid_search_use_case = Arc::new(
+        HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
+            .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED),
+    );
 
     Ok(SearchDi {
         runtime_index,
@@ -316,6 +352,7 @@ pub async fn build_with_compression(
         search_enrichment_service,
         vector_search,
         document_repo,
+        index_persistence,
     })
 }
 

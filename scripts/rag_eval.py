@@ -20,6 +20,12 @@ def query_dimensions(query):
     return []
 
 
+# How much of an answer passage a chunk has to cover before the chunk counts as
+# having retrieved it. A chunk boundary that splits a fact leaves neither half
+# able to answer, so a grazing overlap is not a hit.
+PASSAGE_COVERAGE = 0.5
+
+
 def validate_dataset(dataset):
     if not isinstance(dataset, dict):
         raise ValueError('Dataset must be a JSON object')
@@ -72,6 +78,75 @@ def validate_dataset(dataset):
                     raise ValueError(f"Query {query['id']} has an empty {field} entry")
             if len(tags) != len(set(tags)):
                 raise ValueError(f"Query {query['id']} repeats a {field} entry")
+        _validate_answer_spans(query, documents)
+
+
+def _validate_answer_spans(query, documents):
+    """Optional passage labels: which bytes of which document answer the query.
+
+    Offsets are UTF-8 byte offsets into a document's `text`, start inclusive and
+    end exclusive, because that is what the Rust harness records for a chunk. A
+    fixture without the field scores exactly as it did before it existed.
+    """
+    spans = query.get('answer_spans')
+    if spans is None:
+        return
+    if not isinstance(spans, dict) or not spans:
+        raise ValueError(f"Query {query['id']} must have a nonempty answer_spans object")
+    positives = {doc for doc, grade in query['relevance'].items() if grade > 0}
+    lengths = {}
+    for document_id, ranges in spans.items():
+        if document_id not in positives:
+            raise ValueError(
+                f"Query {query['id']} spans {document_id}, which it does not mark relevant")
+        if not isinstance(ranges, list) or not ranges:
+            raise ValueError(f"Query {query['id']} must give {document_id} a nonempty span list")
+        if not lengths:
+            lengths = {d['id']: len(d['text'].encode('utf-8')) for d in documents}
+        for span in ranges:
+            if (not isinstance(span, list) or len(span) != 2
+                    or any(isinstance(v, bool) or not isinstance(v, int) for v in span)):
+                raise ValueError(f"Query {query['id']} has a malformed span for {document_id}")
+            start, end = span
+            if not 0 <= start < end <= lengths[document_id]:
+                raise ValueError(f"Query {query['id']} has an out-of-range span for {document_id}")
+
+
+def _passage_recall(query, row, k, qid):
+    """Whether the run retrieved the passage that answers the query, not just the document.
+
+    Needs `answer_spans` on the query and both `chunk_ranked_ids` and `chunk_spans`
+    on the row. `chunk_spans` maps a `document#chunk_index` key to the `[start, end]`
+    UTF-8 byte range that chunk covers in its document. A run recorded before the
+    field existed yields null rather than a guessed zero.
+    """
+    spans = query.get('answer_spans')
+    chunk_spans = row.get('chunk_spans')
+    ranked = row.get('chunk_ranked_ids')
+    if not spans or chunk_spans is None or ranked is None:
+        return None
+    if not isinstance(chunk_spans, dict) or not isinstance(ranked, list):
+        raise ValueError(f'{qid}: chunk_spans must be an object and chunk_ranked_ids a list')
+    retrieved = {}
+    for chunk_id in ranked[:k]:
+        window = chunk_spans.get(chunk_id)
+        if window is None:
+            continue
+        if (not isinstance(window, list) or len(window) != 2
+                or any(isinstance(v, bool) or not isinstance(v, int) for v in window)
+                or window[0] < 0 or window[1] <= window[0]):
+            raise ValueError(f'{qid}: malformed chunk span for {chunk_id}')
+        retrieved.setdefault(chunk_id.rsplit('#', 1)[0], []).append(window)
+    found = total = 0
+    for document_id, ranges in spans.items():
+        for start, end in ranges:
+            total += 1
+            covered = max(
+                (min(end, window[1]) - max(start, window[0])
+                 for window in retrieved.get(document_id, ())), default=0)
+            if covered >= PASSAGE_COVERAGE * (end - start):
+                found += 1
+    return found / total if total else None
 
 
 def _mean(values):
@@ -81,6 +156,7 @@ def _mean(values):
 def _summarize(records, k):
     """Aggregate one bucket of per-query outcomes."""
     recall = [r['recall'] for r in records if r['recall'] is not None]
+    passage = [r['passage'] for r in records if r['passage'] is not None]
     return {
         'queries': len(records),
         'retrieval_queries': len(recall),
@@ -88,6 +164,10 @@ def _summarize(records, k):
         'recall_at_k': _mean(recall),
         'ndcg_at_k': _mean([r['ndcg'] for r in records if r['ndcg'] is not None]),
         'mrr_at_k': _mean([r['mrr'] for r in records if r['mrr'] is not None]),
+        # Null unless the fixture labels answer passages and the run records chunk
+        # spans, so a document-level run is never credited with passage accuracy.
+        'passage_queries': len(passage),
+        'passage_recall_at_k': _mean(passage),
         'retrieval_abstention_accuracy': _mean(
             [r['retrieval_abstention'] for r in records
              if r['retrieval_abstention'] is not None]),
@@ -158,7 +238,8 @@ def score(dataset, runs, k=5, abstain_threshold=None, abstain_field=None):
         if not set(relevance).issubset(doc_ids):
             raise ValueError(f'{qid}: labels reference unknown documents')
         record = {'dimensions': query_dimensions(query), 'recall': None, 'ndcg': None,
-                  'mrr': None, 'retrieval_abstention': None}
+                  'mrr': None, 'retrieval_abstention': None,
+                  'passage': _passage_recall(query, row, k, qid)}
         if positives:
             record['recall'] = len(set(ranked) & positives) / len(positives)
             gains = [2 ** relevance.get(doc, 0) - 1 for doc in ranked]
@@ -257,6 +338,8 @@ def main():
             'multi_relevant_queries': multi_relevant,
             'queries_without_dimensions': sum(
                 not query_dimensions(query) for query in dataset['queries']),
+            'queries_with_answer_spans': sum(
+                bool(query.get('answer_spans')) for query in dataset['queries']),
             'queries_per_dimension': dict(sorted(counts.items())),
         }, indent=2, allow_nan=False))
         return

@@ -66,6 +66,17 @@ async fn setup_test_db() -> Result<SqlitePool, Box<dyn std::error::Error>> {
     .execute(&pool)
     .await?;
 
+    // The CJK sibling index, as in the migration.
+    sqlx::query(
+        "CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+            chunk_id UNINDEXED,
+            content,
+            tokenize='trigram'
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
     Ok(pool)
 }
 
@@ -93,15 +104,14 @@ async fn insert_test_documents(pool: &SqlitePool) -> Result<(), Box<dyn std::err
     .execute(pool)
     .await?;
 
-    // Insert into FTS
-    sqlx::query(
-        "INSERT INTO chunks_fts (chunk_id, content) VALUES
-         ('chunk1', 'Rust is a systems programming language focused on safety and performance'),
-         ('chunk2', 'Python is a high-level programming language known for simplicity'),
-         ('chunk3', 'Machine learning with neural networks and deep learning frameworks')",
-    )
-    .execute(pool)
-    .await?;
+    // Insert into both FTS indexes
+    for table in ["chunks_fts", "chunks_trigram"] {
+        sqlx::query(&format!(
+            "INSERT INTO {table} (chunk_id, content) SELECT id, content FROM text_chunks"
+        ))
+        .execute(pool)
+        .await?;
+    }
 
     Ok(())
 }

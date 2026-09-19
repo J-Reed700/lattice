@@ -526,6 +526,120 @@ mod late_chunking_tests {
         assert_eq!(citations(&plain_document), citations(&late_document));
     }
 
+    /// Splits with the real input policy and answers whole spans, so a test can
+    /// tell the late path from the per-chunk fallback by which method ran.
+    struct SpanEmbedder {
+        policy: crate::features::embedding::input_policy::InputPolicy,
+        spans: Mutex<Vec<usize>>,
+        batched: Mutex<Vec<String>>,
+    }
+
+    impl SpanEmbedder {
+        fn new(max_tokens: usize) -> Self {
+            use tokenizers::{
+                models::wordlevel::WordLevel, pre_tokenizers::whitespace::Whitespace, Tokenizer,
+            };
+            let vocab = [("[UNK]".to_owned(), 0), ("word".to_owned(), 1)]
+                .into_iter()
+                .collect();
+            let mut tokenizer = Tokenizer::new(
+                WordLevel::builder()
+                    .vocab(vocab)
+                    .unk_token("[UNK]".into())
+                    .build()
+                    .unwrap(),
+            );
+            tokenizer.with_pre_tokenizer(Whitespace);
+            Self {
+                policy: crate::features::embedding::input_policy::InputPolicy::new(
+                    tokenizer, max_tokens,
+                )
+                .unwrap(),
+                spans: Mutex::new(Vec::new()),
+                batched: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingPort for SpanEmbedder {
+        async fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
+            let mut out = self.embed_batch(&[text.to_owned()]).await?;
+            Ok(out.remove(0))
+        }
+
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.batched.lock().unwrap().extend(texts.iter().cloned());
+            Ok(texts.iter().map(|t| vec![t.len() as f32]).collect())
+        }
+
+        fn split_text(&self, text: &str, prefix: &str) -> Result<Vec<EmbeddingTextChunk>> {
+            self.policy.split(text, prefix)
+        }
+
+        fn uses_late_chunking(&self) -> bool {
+            true
+        }
+
+        async fn embed_span_chunks(
+            &self,
+            span_text: &str,
+            chunk_ranges: &[std::ops::Range<usize>],
+        ) -> Result<Vec<Vec<f32>>> {
+            self.spans.lock().unwrap().push(chunk_ranges.len());
+            Ok(chunk_ranges
+                .iter()
+                .map(|range| vec![span_text[range.clone()].len() as f32])
+                .collect())
+        }
+
+        fn dimension(&self) -> usize {
+            1
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// The point of decoupling chunk size from the model window: a span that
+    /// fits the window now holds several chunks, so late chunking has token
+    /// states from the rest of the span to pool each chunk against. At the old
+    /// window-sized chunk size this span was a single chunk, and any span that
+    /// was not overflowed the window and fell back to chunk-first.
+    #[tokio::test]
+    async fn a_span_of_several_chunks_is_pooled_in_one_pass() {
+        let embedder = SpanEmbedder::new(2048);
+        let text = format!("# Alpha\n{}", "word ".repeat(1400));
+        let (document, spans) =
+            prepare_structured_with_spans(document(&text), &embedder, &[]).unwrap();
+        assert_eq!(spans.len(), 1, "one heading, one structure span");
+        let span = &spans[0];
+        assert!(
+            span.chunk_ranges.len() >= 3,
+            "the retrieval target should cut this span into several chunks, got {}",
+            span.chunk_ranges.len()
+        );
+        assert!(
+            embedder.policy.count(&span.span_text).unwrap() <= 2048,
+            "the whole span still fits one forward pass, so nothing falls back"
+        );
+
+        let vectors = embed_prepared_chunks(&document, &embedder, &spans)
+            .await
+            .unwrap();
+        assert_eq!(vectors.len(), document.chunks().len());
+        assert_eq!(
+            *embedder.spans.lock().unwrap(),
+            vec![span.chunk_ranges.len()],
+            "one span call carrying every chunk"
+        );
+        assert!(
+            embedder.batched.lock().unwrap().is_empty(),
+            "the per-chunk fallback must not have run"
+        );
+    }
+
     #[tokio::test]
     async fn spans_that_do_not_cover_the_chunks_use_the_batch_path() {
         let late = RecordingEmbedder::new(true, 12);

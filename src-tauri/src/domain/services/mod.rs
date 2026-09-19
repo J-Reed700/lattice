@@ -7,7 +7,5 @@
 //! primitives and have no infrastructure dependencies.
 
 pub mod chunking_service;
-pub mod search_ranking_service;
 
 pub use chunking_service::ChunkingService;
-pub use search_ranking_service::SearchRankingService;

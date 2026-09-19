@@ -1,10 +1,9 @@
 use crate::application::ports::system_info::SystemInfoPort;
 use crate::domain::curated_models::{get_curated_llm_models, recommend_chat_model_for_ram};
-use crate::domain::embedding_constants::{
-    DEFAULT_EMBEDDING_MODEL_CURATED_ID, DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME,
-};
+use crate::domain::embedding_constants::default_embedding_model;
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::shared::error::Result;
+use crate::shared::utils::gpu_acceleration_available;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -138,16 +137,30 @@ impl CheckFirstRunStatusUseCase {
 }
 
 fn embedding_recommendation() -> Option<RecommendedModel> {
-    let catalog_size = crate::domain::curated_models::get_curated_embedding_models()
+    // Qwen3 where there is a GPU to run it, MiniLM where there is not.
+    let default = default_embedding_model(gpu_acceleration_available());
+    let entry = crate::domain::curated_models::get_curated_embedding_models()
         .into_iter()
-        .find(|m| m.name == DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME)
-        .map(|m| m.total_size_bytes);
+        .find(|m| m.id == default.curated_id);
+    if entry.is_none() {
+        warn!(
+            model_id = default.curated_id,
+            "Default embedding model is not in the curated catalog; the download will fail"
+        );
+    }
+    debug!(
+        model_id = default.curated_id,
+        dimension = default.dimension,
+        "Embedding model recommendation resolved"
+    );
 
     Some(RecommendedModel {
-        model_id: DEFAULT_EMBEDDING_MODEL_CURATED_ID.to_string(),
-        display_name: format!("{} (Embedding Model)", DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME),
-        // Observed real-world size for all-MiniLM-L6-v2 + tokenizer + config.
-        estimated_size_bytes: catalog_size.unwrap_or(91_700_000),
+        model_id: default.curated_id.to_string(),
+        display_name: format!("{} (Embedding Model)", default.display_name),
+        // The catalog's own figure. The fallback is MiniLM's observed size, and
+        // under-reporting a 1.2 GB download would under-warn the disk check, so
+        // a missing entry is logged above rather than passed off as small.
+        estimated_size_bytes: entry.map(|m| m.total_size_bytes).unwrap_or(91_700_000),
     })
 }
 
@@ -211,7 +224,7 @@ mod tests {
         assert!(response.needs_setup);
         assert_eq!(
             response.recommended_model_id.as_deref(),
-            Some(DEFAULT_EMBEDDING_MODEL_CURATED_ID)
+            Some(default_embedding_model(gpu_acceleration_available()).curated_id)
         );
         assert!(response.recommended_model_name.is_some());
         assert!(response.estimated_size_bytes.is_some());
@@ -248,7 +261,7 @@ mod tests {
         assert!(response.needs_setup);
         assert_eq!(
             response.recommended_model_id.as_deref(),
-            Some(DEFAULT_EMBEDDING_MODEL_CURATED_ID)
+            Some(default_embedding_model(gpu_acceleration_available()).curated_id)
         );
     }
 
@@ -297,7 +310,7 @@ mod tests {
         );
         assert_eq!(
             response.recommended_model_id.as_deref(),
-            Some(DEFAULT_EMBEDDING_MODEL_CURATED_ID)
+            Some(default_embedding_model(gpu_acceleration_available()).curated_id)
         );
 
         // Sanity: empty `repo` still also reports needs_setup.

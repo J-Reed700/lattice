@@ -1,13 +1,17 @@
-//! SQLite Text Search Implementation
+//! SQLite FTS5 text search behind [`TextSearchPort`].
 //!
-//! Stub implementation of text search using SQLite FTS5.
+//! The scoped sibling of [`BM25Search`]: same indexes, same query construction
+//! (both go through [`fts_query`]), but this one applies workspace and
+//! document scope inside the SQL and reports the port's DTO. Chat retrieval
+//! needs the scoping; direct search needs the richer document metadata.
+//!
+//! [`BM25Search`]: crate::features::search::engine::bm25::BM25Search
 
 use crate::application::ports::TextSearchPort;
 use crate::features::search::dto::SearchResultPortDto;
+use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
 use crate::shared::result::Result;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
-use rust_stemmers::{Algorithm, Stemmer};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use tracing::warn;
@@ -26,8 +30,10 @@ mod scope_tests {
         sqlx::raw_sql("CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
             CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
             CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+            CREATE VIRTUAL TABLE chunks_trigram USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
             INSERT INTO text_chunks VALUES ('a','other','patent'), ('b','selected','patent manual introduction');
             INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
+            INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;
             INSERT INTO document_space_memberships VALUES ('other','space'),('selected','space');")
             .execute(&pool).await.unwrap();
         let search = SqliteTextSearch::new(pool);
@@ -87,16 +93,13 @@ mod scope_tests {
 
 /// SQLite-based text search implementation using FTS5
 ///
-/// Uses the chunks_fts virtual table which is automatically synced
-/// with the chunks table via triggers (see schema migration).
+/// Uses the chunks_fts and chunks_trigram virtual tables, which are kept in
+/// sync with text_chunks by triggers (see the schema migration).
 pub struct SqliteTextSearch {
     pool: SqlitePool,
 }
 
 impl SqliteTextSearch {
-    const MIN_TERM_LEN: usize = 3;
-    const MAX_TERMS: usize = 16;
-
     /// Create a new SQLite text search instance
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -116,17 +119,16 @@ impl TextSearchPort for SqliteTextSearch {
         space_id: Option<&str>,
         allowed_document_ids: Option<&HashSet<String>>,
     ) -> Result<Vec<SearchResultPortDto>> {
-        let normalized_query = Self::normalize_fts_query(query);
-        if normalized_query.is_empty() {
+        let Some(normalized) = fts_query::normalize(query) else {
             return Ok(Vec::new());
-        }
+        };
 
         if allowed_document_ids.is_some_and(HashSet::is_empty) || top_k == 0 {
             return Ok(Vec::new());
         }
         let rows_result = Self::execute_fts_query_scoped(
             &self.pool,
-            &normalized_query,
+            &normalized,
             top_k,
             space_id,
             allowed_document_ids,
@@ -136,22 +138,22 @@ impl TextSearchPort for SqliteTextSearch {
         let rows = match rows_result {
             Ok(rows) => rows,
             Err(error) if Self::is_fts_syntax_error(&error) => {
-                let fallback_query = Self::strict_tokenize_fts_query(query);
-                if fallback_query.is_empty() || fallback_query == normalized_query {
+                let fallback = fts_query::strict_tokenize(query);
+                let Some(fallback) = fallback.filter(|fallback| *fallback != normalized) else {
                     return Err(error.into());
-                }
+                };
 
                 warn!(
                     original_query = %query,
-                    normalized_query = %normalized_query,
-                    fallback_query = %fallback_query,
+                    normalized_query = %normalized.match_expression,
+                    fallback_query = %fallback.match_expression,
                     error = %error,
                     "SQLite text search FTS query failed with syntax error, retrying with strict tokenized fallback"
                 );
 
                 Self::execute_fts_query_scoped(
                     &self.pool,
-                    &fallback_query,
+                    &fallback,
                     top_k,
                     space_id,
                     allowed_document_ids,
@@ -172,27 +174,26 @@ impl TextSearchPort for SqliteTextSearch {
     }
 
     async fn index_document(&self, _id: &str, _content: &str) -> Result<()> {
-        // No-op: FTS5 table is automatically synced via triggers
-        // When chunks are inserted, the chunks_fts_insert trigger
-        // adds content to chunks_fts automatically
+        // No-op: both FTS5 tables are synced by the text_chunks triggers.
         Ok(())
     }
 
     async fn index_batch(&self, _documents: &[(&str, &str)]) -> Result<()> {
-        // No-op: FTS5 table is automatically synced via triggers
+        // No-op: both FTS5 tables are synced by the text_chunks triggers.
         Ok(())
     }
 
     async fn remove_document(&self, _id: &str) -> Result<()> {
-        // No-op: FTS5 table is automatically synced via triggers
-        // When chunks are deleted, the chunks_fts_delete trigger
-        // removes content from chunks_fts automatically
+        // No-op: both FTS5 tables are synced by the text_chunks triggers.
         Ok(())
     }
 
     async fn clear(&self) -> Result<()> {
-        // Clear all FTS5 data (chunk-level index)
+        // Both chunk-level indexes, or the next query answers from a stale one.
         sqlx::query("DELETE FROM chunks_fts")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM chunks_trigram")
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -211,17 +212,32 @@ impl TextSearchPort for SqliteTextSearch {
 impl SqliteTextSearch {
     async fn execute_fts_query_scoped(
         pool: &SqlitePool,
-        query: &str,
+        query: &FtsQuery,
         top_k: usize,
         space_id: Option<&str>,
         allowed_document_ids: Option<&HashSet<String>>,
     ) -> std::result::Result<Vec<sqlx::sqlite::SqliteRow>, sqlx::Error> {
         // Apply ALL scope restrictions before ranking/LIMIT. Filtering the top
         // global hits afterwards can hide every hit from a selected chapter.
-        let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-            "SELECT c.id as chunk_id, c.document_id, c.content, bm25(chunks_fts) as score FROM chunks_fts JOIN text_chunks c ON chunks_fts.chunk_id = c.id WHERE chunks_fts MATCH ",
-        );
-        sql.push_bind(query);
+        //
+        // The table name is chosen from a closed set, never from user input.
+        let mut sql = match query.index {
+            FtsIndex::Words => sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "SELECT c.id as chunk_id, c.document_id, c.content, bm25(chunks_fts) as score \
+                 FROM chunks_fts JOIN text_chunks c ON chunks_fts.chunk_id = c.id \
+                 WHERE chunks_fts MATCH ",
+            ),
+            FtsIndex::Trigram => sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "SELECT c.id as chunk_id, c.document_id, c.content, bm25(chunks_trigram) as score \
+                 FROM chunks_trigram JOIN text_chunks c ON chunks_trigram.chunk_id = c.id \
+                 WHERE chunks_trigram MATCH ",
+            ),
+        };
+        let order = match query.index {
+            FtsIndex::Words => " ORDER BY bm25(chunks_fts), c.id LIMIT ",
+            FtsIndex::Trigram => " ORDER BY bm25(chunks_trigram), c.id LIMIT ",
+        };
+        sql.push_bind(query.match_expression.clone());
         if let Some(space) = space_id {
             sql.push(" AND EXISTS (SELECT 1 FROM document_space_memberships m WHERE m.document_id = c.document_id AND m.space_id = ");
             sql.push_bind(space).push(")");
@@ -236,8 +252,7 @@ impl SqliteTextSearch {
             }
             sql.push(")");
         }
-        sql.push(" ORDER BY bm25(chunks_fts), c.id LIMIT ")
-            .push_bind(top_k as i64);
+        sql.push(order).push_bind(top_k as i64);
         sql.build().fetch_all(pool).await
     }
 
@@ -277,240 +292,97 @@ impl SqliteTextSearch {
             .collect()
     }
 
-    fn normalize_fts_query(query: &str) -> String {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            return String::new();
-        }
-
-        if Self::looks_like_explicit_fts_syntax(trimmed) {
-            return trimmed.to_string();
-        }
-
-        Self::strict_tokenize_fts_query(trimmed)
-    }
-
-    fn strict_tokenize_fts_query(query: &str) -> String {
-        let mut terms: Vec<String> = Vec::new();
-        let mut current = String::new();
-        for ch in query.chars() {
-            if ch.is_alphanumeric() {
-                for lower in ch.to_lowercase() {
-                    current.push(lower);
-                }
-            } else if !current.is_empty() {
-                terms.push(current);
-                current = String::new();
-            }
-        }
-        if !current.is_empty() {
-            terms.push(current);
-        }
-
-        let mut seen = std::collections::HashSet::new();
-        let deduped_terms: Vec<String> = terms
-            .into_iter()
-            .filter_map(|term| {
-                if term.is_empty() || !seen.insert(term.clone()) {
-                    None
-                } else {
-                    Some(term)
-                }
-            })
-            .collect();
-
-        if deduped_terms.is_empty() {
-            return String::new();
-        }
-
-        let mut filtered_terms = Self::select_informative_terms(deduped_terms, Self::MAX_TERMS);
-        if filtered_terms.is_empty() {
-            return String::new();
-        }
-
-        let mut seen = filtered_terms
-            .iter()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>();
-        let selected_base = filtered_terms.clone();
-        for term in selected_base {
-            let stem = Self::stem_term(term.as_str());
-            if stem != term && stem.len() >= Self::MIN_TERM_LEN && seen.insert(stem.clone()) {
-                filtered_terms.push(stem);
-                if filtered_terms.len() >= Self::MAX_TERMS {
-                    break;
-                }
-            }
-        }
-
-        if filtered_terms.len() <= 1 {
-            filtered_terms.first().cloned().unwrap_or_default()
-        } else {
-            filtered_terms.join(" OR ")
-        }
-    }
-
     fn is_fts_syntax_error(error: &sqlx::Error) -> bool {
-        let message = error.to_string();
-        message.contains("fts5: syntax error")
-            || message.contains("malformed MATCH expression")
-            || message.contains("unterminated string")
-            // Prose that merely contains a `*` or a quote is taken for
-            // hand-written FTS syntax and passed through raw, where
-            // `rules - The Silo` parses as a column filter on a column named
-            // `The`. That is as much the query's fault as a syntax error, and
-            // without the retry the keyword half of the search was lost.
-            || message.contains("no such column")
-    }
-
-    fn looks_like_explicit_fts_syntax(query: &str) -> bool {
-        query.contains('"')
-            || query.contains('*')
-            || query.contains(" OR ")
-            || query.contains(" AND ")
-            || query.contains(" NOT ")
-            || query.contains(" NEAR ")
-            || query.contains(" NEAR(")
-    }
-
-    fn normalize_term(term: &str) -> Option<String> {
-        let trimmed = term.trim();
-        if trimmed.len() < Self::MIN_TERM_LEN {
-            return None;
-        }
-        if !trimmed.chars().any(|ch| ch.is_ascii_alphabetic()) {
-            return None;
-        }
-        Some(trimmed.to_string())
-    }
-
-    fn stem_term(term: &str) -> String {
-        static EN_STEMMER: Lazy<Stemmer> = Lazy::new(|| Stemmer::create(Algorithm::English));
-        EN_STEMMER.stem(term).to_string()
-    }
-
-    fn term_entropy(term: &str) -> f32 {
-        use std::collections::HashMap;
-
-        let len = term.len();
-        if len == 0 {
-            return 0.0;
-        }
-
-        let mut counts: HashMap<char, usize> = HashMap::new();
-        for ch in term.chars() {
-            *counts.entry(ch).or_insert(0) += 1;
-        }
-
-        let denom = len as f32;
-        counts.values().fold(0.0_f32, |acc, count| {
-            let p = (*count as f32) / denom;
-            if p <= f32::EPSILON {
-                acc
-            } else {
-                acc - p * p.log2()
-            }
-        })
-    }
-
-    fn term_salience(term: &str) -> f32 {
-        let entropy = Self::term_entropy(term);
-        let length_factor = ((term.len() as f32) + 1.0).ln();
-        entropy * (0.65 + 0.35 * length_factor)
-    }
-
-    fn select_informative_terms(terms: Vec<String>, max_terms: usize) -> Vec<String> {
-        let mut deduped = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for term in terms {
-            if let Some(normalized) = Self::normalize_term(&term) {
-                if seen.insert(normalized.clone()) {
-                    deduped.push(normalized);
-                }
-            }
-        }
-        if deduped.is_empty() {
-            return Vec::new();
-        }
-
-        let mut ranked: Vec<(String, f32)> = deduped
-            .into_iter()
-            .map(|term| (term.clone(), Self::term_salience(&term)))
-            .collect();
-        ranked.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
-        });
-
-        let best_score = ranked.first().map(|(_, score)| *score).unwrap_or(0.0);
-        if best_score <= f32::EPSILON {
-            return ranked
-                .into_iter()
-                .take(max_terms)
-                .map(|(term, _)| term)
-                .collect();
-        }
-
-        let mut selected: Vec<String> = ranked
-            .iter()
-            .filter_map(|(term, score)| (*score >= best_score * 0.42).then_some(term.clone()))
-            .take(max_terms)
-            .collect();
-        if selected.is_empty() {
-            selected = ranked
-                .into_iter()
-                .take(max_terms.min(3))
-                .map(|(term, _)| term)
-                .collect();
-        }
-        selected
+        fts_query::is_syntax_error_message(&error.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SqliteTextSearch;
+    use super::*;
 
-    #[test]
-    fn test_normalize_fts_query_tokenizes_natural_language() {
-        let normalized = SqliteTextSearch::normalize_fts_query("What has ICE been doing??");
-        let terms: Vec<&str> = normalized.split(" OR ").collect();
-        assert!(terms
-            .iter()
-            .all(|term| term.len() >= SqliteTextSearch::MIN_TERM_LEN));
+    async fn corpus() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+             CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
+             CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                chunk_id UNINDEXED, content,
+                tokenize='porter unicode61 remove_diacritics 2');
+             CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+                chunk_id UNINDEXED, content, tokenize='trigram');
+             INSERT INTO text_chunks VALUES
+                ('a','doc-a','Incident ERR-4012 raised in 2026 after a 429 response'),
+                ('b','doc-b','日本語サポート時間。担当チームは月曜日から金曜日まで対応します。'),
+                ('c','doc-c','Политика хранения резервных копий'),
+                ('d','doc-d','El horario de atención en español incluye los sábados');
+             INSERT INTO chunks_fts SELECT id, content FROM text_chunks;
+             INSERT INTO chunks_trigram SELECT id, content FROM text_chunks;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
     }
 
-    #[test]
-    fn test_strict_tokenize_fts_query_strips_fts_punctuation() {
-        let strict = SqliteTextSearch::strict_tokenize_fts_query(
-            "\"Immigration and Customs Enforcement (ICE): Operations\"",
-        );
-        let terms: Vec<&str> = strict.split(" OR ").collect();
-        assert!(terms.contains(&"immigration"));
-        assert!(terms.contains(&"customs"));
-        assert!(terms.contains(&"enforcement"));
-        assert!(terms.contains(&"operations"));
+    async fn top(query: &str) -> Option<String> {
+        let search = SqliteTextSearch::new(corpus().await);
+        search
+            .search_scoped(query, 5, None, None)
+            .await
+            .unwrap()
+            .first()
+            .map(|hit| hit.doc_id.clone())
     }
 
-    #[test]
-    fn test_normalize_fts_query_does_not_treat_plain_punctuation_as_fts_syntax() {
-        let sentence = "Immigration and Customs Enforcement (ICE): Operations expanded.";
-        let normalized = SqliteTextSearch::normalize_fts_query(sentence);
-        assert_ne!(normalized, sentence);
-        let terms: Vec<&str> = normalized.split(" OR ").collect();
-        assert!(terms.contains(&"immigration"));
-        assert!(terms.contains(&"customs"));
-        assert!(terms.contains(&"enforcement"));
-        assert!(terms
-            .iter()
-            .all(|term| term.len() >= SqliteTextSearch::MIN_TERM_LEN));
+    #[tokio::test]
+    async fn numeric_cyrillic_and_accented_queries_all_reach_the_index() {
+        assert_eq!(top("4012").await.as_deref(), Some("doc-a"));
+        assert_eq!(top("429").await.as_deref(), Some("doc-a"));
+        assert_eq!(top("политика хранения").await.as_deref(), Some("doc-c"));
+        assert_eq!(top("horario español").await.as_deref(), Some("doc-d"));
     }
 
-    #[test]
-    fn test_normalize_fts_query_preserves_phrase_syntax() {
-        let phrase_query = "\"blueberry anthocyanin\"";
-        let normalized = SqliteTextSearch::normalize_fts_query(phrase_query);
-        assert_eq!(normalized, phrase_query);
+    #[tokio::test]
+    async fn a_japanese_substring_query_uses_the_trigram_index() {
+        assert_eq!(top("日本語サポート").await.as_deref(), Some("doc-b"));
+        assert_eq!(top("金曜日").await.as_deref(), Some("doc-b"));
+    }
+
+    #[tokio::test]
+    async fn hostile_and_empty_queries_do_not_error() {
+        let search = SqliteTextSearch::new(corpus().await);
+        for query in [
+            "",
+            "  ",
+            "!!!",
+            "incident\" OR chunks_fts MATCH \"response",
+            "alpha NEAR(beta gamma) AND NOT delta",
+            "col:value -minus (paren)",
+        ] {
+            let hits = search.search_scoped(query, 5, None, None).await;
+            assert!(hits.is_ok(), "query {query:?} errored: {hits:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn clearing_empties_both_indexes() {
+        let pool = corpus().await;
+        let search = SqliteTextSearch::new(pool.clone());
+        search.clear().await.unwrap();
+        assert!(search
+            .search_scoped("incident", 5, None, None)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(search
+            .search_scoped("日本語サポート", 5, None, None)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

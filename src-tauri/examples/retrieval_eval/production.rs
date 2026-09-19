@@ -10,7 +10,7 @@
 //!    embedder's own input policy with that prefix, and the prefixed text is what gets embedded —
 //!    the same sequence `IndexingActor::process_file` runs.
 //! 3. Vectors go into a `USearchVectorIndex` (HNSW, cosine, f32); chunk rows go into SQLite,
-//!    where the production `chunks_fts_insert` trigger mirrors them into an FTS5 table.
+//!    where the production `chunks_fts_insert` trigger mirrors them into both FTS5 tables.
 //! 4. `HybridSearchService` runs both branches — three, with `--sparse on` — and fuses them
 //!    with weighted `ReciprocalRankFusion` (k = 10 by default), then applies the shared cross-encoder
 //!    blend when a reranker is supplied.
@@ -112,8 +112,15 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
     content,
     tokenize='porter unicode61 remove_diacritics 2'
 );
+CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+    chunk_id UNINDEXED,
+    content,
+    tokenize='trigram'
+);
 CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
   INSERT INTO chunks_fts(chunk_id, content)
+  VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+  INSERT INTO chunks_trigram(chunk_id, content)
   VALUES(new.id, COALESCE(new.contextualized_content, new.content));
 END;
 CREATE TABLE IF NOT EXISTS chunk_sparse_terms (
@@ -165,6 +172,8 @@ pub struct ProductionIndex {
     /// Chunk id to its position inside its document, so ranking rows stay attributable
     /// without a database round trip inside the timed region.
     chunk_positions: HashMap<String, usize>,
+    /// `document#chunk` locator to the UTF-8 byte range the chunk covers in its document.
+    chunk_spans: HashMap<String, (usize, usize)>,
     /// The sparse branch, kept so it can also be run on its own for the branch diagnostics.
     /// `None` when the branch is off, which is also what the run row reports.
     sparse: Option<Arc<SparseSearchService>>,
@@ -229,6 +238,7 @@ impl ProductionIndex {
 
         let mut entries = Vec::new();
         let mut chunk_positions = HashMap::new();
+        let mut chunk_spans = HashMap::new();
         for document in documents {
             let file_name = format!("{}.md", document.id);
             let title = document.title.clone().unwrap_or_else(|| file_name.clone());
@@ -259,7 +269,7 @@ impl ProductionIndex {
                     let contextualized: Vec<ContextualizedChunk> =
                         prepared.iter().map(|p| p.chunk.clone()).collect();
                     (
-                        model.embed_contextualized_chunks(&contextualized).await?,
+                        embed_cached(&model, &model_identity, &contextualized).await?,
                         Vec::new(),
                     )
                 }
@@ -318,6 +328,10 @@ impl ProductionIndex {
                 .await?;
 
                 chunk_positions.insert(chunk_id.clone(), item.chunk.chunk_index);
+                chunk_spans.insert(
+                    format!("{}#{}", document.id, item.chunk.chunk_index),
+                    (item.chunk.start_idx, item.chunk.end_idx),
+                );
                 if let Some(sparse) = sparse_terms.get(item.chunk.chunk_index) {
                     sparse_entries.push((chunk_id.clone(), sparse.clone()));
                 }
@@ -339,6 +353,13 @@ impl ProductionIndex {
         if entries.is_empty() {
             return Err("the fixture produced no indexable chunks".into());
         }
+        // Chunk size is a retrieval knob now, so the corpus's chunk count is
+        // part of what a run reports. stdout carries the JSONL rows.
+        eprintln!(
+            "indexed {} chunks from {} documents",
+            entries.len(),
+            documents.len()
+        );
         index.publish_embeddings(entries)?;
 
         // The same wiring `features::search::di::build` uses, minus recency and workspace scope.
@@ -350,7 +371,6 @@ impl ProductionIndex {
             // Direct search leaves reranking off by default; here it follows the CLI argument
             // so a reranked run exercises HybridSearchService's own blend stage.
             enable_reranking: reranker.is_some(),
-            recency_boost: 1.0,
             max_results: 100,
             // `HybridSearchService` still skips the branch unless a service is
             // attached *and* the loaded model has a sparse head, so this flag
@@ -385,6 +405,7 @@ impl ProductionIndex {
             service,
             top_k,
             chunk_positions,
+            chunk_spans,
             sparse,
             reranked,
         })
@@ -430,6 +451,19 @@ impl ProductionIndex {
             });
         }
         Ok((ranked, sufficiency))
+    }
+
+    /// Byte ranges for the given chunks, keyed by locator, so the scorer can tell whether the
+    /// retrieved chunk held the answer passage and not merely the right document.
+    pub fn spans_for(&self, chunks: &[RankedChunk]) -> HashMap<String, [usize; 2]> {
+        chunks
+            .iter()
+            .filter_map(|chunk| {
+                let locator = chunk.locator();
+                let (start, end) = self.chunk_spans.get(&locator).copied()?;
+                Some((locator, [start, end]))
+            })
+            .collect()
     }
 
     /// The learned sparse branch on its own, collapsed to its document ranking, or `None`
@@ -628,6 +662,55 @@ fn sufficiency_input(result: &HybridSearchResult) -> SearchResultDto {
 }
 
 /// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
+/// Chunk-first embeddings, read from `RETRIEVAL_EVAL_EMBED_CACHE` when that
+/// names a directory. Embedding the corpus is most of a run's wall time, and a
+/// change to search, fusion or the index does not alter a single vector, so a
+/// cached run takes seconds. The key covers the model and the exact text, not
+/// the embedding code: clear the directory after changing how text is embedded.
+async fn embed_cached(
+    model: &CandleEmbeddingService,
+    model_identity: &str,
+    chunks: &[ContextualizedChunk],
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+    let Some(dir) = std::env::var_os("RETRIEVAL_EVAL_EMBED_CACHE").map(PathBuf::from) else {
+        return Ok(model.embed_contextualized_chunks(chunks).await?);
+    };
+    std::fs::create_dir_all(&dir)?;
+    let paths: Vec<PathBuf> = chunks
+        .iter()
+        .map(|chunk| {
+            let mut hasher = Sha256::new();
+            hasher.update(model_identity.as_bytes());
+            hasher.update([0]);
+            hasher.update(chunk.contextualized_content.as_bytes());
+            dir.join(format!("{}.f32", hex::encode(hasher.finalize())))
+        })
+        .collect();
+    let cached: Option<Vec<Vec<f32>>> = paths
+        .iter()
+        .map(|path| {
+            let bytes = std::fs::read(path).ok()?;
+            (bytes.len() == model.dimension() * 4).then(|| {
+                bytes
+                    .chunks_exact(4)
+                    .filter_map(|b| <[u8; 4]>::try_from(b).ok())
+                    .map(f32::from_le_bytes)
+                    .collect()
+            })
+        })
+        .collect();
+    if let Some(vectors) = cached {
+        return Ok(vectors);
+    }
+    let vectors = model.embed_contextualized_chunks(chunks).await?;
+    for (path, vector) in paths.iter().zip(&vectors) {
+        let bytes: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(path, bytes)?;
+    }
+    Ok(vectors)
+}
+
 fn prepare_chunks(
     model: &CandleEmbeddingService,
     chunker: &SemanticChunker,

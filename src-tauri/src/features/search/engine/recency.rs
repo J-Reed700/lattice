@@ -3,6 +3,12 @@ use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
+/// The most a perfectly fresh document can gain, at the highest recency
+/// weight: a quarter of its relevance score. Enough to reorder results the
+/// ranker already considered equivalent, far too little to promote a document
+/// the ranker put well below.
+const MAX_RECENCY_GAIN: f32 = 0.25;
+
 #[derive(Debug, Clone)]
 pub struct RecencyConfig {
     pub max_age_days: i64,
@@ -61,8 +67,19 @@ impl RecencyScorer {
         }
     }
 
+    /// Let recency settle near-ties without letting it replace relevance.
+    ///
+    /// The convex blend this replaced — `base * (1 - w) + recency * w` — mixed
+    /// two incompatible scales. A fused RRF score peaks around `0.09` while the
+    /// recency term runs `0..1`, so at `w = 0.3` a brand-new irrelevant note
+    /// scored `0.3` and outranked every relevant old one at `0.063`: the
+    /// ordering became "newest first" and stopped being a search at all.
+    /// Scaling keeps relevance the ordering key, and bounds what recency can
+    /// buy at [`MAX_RECENCY_GAIN`].
     pub fn boost_score(&self, base_score: f32, recency_score: f32, recency_weight: f32) -> f32 {
-        base_score * (1.0 - recency_weight) + recency_score * recency_weight
+        let weight = recency_weight.clamp(0.0, 1.0);
+        let recency = recency_score.clamp(0.0, 1.0);
+        base_score * (1.0 + MAX_RECENCY_GAIN * weight * recency)
     }
 
     pub async fn get_document_timestamps(
@@ -170,13 +187,9 @@ mod tests {
     fn test_boost_score() {
         let scorer = RecencyScorer::default();
 
-        let base_score = 0.8;
-        let recency_score = 1.0;
-        let recency_weight = 0.1;
+        let boosted = scorer.boost_score(0.8, 1.0, 0.1);
 
-        let boosted = scorer.boost_score(base_score, recency_score, recency_weight);
-
-        let expected = 0.8 * 0.9 + 1.0 * 0.1;
+        let expected = 0.8 * (1.0 + 0.25 * 0.1);
         assert!((boosted - expected).abs() < 0.001);
     }
 
@@ -184,14 +197,39 @@ mod tests {
     fn test_boost_score_with_old_document() {
         let scorer = RecencyScorer::default();
 
-        let base_score = 0.8;
-        let recency_score = 0.0;
-        let recency_weight = 0.2;
+        // Nothing to add, so the relevance score is returned untouched rather
+        // than scaled down for being old.
+        assert!((scorer.boost_score(0.8, 0.0, 0.2) - 0.8).abs() < 0.001);
+    }
 
-        let boosted = scorer.boost_score(base_score, recency_score, recency_weight);
+    /// The failure this replaced an additive blend for: RRF scores live near
+    /// 0.09 and the recency term ran 0-1, so freshness alone decided the order.
+    #[test]
+    fn a_fresh_irrelevant_result_cannot_outrank_a_relevant_old_one() {
+        let scorer = RecencyScorer::default();
+        let relevant_but_old = scorer.boost_score(0.0636, 0.0, 1.0); // RRF rank 1, two years old
+        let irrelevant_but_new = scorer.boost_score(0.0159, 1.0, 1.0); // RRF rank ~34, today
 
-        let expected = 0.8 * 0.8 + 0.0 * 0.2;
-        assert!((boosted - expected).abs() < 0.001);
+        assert!(
+            relevant_but_old > irrelevant_but_new,
+            "{relevant_but_old} !> {irrelevant_but_new}"
+        );
+    }
+
+    /// It still has to do something: two results the ranker could not separate
+    /// are separated by age.
+    #[test]
+    fn recency_still_breaks_a_near_tie() {
+        let scorer = RecencyScorer::default();
+        let older = scorer.boost_score(0.0636, 0.1, 1.0);
+        let newer = scorer.boost_score(0.0630, 1.0, 1.0);
+        assert!(newer > older);
+    }
+
+    #[test]
+    fn a_zero_weight_changes_nothing() {
+        let scorer = RecencyScorer::default();
+        assert!((scorer.boost_score(0.5, 1.0, 0.0) - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]
