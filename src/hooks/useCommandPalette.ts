@@ -26,6 +26,9 @@ const MAX_RECENT_ITEMS = 5
  * - Search mode toggle
  * - Local storage persistence
  */
+/** Dispatched on `window` by anything that wants the palette open (the rail's Find button). */
+export const OPEN_PALETTE_EVENT = 'lattice:open-palette'
+
 export function useCommandPalette() {
   const [state, setState] = useState<CommandPaletteState>({
     isOpen: false,
@@ -77,8 +80,14 @@ export function useCommandPalette() {
       }
     }
 
+    const handleOpenRequest = () => setState(prev => ({ ...prev, isOpen: true, searchMode: false }))
+
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener(OPEN_PALETTE_EVENT, handleOpenRequest)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener(OPEN_PALETTE_EVENT, handleOpenRequest)
+    }
   }, [state.isOpen])
 
   const open = useCallback(() => {

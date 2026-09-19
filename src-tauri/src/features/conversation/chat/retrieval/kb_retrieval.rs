@@ -6,6 +6,8 @@ use tracing::{info, warn};
 
 use crate::application::contracts::search::CorpusDocument;
 use crate::domain::qa::hyde::QueryType;
+use crate::features::conversation::chat::focus::FocusScope;
+use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::search::dto::{SearchResponseDto, SearchResultDto};
 use crate::features::settings::dto::RetrievalTuningSettingsDto;
@@ -25,6 +27,8 @@ pub(super) async fn run_kb_retrieval(
     enable_reranking: bool,
     _semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
+    focus: &FocusScope,
+    recorder: &TurnRecorder,
 ) -> super::KbRetrievalOutcome {
     let kb_start = Instant::now();
     let mut timings = super::RetrievalSubTimingMetrics::default();
@@ -57,11 +61,41 @@ pub(super) async fn run_kb_retrieval(
             };
         }
     };
+    // A chat pinned to particular documents searches those and no others. The
+    // focus was already intersected with this same space scope, so this can
+    // only ever remove ids; when it removes all of them the request named
+    // nothing this chat can reach, and the turn searches nothing rather than
+    // falling back to the whole space.
+    let mut scope = scope;
+    focus.confine(&mut scope.document_ids);
     timings.kb_scope_load_ms = super::elapsed_ms(scope_load_start);
     // The exact set the hard filter allows. Reported to the UI verbatim so
     // "Searched N documents" is a fact, not a corpus-sized guess.
     let searched_documents = scope.document_ids.len();
     let scope_is_linked = scope.space_id != super::DEFAULT_SPACE_ID;
+
+    if focus.blocks_everything() {
+        timings.kb_total_ms = super::elapsed_ms(kb_start);
+        warn!(
+            conversation_id = conversation_id,
+            space_id = scope.space_id.as_str(),
+            "Focus documents are outside this conversation's space; searching nothing"
+        );
+        return super::KbRetrievalOutcome {
+            interpretation: crate::domain::qa::hyde::HyDEInterpretation::raw_only(
+                validated_message.to_string(),
+                QueryType::Question,
+            ),
+            search_response: super::empty_search_response(),
+            sources: Vec::new(),
+            low_confidence: true,
+            kb_unavailable_reason: Some(focus.unavailable_reason().to_string()),
+            timings,
+            searched_documents: 0,
+            scope_is_linked,
+            sufficiency: None,
+        };
+    }
 
     if scope.document_ids.is_empty() {
         timings.kb_total_ms = super::elapsed_ms(kb_start);
@@ -93,6 +127,15 @@ pub(super) async fn run_kb_retrieval(
     let repository = ConversationRepository::new(container.db_pool().clone());
     let summaries = summary_tier(container, validated_message, &scope).await;
     let planning_start = Instant::now();
+    let plan_step = recorder.begin_guarded(
+        TurnStepKind::Plan,
+        if focus.narrows() {
+            "Planning a search of the documents you named"
+        } else {
+            "Planning what to search for"
+        },
+        None,
+    );
     let (mut plan, catalog) = match repository.retrieval_catalog(&scope.document_ids).await {
         Ok(catalog) => {
             let plan = if let Some(plan) =
@@ -144,6 +187,8 @@ pub(super) async fn run_kb_retrieval(
     };
     summaries.apply(&mut plan, validated_message, &catalog);
     timings.kb_hyde_interpretation_ms = super::elapsed_ms(planning_start);
+    // The queries themselves: the one thing a reader can judge a search by.
+    plan_step.done(Some(plan.queries.join(" · ")));
     info!(queries = ?plan.queries, opening_documents = ?plan.opening_document_ids, "Corpus retrieval plan");
     let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
         validated_message.to_string(),
@@ -154,6 +199,22 @@ pub(super) async fn run_kb_retrieval(
         },
     );
     let search_start = Instant::now();
+    let search_step = recorder.begin_guarded(
+        TurnStepKind::SearchDocuments,
+        if focus.narrows() {
+            "Searching the documents you named"
+        } else {
+            "Searching your documents"
+        },
+        Some(format!(
+            "{searched_documents} {}",
+            if searched_documents == 1 {
+                "document"
+            } else {
+                "documents"
+            }
+        )),
+    );
     // The shortlist a reranker gets to see. The corrective pass reuses it so
     // both passes contribute the same number of candidates to the fusion.
     let candidate_limit = if enable_reranking && !plan.start_at_beginning {
@@ -174,9 +235,13 @@ pub(super) async fn run_kb_retrieval(
     timings.kb_search_plan_ms = super::elapsed_ms(search_start);
     timings.kb_query_execution_ms = timings.kb_search_plan_ms;
     let (mut search_response, kb_unavailable_reason) = match response {
-        Ok(response) => (response, None),
+        Ok(response) => {
+            search_step.done(Some(passage_count_line(&response.results)));
+            (response, None)
+        }
         Err(error) => {
             warn!(%error, "Document retrieval failed");
+            search_step.failed(Some(error.to_string()));
             (super::empty_search_response(), Some(error.to_string()))
         }
     };
@@ -205,6 +270,12 @@ pub(super) async fn run_kb_retrieval(
     let sufficiency_start = Instant::now();
     let mut verdict = super::assess_sufficiency(&search_response.results, &plan, tuning, reranked);
     timings.kb_sufficiency_ms = super::elapsed_ms(sufficiency_start);
+    recorder.note(
+        TurnStepKind::Sufficiency,
+        "Judging whether that is enough",
+        None,
+        Some(sufficiency_line(&verdict)),
+    );
     info!(
         conversation_id = conversation_id,
         sufficient = verdict.sufficient,
@@ -222,6 +293,11 @@ pub(super) async fn run_kb_retrieval(
         tuning.sufficiency_retry_enabled && kb_unavailable_reason.is_none() && !catalog.is_empty();
     if !verdict.sufficient && can_retry {
         let retry_start = Instant::now();
+        let corrective_step = recorder.begin_guarded(
+            TurnStepKind::CorrectiveSearch,
+            "Searching again with a different plan",
+            None,
+        );
         let correction = super::corpus_plan::CorrectionRequest {
             queries_already_tried: plan.queries.clone(),
             top_result_titles: top_result_titles(&search_response.results),
@@ -284,6 +360,16 @@ pub(super) async fn run_kb_retrieval(
                 reasons = ?verdict.reasons,
                 "retrieval: corrective pass"
             );
+            corrective_step.done(Some(format!(
+                "{} · {}",
+                passage_count_line(&search_response.results),
+                sufficiency_line(&verdict)
+            )));
+        } else {
+            // No planner, or a plan that only repeated what had already failed.
+            // The first pass's evidence stands, which is not a failure of the
+            // corrective step so much as its honest outcome.
+            corrective_step.done(Some("no better plan to try".to_string()));
         }
         timings.kb_corrective_retry_ms = super::elapsed_ms(retry_start);
     }
@@ -341,6 +427,51 @@ pub(super) async fn run_kb_retrieval(
         scope_is_linked,
         sufficiency: Some(verdict),
     }
+}
+
+/// What a search pass came back with, counted the way the trace counts it:
+/// passages, and the documents they came from.
+fn passage_count_line(results: &[SearchResultDto]) -> String {
+    if results.is_empty() {
+        return "nothing".to_string();
+    }
+    let files = results
+        .iter()
+        .filter_map(|result| result.document_id.as_deref())
+        .collect::<HashSet<_>>()
+        .len()
+        .max(1);
+    format!(
+        "{} {} from {} {}",
+        results.len(),
+        if results.len() == 1 {
+            "passage"
+        } else {
+            "passages"
+        },
+        files,
+        if files == 1 { "file" } else { "files" }
+    )
+}
+
+/// The sufficiency verdict in one line.
+///
+/// A plain sufficient verdict is the expected case and says so in three words;
+/// an insufficient one carries its reasons, which are the only thing that makes
+/// the verdict checkable. In words: this line is persisted and read by people.
+fn sufficiency_line(verdict: &super::SufficiencyVerdict) -> String {
+    if verdict.sufficient {
+        return "enough support".to_string();
+    }
+    if verdict.reasons.is_empty() {
+        return "not enough support".to_string();
+    }
+    let reasons: Vec<&str> = verdict
+        .reasons
+        .iter()
+        .map(|code| super::sufficiency_reason::readable(code))
+        .collect();
+    format!("not enough support: {}", reasons.join(", "))
 }
 
 /// Titles the first pass surfaced, deduplicated, so the corrective planner can

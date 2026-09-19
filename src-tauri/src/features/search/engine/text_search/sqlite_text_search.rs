@@ -51,6 +51,38 @@ mod scope_tests {
             .unwrap()
             .is_empty());
     }
+
+    /// From a real turn: markdown emphasis made the query look like explicit
+    /// FTS syntax, FTS5 read `- The` as a column filter, and the keyword branch
+    /// failed with "no such column: The" instead of falling back.
+    #[tokio::test]
+    async fn prose_that_fts5_reads_as_a_column_filter_still_searches() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql("CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+            CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+            INSERT INTO text_chunks VALUES ('a','silo','a giant underground structure of many levels');
+            INSERT INTO chunks_fts SELECT id,content FROM text_chunks;")
+            .execute(&pool).await.unwrap();
+        let search = SqliteTextSearch::new(pool);
+
+        let hits = search
+            .search_scoped(
+                "The world and its rules - The Silo is a giant underground structure of **144 levels**",
+                5,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].doc_id, "silo");
+    }
 }
 
 /// SQLite-based text search implementation using FTS5
@@ -323,6 +355,12 @@ impl SqliteTextSearch {
         message.contains("fts5: syntax error")
             || message.contains("malformed MATCH expression")
             || message.contains("unterminated string")
+            // Prose that merely contains a `*` or a quote is taken for
+            // hand-written FTS syntax and passed through raw, where
+            // `rules - The Silo` parses as a column filter on a column named
+            // `The`. That is as much the query's fault as a syntax error, and
+            // without the retry the keyword half of the search was lost.
+            || message.contains("no such column")
     }
 
     fn looks_like_explicit_fts_syntax(query: &str) -> bool {

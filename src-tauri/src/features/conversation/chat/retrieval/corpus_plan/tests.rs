@@ -483,6 +483,7 @@ async fn live_corpus_retrieval_and_answer() {
             force_wiki_search: false,
             deep_research_mode: false,
             force_followup_mode: false,
+            closed_book: false,
         },
     )
     .with_kb_context(Some(context))

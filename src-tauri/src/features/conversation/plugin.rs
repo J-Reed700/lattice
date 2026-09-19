@@ -38,7 +38,7 @@ use tauri::{
 
 pub use crate::features::conversation::plugin_impl::{
     ConversationLinkedDocumentDto, ConversationWebSourceDto, DocumentSpaceMembershipDto,
-    SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
+    SpaceDocumentDto, SynthesizeJournalEntriesRequestDto, SynthesizeJournalEntriesResponseDto,
 };
 
 #[tauri::command]
@@ -272,6 +272,22 @@ pub async fn remove_conversation_from_journal(
     container: State<'_, Container>,
 ) -> Result<RenameConversationResponseDto, ApiError> {
     conversation_impl::remove_conversation_from_journal_impl(request, container.inner()).await
+}
+
+/// The documents a chat in `space_id` is allowed to read, newest first.
+///
+/// What the composer's `@` picker offers. Answered from the space's retrieval
+/// scope and nothing else, so it can never name a document the turn could not
+/// then search.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_space_documents(
+    space_id: Option<String>,
+    query: Option<String>,
+    limit: Option<u32>,
+    container: State<'_, Container>,
+) -> Result<Vec<SpaceDocumentDto>, ApiError> {
+    conversation_impl::list_space_documents_impl(space_id, query, limit, container.inner()).await
 }
 
 #[tauri::command]
@@ -577,6 +593,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             set_conversation_bookmarked,
             set_conversation_pinned,
             set_conversation_archived,
+            list_space_documents,
             list_conversation_linked_documents,
             remove_conversation_linked_document,
             add_conversation_web_source,

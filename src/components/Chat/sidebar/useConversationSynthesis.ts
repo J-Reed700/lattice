@@ -18,12 +18,21 @@ export function useConversationSynthesis() {
   const mutation = useSynthesizeConversationMutation();
   const { mutateAsync } = mutation;
   const synthesizeConversationToJournal = useCallback(async (id: string, title: string) => {
+    // A synthesis is two full generations — minutes on a local model. Started
+    // from the palette there is no row spinner to look at, so without this the
+    // command appears to do nothing until the "saved" toast arrives.
+    const working = toast.info(`Synthesizing "${title}"…`, {
+      message: 'This takes a few minutes. The page opens when it is ready.',
+      duration: 0,
+    });
     try {
       const capture = await mutateAsync({ id, title });
       toast.success(`Synthesis saved to "${capture.noteTitle}"`);
       navigate(`/journals?${new URLSearchParams({ noteId: capture.noteId }).toString()}`);
     } catch (error) {
       toast.error('Synthesis failed', { message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      toast.dismiss(working);
     }
   }, [mutateAsync, navigate]);
   const synthesizePaletteCommands = useMemo<PaletteCommand[]>(

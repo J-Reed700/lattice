@@ -13,6 +13,8 @@ import type {
   RetrievalTrace,
   SourceWithMetadata,
   ToolPreferences,
+  TurnRecord,
+  TurnStep,
 } from '../types/conversation';
 
 /**
@@ -61,10 +63,17 @@ export interface ConversationsState {
   messageVerification: Map<string, MessageVerificationSummary>;
   /** Persisted retrieval trace keyed by assistant message id. */
   messageRetrieval: Map<string, RetrievalTrace>;
+  /**
+   * The persisted turn record keyed by assistant message id.
+   *
+   * Absent for every answer written before the record existed. Absent means
+   * "not recorded", never a turn that did nothing.
+   */
+  messageTurn: Map<string, TurnRecord>;
   /** Live retrieval trace per conversation id, while a turn is in flight. */
   liveRetrieval: Map<string, RetrievalTrace>;
-  /** What the in-flight turn is doing, per conversation id. */
-  liveActivity: Map<string, string>;
+  /** What the in-flight turn has done so far, per conversation id. */
+  liveSteps: Map<string, TurnStep[]>;
   /** Text the composer should adopt on its next render. */
   composerDraft: string | null;
   linkedDocumentsByConversationId: Map<string, ConversationLinkedDocumentDto[]>;
@@ -77,7 +86,12 @@ export interface ConversationsState {
   setSearchQuery: (_query: string) => void;
   loadConversations: (_overrides?: LoadConversationsOverrides) => Promise<void>;
   loadMessageBookmarks: (_overrides?: LoadMessageBookmarksOverrides) => Promise<void>;
-  createConversation: (_title: string) => Promise<string>;
+  /**
+   * `_spaceId` files the chat into that space instead of the one selected in
+   * the sidebar — for a chat made on behalf of another chat, whose space is
+   * the only right answer.
+   */
+  createConversation: (_title: string, _spaceId?: string | null) => Promise<string>;
   setConversationSaved: (_id: string, _value: boolean) => Promise<void>;
   setConversationBookmarked: (_id: string, _value: boolean) => Promise<void>;
   setConversationPinned: (_id: string, _value: boolean) => Promise<void>;

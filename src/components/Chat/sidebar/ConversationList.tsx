@@ -4,7 +4,9 @@ import { motion, useReducedMotion } from 'framer-motion';
 import {
   Archive,
   Check,
+  ClipboardCopy,
   Combine,
+  GitBranch,
   GraduationCap,
   Loader2,
   MessageSquare,
@@ -31,13 +33,16 @@ import {
   getLocalDayKey,
   getTimeBucket,
   normalizeHexColor,
+  scrollToMessage,
   SpaceKind,
   TIME_BUCKET_LABELS,
   TIME_BUCKET_ORDER,
   TimeBucketKey,
 } from './sidebarUtils';
+import { useForkLineage } from './useForkLineage';
 import { useJournalsQuery } from './workspaceQueries';
 
+import type { ConversationExportActions } from './useConversationExport';
 import type { useConversationSynthesis } from './useConversationSynthesis';
 
 interface ConversationListProps {
@@ -46,10 +51,12 @@ interface ConversationListProps {
   selectedConversationIds: Set<string>;
   toggleConversationSelection: (id: string) => void;
   synthesis: ReturnType<typeof useConversationSynthesis>;
+  /** The two ways out of a conversation. Mounted once, by the sidebar. */
+  exportActions: ConversationExportActions;
 }
 const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
 
-export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis }: ConversationListProps) {
+export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis, exportActions }: ConversationListProps) {
   const prefersReducedMotion = useReducedMotion();
   const {
     spaces,
@@ -64,7 +71,14 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     setConversationArchived,
   } = useConversationsStore();
   const { journals } = useJournalsQuery();
+  const forkLineage = useForkLineage(conversations);
   const { synthesizeConversationToJournal, synthesizingConversationId } = synthesis;
+  const {
+    copyConversationAsMarkdown,
+    saveConversationToJournal,
+    copyingConversationId,
+    savingConversationId,
+  } = exportActions;
   const generateStudyDeck = useGenerateConversationStudyDeck();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
@@ -170,6 +184,12 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     }
   };
 
+  /** Open the thread this one was branched from, at the turn it forked at. */
+  const openForkParent = async (parentId: string, messageId: string | null) => {
+    await selectConversation(parentId);
+    if (messageId) scrollToMessage(messageId);
+  };
+
   const beginRenameConversation = (conversationId: string, title: string) => {
     setRenamingConversationId(conversationId);
     setRenameDraft(title);
@@ -218,7 +238,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
         {journalConversationGroups.map((group) => (
           <section key={group.key}>
             {group.label && (
-              <p className="px-4 pb-1 pt-4 text-xxs uppercase tracking-[0.08em] text-text-muted">
+              <p className="px-4 pb-1 pt-4 text-xs font-medium text-text-muted">
                 {group.label}
               </p>
             )}
@@ -236,6 +256,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                   ? `${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}${conversationSpaceKind === 'journal' ? ' · Journal' : ''
                   }`
                   : '';
+                const forkParent = forkLineage.get(conversation.id) ?? null;
                 const relativeTime = formatShortRelativeTime(conversation.updatedAt);
                 const metaLine = [spaceLabel, relativeTime].filter(Boolean).join(' · ');
                 const preview =
@@ -274,19 +295,19 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                     })}
                     aria-label={`Select conversation: ${conversation.title}`}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`group relative w-full cursor-pointer px-4 py-2.5 text-left transition-colors duration-fast ${isActive ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+                    className={`group relative mx-2 w-[calc(100%-16px)] cursor-pointer rounded-lg px-2.5 py-2 text-left ${isActive ? 'bg-[hsl(var(--text-primary)/0.07)]' : 'row-hover'
                       }`}
                   >
                     {isActive && (
                       prefersReducedMotion ? (
                         <span
-                          className="absolute inset-y-0 left-0 w-0.5 bg-accent"
+                          className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
                           aria-hidden="true"
                         />
                       ) : (
                         <motion.span
                           layoutId="sidebar-active-bar"
-                          className="absolute inset-y-0 left-0 w-0.5 bg-accent"
+                          className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
                           aria-hidden="true"
                           transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                         />
@@ -306,7 +327,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                       )}
                       {accent ? (
                         <span
-                          className="h-2 w-2 shrink-0 rounded-full"
+                          className="h-1.5 w-1.5 shrink-0 rounded-full"
                           style={{ backgroundColor: accent }}
                           aria-label={conversation.spaceId ? `Space: ${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}` : undefined}
                         />
@@ -369,7 +390,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                         </div>
                       ) : (
                         <h3
-                          className={`min-w-0 flex-1 truncate text-sm text-text-primary ${isActive ? 'font-medium' : 'font-normal'
+                          className={`min-w-0 flex-1 truncate text-ui text-text-primary ${isActive ? 'font-medium' : 'font-normal'
                             }`}
                           onDoubleClick={(e) => {
                             e.stopPropagation();
@@ -384,6 +405,24 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
 
                     {metaLine && (
                       <p className="mt-0.5 truncate text-xs text-text-muted">{metaLine}</p>
+                    )}
+                    {/* A branch and its parent are near-identical threads until
+                        one of them says which is which. Nothing is drawn when
+                        the parent has been deleted — a dangling id is ordinary,
+                        and a dead link would be worse than silence. */}
+                    {forkParent && (
+                      <button
+                        type="button"
+                        onClick={handleAsyncEvent(async (e) => {
+                          e.stopPropagation();
+                          await openForkParent(forkParent.id, forkParent.messageId);
+                        })}
+                        title={`Open "${forkParent.title}"`}
+                        className="mt-0.5 flex max-w-full items-center gap-1 rounded-sm text-xs text-text-muted transition-colors duration-fast hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <GitBranch className="h-3 w-3 shrink-0" strokeWidth={1.6} aria-hidden="true" />
+                        <span className="truncate">Branched from {forkParent.title}</span>
+                      </button>
                     )}
                     {preview && (
                       <p className="truncate text-xs text-text-tertiary">{preview}</p>
@@ -402,6 +441,37 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                           </PopoverTrigger>
                           <PopoverContent aria-label={`Actions for ${conversation.title}`} align="end" sideOffset={5} className="w-60 p-1.5" onClick={(e) => e.stopPropagation()}>
                             <div>
+                              {/* The two ways out come first: taking an answer
+                                  somewhere else is what a researcher opens this
+                                  menu for, and both act on this row, not on
+                                  whichever conversation happens to be open. */}
+                              <button
+                                type="button"
+                                className={MENU_ITEM_CLASS}
+                                disabled={copyingConversationId === conversation.id}
+                                onClick={() => {
+                                  setOpenActionsId(null);
+                                  void copyConversationAsMarkdown(conversation.id, conversation.title);
+                                }}
+                              >
+                                {copyingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCopy className="h-4 w-4" />}
+                                Copy as Markdown
+                              </button>
+                              <button
+                                type="button"
+                                className={MENU_ITEM_CLASS}
+                                disabled={savingConversationId === conversation.id}
+                                onClick={() => {
+                                  setOpenActionsId(null);
+                                  void saveConversationToJournal(conversation.id, conversation.title);
+                                }}
+                              >
+                                {savingConversationId === conversation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <NotebookPen className="h-4 w-4" />}
+                                Save to journal
+                              </button>
+
+                              <div className="my-1 h-px bg-border-subtle" />
+
                               <button
                                 type="button"
                                 className={MENU_ITEM_CLASS}

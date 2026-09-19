@@ -97,17 +97,25 @@ impl DailyNotesRepository {
             .map_err(|error| AppError::Database(format!("Failed to list journal pages: {error}")))
     }
 
-    /// The page with this exact title, newest first when a title repeats.
+    /// The page with this exact title inside one journal (or among the pages no
+    /// journal owns), newest first when a title repeats.
     ///
     /// Quick capture asks for today's page by name rather than taking whatever
-    /// was written to last, so a capture never lands on an unrelated page.
-    pub async fn find_by_title(&self, title: &str) -> Result<Option<WorkspaceNoteRecord>> {
+    /// was written to last, so a capture never lands on an unrelated page. The
+    /// journal is part of the question: each journal has its own "today".
+    pub async fn find_by_title(
+        &self,
+        title: &str,
+        journal_id: Option<&str>,
+    ) -> Result<Option<WorkspaceNoteRecord>> {
+        // `IS` rather than `=`, so a bound NULL matches the unowned pages.
         let query = format!(
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace \
-             WHERE title = ? ORDER BY updated_at DESC LIMIT 1"
+             WHERE title = ? AND journal_id IS ? ORDER BY updated_at DESC LIMIT 1"
         );
         sqlx::query_as::<_, WorkspaceNoteRecord>(&query)
             .bind(title)
+            .bind(journal_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
@@ -115,6 +123,28 @@ impl DailyNotesRepository {
                     "Failed to fetch workspace note titled {title}: {error}"
                 ))
             })
+    }
+
+    /// The journal a capture with no journal of its own belongs to: the one
+    /// written to last, else the first in the sidebar. `None` only when no
+    /// journal exists yet.
+    ///
+    /// The journal screen lists pages per journal and nothing else, so a page
+    /// owned by no journal cannot be opened from anywhere. Captures used to be
+    /// written to exactly such a page: the toast said "saved" and the text was
+    /// unreachable.
+    pub async fn capture_journal_id(&self) -> Result<Option<String>> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT j.id FROM journals j \
+             LEFT JOIN daily_notes_workspace n ON n.journal_id = j.id \
+             WHERE j.is_archived = 0 \
+             GROUP BY j.id \
+             ORDER BY MAX(n.updated_at) DESC, j.sort_order, j.created_at, j.id \
+             LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| AppError::Database(format!("Failed to choose a capture journal: {error}")))
     }
 
     pub async fn most_recent(&self) -> Result<Option<WorkspaceNoteRecord>> {

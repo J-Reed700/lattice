@@ -264,7 +264,13 @@ CREATE TABLE IF NOT EXISTS conversations (
     saved_at TEXT,
     bookmarked_at TEXT,
     pinned_at TEXT,
-    archived_at TEXT
+    archived_at TEXT,
+    -- Where a branch came from, written by ConversationRepository::fork.
+    -- Deliberately no foreign key: deleting the parent must not cascade the
+    -- branch away with it, and a dangling id is a state the UI can render —
+    -- it simply shows no lineage line.
+    forked_from_conversation_id TEXT,
+    forked_from_message_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_messages (

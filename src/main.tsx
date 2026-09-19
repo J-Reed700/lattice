@@ -13,6 +13,11 @@ import App from './App'
 import { RootErrorBoundary } from './components/ErrorBoundary'
 import { queryClient } from './lib/queryClient'
 import { ConversationsProvider } from './stores/conversationsStore'
+import '@fontsource-variable/inter/opsz.css'
+import '@fontsource-variable/inter/opsz-italic.css'
+import '@fontsource-variable/source-serif-4/opsz.css'
+import '@fontsource-variable/source-serif-4/opsz-italic.css'
+import '@fontsource-variable/jetbrains-mono/wght.css'
 import './index.css'
 
 function bootstrapLocalStorage() {
@@ -39,6 +44,10 @@ function bootstrapLocalStorage() {
 }
 
 bootstrapLocalStorage()
+
+// The stylesheet reserves room for the macOS traffic lights; tell it where it is.
+const platform = /Mac/i.test(navigator.userAgent) ? 'macos' : /Win/i.test(navigator.userAgent) ? 'windows' : 'linux'
+document.documentElement.dataset.platform = platform
 
 const rootElement = document.getElementById('root')
 if (!rootElement) {

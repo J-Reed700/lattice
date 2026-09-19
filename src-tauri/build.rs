@@ -139,6 +139,7 @@ fn main() {
                     "set_conversation_bookmarked",
                     "set_conversation_pinned",
                     "set_conversation_archived",
+                    "list_space_documents",
                     "list_conversation_linked_documents",
                     "remove_conversation_linked_document",
                     "add_conversation_web_source",

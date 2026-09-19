@@ -30,12 +30,16 @@ import type {
   RetrievalTrace,
   SourceWithMetadata,
   ToolPreferences,
+  TurnRecord,
+  TurnStep,
 } from '@/types/conversation';
 import {
   MessageVerificationSummarySchema,
   RetrievalTraceSchema,
   SourceWithMetadataSchema,
   SourcesArraySchema,
+  TurnRecordSchema,
+  TurnStepSchema,
 } from '@/types/conversation';
 import { resolveChatModel } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
@@ -245,10 +249,23 @@ const parseRetrievalTrace = (raw: unknown): RetrievalTrace | null => {
   return parsed.success ? parsed.data : null;
 };
 
+/**
+ * A persisted turn record, or null.
+ *
+ * Absent for every answer written before the record existed, and for any turn
+ * that recorded nothing. Never read that as a turn that did nothing.
+ */
+const parseTurnRecord = (raw: unknown): TurnRecord | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const parsed = TurnRecordSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+};
+
 const deriveMessageMetadata = (messages: ConversationMessage[]) => {
   const sources = new Map<string, SourceWithMetadata[]>();
   const verification = new Map<string, MessageVerificationSummary>();
   const retrieval = new Map<string, RetrievalTrace>();
+  const turn = new Map<string, TurnRecord>();
   for (const message of messages) {
     const directSources = parseSources(message.sources);
     if (directSources.length > 0) sources.set(message.id, directSources);
@@ -261,11 +278,29 @@ const deriveMessageMetadata = (messages: ConversationMessage[]) => {
       if (persistedVerification) verification.set(message.id, persistedVerification);
       const persistedRetrieval = parseRetrievalTrace(metadata.retrieval);
       if (persistedRetrieval) retrieval.set(message.id, persistedRetrieval);
+      const persistedTurn = parseTurnRecord(metadata.turn);
+      if (persistedTurn) turn.set(message.id, persistedTurn);
     } catch {
       // A malformed metadata field must not hide the message itself.
     }
   }
-  return { sources, verification, retrieval };
+  return { sources, verification, retrieval, turn };
+};
+
+/**
+ * Merge one step event into a conversation's live list.
+ *
+ * A finish event carries the id of its start, so it replaces that step where it
+ * already is. Appending instead would make a finished step jump to the bottom
+ * of the timeline the moment it completed.
+ */
+const mergeStep = (existing: TurnStep[] | undefined, step: TurnStep): TurnStep[] => {
+  const steps = existing ?? [];
+  const index = steps.findIndex(candidate => candidate.id === step.id);
+  if (index === -1) return [...steps, step];
+  const next = [...steps];
+  next[index] = step;
+  return next;
 };
 
 const isUserInitiatedCancellation = (requestId: string, errorCode?: string): boolean =>
@@ -447,8 +482,11 @@ export function useConversationsController(): ConversationsState {
     }
   }, [queryClient]);
 
-  const createConversation = useCallback(async (title: string): Promise<string> => {
-    const state = conversationUiStore.getState();
+  const createConversation = useCallback(async (title: string, spaceId?: string | null): Promise<string> => {
+    // The sidebar's selection is where a chat the user starts belongs. A chat
+    // made on behalf of another one names its space instead: what is selected
+    // in the sidebar says nothing about the conversation being branched.
+    const state = { selectedSpaceId: spaceId ?? conversationUiStore.getState().selectedSpaceId };
     const spaces = await queryClient.ensureQueryData({
       queryKey: conversationKeys.spaces,
       queryFn: fetchSpaces,
@@ -755,9 +793,9 @@ export function useConversationsController(): ConversationsState {
       inFlightGenerations.set(requestConversationId, requestId);
       const liveRetrieval = new Map(current.liveRetrieval);
       liveRetrieval.delete(requestConversationId);
-      const liveActivity = new Map(current.liveActivity);
-      liveActivity.delete(requestConversationId);
-      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveActivity, error: null };
+      const liveSteps = new Map(current.liveSteps);
+      liveSteps.delete(requestConversationId);
+      return { optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, error: null };
     });
 
     const settleOptimisticMessages = (error?: string) => {
@@ -780,7 +818,6 @@ export function useConversationsController(): ConversationsState {
       if (error) onFailure?.(error);
     };
 
-    const retryingNotice = 'Model response failed. Retrying...';
     let unlisten: (() => void) | undefined;
     try {
       unlisten = await listen<ChatStreamEventDto>('llm-stream', event => {
@@ -790,15 +827,20 @@ export function useConversationsController(): ConversationsState {
           unlisten?.();
           return;
         }
-        // A round can run for minutes without a single character of text. This
-        // is the only thing distinguishing "still working" from "hung".
-        if (payload.status === 'activity') {
-          const detail = payload.detail;
-          if (detail) {
+        // A round can run for minutes without a single character of text. The
+        // steps are the only thing distinguishing "still working" from "hung",
+        // and unlike the note they replace they are kept: the same list is
+        // persisted with the answer.
+        if (payload.status === 'step' && payload.step) {
+          const parsed = TurnStepSchema.safeParse(payload.step);
+          if (parsed.success) {
             conversationUiStore.setState(current => {
-              const liveActivity = new Map(current.liveActivity);
-              liveActivity.set(requestConversationId, detail);
-              return { liveActivity };
+              const liveSteps = new Map(current.liveSteps);
+              liveSteps.set(
+                requestConversationId,
+                mergeStep(liveSteps.get(requestConversationId), parsed.data)
+              );
+              return { liveSteps };
             });
           }
           return;
@@ -815,31 +857,17 @@ export function useConversationsController(): ConversationsState {
           }
           return;
         }
-        // Real text supersedes the activity note: the answer itself is now the
-        // progress indicator.
-        if (payload.content) {
-          conversationUiStore.setState(current => {
-            if (!current.liveActivity.has(requestConversationId)) return current;
-            const liveActivity = new Map(current.liveActivity);
-            liveActivity.delete(requestConversationId);
-            return { liveActivity };
-          });
-        }
-        const nextChunk = payload.status === 'retrying'
-          ? (typeof payload.attempt === 'number'
-            ? `${retryingNotice} (attempt ${payload.attempt})`
-            : retryingNotice)
-          : payload.content;
-        if (!nextChunk) return;
+        // A retry is a step of its own now. It used to arrive as text and
+        // overwrite the bubble, so a turn that recovered showed the retry
+        // notice where its answer should have been.
+        if (!payload.content) return;
         conversationUiStore.setState(current => {
           const optimisticMessages = new Map(current.optimisticMessages);
           const existing = optimisticMessages.get(assistantTempId);
           if (existing) {
             optimisticMessages.set(assistantTempId, {
               ...existing,
-              content: payload.status === 'retrying' || existing.content.startsWith(retryingNotice)
-                ? nextChunk
-                : existing.content + nextChunk,
+              content: existing.content + payload.content,
             });
           }
           return { optimisticMessages };
@@ -920,9 +948,9 @@ export function useConversationsController(): ConversationsState {
         }
         const liveRetrieval = new Map(current.liveRetrieval);
         liveRetrieval.delete(requestConversationId);
-        const liveActivity = new Map(current.liveActivity);
-        liveActivity.delete(requestConversationId);
-        return { inFlightGenerations, liveRetrieval, liveActivity };
+        const liveSteps = new Map(current.liveSteps);
+        liveSteps.delete(requestConversationId);
+        return { inFlightGenerations, liveRetrieval, liveSteps };
       });
     }
   }, [invalidateLists, queryClient]);
@@ -1135,8 +1163,9 @@ export function useConversationsController(): ConversationsState {
     lastMessageSources: messageMetadata.sources,
     messageVerification: messageMetadata.verification,
     messageRetrieval: messageMetadata.retrieval,
+    messageTurn: messageMetadata.turn,
     liveRetrieval: ui.liveRetrieval,
-    liveActivity: ui.liveActivity,
+    liveSteps: ui.liveSteps,
     composerDraft: ui.composerDraft,
     linkedDocumentsByConversationId,
     webSourcesByConversationId,
@@ -1182,7 +1211,7 @@ export function useConversationsController(): ConversationsState {
     loadConversationLinkedDocuments, loadConversationWebSources, loadConversations,
     loadDocumentSpaceMemberships, loadMessageBookmarks, loadSpaces, messageBookmarkMap,
     messageBookmarks, messageMetadata.retrieval, messageMetadata.sources,
-    messageMetadata.verification, messagesQuery.isLoading,
+    messageMetadata.turn, messageMetadata.verification, messagesQuery.isLoading,
     moveConversationToSpace, queryError?.message, regenerateResponse,
     removeConversationLinkedDocument,
     removeConversationWebSource, renameConversation, selectConversation, sendMessage,
@@ -1190,7 +1219,7 @@ export function useConversationsController(): ConversationsState {
     setConversationSaved, setDocumentSpaceMembership, setFilterMode, setSearchQuery,
     setSelectedSpace, spacesQuery.data, truncateAfter, forkConversation,
     ui.activeConversationId, ui.composerDraft, ui.error, ui.filterMode,
-    ui.inFlightGenerations, ui.liveActivity, ui.liveRetrieval, ui.optimisticMessages, ui.searchQuery,
+    ui.inFlightGenerations, ui.liveRetrieval, ui.liveSteps, ui.optimisticMessages, ui.searchQuery,
     ui.selectedSpaceId, unbookmarkMessage, webSourcesByConversationId,
   ]);
 }

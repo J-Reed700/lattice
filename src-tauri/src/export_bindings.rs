@@ -264,6 +264,7 @@ fn main() {
             lattice::features::conversation::plugin::move_conversation_to_space,
             lattice::features::conversation::plugin::add_conversation_to_journal,
             lattice::features::conversation::plugin::remove_conversation_from_journal,
+            lattice::features::conversation::plugin::list_space_documents,
             lattice::features::conversation::plugin::list_conversation_linked_documents,
             lattice::features::conversation::plugin::remove_conversation_linked_document,
             lattice::features::conversation::plugin::add_conversation_web_source,
@@ -372,6 +373,9 @@ fn main() {
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
+        // Persisted in `metadata.turn` rather than returned by a command, so it
+        // reaches no signature on its own and has to be named here.
+        .typ::<lattice::features::conversation::chat::TurnRecordDto>()
         .typ::<lattice::features::conversation::chat::ToolPreferences>();
 
     // Export bindings to file

@@ -24,6 +24,7 @@ import { ConversationList } from './sidebar/ConversationList';
 import { SidebarReferences } from './sidebar/SidebarReferences';
 import { SPACES_MODAL_LAYER_CLASSES } from './sidebar/sidebarUtils';
 import { SpacesPanel } from './sidebar/SpacesPanel';
+import { useConversationExport } from './sidebar/useConversationExport';
 import { useConversationSynthesis } from './sidebar/useConversationSynthesis';
 import { useJournalSelection } from './sidebar/useJournalSelection';
 import { useSpaceEditor } from './sidebar/useSpaceEditor';
@@ -61,6 +62,10 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
   const loadJournals = async () => { await refetch(); };
   const journalSpaces = useMemo(() => journals.filter(journal => !journal.isArchived), [journals]);
   const synthesis = useConversationSynthesis();
+  // Registers "Copy conversation as Markdown" and "Save conversation to
+  // Journal" with the palette for as long as Chat is on screen, and hands the
+  // row menu the same two verbs.
+  const exportActions = useConversationExport();
   const spaceEditor = useSpaceEditor();
   const {
     isSelectionMode,
@@ -180,12 +185,12 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
       />
 
       {/* Scope — one line, opens the Spaces panel */}
-      <div className="flex shrink-0 items-center gap-1 border-b border-border-subtle px-4 py-2">
+      <div className="flex shrink-0 items-center gap-1 px-3 pb-1">
         <button
           type="button"
           onClick={() => setIsSpacesOpen(true)}
           aria-label="Change scope"
-          className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-sm px-1 py-0.5 text-sm text-text-primary transition-colors duration-fast hover:bg-surface-raised"
+          className="row-hover flex h-7 min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-2 text-ui text-text-secondary"
         >
           <span className="truncate">{scopeLabel}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden="true" />
@@ -197,7 +202,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
         )}
       </div>
 
-      <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 py-2.5">
+      <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 pb-0 pt-1.5">
         <SidebarSearch
           value={localQuery}
           onChange={setLocalQuery}
@@ -328,7 +333,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
 
       <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
         <SidebarReferences query={debouncedQuery} active={filterMode === 'snippets'} />
-        <ConversationList isJournalScope={isJournalScope} isSelectionMode={isSelectionMode} selectedConversationIds={selectedConversationIds} toggleConversationSelection={toggleConversationSelection} synthesis={synthesis} />
+        <ConversationList isJournalScope={isJournalScope} isSelectionMode={isSelectionMode} selectedConversationIds={selectedConversationIds} toggleConversationSelection={toggleConversationSelection} synthesis={synthesis} exportActions={exportActions} />
       </div>
 
       <div className="flex h-8 shrink-0 items-center justify-end border-t border-border-subtle px-4">

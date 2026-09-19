@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 
 import { invoke } from '@tauri-apps/api/core';
+import { Cpu } from 'lucide-react';
 
 import { useModelCatalog } from '../../hooks/useModelCatalog';
 import { VaultAPI } from '../../lib/api';
@@ -162,11 +163,15 @@ export function ModelSetupModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="gap-5 sm:max-w-[440px]">
+        <DialogHeader className="space-y-2">
+          <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-muted text-accent">
+            <Cpu className="h-5 w-5" strokeWidth={1.6} />
+          </div>
           <DialogTitle>Set up AI</DialogTitle>
           <DialogDescription>
             Lattice picked a chat model and an embedding model that fit this Mac.
+            Both download once and run on this machine.
           </DialogDescription>
         </DialogHeader>
 
@@ -174,7 +179,7 @@ export function ModelSetupModal({
           {loading && <p className="text-sm text-text-muted">Checking your hardware…</p>}
 
           {!loading && status.embedding_model && status.chat_model && (
-            <div className="border-t border-border-subtle">
+            <div className="rounded-lg border border-border-subtle bg-[hsl(var(--text-primary)/0.025)] px-3.5">
               <BundleRow
                 label="Chat"
                 name={status.chat_model.display_name}
@@ -201,8 +206,8 @@ export function ModelSetupModal({
           )}
         </div>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row">
-          <Button variant="ghost" onClick={handleSkip} disabled={loading}>
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center">
+          <Button variant="ghost" onClick={handleSkip} disabled={loading} className="sm:mr-auto">
             Not now
           </Button>
           <Button variant="ghost" onClick={handleMoreOptions} disabled={loading}>
@@ -228,7 +233,7 @@ interface BundleRowProps {
 
 function BundleRow({ label, name, bytes }: BundleRowProps) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-border-subtle py-2">
+    <div className="flex items-baseline justify-between gap-3 border-b border-border-subtle py-2.5 last:border-b-0">
       <span className="w-20 shrink-0 text-xs text-text-muted">{label}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{name}</span>
       <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-text-secondary">

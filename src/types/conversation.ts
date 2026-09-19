@@ -149,6 +149,28 @@ export interface ToolPreferences {
   followupMode?: boolean;
   turnMode?: TurnMode;
   enabledTools?: string[];
+  /**
+   * Documents this chat is pinned to; `[]` or absent means the whole space.
+   *
+   * The backend intersects these with the conversation's space scope before
+   * anything reads them, so naming a document from another space narrows the
+   * turn to nothing rather than reaching outside. A request can only ever
+   * narrow what a chat may read.
+   */
+  focusDocumentIds?: string[];
+}
+
+/**
+ * One document a chat in a space may read — what `@` offers in the composer.
+ *
+ * Comes from the same allow-list retrieval derives its scope from, so the
+ * picker can never name a file the turn would then fail to search.
+ */
+export interface SpaceDocument {
+  documentId: string;
+  fileName: string;
+  category: string | null;
+  modifiedAt: string | null;
 }
 
 export interface Conversation {
@@ -172,6 +194,16 @@ export interface Conversation {
   totalTokens?: number;
   /** Active compaction summary, if older messages were folded into a summary. */
   compaction?: CompactionRecord | null;
+  /**
+   * The conversation this one was branched from, when it was.
+   *
+   * No foreign key stands behind it, so the parent may since have been
+   * deleted. A reader that cannot find it shows no lineage at all — a
+   * dangling id is an ordinary state, not an error.
+   */
+  forkedFromConversationId?: string | null;
+  /** The parent turn the branch was taken at, when one was named. */
+  forkedFromMessageId?: string | null;
   messages?: ConversationMessage[];
 }
 
@@ -313,6 +345,14 @@ export interface RetrievalTrace {
   kbPlannerSkipped?: boolean;
   /** Stable verdict codes (`low_term_coverage`, …), not prose. */
   sufficiencyReasons?: string[];
+  /**
+   * How many documents this turn was pinned to, when it was pinned at all.
+   *
+   * The count *after* the intersection with the space scope, so `0` means the
+   * request named documents this chat cannot reach and the turn searched
+   * nothing — never that it fell back to the whole space.
+   */
+  focusedDocuments?: number;
 }
 
 export const RetrievalTraceSchema = z.object({
@@ -326,7 +366,88 @@ export const RetrievalTraceSchema = z.object({
   kbCorrectiveRetries: z.number().int().min(0).max(8).optional(),
   kbPlannerSkipped: z.boolean().optional(),
   sufficiencyReasons: z.array(z.string().max(64)).max(8).optional(),
+  focusedDocuments: z.number().int().min(0).max(1000).optional(),
 }).strict();
+
+/**
+ * What a turn did, step by step.
+ *
+ * The same structure is streamed while the turn runs and persisted when it
+ * ends, so the timeline under a finished answer is the list the reader watched
+ * tick past. An absent record means "not recorded" — every answer written
+ * before this existed has none — and never an empty turn.
+ */
+export const TurnStepKindSchema = z.enum([
+  'route',
+  'plan',
+  'search_documents',
+  'sufficiency',
+  'corrective_search',
+  'web_search',
+  'read_page',
+  'wiki',
+  'open_document',
+  'tool',
+  'generate',
+  'verify',
+  'retry',
+]);
+
+export type TurnStepKind = z.infer<typeof TurnStepKindSchema>;
+
+export const TurnStepSchema = z.object({
+  /** Stable within the turn; a finish event carries the id of its start. */
+  id: z.string().min(1).max(64),
+  kind: TurnStepKindSchema,
+  /** A human sentence, as the activity labels were: "Searching your documents". */
+  label: z.string().max(200),
+  /** The query, the host, a tool's argument summary. */
+  detail: z.string().max(400).nullable().optional(),
+  state: z.enum(['running', 'done', 'failed']),
+  /** Offset from the start of the turn, not a wall clock. */
+  startedAtMs: z.number().int().min(0),
+  /** Absent while the step is still running. Absent is not zero. */
+  durationMs: z.number().int().min(0).nullable().optional(),
+  /** What it produced: "8 passages from 3 files", "not enough support: …". */
+  result: z.string().max(400).nullable().optional(),
+}).strict();
+
+export type TurnStep = z.infer<typeof TurnStepSchema>;
+
+export const TurnRecordSchema = z.object({
+  /** The model that answered **this** turn, which the conversation's may not be. */
+  model: z.object({
+    id: z.string().max(400),
+    name: z.string().max(400),
+  }).strict().nullable(),
+  steps: z.array(TurnStepSchema).max(200),
+  timing: z.object({
+    /** Time to the persisted answer, not to the last token. */
+    totalMs: z.number().int().min(0),
+    routerMs: z.number().int().min(0),
+    retrievalMs: z.number().int().min(0),
+    generationMs: z.number().int().min(0),
+    verificationMs: z.number().int().min(0),
+    /** Time inside tool calls — part of `generationMs`, not beside it. */
+    toolMs: z.number().int().min(0),
+  }).strict(),
+  tokens: z.object({
+    completion: z.number().int().min(0).nullable(),
+    contextUsed: z.number().int().min(0).nullable(),
+  }).strict(),
+  /**
+   * What the router decided and how sure it was. `null` on every turn where no
+   * router ran — a forced web search, a closed-book turn, a chat with nothing
+   * to route.
+   */
+  router: z.object({
+    action: z.string().max(64),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().max(4000).nullable(),
+  }).strict().nullable(),
+}).strict();
+
+export type TurnRecord = z.infer<typeof TurnRecordSchema>;
 
 /** Where in a file a cited passage lives, and how to find it again. */
 export interface PassageLocator {

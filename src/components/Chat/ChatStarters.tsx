@@ -9,14 +9,19 @@ import { useChatStartersQuery } from '@/hooks/queries/useChatStartersQuery';
  *
  * Clicking fills the composer and focuses it rather than sending: a question
  * the reader has not read yet should not become a turn behind their back.
+ *
+ * `spaceId` is the space of the chat being shown, and the panel passes it down
+ * rather than letting this component guess: the questions must come from the
+ * documents this chat can actually read, not from the whole vault.
  */
 
 interface ChatStartersProps {
   onPick: (_question: string) => void;
+  spaceId?: string | null;
 }
 
-export function ChatStarters({ onPick }: ChatStartersProps) {
-  const { data, isLoading } = useChatStartersQuery();
+export function ChatStarters({ onPick, spaceId = null }: ChatStartersProps) {
+  const { data, isLoading } = useChatStartersQuery(spaceId);
 
   // Nothing while loading: `ChatEmptyStateIngestDelta` already holds the space.
   if (isLoading || !data) return null;

@@ -24,11 +24,59 @@ interface FileIconProps {
   size?: number;
 }
 
-export function FileIcon({ file, className = '', size = 16 }: FileIconProps) {
-  const Icon = getIconComponent(file);
-  const color = getIconColor(file);
+/** The short label a reader recognises a format by. */
+const FORMAT_LABELS: Record<string, string> = {
+  pdf: 'PDF',
+  md: 'MD',
+  markdown: 'MD',
+  txt: 'TXT',
+  doc: 'DOC',
+  docx: 'DOC',
+  rtf: 'RTF',
+  odt: 'ODT',
+  epub: 'EPUB',
+  html: 'HTML',
+  htm: 'HTML',
+  pptx: 'PPT',
+  ppt: 'PPT',
+  xlsx: 'XLS',
+  xls: 'XLS',
+  csv: 'CSV',
+  json: 'JSON',
+};
 
-  return <Icon className={`${className} ${color}`} size={size} />;
+/**
+ * A small format tile. Documents are told apart by their label ("PDF", "MD"),
+ * not by colour: colour stays reserved for state. Formats without a familiar
+ * label fall back to a glyph.
+ */
+export function FileIcon({ file, className = '', size = 16 }: FileIconProps) {
+  const isWeb = file.filePath.includes('/.lattice/web-archive/');
+  const ext = (file.fileType || getFileExtension(file.fileName) || '').toLowerCase();
+  const label = isWeb ? null : FORMAT_LABELS[ext];
+  const tile = Math.round(size * 1.75);
+  const Icon = getIconComponent(file);
+
+  return (
+    <span
+      aria-hidden="true"
+      style={{ width: tile, height: tile }}
+      className={`inline-flex items-center justify-center rounded-md ${
+        isWeb ? 'bg-accent-muted text-accent' : 'bg-[hsl(var(--text-primary)/0.06)] text-text-tertiary'
+      } ${className}`}
+    >
+      {label ? (
+        <span
+          className="font-sans font-semibold leading-none tracking-[0.02em]"
+          style={{ fontSize: label.length > 3 ? Math.max(7, size * 0.44) : Math.max(8, size * 0.53) }}
+        >
+          {label}
+        </span>
+      ) : (
+        <Icon size={Math.round(size * 0.94)} />
+      )}
+    </span>
+  );
 }
 
 function getIconComponent(file: DocumentMetadata): React.ComponentType<{ className?: string; size?: number }> {
@@ -76,14 +124,4 @@ function getIconComponent(file: DocumentMetadata): React.ComponentType<{ classNa
 
   // Default
   return File;
-}
-
-function getIconColor(file: DocumentMetadata): string {
-  // Web articles pick up the accent; every document type stays quiet so
-  // status colors (danger/warning/success) keep their meaning.
-  if (file.filePath.includes('/.lattice/web-archive/')) {
-    return 'text-[hsl(var(--accent))]';
-  }
-
-  return 'text-[hsl(var(--text-secondary))]';
 }

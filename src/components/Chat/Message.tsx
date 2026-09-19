@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 import {
   AlertCircle,
@@ -10,25 +10,28 @@ import {
   ShieldCheck,
   ShieldOff,
 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 
 import { usePassageReferenceIds, useSettingsQuery } from '@/hooks/queries';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { toast } from '@/stores/toastStore';
 
-import { ActivityNote } from './ActivityNote';
+import { ClaimActionsPopover } from './actions/ClaimActionsPopover';
 import { CitationFootnote } from './CitationFootnote';
-import { FilePreviewModal } from './FilePreviewModal';
+import { CitationHoverCard, type CitationHover } from './CitationHoverCard';
+import { ClaimHoverCard, type ClaimHover } from './ClaimHoverCard';
+import { EvidenceMargin } from './EvidenceMargin';
 import { MessageActions } from './MessageActions';
 import { MessageEditor } from './MessageEditor';
-import { RetrievalTrace } from './RetrievalTrace';
 import { SourceCitations } from './SourceCitations';
 import { provenanceLabel, sourceProvenance } from './sourceProvenance';
+import { TurnRecord } from './turn/TurnRecord';
 import { verificationSummaryLine } from './verificationSummary';
+import { useChatReaderStore } from '../../stores/chatReaderStore';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { normalizeAssistantMarkdown } from '../../utils/assistantMarkdown';
 import { createCitationMap } from '../../utils/citations';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
-import { locatorFromSource, rememberLocation } from '../Reading/passageLocator';
 import { TiptapViewer } from '../TiptapEditor';
 
 import type { GenerationOutcome } from '../../stores/conversationsStore.types';
@@ -62,10 +65,7 @@ export function Message({
   isLastTurn = false,
   previousMessageId,
 }: MessageProps) {
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [resolvedLocations, setResolvedLocations] = useState<Map<string, string>>(
-    () => new Map()
-  );
+  const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
   const verificationPanelId = useId();
   const [isVerificationPanelExpanded, setIsVerificationPanelExpanded] = useState(false);
@@ -86,13 +86,20 @@ export function Message({
   const lastMessageSources = useConversationsStore((s) => s.lastMessageSources);
   const messageRetrieval = useConversationsStore((s) => s.messageRetrieval);
   const liveRetrieval = useConversationsStore((s) => s.liveRetrieval);
-  const liveActivity = useConversationsStore((s) => s.liveActivity);
+  const liveSteps = useConversationsStore((s) => s.liveSteps);
+  const messageTurn = useConversationsStore((s) => s.messageTurn);
   const inFlightGenerations = useConversationsStore((s) => s.inFlightGenerations);
   const regenerateResponse = useConversationsStore((s) => s.regenerateResponse);
   const truncateAfter = useConversationsStore((s) => s.truncateAfter);
   const forkConversation = useConversationsStore((s) => s.forkConversation);
   const sendMessage = useConversationsStore((s) => s.sendMessage);
   const createConversation = useConversationsStore((s) => s.createConversation);
+
+  // One reader serves the whole thread. A message hands it a citation to show
+  // and reads back where the viewer found it.
+  const openReader = useChatReaderStore((s) => s.open);
+  const readerSession = useChatReaderStore((s) => s.session);
+  const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
 
   const { activeModel, setActiveChatModel } = useDownloadedModels();
   const settings = useSettingsQuery().data;
@@ -128,6 +135,32 @@ export function Message({
     [citationMap]
   );
 
+  /** What the reader calls this message when it holds its citations. */
+  const ownerKey = messageId ?? domMessageId ?? '';
+
+  const openCitation = useCallback(
+    (index: number) => {
+      if (index < 0 || !ownerKey) return;
+      openReader(ownerKey, citationSources, index);
+    },
+    [ownerKey, openReader, citationSources]
+  );
+
+  /** Open the reader on a source by identity, whatever its position. */
+  const openSource = useCallback(
+    (source: SourceWithMetadata) => {
+      const index = citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId);
+      // A passage the answer never numbered — two chunks that share a citation
+      // id keep one of them out of the map — still opens, on its own.
+      if (index < 0) {
+        if (ownerKey) openReader(ownerKey, [source], 0);
+        return;
+      }
+      openCitation(index);
+    },
+    [citationSources, openCitation, openReader, ownerKey]
+  );
+
   const vaultPath = settings?.vault?.vaultPath ?? '';
   const provenanceBySource = useMemo(() => {
     const map = new Map<string, string>();
@@ -139,6 +172,12 @@ export function Message({
   }, [sources, vaultPath, referenceKeys]);
 
   const conversationId = 'conversationId' in message ? message.conversationId : undefined;
+  const conversationTitle = useConversationsStore(
+    (s) => s.conversations.find((c) => c.id === conversationId)?.title ?? null,
+  );
+  const conversationSpaceId = useConversationsStore(
+    (s) => s.conversations.find((c) => c.id === conversationId)?.spaceId ?? null,
+  );
   const isBusy = Boolean(conversationId && inFlightGenerations.has(conversationId));
 
   // In flight, the live event stream is the trace; once persisted, the message
@@ -183,6 +222,12 @@ export function Message({
   }, [verificationSummary]);
   const canExpandVerification =
     verificationSummary?.enabled === true && claimsEvaluated > 0;
+  // Drawn on the sentences themselves, so a doubtful figure is doubtful where
+  // it is read and not in a list under a badge.
+  const claimVerdicts = useMemo(
+    () => (verificationSummary?.enabled ? verificationSummary.claimVerdicts ?? [] : []),
+    [verificationSummary]
+  );
 
   const visibleVerifiedClaims = showAllVerifiedClaims
     ? supportedClaims
@@ -344,14 +389,17 @@ export function Message({
       setIsEditing(false);
       // No previous message means this is the first turn: a fork of nothing is
       // a new conversation, so make one rather than copying the whole thread.
+      // Either way the branch stays in this conversation's space. A fork copies
+      // it; a new conversation would otherwise take whatever the sidebar has
+      // selected, and the branch would then search a different library.
       const branchId = previousMessageId
         ? await forkConversation(conversationId, previousMessageId)
-        : await createConversation(createDefaultConversationTitle());
+        : await createConversation(createDefaultConversationTitle(), conversationSpaceId);
       if (!branchId) return;
       await sendMessage(value, branchId);
       toast.success('Branched', { message: "You're in the new conversation." });
     },
-    [conversationId, previousMessageId, forkConversation, createConversation, sendMessage]
+    [conversationId, conversationSpaceId, previousMessageId, forkConversation, createConversation, sendMessage]
   );
 
   const handleDeleteMessage = async () => {
@@ -378,26 +426,160 @@ export function Message({
             source={source}
             provenanceLabel={provenanceBySource.get(source.chunkId)}
             resolvedLocation={resolvedLocations.get(source.chunkId)}
-            onViewFile={() => setPreviewIndex(position)}
+            onViewFile={() => openCitation(position)}
           />
         ))}
       </div>
     );
-  }, [isAssistantWithSources, citationMap, provenanceBySource, resolvedLocations]);
+  }, [isAssistantWithSources, citationMap, provenanceBySource, resolvedLocations, openCitation]);
 
-  const previewSource =
-    previewIndex !== null ? citationSources[previewIndex] ?? null : null;
-  const previewLocator = useMemo(
-    () => (previewSource ? locatorFromSource(previewSource, previewSource.chunkId) : null),
-    [previewSource]
+  // Inline `[n]` chips live inside the rendered answer, so they are handled by
+  // delegation: one listener on the body, the chip found by its data attribute.
+  const [citationHover, setCitationHover] = useState<CitationHover | null>(null);
+  const citationNumbers = useMemo(
+    () => (isAssistantWithSources ? Array.from(citationMap.keys()) : []),
+    [isAssistantWithSources, citationMap]
   );
 
-  const handleLocationResolved = useCallback((chunkId: string, label: string) => {
-    // Remembered globally so every citation row for this chunk shows the page,
-    // and locally so this message re-renders with it now.
-    rememberLocation(chunkId, label);
-    setResolvedLocations((current) => new Map(current).set(chunkId, label));
+  const chipFromEvent = (event: ReactMouseEvent<HTMLElement>): HTMLElement | null =>
+    event.target instanceof Element ? event.target.closest<HTMLElement>('[data-cite]') : null;
+
+  const articleRef = useRef<HTMLElement>(null);
+  const [claimHover, setClaimHover] = useState<ClaimHover | null>(null);
+  const claimTimerRef = useRef<number | null>(null);
+  const cancelPendingClaim = () => {
+    if (claimTimerRef.current !== null) window.clearTimeout(claimTimerRef.current);
+    claimTimerRef.current = null;
+  };
+  useEffect(() => cancelPendingClaim, []);
+
+  /** True where the thread is wide enough that the evidence sits beside the answer. */
+  const hasEvidenceMargin = () =>
+    Boolean(articleRef.current?.querySelector<HTMLElement>('.evidence-margin')?.offsetParent);
+
+  /**
+   * The citation the reader is showing, if it is showing one of ours.
+   *
+   * Only the answer the reader was opened from lights up: the same number in
+   * the answer above means a different passage.
+   */
+  const readerCitationNumber = useMemo(() => {
+    if (!readerSession || !ownerKey || readerSession.ownerKey !== ownerKey) return null;
+    const shown = readerSession.citations[readerSession.index];
+    if (!shown) return null;
+    for (const [number, source] of citationMap) {
+      if (source.chunkId === shown.chunkId) return number;
+    }
+    return null;
+  }, [readerSession, ownerKey, citationMap]);
+
+  /** What stays lit when nothing is under the pointer. */
+  const restingLitRef = useRef<string | null>(null);
+
+  /** Light every piece of one citation or one sentence; decorations split at each mark. */
+  const setLit = useCallback((selector: string | null) => {
+    const article = articleRef.current;
+    if (!article) return;
+    // Nothing hovered falls back to what the reader is showing, so moving the
+    // pointer away does not put the open citation out.
+    const next = selector ?? restingLitRef.current;
+    article.querySelectorAll('.is-lit').forEach((element) => element.classList.remove('is-lit'));
+    if (next) article.querySelectorAll(next).forEach((element) => element.classList.add('is-lit'));
   }, []);
+
+  // The open citation is lit in the text as long as the reader shows it.
+  useEffect(() => {
+    restingLitRef.current =
+      readerCitationNumber === null ? null : `[data-cite="${readerCitationNumber}"]`;
+    setLit(null);
+  }, [readerCitationNumber, setLit]);
+
+  // Resting on a sentence says why it is trusted; clicking it is how the
+  // sentence leaves the chat.
+  const [claimActions, setClaimActions] = useState<{ index: number; rect: DOMRect; maxRight: number } | null>(null);
+
+  const handleBodyClick = (event: ReactMouseEvent<HTMLElement>) => {
+    const chip = chipFromEvent(event);
+    if (chip) {
+      const source = citationMap.get(Number(chip.dataset.cite));
+      if (!source) return;
+      event.preventDefault();
+      setCitationHover(null);
+      openSource(source);
+      return;
+    }
+
+    // A click that ends a text selection is a selection, not a request.
+    if (window.getSelection()?.toString()) return;
+    const claim =
+      event.target instanceof Element ? event.target.closest<HTMLElement>('[data-claim]') : null;
+    if (!claim) return;
+    const index = Number(claim.dataset.claim);
+    if (!claimVerdicts[index]) return;
+    cancelPendingClaim();
+    setClaimHover(null);
+    const lines = Array.from(claim.getClientRects());
+    const rect =
+      lines.find((line) => event.clientY >= line.top && event.clientY <= line.bottom) ??
+      claim.getBoundingClientRect();
+    setClaimActions({ index, rect, maxRight: event.currentTarget.getBoundingClientRect().right });
+  };
+
+  const handleBodyMouseOver = (event: ReactMouseEvent<HTMLElement>) => {
+    const chip = chipFromEvent(event);
+    if (chip) {
+      cancelPendingClaim();
+      if (claimHover) setClaimHover(null);
+      setLit(null);
+      const number = Number(chip.dataset.cite);
+      if (citationHover?.number === number) return;
+      setCitationHover({ number, rect: chip.getBoundingClientRect() });
+      return;
+    }
+    if (citationHover) setCitationHover(null);
+
+    const claim =
+      event.target instanceof Element ? event.target.closest<HTMLElement>('[data-claim]') : null;
+    if (!claim) {
+      cancelPendingClaim();
+      if (claimHover) setClaimHover(null);
+      setLit(null);
+      return;
+    }
+    const index = Number(claim.dataset.claim);
+    if (claimHover?.index === index) return;
+    setLit(`[data-claim="${index}"]`);
+    // The line under the pointer, not the box around a sentence that wraps.
+    const lines = Array.from(claim.getClientRects());
+    const rect =
+      lines.find((line) => event.clientY >= line.top && event.clientY <= line.bottom) ??
+      claim.getBoundingClientRect();
+    const next: ClaimHover = { index, rect, maxRight: event.currentTarget.getBoundingClientRect().right };
+    cancelPendingClaim();
+    // Sweeping the pointer across a paragraph should not flash a card per
+    // sentence; once one is open, the next opens at once.
+    if (claimHover) {
+      setClaimHover(next);
+      return;
+    }
+    claimTimerRef.current = window.setTimeout(() => setClaimHover(next), 280);
+  };
+
+  const handleBodyMouseLeave = () => {
+    cancelPendingClaim();
+    setCitationHover(null);
+    setClaimHover(null);
+    setLit(null);
+  };
+
+  const hoveredSource = citationHover ? citationMap.get(citationHover.number) ?? null : null;
+  const hoveredVerdict = claimHover ? claimVerdicts[claimHover.index] ?? null : null;
+  // What the margin lights: the citation under the pointer, or every citation
+  // of the sentence under it.
+  const activeEvidence = useMemo(
+    () => (citationHover ? [citationHover.number] : hoveredVerdict?.citationIds ?? []),
+    [citationHover, hoveredVerdict]
+  );
 
   const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
     hour: '2-digit',
@@ -407,15 +589,17 @@ export function Message({
   return (
     <>
       <article
+        ref={articleRef}
         id={domMessageId}
-        className={`group border-t border-subtle px-6 py-8${isFresh ? ' animate-in fade-in-0 duration-fast ease-out' : ''}`}
+        data-role={message.role}
+        className={`chat-turn group px-6 ${isUser ? 'pb-2 pt-7' : 'pb-5 pt-3'}${isFresh ? ' animate-in fade-in-0 slide-in-from-bottom-1 duration-base ease-out' : ''}`}
       >
-        {/* Header row: label + metadata */}
-        <header className="mb-2 flex items-baseline justify-between gap-3">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-tertiary))] font-medium">
-              {isUser ? 'You' : 'Assistant'}
-            </span>
+        <div className="chat-turn-grid">
+        <div className="chat-turn-main min-w-0">
+        {/* Header row: who spoke is carried by the layout; this holds state. */}
+        <header className={`mb-1.5 flex items-center gap-3 ${isUser ? 'justify-end' : 'justify-between'}`}>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="sr-only">{isUser ? 'You' : 'Assistant'}</span>
             {isPending && (
               <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--text-muted))]">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -465,7 +649,7 @@ export function Message({
               />
             )}
           </div>
-          <time className="shrink-0 text-xs text-[hsl(var(--text-muted))]">
+          <time className="shrink-0 text-[11px] tabular-nums text-[hsl(var(--text-muted))] opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
             {timestamp}
           </time>
         </header>
@@ -565,10 +749,13 @@ export function Message({
           </div>
         )}
 
-        <RetrievalTrace trace={retrievalTrace} />
-        {!isUser && isPending && (
-          <ActivityNote detail={conversationId ? liveActivity.get(conversationId) ?? null : null} />
-        )}
+        <TurnRecord
+          trace={retrievalTrace}
+          record={messageId ? messageTurn.get(messageId) ?? null : null}
+          liveSteps={isPending && conversationId ? liveSteps.get(conversationId) ?? null : null}
+          isPending={!isUser && isPending}
+          verification={verificationSummary ?? null}
+        />
 
         {/* Body prose — tiptap.css styles inherit `font-family` from this wrapper. */}
         {isUser && isEditing ? (
@@ -581,11 +768,20 @@ export function Message({
           />
         ) : (
         <div
-          className={`max-w-none break-words text-base [overflow-wrap:anywhere] ${
-            isUser ? 'font-sans leading-[1.5]' : 'font-serif leading-[1.65]'
+          onClick={isUser ? undefined : handleBodyClick}
+          onMouseOver={isUser ? undefined : handleBodyMouseOver}
+          onMouseLeave={isUser ? undefined : handleBodyMouseLeave}
+          className={`break-words [overflow-wrap:anywhere] ${
+            isUser
+              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] shadow-sheet'
+              : 'chat-answer max-w-none font-serif text-[16.5px] leading-[1.7]'
           }`}
         >
-          <TiptapViewer content={normalizedMarkdownContent} />
+          <TiptapViewer
+            content={normalizedMarkdownContent}
+            citationNumbers={citationNumbers}
+            claims={isUser ? undefined : claimVerdicts}
+          />
           {/* Streaming cursor — spec §3.7 */}
           {!isUser && isPending && (
             <span
@@ -599,6 +795,8 @@ export function Message({
         </div>
         )}
 
+        {/* The narrow form of the evidence; the margin replaces it where there is room. */}
+        <div className="evidence-inline">
         {citationFootnotes}
 
         {/* Source citations (assistant-only) */}
@@ -607,16 +805,10 @@ export function Message({
             sources={sources}
             provenanceBySource={provenanceBySource}
             resolvedLocations={resolvedLocations}
-            onViewSource={(source) =>
-              setPreviewIndex(
-                Math.max(
-                  0,
-                  citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId)
-                )
-              )
-            }
+            onViewSource={openSource}
           />
         )}
+        </div>
 
         {/* Inline actions */}
         <MessageActions
@@ -635,20 +827,51 @@ export function Message({
           onTryWithModel={handleTryWithModel}
           onEdit={() => setIsEditing(true)}
           onBranch={handleBranch}
+          answerSources={isAssistantWithSources ? sources : undefined}
+          answerMarkdown={isUser ? undefined : normalizedMarkdownContent}
+          answerVerification={verificationSummary ?? null}
+          conversationTitle={conversationTitle}
+          answerTurn={messageId ? messageTurn.get(messageId) : undefined}
         />
+        </div>
+        {isAssistantWithSources && (
+          <EvidenceMargin
+            citationMap={citationMap}
+            activeNumbers={activeEvidence}
+            claimVerdicts={claimVerdicts}
+            provenanceBySource={provenanceBySource}
+            resolvedLocations={resolvedLocations}
+            onOpen={(number) => {
+              const source = citationMap.get(number);
+              if (source) openSource(source);
+            }}
+            onHoverNumber={(number) => setLit(number === null ? null : `[data-cite="${number}"]`)}
+            onCompareDocuments={(ids) =>
+              navigate(`/compare?${new URLSearchParams({ ids: ids.join(',') }).toString()}`)
+            }
+          />
+        )}
+        </div>
       </article>
 
-      <FilePreviewModal
-        presentation="reading-pane"
-        isOpen={previewIndex !== null && previewSource !== null}
-        onClose={() => setPreviewIndex(null)}
-        source={previewSource}
-        initialLocator={previewLocator}
-        citations={citationSources}
-        citationIndex={previewIndex ?? undefined}
-        onCitationIndexChange={setPreviewIndex}
-        onLocationResolved={handleLocationResolved}
+      {/* Beside a margin the passage is already on screen; a card would repeat it. */}
+      <CitationHoverCard
+        hover={citationHover && !hasEvidenceMargin() ? citationHover : null}
+        source={hoveredSource}
+        location={hoveredSource ? resolvedLocations.get(hoveredSource.chunkId) ?? null : null}
+        provenanceLabel={hoveredSource ? provenanceBySource.get(hoveredSource.chunkId) : undefined}
       />
+      <ClaimHoverCard hover={claimHover} verdict={hoveredVerdict} citationMap={citationMap} />
+      {claimActions && claimVerdicts[claimActions.index] && (
+        <ClaimActionsPopover
+          anchor={claimActions.rect}
+          verdict={claimVerdicts[claimActions.index]!}
+          citationMap={citationMap}
+          conversationId={conversationId ?? null}
+          maxRight={claimActions.maxRight}
+          onClose={() => setClaimActions(null)}
+        />
+      )}
     </>
   );
 }

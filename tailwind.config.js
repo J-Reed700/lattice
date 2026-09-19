@@ -8,15 +8,18 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        sans: ['var(--font-sans)'],
+        mono: ['var(--font-mono)'],
         serif: ['var(--font-serif)'],
       },
       colors: {
         bg: 'hsl(var(--bg))',
+        chrome: 'hsl(var(--chrome))',
         surface: {
           DEFAULT: 'hsl(var(--surface))',
           raised: 'hsl(var(--surface-raised))',
+          overlay: 'hsl(var(--surface-overlay))',
+          sunken: 'hsl(var(--surface-sunken))',
         },
         border: {
           DEFAULT: 'hsl(var(--border-subtle))',
@@ -52,6 +55,12 @@ export default {
           muted: 'hsl(var(--danger-muted))',
           fg: 'hsl(var(--danger-fg))',
         },
+        action: {
+          DEFAULT: 'hsl(var(--action))',
+          hover: 'hsl(var(--action-hover))',
+          fg: 'hsl(var(--action-fg))',
+        },
+        highlight: 'hsl(var(--highlight))',
         ring: 'hsl(var(--ring))',
         overlay: 'hsl(var(--overlay))',
         chart: {
@@ -64,6 +73,7 @@ export default {
       },
       fontSize: {
         'xxs': ['0.6875rem', { lineHeight: '1.45', letterSpacing: '0.02em', fontWeight: '500' }],
+        'ui': ['0.8125rem', { lineHeight: '1.4', letterSpacing: '-0.003em' }],
         'xs': ['0.75rem', { lineHeight: '1.5', letterSpacing: '0.01em', fontWeight: '400' }],
         'sm': ['0.875rem', { lineHeight: '1.55', letterSpacing: '0', fontWeight: '400' }],
         'base': ['1rem', { lineHeight: '1.6', letterSpacing: '0', fontWeight: '400' }],
@@ -73,17 +83,24 @@ export default {
         '3xl': ['1.875rem', { lineHeight: '1.2', letterSpacing: '-0.02em', fontWeight: '600' }],
       },
       borderRadius: {
+        xs: 'var(--radius-xs)',
         sm: 'var(--radius-sm)',
         md: 'var(--radius-md)',
         lg: 'var(--radius-lg)',
+        xl: 'var(--radius-xl)',
         full: 'var(--radius-full)',
       },
       boxShadow: {
         none: 'var(--shadow-none)',
         sm: 'var(--shadow-sm)',
         md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+        sheet: 'var(--shadow-sheet)',
+        control: 'var(--shadow-control)',
+        action: 'var(--shadow-action)',
       },
       transitionDuration: {
+        instant: 'var(--duration-instant)',
         fast: 'var(--duration-fast)',
         base: 'var(--duration-base)',
         slow: 'var(--duration-slow)',
@@ -91,6 +108,8 @@ export default {
       transitionTimingFunction: {
         out: 'var(--ease-out)',
         in: 'var(--ease-in)',
+        'in-out': 'var(--ease-in-out)',
+        drawer: 'var(--ease-drawer)',
         linear: 'var(--ease-linear)',
       },
     },

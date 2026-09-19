@@ -1,8 +1,12 @@
 import { useState } from 'react';
 
-import { Bookmark, Check, Copy, Cpu, GitBranch, Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Bookmark, Check, Copy, Cpu, GitBranch, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 
+import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
+
+import { AnswerActionsMenu } from './actions/AnswerActionsMenu';
 import { ModelPickerPopover } from './ModelPickerPopover';
+
 
 /**
  * Actions available on a message.
@@ -23,6 +27,20 @@ interface MessageActionsProps {
   /** A generation is in flight; every mutating verb waits. */
   isBusy: boolean;
   activeModelId?: string | null;
+  /**
+   * The answer's cited passages. Present only on an assistant turn that has
+   * any; without them there is nothing to put in a journal or compare, so the
+   * "Use this answer" menu is not drawn at all.
+   */
+  answerSources?: readonly SourceWithMetadata[];
+  /** The answer as markdown — what "Add to journal" writes. */
+  answerMarkdown?: string;
+  /** What the sentence check found, carried onto the journal page. */
+  answerVerification?: MessageVerificationSummary | null;
+  /** The thread this answer came from, named on the journal page. */
+  conversationTitle?: string | null;
+  /** `metadata.turn`, read defensively by the export; may be absent. */
+  answerTurn?: unknown;
   onCopy: () => Promise<void> | void;
   onBookmarkToggle: () => Promise<void> | void;
   onDelete: () => Promise<void> | void;
@@ -38,7 +56,7 @@ const FOCUS_CLASS =
   'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]';
 
 const ACTION_CLASS =
-  `inline-flex items-center gap-1.5 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))] disabled:opacity-50 disabled:cursor-not-allowed ${FOCUS_CLASS}`;
+  `inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed ${FOCUS_CLASS}`;
 
 export function MessageActions({
   role,
@@ -49,6 +67,11 @@ export function MessageActions({
   isBookmarked,
   isBusy,
   activeModelId,
+  answerSources,
+  answerMarkdown,
+  answerVerification = null,
+  conversationTitle = null,
+  answerTurn,
   onCopy,
   onBookmarkToggle,
   onDelete,
@@ -70,9 +93,14 @@ export function MessageActions({
   const showTryWith = !isUser && isLastTurn && Boolean(onTryWithModel);
   const showEdit = isUser && Boolean(onEdit);
   const showBranch = canBranch && Boolean(onBranch);
+  // An answer with nothing behind it has nowhere to go: no sources means no
+  // journal entry worth keeping and nothing to compare.
+  const showAnswerActions =
+    !isUser && Boolean(answerSources?.length) && typeof answerMarkdown === 'string';
 
+  // Always visible, always quiet: verbs that only exist on hover teach nobody they exist.
   return (
-    <div className="mt-3 flex items-center gap-4 text-xs">
+    <div className={`-mx-2 mt-2 flex flex-wrap items-center gap-0.5 text-xs ${isUser ? 'justify-end' : ''}`}>
       <button
         type="button"
         onClick={() => void handleCopy()}
@@ -82,12 +110,12 @@ export function MessageActions({
       >
         {copied ? (
           <>
-            <Check className="h-3 w-3" />
+            <Check className="h-3.5 w-3.5" />
             Copied
           </>
         ) : (
           <>
-            <Copy className="h-3 w-3" />
+            <Copy className="h-3.5 w-3.5" />
             Copy
           </>
         )}
@@ -102,7 +130,7 @@ export function MessageActions({
           title="Edit"
           className={ACTION_CLASS}
         >
-          <Pencil className="h-3 w-3" />
+          <Pencil className="h-3.5 w-3.5" />
           Edit
         </button>
       )}
@@ -113,15 +141,38 @@ export function MessageActions({
           onClick={() => void onBookmarkToggle()}
           aria-label={isBookmarked ? 'Remove from references' : 'Add to references'}
           title={isBookmarked ? 'Remove from references' : 'Add to references'}
-          className={`inline-flex items-center gap-1.5 transition-colors duration-fast ${FOCUS_CLASS} ${
+          className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] ${FOCUS_CLASS} ${
             isBookmarked
               ? 'text-[hsl(var(--accent))] hover:text-[hsl(var(--accent-hover))]'
               : 'text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))]'
           }`}
         >
-          <Bookmark className={`h-3 w-3 ${isBookmarked ? 'fill-current' : ''}`} />
+          <Bookmark className={`h-3.5 w-3.5 ${isBookmarked ? 'fill-current' : ''}`} />
           {isBookmarked ? 'Referenced' : 'Reference'}
         </button>
+      )}
+
+      {/* Always here, never behind a hover: the verbs that carry an answer into
+          the rest of the work are the point of a research tool, and a menu
+          nobody can see teaches nobody it exists. */}
+      {showAnswerActions && (
+        <AnswerActionsMenu
+          sources={answerSources ?? []}
+          markdown={answerMarkdown ?? ''}
+          verification={answerVerification}
+          conversationTitle={conversationTitle}
+          turn={answerTurn}
+        >
+          <button
+            type="button"
+            aria-label="Use this answer elsewhere"
+            title="Add to journal, or compare its sources"
+            className={ACTION_CLASS}
+          >
+            <ArrowUpRight className="h-3.5 w-3.5" />
+            Use this answer
+          </button>
+        </AnswerActionsMenu>
       )}
 
       {showRegenerate && (
@@ -133,7 +184,7 @@ export function MessageActions({
           title="Regenerate"
           className={ACTION_CLASS}
         >
-          <RefreshCw className="h-3 w-3" />
+          <RefreshCw className="h-3.5 w-3.5" />
           Regenerate
         </button>
       )}
@@ -149,7 +200,7 @@ export function MessageActions({
             aria-label="Try this question with another model"
             className={ACTION_CLASS}
           >
-            <Cpu className="h-3 w-3" />
+            <Cpu className="h-3.5 w-3.5" />
             Try with another model
           </button>
         </ModelPickerPopover>
@@ -164,7 +215,7 @@ export function MessageActions({
           title="Branch here"
           className={ACTION_CLASS}
         >
-          <GitBranch className="h-3 w-3" />
+          <GitBranch className="h-3.5 w-3.5" />
           Branch here
         </button>
       )}
@@ -176,9 +227,9 @@ export function MessageActions({
           disabled={isBusy}
           aria-label="Delete message"
           title="Delete message"
-          className={`inline-flex items-center gap-1.5 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--danger))] disabled:opacity-50 disabled:cursor-not-allowed ${FOCUS_CLASS}`}
+          className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-[hsl(var(--danger)/0.1)] hover:text-[hsl(var(--danger-fg))] disabled:opacity-50 disabled:cursor-not-allowed ${FOCUS_CLASS}`}
         >
-          <Trash2 className="h-3 w-3" />
+          <Trash2 className="h-3.5 w-3.5" />
           Delete
         </button>
       )}

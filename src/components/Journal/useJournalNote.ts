@@ -8,7 +8,8 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function defaultJournalTitle(spaceName: string): string {
+/** Title given to a journal's first page by earlier builds; shown as untitled. */
+export function defaultJournalTitle(spaceName: string): string {
   return `Journal · ${spaceName}`;
 }
 
@@ -50,17 +51,6 @@ function sortPages(notes: WorkspaceNote[]): WorkspaceNote[] {
   });
 }
 
-function inferInitialJournalNameFromNotes(notes: WorkspaceNote[]): string | null {
-  const firstNamed = notes
-    .map((note) => note.title.trim())
-    .find((title) => title.length > 0);
-  if (!firstNamed) return null;
-  const lower = firstNamed.toLowerCase();
-  if (lower.startsWith('journal · ')) return null;
-  if (lower.startsWith('note ')) return null;
-  return firstNamed;
-}
-
 export interface UseJournalNoteResult {
   activeNote: WorkspaceNote | null;
   /** Every page in the workspace, most recently updated first. */
@@ -77,11 +67,18 @@ export interface UseJournalNoteResult {
   selectPage: (noteId: string) => Promise<void>;
   /** Creates a page and opens it. */
   createPage: (title: string) => Promise<WorkspaceNote | null>;
+  /** Renames any page, open or not. */
+  renamePage: (noteId: string, title: string) => Promise<boolean>;
+  /** Deletes any page. Deleting the open one opens the next most recent. */
+  deletePage: (noteId: string) => Promise<boolean>;
   /** Re-reads the page list (after a synthesis writes one, say). */
   refreshPages: () => Promise<WorkspaceNote[]>;
 }
 
 const DEBOUNCE_MS = 450;
+
+/** What a page is called until its writer names it. */
+export const UNTITLED_PAGE = 'Untitled page';
 
 /**
  * Owns the per-journal notebook WorkspaceNote lifecycle: load, debounced
@@ -248,12 +245,14 @@ export function useJournalNote(options: {
         target = allPages.find((n) => n.title.trim() === expected) ?? null;
       }
 
+      // A journal with pages never needs another made for it: renaming the
+      // journal, or its first page, used to mint a fresh "Journal · …" page here.
+      if (!target && allPages.length > 0) {
+        target = allPages[0];
+      }
+
       if (!target) {
-        const titleBase = journalName ?? inferInitialJournalNameFromNotes(allPages) ?? 'Journal';
-        const created = await VaultAPI.createWorkspaceNote(
-          defaultJournalTitle(titleBase),
-          journalSpaceId,
-        );
+        const created = await VaultAPI.createWorkspaceNote(UNTITLED_PAGE, journalSpaceId);
         if (cancelled) return;
         if (!created.ok) {
           setLoadError(created.error);
@@ -376,6 +375,60 @@ export function useJournalNote(options: {
     [journalSpaceId, openPage, saveNow],
   );
 
+  const renamePage = useCallback(
+    async (noteId: string, title: string): Promise<boolean> => {
+      const next = title.trim() || UNTITLED_PAGE;
+      if (noteRef.current?.id === noteId) {
+        if (noteRef.current.title === next) return true;
+        updateNote((note) => ({ ...note, title: next }));
+        return saveNow();
+      }
+      const page = pagesRef.current.find((candidate) => candidate.id === noteId);
+      if (!page) return false;
+      if (page.title === next) return true;
+      const result = await VaultAPI.updateWorkspaceNote({ ...page, title: next });
+      if (!result.ok) {
+        setSaveError(result.error);
+        return false;
+      }
+      const updated = sortPages(
+        pagesRef.current.map((candidate) => (candidate.id === noteId ? result.data : candidate)),
+      );
+      setPages(updated);
+      pagesRef.current = updated;
+      return true;
+    },
+    [saveNow, updateNote],
+  );
+
+  const deletePage = useCallback(
+    async (noteId: string): Promise<boolean> => {
+      const wasOpen = noteRef.current?.id === noteId;
+      if (wasOpen) clearPersistTimer();
+      const result = await VaultAPI.deleteWorkspaceNote(noteId);
+      if (!result.ok) {
+        setSaveError(result.error);
+        return false;
+      }
+      const remaining = pagesRef.current.filter((page) => page.id !== noteId);
+      setPages(remaining);
+      pagesRef.current = remaining;
+      if (wasOpen) {
+        dirtyRef.current = false;
+        setHasPendingChanges(false);
+        const next = remaining[0] ?? null;
+        if (next) {
+          openPage(next);
+        } else {
+          setActiveNote(null);
+          noteRef.current = null;
+        }
+      }
+      return true;
+    },
+    [clearPersistTimer, openPage],
+  );
+
   const deleteActiveNote = useCallback(async (): Promise<boolean> => {
     const current = noteRef.current;
     if (!current) return false;
@@ -408,6 +461,8 @@ export function useJournalNote(options: {
     deleteActiveNote,
     selectPage,
     createPage,
+    renamePage,
+    deletePage,
     refreshPages,
   };
 }

@@ -4,7 +4,7 @@ use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::warn;
 
-use super::{ChatResponse, ConversationMessage, RetrievalTraceDto};
+use super::{ChatResponse, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
 
 #[derive(Debug, Clone)]
 struct MemoryToIndex {
@@ -46,6 +46,7 @@ pub(super) async fn finalize_successful_turn(
     sources: Vec<SourceDto>,
     verification_metadata: Option<serde_json::Value>,
     retrieval_trace: Option<RetrievalTraceDto>,
+    turn_record: Option<TurnRecordDto>,
     message_tokens: usize,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
 ) -> Result<ChatResponse> {
@@ -63,6 +64,12 @@ pub(super) async fn finalize_successful_turn(
     // frontend must read as "no trace", never as zeros.
     if let Some(trace) = retrieval_trace {
         metadata_payload.insert("retrieval".to_string(), serde_json::json!(trace));
+    }
+    // What the turn did, in the same shape the reader watched it happen. Absent
+    // on every message written before the record existed, and on a turn that
+    // recorded nothing at all; absent is "no record", never an empty timeline.
+    if let Some(record) = turn_record {
+        metadata_payload.insert("turn".to_string(), serde_json::json!(record));
     }
     let metadata = if metadata_payload.is_empty() {
         None

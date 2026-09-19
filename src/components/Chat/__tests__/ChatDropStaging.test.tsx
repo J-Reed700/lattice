@@ -36,9 +36,7 @@ describe('ChatDropStaging', () => {
     );
 
     expect(screen.getByText('1 file ready')).toBeInTheDocument();
-    expect(screen.queryByText(/Search the whole vault/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/Answers use only this conversation/)
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Move this chat to General/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Answers use only documents/)).not.toBeInTheDocument();
   });
 });

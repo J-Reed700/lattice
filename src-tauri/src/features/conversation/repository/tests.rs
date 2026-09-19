@@ -25,7 +25,9 @@ async fn setup_schema(pool: &SqlitePool) {
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 message_count INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                forked_from_conversation_id TEXT,
+                forked_from_message_id TEXT
             );
 
             CREATE TABLE conversation_spaces (

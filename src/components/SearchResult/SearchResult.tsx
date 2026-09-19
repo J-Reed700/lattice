@@ -65,6 +65,21 @@ function selectInformativeTerms(terms: string[], maxTerms: number): string[] {
  * BM25 is an unbounded relevance score, not a percentage — it is printed raw
  * on the component line below.
  */
+/** "Papers › Halvorsen 2024.pdf" reads; "/Users/mira/Lattice Vault/Papers/…" does not. */
+function describeLocation(path: string | undefined): string | null {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      return new URL(path).hostname.replace(/^www\./, '');
+    } catch {
+      return path;
+    }
+  }
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  if (parts.length <= 1) return null;
+  return parts.slice(Math.max(0, parts.length - 3), -1).join(' › ');
+}
+
 function formatScore(score: number): string {
   return score.toFixed(2);
 }
@@ -115,7 +130,7 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
     return parts.map((part, idx) => {
       if (matchRegex.test(part)) {
         return (
-          <mark key={`${part}-${idx}`} className="bg-transparent font-medium text-text-primary">
+          <mark key={`${part}-${idx}`} className="text-text-primary">
             {part}
           </mark>
         );
@@ -136,33 +151,40 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
   if (result.bm25Score != null) {
     components.push(`bm25 ${result.bm25Score.toFixed(1)}`);
   }
+  const relevance = Math.max(0, Math.min(1, result.score));
+  const location = describeLocation(displayPath);
 
   return (
     <button
       type="button"
-      className="w-full border-b border-border-subtle px-2 py-3 text-left transition-colors duration-fast hover:bg-surface"
+      className="row-hover group w-full rounded-xl px-3.5 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onClick={handleClick}
     >
-      <div className="flex items-baseline gap-4">
+      <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-text-primary">{displayTitle}</div>
-          {displayPath && (
-            <div className="truncate text-xs text-text-muted">{displayPath}</div>
+          <div className="truncate text-[15px] font-medium tracking-[-0.005em] text-text-primary">{displayTitle}</div>
+          {location && (
+            <div className="mt-0.5 truncate text-xs text-text-muted" title={displayPath}>{location}</div>
           )}
         </div>
         <div className="shrink-0 text-right">
-          <div className="text-xs tabular-nums text-text-muted">{formatScore(result.score)}</div>
+          <div className="flex items-center justify-end gap-2">
+            <span aria-hidden="true" className="h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.08)]">
+              <span className="block h-full rounded-full bg-accent" style={{ width: `${relevance * 100}%` }} />
+            </span>
+            <span className="w-7 text-right text-xs tabular-nums text-text-secondary">{formatScore(result.score)}</span>
+          </div>
           {components.length > 0 && (
-            <div className="font-mono text-xxs text-text-muted">{components.join(' · ')}</div>
+            <div className="mt-0.5 font-mono text-[10.5px] text-text-muted">{components.join(' · ')}</div>
           )}
         </div>
       </div>
 
       {highlightedExcerpts.length > 0 && (
-        <div className="mt-1.5 space-y-1">
+        <div className="mt-2 space-y-1.5">
           {highlightedExcerpts.map((excerpt, index) => (
             <p
-              className="line-clamp-2 text-sm text-text-secondary"
+              className="line-clamp-2 border-l-2 border-border-default pl-3 font-serif text-[14.5px] leading-relaxed text-text-secondary"
               key={`${result.id}-excerpt-${index}`}
             >
               {renderHighlightedText(excerpt)}

@@ -909,6 +909,12 @@
           "markdownDescription": "Enables the list_message_bookmarks command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_space_documents command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:allow-list-space-documents",
+          "markdownDescription": "Enables the list_space_documents command without any pre-configured scope."
+        },
+        {
           "description": "Enables the move_conversation_to_space command without any pre-configured scope.",
           "type": "string",
           "const": "conversation:allow-move-conversation-to-space",
@@ -1177,6 +1183,12 @@
           "type": "string",
           "const": "conversation:deny-list-message-bookmarks",
           "markdownDescription": "Denies the list_message_bookmarks command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_space_documents command without any pre-configured scope.",
+          "type": "string",
+          "const": "conversation:deny-list-space-documents",
+          "markdownDescription": "Denies the list_space_documents command without any pre-configured scope."
         },
         {
           "description": "Denies the move_conversation_to_space command without any pre-configured scope.",

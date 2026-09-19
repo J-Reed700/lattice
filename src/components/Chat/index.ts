@@ -17,7 +17,6 @@ export { ChatStarters } from './ChatStarters';
 export { FilePreviewModal } from './FilePreviewModal';
 export { MessageEditor } from './MessageEditor';
 export { ModelPickerPopover } from './ModelPickerPopover';
-export { RetrievalTrace } from './RetrievalTrace';
 export { useChatFileDrop } from './useChatFileDrop';
 export type { StagedFile } from './useChatFileDrop';
 export {

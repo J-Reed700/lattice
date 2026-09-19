@@ -25,6 +25,7 @@ fn retrieval_plan_does_not_short_circuit_clarify_without_recent_document() {
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
+        closed_book: false,
     };
 
     let plan = RetrievalPlan::from_router(&settings, &decision, "test", flags);
@@ -60,6 +61,7 @@ fn followup_with_forced_web_prefers_kb_first_without_external_intent() {
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
+        closed_book: false,
     };
     let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
         "Right, I am talking about a scenario with my company",
@@ -78,6 +80,7 @@ fn question_with_forced_web_keeps_web_enabled() {
         force_wiki_search: false,
         deep_research_mode: false,
         force_followup_mode: false,
+        closed_book: false,
     };
     let interpretation = crate::domain::qa::hyde::HyDEInterpretation::raw_only(
         "latest updates?",
@@ -95,6 +98,7 @@ fn flags(kb: bool, web: bool, wiki: bool, followup: bool) -> SearchFlags {
         force_wiki_search: wiki,
         deep_research_mode: false,
         force_followup_mode: followup,
+        closed_book: false,
     }
 }
 
@@ -490,4 +494,29 @@ fn public_sufficiency_facade_reports_the_pipelines_own_verdict() {
     let empty = assess_retrieval_sufficiency(&[], &queries, &tuning, true);
     assert!(!empty.sufficient);
     assert_eq!(empty.reasons, ["no_results"]);
+}
+
+/// A chat moved out of a space, or a document filed elsewhere since, leaves a
+/// reference behind. The follow-up path reopens the last reference by id, so a
+/// stale one put a document the space no longer holds straight into the prompt.
+#[test]
+fn a_remembered_document_outside_the_space_is_forgotten() {
+    let reference = |id: &str| crate::domain::conversation::DocumentReference {
+        document_id: id.to_string(),
+        chunk_id: None,
+        relevance_score: None,
+        added_at: chrono::Utc::now(),
+    };
+    let allowed = HashSet::from(["still_here".to_string()]);
+
+    let kept = super::keep_references_in_scope(
+        vec![reference("still_here"), reference("filed_elsewhere")],
+        &allowed,
+    );
+
+    assert_eq!(
+        kept.iter().map(|r| r.document_id.as_str()).collect::<Vec<_>>(),
+        ["still_here"]
+    );
+    assert!(super::keep_references_in_scope(vec![reference("any")], &HashSet::new()).is_empty());
 }

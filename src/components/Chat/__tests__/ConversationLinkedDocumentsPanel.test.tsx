@@ -33,38 +33,41 @@ describe('ConversationLinkedDocumentsPanel — scope release', () => {
     storeState.current = emptyStore();
   });
 
-  it('offers the way back to the whole vault even with nothing staged or linked', async () => {
+  it('names the space and offers the way out even with nothing staged or linked', async () => {
     // The narrowing outlives the staging row that used to announce it, so the
     // release has to stand on its own in the footer.
-    const onSearchWholeVault = vi.fn();
+    const onMoveToGeneral = vi.fn();
     render(
       <ConversationLinkedDocumentsPanel
         conversationId="conv-1"
-        isScopedToLinkedFiles
-        onSearchWholeVault={onSearchWholeVault}
+        scopedSpaceName="Movies"
+        onMoveToGeneral={onMoveToGeneral}
       />
     );
 
     expect(
-      screen.getByText(/Answers use only this conversation's files\./)
+      screen.getByText(/Answers use only documents filed in Movies\./)
     ).toBeInTheDocument();
+    // General is a space, not the whole vault: the way out must not promise
+    // documents it cannot reach.
+    expect(screen.queryByText(/whole vault/i)).not.toBeInTheDocument();
     // …and without an "always zero" count above it.
     expect(screen.queryByText(/Sources in this conversation/)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Search the whole vault' }));
-    expect(onSearchWholeVault).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Move this chat to General' }));
+    expect(onMoveToGeneral).toHaveBeenCalledTimes(1);
   });
 
-  it('says nothing about scope when retrieval is already vault-wide', () => {
+  it('says nothing about scope for a chat in General', () => {
     const { container } = render(
       <ConversationLinkedDocumentsPanel
         conversationId="conv-1"
-        isScopedToLinkedFiles={false}
-        onSearchWholeVault={vi.fn()}
+        scopedSpaceName={null}
+        onMoveToGeneral={vi.fn()}
       />
     );
 
     expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByText(/Search the whole vault/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Move this chat to General/)).not.toBeInTheDocument();
   });
 });

@@ -404,7 +404,24 @@
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  margin-top: 0.3em;
+  /* One line tall, so the box centres on the first line of the task whatever
+     the surface's line-height is. */
+  height: 1lh;
+  margin-top: 0;
+}
+
+/* The task text is a paragraph inside a div; prose margins would drop it a
+   line below its checkbox. */
+.tiptap-editor ul[data-type='taskList'] li > div > p,
+.tiptap-viewer ul[data-type='taskList'] li > div > p {
+  margin: 0;
+}
+
+.tiptap-editor ul[data-type='taskList'] li[data-checked='true'] > div,
+.tiptap-viewer ul[data-type='taskList'] li[data-checked='true'] > div {
+  color: hsl(var(--text-muted));
+  text-decoration: line-through;
+  text-decoration-color: hsl(var(--text-muted) / 0.5);
 }
 
 .tiptap-editor ul[data-type='taskList'] li > div,
@@ -417,8 +434,8 @@
 .tiptap-viewer ul[data-type='taskList'] input[type='checkbox'] {
   accent-color: hsl(var(--accent));
   cursor: pointer;
-  width: 0.95em;
-  height: 0.95em;
+  width: 0.9em;
+  height: 0.9em;
   margin: 0;
   border: 1px solid hsl(var(--border-default));
   border-radius: var(--radius-sm);
@@ -430,28 +447,48 @@
 
 .tiptap-editor table,
 .tiptap-viewer table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: auto;
   max-width: 100%;
   margin: 1.25em 0;
-  border: 1px solid hsl(var(--border-subtle));
-  font-size: 0.9375em;
+  border: 1px solid hsl(var(--border-default));
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 0.84em;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
 }
+
+/* Cells hold paragraphs; a paragraph's prose margins do not belong in a grid. */
+.tiptap-editor :is(th, td) > p,
+.tiptap-viewer :is(th, td) > p {
+  margin: 0;
+}
+
+.tiptap-editor tr:last-child > td,
+.tiptap-viewer tr:last-child > td { border-bottom: 0; }
+.tiptap-editor :is(th, td):last-child,
+.tiptap-viewer :is(th, td):last-child { border-right: 0; }
 
 .tiptap-editor th,
 .tiptap-viewer th {
-  background: hsl(var(--surface-raised));
-  border: 1px solid hsl(var(--border-subtle));
-  padding: 0.5em 0.75em;
+  background: hsl(var(--text-primary) / 0.04);
+  border: 0 solid hsl(var(--border-subtle));
+  border-width: 0 1px 1px 0;
+  padding: 0.55em 0.9em;
   text-align: left;
-  font-weight: 600;
-  color: hsl(var(--text-primary));
+  font-size: 0.92em;
+  font-weight: 500;
+  color: hsl(var(--text-tertiary));
 }
 
 .tiptap-editor td,
 .tiptap-viewer td {
-  border: 1px solid hsl(var(--border-subtle));
-  padding: 0.5em 0.75em;
+  border: 0 solid hsl(var(--border-subtle));
+  border-width: 0 1px 1px 0;
+  padding: 0.6em 0.9em;
   color: hsl(var(--text-primary));
   vertical-align: top;
 }

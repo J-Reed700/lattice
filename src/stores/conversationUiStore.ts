@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { ConversationFilterMode } from './conversationsStore.types';
-import type { OptimisticMessage, RetrievalTrace } from '../types/conversation';
+import type { OptimisticMessage, RetrievalTrace, TurnStep } from '../types/conversation';
 
 export interface ConversationUiState {
   selectedSpaceId: string | null;
@@ -17,13 +17,16 @@ export interface ConversationUiState {
    */
   liveRetrieval: Map<string, RetrievalTrace>;
   /**
-   * What the in-flight turn says it is doing, per conversation.
+   * What the in-flight turn has done so far, per conversation, oldest first.
    *
    * A tool round can run for minutes without emitting a single character, so
    * without this the UI has only a spinner and no way to tell work from a hang.
-   * Cleared when the turn ends, like `liveRetrieval`.
+   * Start and finish events share a step id and are merged in place, so the
+   * running step stays where it is instead of jumping to the end when it
+   * finishes. Cleared when the turn ends, like `liveRetrieval`: from then on
+   * the persisted `metadata.turn` is the record.
    */
-  liveActivity: Map<string, string>;
+  liveSteps: Map<string, TurnStep[]>;
   /** Text the composer should adopt on its next render (deep links, retries). */
   composerDraft: string | null;
   error: string | null;
@@ -40,7 +43,7 @@ export const useConversationUiStore = create<ConversationUiState>(() => ({
   inFlightGenerations: new Map(),
   optimisticMessages: new Map(),
   liveRetrieval: new Map(),
-  liveActivity: new Map(),
+  liveSteps: new Map(),
   composerDraft: null,
   error: null,
   requestedLinkedConversationIds: new Set(),

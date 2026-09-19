@@ -11,15 +11,15 @@ import { getSourceExternalUrl } from '../../utils/sourcePreview';
 
 interface ConversationLinkedDocumentsPanelProps {
   conversationId: string;
-  /** Retrieval is narrowed to this conversation's own files. */
-  isScopedToLinkedFiles?: boolean;
-  onSearchWholeVault?: () => void;
+  /** The named space this chat is confined to; null in General. */
+  scopedSpaceName?: string | null;
+  onMoveToGeneral?: () => void;
 }
 
 export function ConversationLinkedDocumentsPanel({
   conversationId,
-  isScopedToLinkedFiles = false,
-  onSearchWholeVault,
+  scopedSpaceName = null,
+  onMoveToGeneral,
 }: ConversationLinkedDocumentsPanelProps) {
   const {
     spaces,
@@ -265,7 +265,7 @@ export function ConversationLinkedDocumentsPanel({
     }
   };
 
-  const showScopeRelease = isScopedToLinkedFiles && Boolean(onSearchWholeVault);
+  const showScopeRelease = Boolean(scopedSpaceName) && Boolean(onMoveToGeneral);
 
   if (linkedContextCount === 0 && !expanded && !showScopeRelease) {
     return null;
@@ -482,17 +482,19 @@ export function ConversationLinkedDocumentsPanel({
       {/*
         The scope is a standing narrowing of every future answer in this thread,
         so the way out of it stands with it — not only while files happen to be
-        staged above the composer.
+        staged above the composer. It names both ends: this used to read "only
+        this conversation's files … search the whole vault", which was true of
+        neither the space nor General.
       */}
       {showScopeRelease && (
         <p className="mt-2 text-xs text-[hsl(var(--text-muted))]">
-          Answers use only this conversation&apos;s files.{' '}
+          Answers use only documents filed in {scopedSpaceName}.{' '}
           <button
             type="button"
-            onClick={onSearchWholeVault}
+            onClick={onMoveToGeneral}
             className="text-[hsl(var(--accent))] underline-offset-2 hover:underline"
           >
-            Search the whole vault
+            Move this chat to General
           </button>
         </p>
       )}

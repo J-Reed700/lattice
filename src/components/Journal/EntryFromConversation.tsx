@@ -40,6 +40,8 @@ interface EntryFromConversationProps {
   scannedConversationCount: number;
   onJumpToEntry: (entryId: string) => void;
   onNotify: (tone: 'info' | 'success' | 'error', message: string) => void;
+  /** Rendered inside the context rail: always open, titled with the entry. */
+  embedded?: boolean;
 }
 
 /**
@@ -56,11 +58,12 @@ export function EntryFromConversation({
   scannedConversationCount,
   onJumpToEntry,
   onNotify,
+  embedded = false,
 }: EntryFromConversationProps) {
   const prefersReducedMotion = useReducedMotion();
   const navigate = useNavigate();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isInsightsExpanded, setIsInsightsExpanded] = useState(false);
+  const [isInsightsExpanded, setIsInsightsExpanded] = useState(embedded);
   const [isCrossEntryExpanded, setIsCrossEntryExpanded] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
 
@@ -122,7 +125,12 @@ export function EntryFromConversation({
     try {
       const titleBase = entry.title.trim() || 'Journal Entry';
       const conversationTitle = `Sources · ${titleBase}`.slice(0, 90);
-      const newConversationId = await createConversation(conversationTitle);
+      // A chat about this entry's sources searches what the entry searched.
+      // Read from the saved row, not the sidebar's list, which may be showing
+      // another space and would hand back nothing.
+      const source = await VaultAPI.getConversation(entry.id);
+      const entrySpaceId = source.ok ? (source.data.conversation?.spaceId ?? null) : null;
+      const newConversationId = await createConversation(conversationTitle, entrySpaceId);
 
       const webSources = sources
         .map((source) => ({ source, url: getSourceOpenUrl(source) }))
@@ -153,20 +161,53 @@ export function EntryFromConversation({
     }
   };
 
-  if (!entry) return null;
+  if (!entry) {
+    return embedded ? (
+      <div className="px-1 py-10 text-center">
+        <MessageSquare className="mx-auto mb-3 h-5 w-5 text-text-muted" strokeWidth={1.5} />
+        <p className="text-ui font-medium text-text-secondary">No entry selected</p>
+        <p className="mx-auto mt-1 max-w-[220px] text-xs leading-relaxed text-text-muted">
+          Pick an entry from the list to read its replies and sources beside your page.
+        </p>
+      </div>
+    ) : null;
+  }
 
   const insightCount = assistantMessages.length;
   const sourceCount = entrySources.length;
   const hasAssistantYet = insightCount > 0;
 
   return (
-    <section className="mt-12 border-t border-[hsl(var(--border-subtle))] pt-6">
+    <section className={embedded ? '' : 'mt-12 border-t border-[hsl(var(--border-subtle))] pt-6'}>
+      {embedded ? (
+        <div className="mb-1">
+          <h3 className="font-serif text-[17px] font-medium leading-snug tracking-[-0.01em] text-text-primary">{entry.title}</h3>
+          <p className="mt-1 text-xs text-text-muted">
+            {isLoading && !hasAssistantYet
+              ? 'Loading…'
+              : !hasAssistantYet
+                ? 'No replies yet'
+                : `${insightCount} ${insightCount === 1 ? 'reply' : 'replies'} · ${sourceCount} ${sourceCount === 1 ? 'source' : 'sources'}`}
+          </p>
+          {/* Nothing to read yet: the one useful thing is to go and ask. */}
+          {!isLoading && !hasAssistantYet ? (
+            <button
+              type="button"
+              onClick={() => navigate(`/chat?conversationId=${encodeURIComponent(entry.id)}`)}
+              className="pressable mt-4 inline-flex h-8 items-center gap-1.5 rounded-md border border-border-default bg-surface px-3 text-ui font-medium text-text-primary shadow-control transition-[background-color,border-color,scale] duration-fast hover:border-border-strong hover:bg-surface-raised"
+            >
+              <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Continue in Chat
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <button
         type="button"
         onClick={() => setIsExpanded((v) => !v)}
         disabled={isLoading && !hasAssistantYet}
-        className="group flex w-full items-center justify-between text-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast disabled:hover:text-[hsl(var(--text-tertiary))]"
-        aria-expanded={isExpanded}
+        className={`group w-full items-center justify-between text-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast disabled:hover:text-[hsl(var(--text-tertiary))] ${embedded ? 'hidden' : 'flex'}`}
+        aria-expanded={isExpanded || embedded}
       >
         <span>
           {isLoading && !hasAssistantYet ? (
@@ -194,7 +235,7 @@ export function EntryFromConversation({
       </button>
 
       <AnimatePresence initial={false}>
-        {isExpanded && hasAssistantYet && (
+        {(isExpanded || embedded) && hasAssistantYet && (
           <motion.div
             key="from-conversation"
             initial={prefersReducedMotion ? undefined : { height: 0, opacity: 0 }}

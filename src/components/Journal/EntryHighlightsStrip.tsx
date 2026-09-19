@@ -18,6 +18,8 @@ interface EntryHighlightsStripProps {
    * grows two toolbars.
    */
   showFloatingToolbar?: boolean;
+  /** Rendered inside the context rail: always open, no disclosure row. */
+  embedded?: boolean;
 }
 
 export const HIGHLIGHT_CHAR_LIMIT = 8000;
@@ -47,6 +49,7 @@ export function EntryHighlightsStrip({
   onTogglePinned,
   editorContainerRef,
   showFloatingToolbar = true,
+  embedded = false,
 }: EntryHighlightsStripProps) {
   const prefersReducedMotion = useReducedMotion();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -125,7 +128,23 @@ export function EntryHighlightsStrip({
 
   if (highlights.length === 0) {
     // Still render the mini-toolbar portal
-    return (
+    return embedded ? (
+      <>
+        <div className="px-1 py-10 text-center">
+          <Highlighter className="mx-auto mb-3 h-5 w-5 text-text-muted" strokeWidth={1.5} />
+          <p className="text-ui font-medium text-text-secondary">No highlights yet</p>
+          <p className="mx-auto mt-1 max-w-[220px] text-xs leading-relaxed text-text-muted">
+            Select a line on the page and choose Save highlight to keep it here.
+          </p>
+        </div>
+        <FloatingToolbar
+          state={toolbarState}
+          onAdd={handleAdd}
+          toolbarRef={toolbarRef}
+          prefersReducedMotion={prefersReducedMotion}
+        />
+      </>
+    ) : (
       <FloatingToolbar
         state={toolbarState}
         onAdd={handleAdd}
@@ -137,12 +156,12 @@ export function EntryHighlightsStrip({
 
   return (
     <>
-      <section className="mt-12">
+      <section className={embedded ? '' : 'mt-12'}>
         <button
           type="button"
           onClick={() => setIsExpanded((v) => !v)}
-          className="group flex w-full items-center justify-between text-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
-          aria-expanded={isExpanded}
+          className={`group w-full items-center justify-between text-sm text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast ${embedded ? 'hidden' : 'flex'}`}
+          aria-expanded={isExpanded || embedded}
         >
           <span>
             {highlights.length} highlight{highlights.length === 1 ? '' : 's'} from this entry
@@ -154,7 +173,7 @@ export function EntryHighlightsStrip({
           )}
         </button>
         <AnimatePresence initial={false}>
-          {isExpanded && (
+          {(isExpanded || embedded) && (
             <motion.div
               key="highlights-body"
               initial={prefersReducedMotion ? undefined : { height: 0, opacity: 0 }}
@@ -163,15 +182,15 @@ export function EntryHighlightsStrip({
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               className="overflow-hidden"
             >
-              <ul className="mt-4 space-y-5">
+              <ul className={embedded ? 'space-y-4' : 'mt-4 space-y-5'}>
                 {ordered.map((highlight) => {
                   const isPinned = pinnedIds.has(highlight.id);
                   return (
                     <li key={highlight.id}>
-                      <blockquote className="border-l-[3px] border-[hsl(var(--border-strong))] pl-4 italic font-serif text-[hsl(var(--text-secondary))] text-base leading-relaxed">
+                      <blockquote className={`border-l-2 border-[hsl(var(--accent)/0.55)] pl-3.5 font-serif italic leading-relaxed text-[hsl(var(--text-secondary))] ${embedded ? 'text-[14.5px]' : 'text-base'}`}>
                         {highlight.text}
                       </blockquote>
-                      <div className="mt-2 flex items-center gap-3 pl-4 text-xs text-[hsl(var(--text-muted))]">
+                      <div className="mt-1.5 flex items-center gap-3 pl-4 text-xs text-[hsl(var(--text-muted))]">
                         <span>{formatWhen(highlight.createdAt)}</span>
                         <button
                           type="button"

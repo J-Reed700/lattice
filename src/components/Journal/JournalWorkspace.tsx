@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
 import { Combine, FilePlus2, NotebookPen, PanelLeft, Plus } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
 
+import { GENERAL_SPACE_ID } from '@/components/Chat/SpacePickerPopover';
 import { NEW_ITEM_EVENT } from '@/components/RootLayout';
 import { useWeeklySynthesisCandidatesQuery } from '@/hooks/queries/useWeeklySynthesisCandidatesQuery';
 import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
@@ -11,9 +13,11 @@ import { useConversationsStore } from '@/stores/conversationsStore';
 import type { PaletteCommand } from '@/stores/paletteCommandsStore';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
+import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 
 import { EntryEditor } from './EntryEditor';
 import { EntryList } from './EntryList';
+import { pageTitle as rawPageTitle } from './PageList';
 import {
   appendToNote,
   buildSynthesisBlock,
@@ -22,7 +26,7 @@ import {
 } from './synthesisTargets';
 import { useJournalEntries } from './useJournalEntries';
 import { useJournalNavigationGuard } from './useJournalNavigationGuard';
-import { useJournalNote } from './useJournalNote';
+import { UNTITLED_PAGE, useJournalNote } from './useJournalNote';
 import { useJournalSources } from './useJournalSources';
 
 import type { SynthesisScope } from './SynthesizePopover';
@@ -180,6 +184,8 @@ export function JournalWorkspace() {
     saveNow,
     selectPage,
     createPage,
+    renamePage,
+    deletePage,
     refreshPages,
   } = noteState;
 
@@ -199,13 +205,35 @@ export function JournalWorkspace() {
     writeSidebarCollapsed(sidebarCollapsed);
   }, [sidebarCollapsed]);
 
-  // Take `?noteId=` off the URL once it has been handed to the note hook.
+  // Take `?noteId=` off the URL once it has been handed to the note hook, and
+  // move to the journal that owns the page. Pages are listed per journal, so a
+  // link that arrives while another journal is open would find nothing there —
+  // the "saved" toast pointing at a page the screen then fails to show.
   useEffect(() => {
     if (!requestedNoteIdParam) return;
-    setRequestedNoteId(requestedNoteIdParam);
-    const next = new URLSearchParams(searchParams);
-    next.delete('noteId');
-    setSearchParams(next, { replace: true });
+    let cancelled = false;
+
+    const follow = async () => {
+      const notesResult = await VaultAPI.listWorkspaceNotes();
+      if (cancelled) return;
+      const owningJournalId = notesResult.ok
+        ? (notesResult.data.notes.find((note) => note.id === requestedNoteIdParam)?.journalId ?? null)
+        : null;
+
+      setRequestedNoteId(requestedNoteIdParam);
+      const next = new URLSearchParams(searchParams);
+      next.delete('noteId');
+      if (owningJournalId && owningJournalId !== next.get('journalSpaceId')) {
+        next.set('journalSpaceId', owningJournalId);
+        next.delete('entryId');
+      }
+      setSearchParams(next, { replace: true });
+    };
+
+    void follow();
+    return () => {
+      cancelled = true;
+    };
   }, [requestedNoteIdParam, searchParams, setSearchParams]);
 
   // Sync pinned note-highlight ids (per journal) from localStorage
@@ -425,15 +453,18 @@ export function JournalWorkspace() {
 
   const createConversationViaStore = useConversationsStore((s) => s.createConversation);
 
-  const handleNewEntry = useCallback(async () => {
+  // `spaceId` is the space whose documents the chat will search. A journal is
+  // not a space, so nothing here implies one: the sidebar asks, and the palette
+  // — which cannot — starts in General rather than in whatever the Chat sidebar
+  // last had selected, a choice made on another screen for another reason. The
+  // chat names its space above the composer either way.
+  const handleNewEntry = useCallback(async (spaceId: string = GENERAL_SPACE_ID) => {
     if (!requestedJournalSpaceId) return;
     try {
-      const title = `Entry · ${new Date().toLocaleDateString(undefined, {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-      })}`;
-      const newConversationId = await createConversationViaStore(title);
+      const newConversationId = await createConversationViaStore(
+        createDefaultConversationTitle(),
+        spaceId,
+      );
       const linkResult = await VaultAPI.addConversationToJournal({
         journalSpaceId: requestedJournalSpaceId,
         conversationId: newConversationId,
@@ -442,33 +473,17 @@ export function JournalWorkspace() {
         notify('error', `Failed to attach entry to journal: ${linkResult.error}`);
         return;
       }
-      await reloadEntries();
-      setSelectedId(newConversationId);
+      // A conversation is something you have in Chat. Filing an empty one here
+      // and stopping left a row that could be neither read nor written in.
+      if (!(await saveNow())) return;
+      navigate(`/chat?conversationId=${encodeURIComponent(newConversationId)}`);
     } catch (error) {
       notify(
         'error',
-        error instanceof Error ? error.message : 'Failed to create entry.',
+        error instanceof Error ? error.message : 'Failed to start a conversation.',
       );
     }
-  }, [createConversationViaStore, notify, reloadEntries, requestedJournalSpaceId, setSelectedId]);
-
-  // ⌘N from anywhere in the app (RootLayout) and `?new=1` deep links both
-  // create an entry in the current journal.
-  useEffect(() => {
-    const onNew = () => {
-      void handleNewEntry();
-    };
-    window.addEventListener(NEW_ITEM_EVENT, onNew);
-    return () => window.removeEventListener(NEW_ITEM_EVENT, onNew);
-  }, [handleNewEntry]);
-
-  useEffect(() => {
-    if (searchParams.get('new') !== '1' || !requestedJournalSpaceId) return;
-    const next = new URLSearchParams(searchParams);
-    next.delete('new');
-    setSearchParams(next, { replace: true });
-    void handleNewEntry();
-  }, [handleNewEntry, requestedJournalSpaceId, searchParams, setSearchParams]);
+  }, [createConversationViaStore, navigate, notify, requestedJournalSpaceId, saveNow]);
 
   const handleSelectPage = useCallback(
     (noteId: string) => {
@@ -477,15 +492,67 @@ export function JournalWorkspace() {
     [selectPage],
   );
 
+  // Earlier builds titled a journal's first page "Journal · <name>", which read
+  // in the list as a journal sitting among its own pages. It is an ordinary
+  // page that was never named, and is shown as one.
+  const displayPageTitle = useCallback(
+    (page: WorkspaceNote) => {
+      const title = rawPageTitle(page);
+      return title === defaultJournalTitle(journalSpace?.name ?? 'Journal') ? UNTITLED_PAGE : title;
+    },
+    [journalSpace?.name],
+  );
+
+  // A new page arrives unnamed with the caret in its title, rather than as one
+  // more "Page · Fri, Sep 18" that cannot be told from the last.
+  const [pageToName, setPageToName] = useState<string | null>(null);
+
   const handleNewPage = useCallback(async () => {
-    const title = `Page · ${new Date().toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    })}`;
-    const created = await createPage(title);
-    if (created) notify('success', `Created "${created.title}".`);
-  }, [createPage, notify]);
+    const created = await createPage(UNTITLED_PAGE);
+    if (created) setPageToName(created.id);
+  }, [createPage]);
+
+  const handleRenamePage = useCallback(
+    async (noteId: string, title: string) => {
+      setPageToName(null);
+      if (!(await renamePage(noteId, title))) notify('error', 'Could not rename that page.');
+    },
+    [notify, renamePage],
+  );
+
+  const handleDeletePage = useCallback(
+    async (page: WorkspaceNote) => {
+      const name = displayPageTitle(page);
+      const confirmed = await tauriConfirm(
+        'The page and its highlights are deleted. This cannot be undone.',
+        { title: `Delete "${name}"?`, kind: 'warning' },
+      );
+      if (!confirmed) return;
+      if (await deletePage(page.id)) notify('success', `Deleted "${name}".`);
+      else notify('error', 'Could not delete that page.');
+    },
+    [deletePage, displayPageTitle, notify],
+  );
+
+  // ⌘N from anywhere in the app (RootLayout) and `?new=1` deep links both
+  // start a new page: writing is what a journal is for. (A `?new=1` that
+  // arrives before the page list has loaded waits for it.)
+  useEffect(() => {
+    const onNew = () => {
+      void handleNewPage();
+    };
+    window.addEventListener(NEW_ITEM_EVENT, onNew);
+    return () => window.removeEventListener(NEW_ITEM_EVENT, onNew);
+  }, [handleNewPage]);
+
+  useEffect(() => {
+    if (searchParams.get('new') !== '1' || !requestedJournalSpaceId || isLoadingNote) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    setSearchParams(next, { replace: true });
+    void handleNewPage();
+  }, [handleNewPage, isLoadingNote, requestedJournalSpaceId, searchParams, setSearchParams]);
+
 
   const handleRenameEntry = useCallback(
     async (entryId: string, title: string) => {
@@ -704,7 +771,7 @@ export function JournalWorkspace() {
       },
       {
         id: 'journal.newEntry',
-        label: 'New journal entry',
+        label: 'Ask in Chat, filed under this journal',
         group: 'Journal',
         icon: Plus,
         enabled: Boolean(journalSpace),
@@ -759,7 +826,7 @@ export function JournalWorkspace() {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'n') {
         if (isEditable) return;
         e.preventDefault();
-        void handleNewEntry();
+        void handleNewPage();
         return;
       }
       if (!isEditable) {
@@ -797,7 +864,7 @@ export function JournalWorkspace() {
     return () => {
       window.removeEventListener('keydown', onKey);
     };
-  }, [entries, handleNewEntry, saveNow, selectedId, setSelectedId]);
+  }, [entries, handleNewPage, saveNow, selectedId, setSelectedId]);
 
   // Auto-dismiss notice after 3.5s
   useEffect(() => {
@@ -859,11 +926,11 @@ export function JournalWorkspace() {
   return (
     <div className="relative flex h-full overflow-hidden bg-[hsl(var(--bg))] text-[hsl(var(--text-primary))]">
       {sidebarCollapsed ? (
-        <aside className="flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] py-2">
+        <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-[hsl(var(--border-subtle))] py-2.5">
           <button
             type="button"
             onClick={() => setSidebarCollapsed(false)}
-            className="rounded-sm p-2 text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
+            className="row-hover pressable rounded-md p-2 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]"
             aria-label="Expand sidebar"
             title="Expand sidebar (⌘\\)"
           >
@@ -871,10 +938,10 @@ export function JournalWorkspace() {
           </button>
           <button
             type="button"
-            onClick={() => void handleNewEntry()}
-            className="rounded-sm p-2 text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
-            aria-label="New entry"
-            title="New entry (⌘N)"
+            onClick={() => void handleNewPage()}
+            className="row-hover pressable rounded-md p-2 text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))]"
+            aria-label="New page"
+            title="New page (⌘N)"
           >
             <Plus className="h-4 w-4" strokeWidth={1.75} />
           </button>
@@ -888,7 +955,7 @@ export function JournalWorkspace() {
           onCreateJournal={() => void handleCreateJournal()}
           onRenameJournal={handleRenameJournal}
           onDeleteJournal={handleDeleteJournal}
-          onNewEntry={() => void handleNewEntry()}
+          onNewEntry={(spaceId) => void handleNewEntry(spaceId)}
           onRenameEntry={handleRenameEntry}
           onDeleteEntry={handleDeleteEntry}
           onToggleCollapse={() => setSidebarCollapsed(true)}
@@ -896,6 +963,9 @@ export function JournalWorkspace() {
           activePageId={activeNote?.id ?? null}
           onSelectPage={handleSelectPage}
           onNewPage={() => void handleNewPage()}
+          onRenamePage={handleRenamePage}
+          onDeletePage={handleDeletePage}
+          displayPageTitle={displayPageTitle}
         />
       )}
 
@@ -913,10 +983,12 @@ export function JournalWorkspace() {
         pinnedHighlightIds={pinnedNoteHighlightIds}
         onTogglePinnedHighlight={handleTogglePinnedHighlight}
         journalName={journalName}
-        pageTitle={activeNote?.title ?? null}
-        isDefaultPage={
-          (activeNote?.title.trim() ?? '') === defaultJournalTitle(journalName)
-        }
+        pageTitle={activeNote ? displayPageTitle(activeNote) : null}
+        isDefaultPage={activeNote ? displayPageTitle(activeNote) === UNTITLED_PAGE : false}
+        autoFocusTitle={Boolean(pageToName === activeNote?.id)}
+        onRenamePage={(title) => {
+          if (activeNote) void handleRenamePage(activeNote.id, title);
+        }}
         selectedEntry={selectedEntry}
         selectedEntryMessages={selectedEntryMessages}
         selectedEntryLoading={selectedEntryLoading}
@@ -934,7 +1006,7 @@ export function JournalWorkspace() {
       {notice && (
         <div
           role="status"
-          className={`absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-1.5 text-xs shadow-md ${
+          className={`absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-3.5 py-2 text-xs shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 duration-base ${
             notice.action ? '' : 'pointer-events-none '
           }${
             notice.tone === 'error'

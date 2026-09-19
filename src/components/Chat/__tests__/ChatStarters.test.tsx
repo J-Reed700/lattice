@@ -11,10 +11,14 @@ const queryResult = vi.hoisted(() => ({
     data: undefined as ChatStartersData | undefined,
     isLoading: false,
   },
+  askedFor: undefined as string | null | undefined,
 }));
 
 vi.mock('@/hooks/queries/useChatStartersQuery', () => ({
-  useChatStartersQuery: () => queryResult.current,
+  useChatStartersQuery: (spaceId: string | null) => {
+    queryResult.askedFor = spaceId;
+    return queryResult.current;
+  },
 }));
 
 const setData = (data: ChatStartersData | undefined, isLoading = false) => {
@@ -83,5 +87,17 @@ describe('ChatStarters', () => {
     setData(undefined, true);
     const { container } = render(<ChatStarters onPick={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  // The reported bug: a chat in one space opened with questions drawn from
+  // another space's library, because the questions were never asked per space.
+  it('asks for the questions of the space it was given', () => {
+    setData(undefined, true);
+
+    render(<ChatStarters onPick={vi.fn()} spaceId="movies" />);
+    expect(queryResult.askedFor).toBe('movies');
+
+    render(<ChatStarters onPick={vi.fn()} />);
+    expect(queryResult.askedFor).toBeNull();
   });
 });

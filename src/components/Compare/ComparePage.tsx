@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { Columns3 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { FilePreviewModal } from '@/components/Chat/FilePreviewModal';
+import { EmptyState } from '@/components/EmptyState';
 import { PageHeader } from '@/components/ui';
 import { useCompareQuery } from '@/hooks/queries/useCompareQuery';
 import VaultAPI from '@/lib/api';
@@ -119,9 +121,13 @@ export function ComparePage() {
   const body = (() => {
     if (documentIds.length < 2) {
       return (
-        <p className="text-sm text-text-tertiary">
-          Select two or more documents in the Library to compare them.
-        </p>
+        <EmptyState
+          className="py-24"
+          icon={<Columns3 />}
+          title="Nothing to compare yet"
+          description="Select two or more documents in the Library to compare them."
+          action={{ label: 'Open Library', onClick: () => navigate('/files'), shortcut: '⌘2' }}
+        />
       );
     }
     if (!hasRun || columns.length === 0) return null;

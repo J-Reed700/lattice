@@ -48,15 +48,18 @@ use tracing::{info, warn};
 
 mod cancellation;
 mod fetch_memory;
+mod focus;
 mod persistence;
 mod prompting;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
 // sufficiency judgement instead of reimplementing it.
 pub mod retrieval;
 mod tool_loop;
+pub mod turn_record;
 mod verification;
 
 use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
+use self::focus::FocusScope;
 use self::persistence::{
     finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
 };
@@ -64,11 +67,16 @@ use self::prompting::{build_kb_context, enforce_numeric_citation_format, PromptM
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::WEB_SOURCE_PREFIX;
 use self::retrieval::{
-    assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, load_recent_document_metadata,
-    run_retrieval_pipeline, RouterDecisionOutcome,
+    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
+    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
+pub use self::turn_record::{
+    TurnModelDto, TurnRecordDto, TurnRouterDto, TurnStepDto, TurnStepKind, TurnStepState,
+    TurnTimingDto, TurnTokensDto,
+};
+use self::turn_record::TurnRecorder;
 use self::verification::{GroundingReport, GroundingVerifier};
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
@@ -222,6 +230,14 @@ pub struct RetrievalTraceDto {
     /// them.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub sufficiency_reasons: Vec<String>,
+
+    /// How many documents this turn was pinned to, when it was pinned at all.
+    ///
+    /// The count after the intersection with the space scope, so `Some(0)`
+    /// means the request named documents this chat cannot reach and the turn
+    /// searched nothing — which is what fails closed looks like from outside.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused_documents: Option<usize>,
 }
 
 /// Every chat stream update identifies its conversation and generation. Other
@@ -237,19 +253,17 @@ pub struct ChatStreamEventDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub attempt: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieval: Option<RetrievalTraceDto>,
 
-    /// What the turn is doing right now, in words meant for a person.
+    /// One step of the turn, starting or finishing.
     ///
     /// A tool round emits no text at all while the model reasons and writes its
     /// tool calls — on a slow model that is minutes of a spinner with nothing
-    /// behind it, which is indistinguishable from a hang. This is the only
-    /// signal the UI has during that stretch, so it is sent when a phase starts
-    /// and repeated on a heartbeat to show the turn is still alive.
+    /// behind it, which is indistinguishable from a hang. This is what the UI
+    /// has during that stretch, and unlike the sentence it replaces it is kept:
+    /// the timeline under the finished answer is this same list.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub step: Option<TurnStepDto>,
 }
 
 impl ChatStreamEventDto {
@@ -277,6 +291,24 @@ pub struct ToolPreferences {
     pub turn_mode: Option<String>,
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
+    /// Documents this chat is pinned to. Empty or absent means the whole space.
+    ///
+    /// A request may only ever narrow what the turn can read, so these ids are
+    /// intersected with the conversation's space scope before anything uses
+    /// them; ids from outside it are dropped. See `focus_scope` in the
+    /// retrieval pipeline.
+    #[serde(default)]
+    pub focus_document_ids: Option<Vec<String>>,
+    /// The message already carries everything the turn may use: no retrieval of
+    /// any kind runs, no tools are offered, and nothing is verified against
+    /// sources. Backend callers only — it is never deserialized, so the
+    /// frontend can neither set nor see it.
+    ///
+    /// `knowledge_base: false` does not mean this. It only declines to *force*
+    /// a vault search; the router still ran one, which is how a journal
+    /// synthesis of one space's chat was handed another space's documents.
+    #[serde(skip)]
+    pub closed_book: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -286,6 +318,7 @@ struct SearchFlags {
     force_wiki_search: bool,
     deep_research_mode: bool,
     force_followup_mode: bool,
+    closed_book: bool,
 }
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
@@ -328,12 +361,25 @@ impl SearchFlags {
                     .iter()
                     .any(|name| WIKI_OPTIONAL_TOOL_NAMES.contains(&name.as_str()))
             });
+        if tool_preferences.closed_book {
+            // Closed wins over every other preference, so no combination of
+            // flags can reopen the vault or the network for such a turn.
+            return Self {
+                force_kb_search: false,
+                force_web_search: false,
+                force_wiki_search: false,
+                deep_research_mode: false,
+                force_followup_mode: tool_preferences.followup_mode || turn_mode_is_followup,
+                closed_book: true,
+            };
+        }
         Self {
             force_kb_search: tool_preferences.knowledge_base || turn_mode_is_query,
             force_web_search: tool_preferences.web_search || turn_mode_is_query,
             force_wiki_search,
             deep_research_mode: tool_preferences.deep_research_mode,
             force_followup_mode: tool_preferences.followup_mode || turn_mode_is_followup,
+            closed_book: false,
         }
     }
 }
@@ -493,6 +539,31 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         return Err(cancellation_error());
     }
 
+    // Both emits and accumulates: everything below reports what it is doing
+    // through this, and the same list is what the finished answer carries.
+    let recorder = TurnRecorder::new(&window, &conv_id, &turn_id);
+    // Resolved once, against the conversation's space scope. A request may
+    // narrow what the turn reads; it may never widen it.
+    let focus = FocusScope::resolve(
+        container,
+        &conv_id,
+        tool_preferences
+            .as_ref()
+            .and_then(|preferences| preferences.focus_document_ids.as_ref()),
+        search_flags.closed_book,
+    )
+    .await;
+    // A focus that survived the intersection is an explicit instruction to read
+    // those documents, so the vault is searched whether or not the router would
+    // have asked for it. A focus that survived *nothing* forces the search too,
+    // because that is the only path that reports why the turn read nothing —
+    // skipping it would leave a fail-closed turn silently indistinguishable
+    // from one that simply had no reason to search.
+    let search_flags = SearchFlags {
+        force_kb_search: search_flags.force_kb_search || focus.is_requested(),
+        ..search_flags
+    };
+
     let conv_service = container.conversation_service();
 
     let settings_start = Instant::now();
@@ -523,14 +594,20 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         )
         .await?;
     flow_metrics.context_build_ms = elapsed_ms(context_build_start);
+    let conversation_document_context =
+        confine_document_context(container, &conv_id, conversation_document_context).await;
+    // Pages linked to the conversation are outside material too.
+    let linked_web_sources_context =
+        linked_web_sources_context.filter(|_| !search_flags.closed_book);
 
     let router_start = Instant::now();
-    let router_decision = resolve_router_decision(
+    let (router_decision, router_record) = resolve_router_decision(
         container,
         &conversation_document_context,
         &validated_message,
-        search_flags.force_web_search,
+        search_flags,
         &router_settings,
+        &recorder,
     )
     .await?;
     flow_metrics.router_ms = elapsed_ms(router_start);
@@ -563,6 +640,8 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         max_tokens,
         &tool_output_settings,
         &settings.search,
+        &focus,
+        &recorder,
     )
     .await;
     flow_metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);
@@ -660,6 +739,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 .as_ref()
                 .map(|v| v.reasons.iter().map(|r| (*r).to_owned()).collect())
                 .unwrap_or_default(),
+            focused_documents: focus.reported_count(),
         };
         if let Err(e) = window.emit(
             "llm-stream",
@@ -741,7 +821,10 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     } else {
         &tool_definitions
     };
-    let tools_ref = (!selected_tools.is_empty()).then_some(selected_tools.as_slice());
+    // Offering a closed-book turn `semantic_search` would reopen the vault one
+    // tool call later.
+    let tools_ref = (!selected_tools.is_empty() && !search_flags.closed_book)
+        .then_some(selected_tools.as_slice());
     flow_metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
 
     info!(
@@ -757,6 +840,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     let mut sources = retrieval.sources;
     let short_circuit_response = retrieval.short_circuit_response.take();
     let generation_start = Instant::now();
+    let mut turn_tokens = TurnTokensDto::default();
     let response_result: Result<String> = if let Some(response) = short_circuit_response {
         flow_metrics.generation_subtimings = Some(ToolLoopTimingMetrics::default());
         Ok(response)
@@ -779,11 +863,17 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             tools_ref,
             generation_time_budget(search_flags),
             std::mem::take(&mut retrieval.pages_read),
+            &focus,
+            &recorder,
         )
         .await
         {
             Ok(tool_loop_outcome) => {
                 flow_metrics.generation_subtimings = Some(tool_loop_outcome.timings);
+                turn_tokens = TurnTokensDto {
+                    completion: tool_loop_outcome.output_tokens,
+                    context_used: tool_loop_outcome.input_tokens,
+                };
                 Ok(tool_loop_outcome.response)
             }
             Err(e) => Err(e),
@@ -813,7 +903,12 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 response
             };
             let verification_start = Instant::now();
-            let verification_enabled = settings.llm.verification.enabled;
+            // A closed-book turn cites nothing, so there is nothing to ground
+            // it against — judging it only reports every sentence unsupported.
+            let verification_enabled =
+                settings.llm.verification.enabled && !search_flags.closed_book;
+            let verify_step = verification_enabled
+                .then(|| recorder.begin(TurnStepKind::Verify, "Checking the answer", None));
             let grounding_report = if verification_enabled {
                 // The utility model judges claims so a chat turn is not charged a
                 // second pass through the large model. Without one configured the
@@ -836,6 +931,13 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             } else {
                 GroundingReport::default()
             };
+            if let Some(step) = verify_step {
+                recorder.end(
+                    &step,
+                    TurnStepState::Done,
+                    Some(verification_result_line(&grounding_report)),
+                );
+            }
             if verification_enabled && grounding_report.claims_evaluated > 0 {
                 info!(
                     conversation_id = conv_id.as_str(),
@@ -858,6 +960,30 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             };
             flow_metrics.verification_ms = elapsed_ms(verification_start);
 
+            // Built here rather than after persistence so `totalMs` is time to
+            // the answer the reader is about to see, and so the step list is
+            // exactly what was streamed.
+            if turn_tokens.completion.is_none() {
+                turn_tokens.completion = Some(llm.count_tokens(&assistant_response) as u64);
+            }
+            let turn_record = TurnRecordDto {
+                model: Some(TurnModelDto {
+                    id: llm.model_name().to_string(),
+                    name: llm.model_name().to_string(),
+                }),
+                steps: recorder.steps(),
+                timing: TurnTimingDto {
+                    total_ms: elapsed_ms(flow_start),
+                    router_ms: flow_metrics.router_ms,
+                    retrieval_ms: flow_metrics.retrieval_pipeline_ms,
+                    generation_ms: flow_metrics.generation_ms,
+                    verification_ms: flow_metrics.verification_ms,
+                    tool_ms: generation_subtimings_or_default(&flow_metrics).tool_execution_ms,
+                },
+                tokens: turn_tokens,
+                router: router_record,
+            };
+
             let finalize_start = Instant::now();
             let mut chat_response = finalize_successful_turn(
                 container,
@@ -870,6 +996,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
                 sources,
                 verification_metadata,
                 retrieval_trace.clone(),
+                Some(turn_record),
                 message_tokens,
                 &llm,
             )
@@ -990,6 +1117,20 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
 
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// What the `verify` step says it found.
+///
+/// An answer with nothing to check is not an answer that failed its check, so
+/// it says so in those words rather than reporting "0 of 0 backed".
+fn verification_result_line(report: &GroundingReport) -> String {
+    if report.claims_evaluated == 0 {
+        return "nothing to check against sources".to_string();
+    }
+    format!(
+        "{} of {} claims backed",
+        report.supported_claims, report.claims_evaluated
+    )
 }
 
 /// Generation allowance for one turn, shared by tool rounds and provider retries.
@@ -1136,19 +1277,31 @@ fn stable_prompt_signature(input: &str) -> u64 {
         })
 }
 
+/// Route the turn, and keep what the router said about it.
+///
+/// The decision used to be reduced to its `action` the moment it arrived, so an
+/// answer could be steered by a 0.31-confidence guess with a rationale nobody
+/// ever saw. Both now reach the turn record, and the only paths that report no
+/// router are the ones where no router ran.
 async fn resolve_router_decision(
     container: &Container,
     conversation_document_context: &[crate::domain::conversation::DocumentReference],
     validated_message: &str,
-    force_web_search: bool,
+    search_flags: SearchFlags,
     router_settings: &RouterSettingsDto,
-) -> Result<RouterDecisionOutcome> {
-    if force_web_search {
-        return Ok(RouterDecisionOutcome {
-            action: RouterAction::NewSearch,
-            recent_doc_meta: None,
-            clarify_message: None,
-        });
+    recorder: &TurnRecorder,
+) -> Result<(RouterDecisionOutcome, Option<TurnRouterDto>)> {
+    // A closed-book turn has nothing to route: the pipeline returns before it
+    // reads this, and asking the router model would only spend time.
+    if search_flags.force_web_search || search_flags.closed_book {
+        return Ok((
+            RouterDecisionOutcome {
+                action: RouterAction::NewSearch,
+                recent_doc_meta: None,
+                clarify_message: None,
+            },
+            None,
+        ));
     }
 
     let recent_doc_meta =
@@ -1156,11 +1309,14 @@ async fn resolve_router_decision(
     let has_recent_document = recent_doc_meta.is_some();
     if conversation_document_context.is_empty() || !router_settings.enabled || !has_recent_document
     {
-        return Ok(RouterDecisionOutcome {
-            action: RouterAction::NewSearch,
-            recent_doc_meta,
-            clarify_message: None,
-        });
+        return Ok((
+            RouterDecisionOutcome {
+                action: RouterAction::NewSearch,
+                recent_doc_meta,
+                clarify_message: None,
+            },
+            None,
+        ));
     }
 
     let router_input = RouterInput {
@@ -1169,15 +1325,52 @@ async fn resolve_router_decision(
         recent_document_title: recent_doc_meta.as_ref().map(|m| m.title.clone()),
         recent_document_id: recent_doc_meta.as_ref().map(|m| m.document_id.clone()),
     };
+    let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
     let router_llm = container.get_or_load_router_llm().await?;
     let router = RouterService::new(router_llm, router_settings.clone());
     let decision = router.route(router_input).await;
+    let action = router_action_code(&decision.action);
+    recorder.end(
+        &step,
+        TurnStepState::Done,
+        Some(format!(
+            "{} · {:.0}% confident",
+            router_action_label(&decision.action),
+            decision.confidence * 100.0
+        )),
+    );
 
-    Ok(RouterDecisionOutcome {
-        action: decision.action,
-        recent_doc_meta,
-        clarify_message: decision.clarify_question,
-    })
+    Ok((
+        RouterDecisionOutcome {
+            action: decision.action,
+            recent_doc_meta,
+            clarify_message: decision.clarify_question,
+        },
+        Some(TurnRouterDto {
+            action,
+            confidence: decision.confidence,
+            rationale: decision.rationale,
+        }),
+    ))
+}
+
+/// The stable code the UI and tests match on.
+fn router_action_code(action: &RouterAction) -> String {
+    match action {
+        RouterAction::UseLastDocument => "use_last_document",
+        RouterAction::NewSearch => "new_search",
+        RouterAction::Clarify => "clarify",
+    }
+    .to_string()
+}
+
+/// The same decision as a sentence, for the step's one line.
+fn router_action_label(action: &RouterAction) -> &'static str {
+    match action {
+        RouterAction::UseLastDocument => "Continuing with the last document",
+        RouterAction::NewSearch => "Searching afresh",
+        RouterAction::Clarify => "Asking what you mean",
+    }
 }
 
 fn budget_search_results_for_prompt<'a>(
@@ -1590,12 +1783,50 @@ mod tests {
             followup_mode: false,
             turn_mode: Some("followup".to_string()),
             enabled_tools: None,
+            focus_document_ids: None,
+            closed_book: false,
         };
 
         let flags = SearchFlags::from_preferences(Some(&prefs));
         assert!(!flags.force_kb_search);
         assert!(!flags.force_web_search);
         assert!(flags.force_followup_mode);
+    }
+
+    /// The reported bug: a journal synthesis asked for `knowledge_base: false`
+    /// and was still handed another space's documents, because that flag only
+    /// declines to force a search. Closed has to beat every other preference.
+    #[test]
+    fn a_closed_book_turn_cannot_be_reopened_by_any_other_preference() {
+        let prefs = ToolPreferences {
+            knowledge_base: true,
+            web_search: true,
+            deep_research_mode: true,
+            followup_mode: false,
+            turn_mode: Some("query".to_string()),
+            enabled_tools: Some(vec!["wiki_search".to_string()]),
+            focus_document_ids: None,
+            closed_book: true,
+        };
+
+        let flags = SearchFlags::from_preferences(Some(&prefs));
+
+        assert!(flags.closed_book);
+        assert!(!flags.force_kb_search);
+        assert!(!flags.force_web_search);
+        assert!(!flags.force_wiki_search);
+        assert!(!flags.deep_research_mode);
+    }
+
+    /// Only backend callers may close a turn. If the frontend could send the
+    /// flag it could also clear it, so it must not survive deserialization.
+    #[test]
+    fn the_frontend_cannot_set_closed_book() {
+        let prefs: ToolPreferences =
+            serde_json::from_str(r#"{"knowledgeBase":true,"closedBook":true,"closed_book":true}"#)
+                .unwrap();
+
+        assert!(!prefs.closed_book);
     }
 
     #[test]
@@ -1607,6 +1838,8 @@ mod tests {
             followup_mode: false,
             turn_mode: None,
             enabled_tools: None,
+            focus_document_ids: None,
+            closed_book: false,
         };
         let chat = generation_time_budget(SearchFlags::from_preferences(Some(&prefs)));
         prefs.deep_research_mode = true;
@@ -1625,6 +1858,8 @@ mod tests {
             followup_mode: false,
             turn_mode: Some("query".to_string()),
             enabled_tools: None,
+            focus_document_ids: None,
+            closed_book: false,
         };
 
         let flags = SearchFlags::from_preferences(Some(&prefs));

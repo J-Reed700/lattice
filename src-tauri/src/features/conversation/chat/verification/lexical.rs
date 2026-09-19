@@ -184,13 +184,19 @@ fn is_contradiction_prone(claim: &str) -> bool {
         .any(|marker| padded.contains(marker))
 }
 
+/// A full stop ends a sentence only when the text pauses after it. One inside
+/// a token ("1.2 °C", "v2.1", "example.com") does not, and splitting there cut
+/// every sentence with a decimal in half: the claims most worth checking were
+/// judged as two fragments, neither of which says what the sentence says.
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
 
-    for ch in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
         current.push(ch);
-        if matches!(ch, '.' | '!' | '?' | '\n') {
+        let pauses = chars.peek().is_none_or(|next| !next.is_alphanumeric());
+        if ch == '\n' || (matches!(ch, '.' | '!' | '?') && pauses) {
             let candidate = current.trim();
             if !candidate.is_empty() {
                 sentences.push(candidate.to_string());
@@ -536,6 +542,22 @@ mod tests {
             "mechanistic link between methylation dynamics and developmental transitions"
         ));
         assert!(!claims[0].claim_text.contains("developmental tr..."));
+    }
+
+    #[test]
+    fn a_decimal_point_does_not_end_a_sentence() {
+        let sentences = split_sentences(
+            "The pooled effect was 1.2 °C per 10 points [1]. Surface readings ran 8.5 °C apart!\nSee example.com for v2.1.",
+        );
+
+        assert_eq!(
+            sentences,
+            vec![
+                "The pooled effect was 1.2 °C per 10 points [1].",
+                "Surface readings ran 8.5 °C apart!",
+                "See example.com for v2.1.",
+            ]
+        );
     }
 
     #[test]

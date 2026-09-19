@@ -94,6 +94,7 @@ import type {
   ConversationLinkedDocumentDto,
   ConversationWebSourceDto,
   DocumentSpaceMembershipDto,
+  SpaceDocument,
   // Function calling types (Wave 2B)
   FunctionDefinition,
   FunctionResult,
@@ -260,6 +261,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   list_message_bookmarks: { domain: 'conversation', command: 'list_message_bookmarks' },
   list_conversations_explorer: { domain: 'conversation', command: 'list_conversations_explorer' },
   list_journal_conversations: { domain: 'conversation', command: 'list_journal_conversations' },
+  list_space_documents: { domain: 'conversation', command: 'list_space_documents' },
   list_conversation_linked_documents: { domain: 'conversation', command: 'list_conversation_linked_documents' },
   remove_conversation_linked_document: { domain: 'conversation', command: 'remove_conversation_linked_document' },
   add_conversation_web_source: { domain: 'conversation', command: 'add_conversation_web_source' },
@@ -1822,12 +1824,13 @@ const VaultAPI = {
   checkLLMHealth: async (): Promise<ApiResult<LLMHealthStatus>> => apiCall<LLMHealthStatus>('check_llm_health'),
 
   /**
-   * Three corpus-derived questions for the Chat empty state.
+   * Three corpus-derived questions for the Chat empty state, drawn from the
+   * documents `spaceId` can see. A null space means General.
    * Returns an empty `starters` array when no model could produce them —
    * the empty state renders no questions rather than inventing any.
    */
-  generateChatStarters: async (): Promise<ApiResult<ChatStarters>> =>
-    apiCall<ChatStarters>('generate_chat_starters', {}),
+  generateChatStarters: async (spaceId?: string | null): Promise<ApiResult<ChatStarters>> =>
+    apiCall<ChatStarters>('generate_chat_starters', { spaceId: spaceId ?? null }),
 
   /**
    * Saves an excerpt from a document as a reference.
@@ -2665,6 +2668,24 @@ const VaultAPI = {
   ): Promise<ApiResult<ListConversationsResponse>> =>
     apiCall<Wire.ListConversationsResponseDto>('list_journal_conversations', {
       query,
+    }),
+
+  /**
+   * The documents a chat in this space may read, newest first.
+   *
+   * `spaceId` of `null` means General. The backend answers from the same
+   * allow-list retrieval uses, so what this offers is exactly what a turn can
+   * search — never a superset. `limit` is clamped to 50 there.
+   */
+  listSpaceDocuments: async (
+    spaceId: string | null,
+    query: string,
+    limit: number
+  ): Promise<ApiResult<SpaceDocument[]>> =>
+    apiCall<Wire.SpaceDocumentDto[]>('list_space_documents', {
+      spaceId,
+      query,
+      limit,
     }),
 
   /**

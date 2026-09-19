@@ -414,6 +414,27 @@ pub async fn set_documents_space_membership_impl(
         .map_err(ApiError::from)
 }
 
+/// The documents a chat in this space may name, for the composer's `@` picker.
+///
+/// `space_id` of `None` or blank means General. The list comes from the same
+/// scope retrieval derives its allow-list from, so what the picker offers is
+/// exactly what the turn can read.
+pub async fn list_space_documents_impl(
+    space_id: Option<String>,
+    query: Option<String>,
+    limit: Option<u32>,
+    container: &Container,
+) -> Result<Vec<SpaceDocumentDto>, ApiError> {
+    ConversationRepository::new(container.db_pool().clone())
+        .space_documents(
+            space_id.as_deref(),
+            query.as_deref().unwrap_or_default(),
+            limit.unwrap_or(8) as usize,
+        )
+        .await
+        .map_err(ApiError::from)
+}
+
 pub async fn list_conversation_linked_documents_impl(
     conversation_id: String,
     container: &Container,
