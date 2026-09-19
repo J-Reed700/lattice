@@ -146,27 +146,32 @@ impl InputPolicy {
         prefix_tokens: usize,
         limit: usize,
     ) -> Result<()> {
-        let Some(previous) = chunks.len().checked_sub(2) else {
+        if chunks.len() < 2 {
+            return Ok(());
+        }
+        let Some(tail) = chunks.last().cloned() else {
             return Ok(());
         };
-        let tail = &chunks[previous + 1];
         let passage_budget = limit.saturating_sub(prefix_tokens);
         if tail.token_count.saturating_sub(prefix_tokens) * 100
             >= passage_budget * TRAILING_FRAGMENT_PERCENT
         {
             return Ok(());
         }
-        let merged = format!("{}{}", chunks[previous].text, tail.text);
+        let Some(previous) = chunks.iter().rev().nth(1) else {
+            return Ok(());
+        };
+        let merged = format!("{}{}", previous.text, tail.text);
         let token_count = self.count(&format!("{prefix}{merged}"))?;
         if token_count > self.max_tokens {
             return Ok(());
         }
-        let end = tail.end;
-        chunks.truncate(previous + 1);
-        let last = &mut chunks[previous];
-        last.text = merged;
-        last.end = end;
-        last.token_count = token_count;
+        chunks.pop();
+        if let Some(last) = chunks.last_mut() {
+            last.text = merged;
+            last.end = tail.end;
+            last.token_count = token_count;
+        }
         Ok(())
     }
 }
@@ -183,64 +188,58 @@ impl InputPolicy {
 /// arbitrarily far back and a plain character boundary is the better cut.
 fn cut_candidates(fitted: &str) -> Vec<usize> {
     let floor = fitted.len() / 2;
-    let mut lines: Vec<(usize, &str)> = Vec::new();
-    let mut offset = 0;
-    for line in fitted.split_inclusive('\n') {
-        lines.push((offset, line));
-        offset += line.len();
-    }
-    // Per line: (inside a code fence, is a table row). The ``` delimiters count
-    // as fenced themselves, so a cut never separates one from its block.
-    let mut in_fence = false;
-    let flags: Vec<(bool, bool)> = lines
-        .iter()
-        .map(|(_, line)| {
-            let trimmed = line.trim_start();
-            let delimiter = trimmed.starts_with("```");
-            if delimiter {
-                in_fence = !in_fence;
-            }
-            (in_fence || delimiter, trimmed.starts_with('|'))
-        })
-        .collect();
-
     let (mut paragraph, mut sentence) = (None, None);
-    for (index, (start, line)) in lines.iter().enumerate() {
-        let (fenced, table) = flags[index];
-        let joined = index > 0 && ((fenced && flags[index - 1].0) || (table && flags[index - 1].1));
-        if !joined
-            && *start >= floor
-            && index > 0
-            && lines[index - 1].1.trim().is_empty()
-            && !line.trim().is_empty()
-        {
-            paragraph = Some(*start);
+    // Carried from the line before: (inside a code fence, is a table row, is
+    // blank). A ``` delimiter counts as fenced itself, so a cut never separates
+    // one from its block.
+    let mut before: Option<(bool, bool, bool)> = None;
+    let mut in_fence = false;
+    let mut start = 0;
+    for line in fitted.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let delimiter = trimmed.starts_with("```");
+        if delimiter {
+            in_fence = !in_fence;
         }
-        if fenced || table {
-            continue;
-        }
-        for (i, ch) in line.char_indices() {
-            // The ideographic stops end a sentence on their own; the shared
-            // ASCII ones also end abbreviations and decimals, so they need
-            // whitespace or the end of the passage behind them.
-            let terminal = match ch {
-                '。' | '！' | '？' => true,
-                '.' | '!' | '?' | '…' => false,
-                _ => continue,
-            };
-            let after = start + i + ch.len_utf8();
-            let run: usize = fitted[after..]
-                .chars()
-                .take_while(|c| c.is_whitespace())
-                .map(char::len_utf8)
-                .sum();
-            if !terminal && run == 0 && after != fitted.len() {
-                continue;
-            }
-            if after + run >= floor {
-                sentence = Some(after + run);
+        let (fenced, table, blank) = (
+            in_fence || delimiter,
+            trimmed.starts_with('|'),
+            line.trim().is_empty(),
+        );
+        if let Some((was_fenced, was_table, was_blank)) = before {
+            let joined = (fenced && was_fenced) || (table && was_table);
+            if !joined && was_blank && !blank && start >= floor {
+                paragraph = Some(start);
             }
         }
+        before = Some((fenced, table, blank));
+        if !fenced && !table {
+            for (i, ch) in line.char_indices() {
+                // The ideographic stops end a sentence on their own; the shared
+                // ASCII ones also end abbreviations and decimals, so they need
+                // whitespace or the end of the passage behind them.
+                let terminal = match ch {
+                    '。' | '！' | '？' => true,
+                    '.' | '!' | '?' | '…' => false,
+                    _ => continue,
+                };
+                let after = start + i + ch.len_utf8();
+                let run: usize = fitted
+                    .get(after..)
+                    .unwrap_or_default()
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .map(char::len_utf8)
+                    .sum();
+                if !terminal && run == 0 && after != fitted.len() {
+                    continue;
+                }
+                if after + run >= floor {
+                    sentence = Some(after + run);
+                }
+            }
+        }
+        start += line.len();
     }
     // The separating whitespace stays with the chunk before it.
     let whitespace = fitted

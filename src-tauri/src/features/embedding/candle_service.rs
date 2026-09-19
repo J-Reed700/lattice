@@ -602,14 +602,19 @@ impl CandleEmbeddingService {
         // Windowing reads a window as one contiguous slice, which only holds
         // for ranges in chunk order. Anything else keeps the old whole-span
         // fallback rather than pooling the wrong bytes.
-        if chunk_ranges
-            .windows(2)
-            .any(|pair| pair[1].start < pair[0].start || pair[1].end < pair[0].end)
-        {
+        if chunk_ranges.windows(2).any(|pair| match pair {
+            [a, b] => b.start < a.start || b.end < a.end,
+            _ => false,
+        }) {
             return Err(LateChunkingError::InvalidRange { chunk: 0 });
         }
 
-        let prefix = &span_text[..prefix_end];
+        let slice = |range: Range<usize>| {
+            span_text
+                .get(range)
+                .ok_or(LateChunkingError::InvalidRange { chunk: 0 })
+        };
+        let prefix = slice(0..prefix_end)?;
         let count = |text: &str| {
             self.input_policy
                 .count(text)
@@ -617,7 +622,7 @@ impl CandleEmbeddingService {
         };
         let mut chunk_tokens = Vec::with_capacity(chunk_ranges.len());
         for range in chunk_ranges {
-            chunk_tokens.push(count(&span_text[range.clone()])?);
+            chunk_tokens.push(count(slice(range.clone())?)?);
         }
         let budget = self.input_policy.max_tokens.saturating_sub(count(prefix)?);
 
@@ -625,12 +630,14 @@ impl CandleEmbeddingService {
         for window in window_groups(&chunk_tokens, budget) {
             // Ranges arrive in chunk order, so the window's text is one
             // contiguous slice behind the shared prefix.
-            let group = &chunk_ranges[window];
+            let Some(group) = chunk_ranges.get(window) else {
+                continue;
+            };
             let (start, end) = match (group.first(), group.last()) {
                 (Some(first), Some(last)) => (first.start, last.end),
                 _ => continue,
             };
-            let text = format!("{prefix}{}", &span_text[start..end]);
+            let text = format!("{prefix}{}", slice(start..end)?);
             let shifted: Vec<Range<usize>> = group
                 .iter()
                 .map(|range| prefix_end + (range.start - start)..prefix_end + (range.end - start))
