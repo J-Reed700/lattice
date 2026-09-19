@@ -168,6 +168,7 @@ fn empty_pipeline_outcome() -> RetrievalPipelineOutcome {
         searched_documents: 0,
         scope_is_linked: false,
         sufficiency: None,
+        pages_read: Default::default(),
     }
 }
 
@@ -184,7 +185,39 @@ fn external_result(url: &str, context: Option<&str>) -> pipeline::ExternalSearch
         context: context.map(str::to_string),
         error: None,
         elapsed_ms: 7,
+        pages: Default::default(),
     }
+}
+
+/// The turn in the log: retrieval read three pages, one of them blocked, and
+/// the tool loop then started blank and asked for all three again. Whatever
+/// the web phase learned has to reach the outcome the tool loop is handed.
+#[test]
+fn what_the_web_phase_read_reaches_the_outcome_the_tool_loop_starts_from() {
+    use crate::features::conversation::chat::fetch_memory::{Delivery, Recall};
+
+    let mut web = external_result("https://example.com/web", Some("web context"));
+    web.pages
+        .record_failure("https://blocked.test/guide", "HTTP 403 Forbidden");
+    web.pages.record_page(
+        "https://read.test/recap",
+        "the whole recap",
+        Delivery::Whole,
+    );
+
+    let mut outcome = empty_pipeline_outcome();
+    pipeline::attach_web_results(&mut outcome, web);
+
+    assert_eq!(
+        outcome
+            .pages_read
+            .previous_failure("https://blocked.test/guide"),
+        Some("HTTP 403 Forbidden")
+    );
+    assert_eq!(
+        outcome.pages_read.recall("https://read.test/recap"),
+        Some(Recall::AlreadyWhole { word_count: 3 })
+    );
 }
 
 #[test]

@@ -34,6 +34,34 @@ fn normalize_generated_bindings(path: &Path) -> std::io::Result<()> {
     std::fs::write(path, format!("{normalized}\n"))
 }
 
+/// Where `generated` and `committed` first differ, as a 1-based line number and
+/// the two lines; `None` when they are the same text.
+///
+/// Compared line by line, so the line-ending convention is not part of the
+/// comparison. It used to be byte for byte, and on Windows git checks the
+/// committed file out with CRLF endings while the generator writes LF — so the
+/// check reported up-to-date bindings as stale there, and only there. A missing
+/// line is reported against an empty one.
+fn first_difference(generated: &str, committed: &str) -> Option<(usize, String, String)> {
+    let mut generated_lines = generated.lines();
+    let mut committed_lines = committed.lines();
+    let mut line_number = 0usize;
+    loop {
+        line_number += 1;
+        match (generated_lines.next(), committed_lines.next()) {
+            (None, None) => return None,
+            (generated, committed) if generated == committed => {}
+            (generated, committed) => {
+                return Some((
+                    line_number,
+                    generated.unwrap_or_default().to_string(),
+                    committed.unwrap_or_default().to_string(),
+                ));
+            }
+        }
+    }
+}
+
 fn main() {
     // Determine output path relative to workspace root
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -370,19 +398,20 @@ fn main() {
 
     match result {
         Ok(_) if check_only => {
-            let generated = std::fs::read(&output_path);
-            let committed = std::fs::read(&canonical_output_path);
+            let generated = std::fs::read_to_string(&output_path);
+            let committed = std::fs::read_to_string(&canonical_output_path);
             let _ = std::fs::remove_file(&output_path);
             match (generated, committed) {
-                (Ok(generated), Ok(committed)) if generated == committed => {
-                    println!("TypeScript bindings are up to date.");
-                }
-                (Ok(_), Ok(_)) => {
-                    eprintln!(
-                        "TypeScript bindings are stale. Run `cargo run --bin export_bindings`."
-                    );
-                    std::process::exit(1);
-                }
+                (Ok(generated), Ok(committed)) => match first_difference(&generated, &committed) {
+                    None => println!("TypeScript bindings are up to date."),
+                    Some((line, generated, committed)) => {
+                        eprintln!(
+                                "TypeScript bindings are stale. Run `cargo run --bin export_bindings`.\n\
+                                 First difference at line {line}:\n  generated: {generated}\n  committed: {committed}"
+                            );
+                        std::process::exit(1);
+                    }
+                },
                 (Err(error), _) => {
                     eprintln!("Failed to read generated bindings: {error}");
                     std::process::exit(1);
@@ -400,5 +429,43 @@ fn main() {
             eprintln!("✗ Error generating bindings: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_difference;
+
+    /// The Windows CI failure: same bindings, checked out with CRLF endings.
+    #[test]
+    fn a_crlf_checkout_of_the_same_bindings_is_not_stale() {
+        let generated = "export type A = string\nexport type B = number\n";
+        let committed = "export type A = string\r\nexport type B = number\r\n";
+        assert_eq!(first_difference(generated, committed), None);
+    }
+
+    #[test]
+    fn a_real_difference_is_reported_with_its_line() {
+        let generated = "export type A = string\nexport type B = number\n";
+        let committed = "export type A = string\nexport type B = boolean\n";
+        assert_eq!(
+            first_difference(generated, committed),
+            Some((
+                2,
+                "export type B = number".to_string(),
+                "export type B = boolean".to_string()
+            ))
+        );
+    }
+
+    /// A command added in Rust but not yet regenerated shows up as extra lines.
+    #[test]
+    fn bindings_that_only_differ_in_length_are_stale() {
+        let generated = "export type A = string\nexport type B = number\n";
+        let committed = "export type A = string\n";
+        assert_eq!(
+            first_difference(generated, committed),
+            Some((2, "export type B = number".to_string(), String::new()))
+        );
     }
 }

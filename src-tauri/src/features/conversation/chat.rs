@@ -47,6 +47,7 @@ use tauri::Emitter;
 use tracing::{info, warn};
 
 mod cancellation;
+mod fetch_memory;
 mod persistence;
 mod prompting;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
@@ -571,9 +572,19 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     }
 
     let prompt_build_start = Instant::now();
+    // Fetched web pages are carried whole where the window allows, so they are
+    // no longer small enough to ignore: what they fill is not there for the
+    // user's own passages.
+    let web_context_tokens = retrieval
+        .web_context
+        .as_deref()
+        .map(|text| llm.count_tokens(text))
+        .unwrap_or(0);
     let budgeted_results = budget_search_results_for_prompt(
         &retrieval.search_response.results,
-        retrieval.available_for_rag,
+        retrieval
+            .available_for_rag
+            .saturating_sub(web_context_tokens),
         &llm,
     );
     if budgeted_results.len() < retrieval.search_response.results.len() {
@@ -767,6 +778,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             &mut retrieval_trace,
             tools_ref,
             generation_time_budget(search_flags),
+            std::mem::take(&mut retrieval.pages_read),
         )
         .await
         {

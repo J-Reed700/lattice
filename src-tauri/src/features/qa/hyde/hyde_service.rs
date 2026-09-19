@@ -171,30 +171,32 @@ impl HyDEService {
             .await
     }
 
-    /// Interpret a user query with optional conversation context.
+    /// Decide what kind of turn this is, without writing anything for it.
     ///
     /// When a query appears referential (e.g., "what do those do?") and recent
-    /// context is available, this upgrades classification to `Followup` so HyDE
-    /// can resolve references before retrieval.
-    pub async fn interpret_query_with_context(
+    /// context is available, this upgrades classification to `Followup`.
+    ///
+    /// Classification is rule-based and close to free; the expansion
+    /// [`Self::interpret_query_with_context`] goes on to generate is a full
+    /// model call. A caller that only needs the type — a turn searching the web,
+    /// where nothing reads the expansion — should stop here.
+    pub async fn classify_query_with_context(
         &self,
-        query: impl Into<String>,
+        query: &str,
         conversation_context: Option<&str>,
-    ) -> Result<HyDEInterpretation> {
-        let query = query.into();
-
+    ) -> Result<QueryType> {
         if query.trim().is_empty() {
             return Err(AppError::InvalidInput("Query cannot be empty".to_string()));
         }
 
         debug!("Classifying query: {}", query);
-        let mut query_type = self.classifier.classify(&query);
+        let mut query_type = self.classifier.classify(query);
         if let Some(context) = conversation_context {
             if matches!(query_type, QueryType::Question) {
-                let continuity_score = contextual_followup_score(&query, context);
+                let continuity_score = contextual_followup_score(query, context);
                 let classifier_followup = self
                     .generator
-                    .classify_followup_with_context(&query, context)
+                    .classify_followup_with_context(query, context)
                     .await
                     .unwrap_or(false);
                 if continuity_score >= 0.30 || classifier_followup {
@@ -208,6 +210,20 @@ impl HyDEService {
             }
         }
         info!("Query classified as: {}", query_type);
+        Ok(query_type)
+    }
+
+    /// Interpret a user query with optional conversation context: classify it,
+    /// then generate the retrieval-oriented expansion for that type.
+    pub async fn interpret_query_with_context(
+        &self,
+        query: impl Into<String>,
+        conversation_context: Option<&str>,
+    ) -> Result<HyDEInterpretation> {
+        let query = query.into();
+        let query_type = self
+            .classify_query_with_context(&query, conversation_context)
+            .await?;
 
         let interpretation = self
             .generator
@@ -396,13 +412,19 @@ mod tests {
     /// Mock LLM for testing
     struct MockLLM {
         response: String,
+        calls: std::sync::atomic::AtomicUsize,
     }
 
     impl MockLLM {
         fn new(response: impl Into<String>) -> Self {
             Self {
                 response: response.into(),
+                calls: std::sync::atomic::AtomicUsize::new(0),
             }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
 
@@ -414,6 +436,7 @@ mod tests {
             _context: &[String],
             _images: Option<Vec<String>>,
         ) -> Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.response.clone())
         }
 
@@ -442,6 +465,51 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+    }
+
+    /// A web-only turn needs the turn's type and nothing else. Working that out
+    /// must not cost a model call — the expansion it used to generate alongside
+    /// took the utility model over five seconds and nothing read it.
+    #[tokio::test]
+    async fn classifying_a_first_question_never_calls_the_model() {
+        let mock_llm = Arc::new(MockLLM::new("Should not be called"));
+        let service = HyDEService::new(mock_llm.clone());
+
+        let query_type = service
+            .classify_query_with_context(
+                "I need an in depth recap of seasons 1 and 2 of Silo",
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(query_type, QueryType::Question);
+        assert_eq!(mock_llm.calls(), 0);
+    }
+
+    /// The same question through the full interpretation does pay for the
+    /// expansion, which is what makes the split worth having.
+    #[tokio::test]
+    async fn interpreting_the_same_question_does_call_the_model() {
+        let mock_llm = Arc::new(MockLLM::new("An expansion about Silo."));
+        let service = HyDEService::new(mock_llm.clone());
+
+        let interpretation = service
+            .interpret_query("I need an in depth recap of seasons 1 and 2 of Silo")
+            .await
+            .unwrap();
+
+        assert!(interpretation.hyde_text.is_some());
+        assert!(mock_llm.calls() >= 1);
+    }
+
+    #[tokio::test]
+    async fn classifying_an_empty_query_is_an_error() {
+        let service = HyDEService::new(Arc::new(MockLLM::new("unused")));
+        assert!(service
+            .classify_query_with_context("   ", None)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
