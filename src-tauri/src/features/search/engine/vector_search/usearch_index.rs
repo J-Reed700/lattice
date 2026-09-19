@@ -46,9 +46,21 @@ const INITIAL_INDEX_CAPACITY: usize = 1_024;
 
 /// HNSW graph parameters. Recorded in the manifest, so retuning any of them
 /// rebuilds rather than reusing a graph built to a different shape.
-const HNSW_CONNECTIVITY: usize = 16;
-const HNSW_EXPANSION_ADD: usize = 128;
-const HNSW_EXPANSION_SEARCH: usize = 64;
+///
+/// Measured on the v3 retrieval fixture (1,145 Qwen3 vectors, 194 queries)
+/// against exact cosine: 16/128/64 lost the true nearest chunk on 13 queries
+/// (recall@10 0.953), because a templated corpus packs into tight clusters and
+/// a narrow walk never leaves the one it lands in. 32/256/256 lost none
+/// (recall@10 0.999) for about 0.3 ms more per query.
+const HNSW_CONNECTIVITY: usize = 32;
+const HNSW_EXPANSION_ADD: usize = 256;
+const HNSW_EXPANSION_SEARCH: usize = 256;
+
+/// Up to this many vectors a query is answered by an exact scan instead of the
+/// graph. A personal library is usually this small, the scan costs under a
+/// microsecond per vector, and it cannot miss; the graph is still built and
+/// saved, so crossing the line needs no rebuild.
+const EXACT_SEARCH_MAX_VECTORS: usize = 20_000;
 
 /// When to write the index to disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +154,11 @@ pub struct USearchVectorIndex {
     /// Full-precision vectors used to rescore over-fetched candidates.
     /// `Some` exactly when `compression.is_active()`.
     rescore: Option<RescoreVectorStore>,
+
+    /// Largest index a query scans exactly rather than walking the graph.
+    /// Always [`EXACT_SEARCH_MAX_VECTORS`] outside tests, which lower it to
+    /// reach the graph path without building twenty thousand vectors.
+    exact_search_max: usize,
 
     /// Path for persisting the index to disk
     index_path: Option<PathBuf>,
@@ -276,6 +293,7 @@ impl USearchVectorIndex {
             dimension,
             compression,
             rescore,
+            exact_search_max: EXACT_SEARCH_MAX_VECTORS,
             index_path,
             keymap_path,
             persistence: Mutex::new(()),
@@ -334,6 +352,65 @@ impl USearchVectorIndex {
             SavePolicy::Immediate => self.save_to_disk(),
             SavePolicy::Coalesced => Ok(()),
         }
+    }
+
+    /// The `count` stored vectors nearest to `query`, nearest first, as
+    /// parallel key and distance lists.
+    ///
+    /// A small index is scanned exactly; see [`EXACT_SEARCH_MAX_VECTORS`]. The
+    /// scan has no predicate, so a scoped query ranks every vector and keeps the
+    /// in-scope ones. Past that size the graph answers, and the scope runs as a
+    /// predicate inside the traversal: the filter costs a hash lookup per
+    /// visited node instead of a discarded candidate per hit. The predicate
+    /// sees only the USearch key, and it must not panic, because USearch calls
+    /// it back through a plain `extern "C"` trampoline that unwinding would
+    /// cross.
+    fn nearest(
+        &self,
+        state: &KeyState,
+        query: &[f32],
+        count: usize,
+        scope: Option<&HashSet<String>>,
+    ) -> Result<(Vec<u64>, Vec<f32>)> {
+        let in_scope = |key: u64, scope: &HashSet<String>| {
+            state
+                .key_to_id
+                .get(&key)
+                .map(|id| {
+                    let doc_id = state
+                        .metadata
+                        .get(id)
+                        .map_or(id.as_str(), |m| m.document_id.as_str());
+                    scope.contains(doc_id)
+                })
+                .unwrap_or(false)
+        };
+        let failed = |e| AppError::InternalError(format!("USearch search failed: {}", e));
+
+        let index_size = self.index.size();
+        if index_size <= self.exact_search_max {
+            let Some(scope) = scope else {
+                let matches = self.index.exact_search(query, count).map_err(failed)?;
+                return Ok((matches.keys, matches.distances));
+            };
+            let matches = self.index.exact_search(query, index_size).map_err(failed)?;
+            return Ok(matches
+                .keys
+                .into_iter()
+                .zip(matches.distances)
+                .filter(|(key, _)| in_scope(*key, scope))
+                .take(count)
+                .unzip());
+        }
+
+        let matches = match scope {
+            None => self.index.search(query, count),
+            Some(scope) => self
+                .index
+                .filtered_search(query, count, |key| in_scope(key, scope)),
+        }
+        .map_err(failed)?;
+        Ok((matches.keys, matches.distances))
     }
 
     /// Candidates to ask USearch for when `top_k` results are wanted.
@@ -861,38 +938,12 @@ impl VectorSearchPort for USearchVectorIndex {
         // a real session cost nine passes over 29,766 vectors to return the
         // empty list its first pass had already established.
         loop {
-            let matches = match allowed_document_ids {
-                None => self
-                    .index
-                    .search(projected_query.as_ref(), candidate_k)
-                    .map_err(|e| {
-                        AppError::InternalError(format!("USearch search failed: {}", e))
-                    })?,
-                // The predicate runs inside the graph traversal, so the filter
-                // costs a hash lookup per visited node instead of a discarded
-                // candidate per hit. It sees only the USearch key, so it walks
-                // the same two maps the result loop below does. It must not
-                // panic: USearch calls it back through a plain `extern "C"`
-                // trampoline, which unwinding would cross.
-                Some(scope) => self
-                    .index
-                    .filtered_search(projected_query.as_ref(), candidate_k, |key| {
-                        state
-                            .key_to_id
-                            .get(&key)
-                            .map(|id| {
-                                let doc_id = state
-                                    .metadata
-                                    .get(id)
-                                    .map_or(id.as_str(), |m| m.document_id.as_str());
-                                scope.contains(doc_id)
-                            })
-                            .unwrap_or(false)
-                    })
-                    .map_err(|e| {
-                        AppError::InternalError(format!("USearch filtered search failed: {}", e))
-                    })?,
-            };
+            let (keys, distances) = self.nearest(
+                &state,
+                projected_query.as_ref(),
+                candidate_k,
+                allowed_document_ids,
+            )?;
 
             let mut results = Vec::new();
             // The best similarity any candidate reached. A second pass is
@@ -901,7 +952,7 @@ impl VectorSearchPort for USearchVectorIndex {
             // nearest first, so a wider window can only add vectors that score
             // lower than the ones already rejected.
             let mut best_seen: Option<f32> = None;
-            for (&key, &distance) in matches.keys.iter().zip(matches.distances.iter()) {
+            for (&key, &distance) in keys.iter().zip(distances.iter()) {
                 let Some(id) = state.key_to_id.get(&key) else {
                     continue;
                 };
@@ -1098,15 +1149,12 @@ impl SearchServiceTrait for USearchVectorIndex {
         let candidate_k = self.candidate_window(top_k, self.index.size());
         let projected_query = self.compression.project(query_embedding)?;
 
-        let matches = self
-            .index
-            .search(projected_query.as_ref(), candidate_k)
-            .map_err(|e| AppError::InternalError(format!("USearch search failed: {}", e)))?;
+        let (keys, distances) =
+            self.nearest(&state, projected_query.as_ref(), candidate_k, None)?;
 
-        let mut results: Vec<SearchResult> = matches
-            .keys
+        let mut results: Vec<SearchResult> = keys
             .iter()
-            .zip(matches.distances.iter())
+            .zip(distances.iter())
             .enumerate()
             .filter_map(|(idx, (&key, &distance))| {
                 let similarity = self.candidate_similarity(key, query_embedding, distance);
@@ -1973,10 +2021,22 @@ mod tests {
     /// yields a full `top_k`.
     #[test]
     fn a_scoped_search_returns_only_allowed_documents_and_still_fills_top_k() {
+        scoped_search_fills_top_k_with_the_best_in_scope_chunks(EXACT_SEARCH_MAX_VECTORS);
+    }
+
+    /// The same contract past the exact-scan size, where the scope runs as a
+    /// predicate inside the graph traversal instead.
+    #[test]
+    fn a_scoped_graph_search_returns_only_allowed_documents_and_still_fills_top_k() {
+        scoped_search_fills_top_k_with_the_best_in_scope_chunks(0);
+    }
+
+    fn scoped_search_fills_top_k_with_the_best_in_scope_chunks(exact_search_max: usize) {
         const DIM: usize = 16;
         const TOP_K: usize = 10;
         let corpus = widening_corpus(DIM, 512);
-        let index = widening_index(DIM, &corpus);
+        let mut index = widening_index(DIM, &corpus);
+        index.exact_search_max = exact_search_max;
         let query = synthetic_vector(2_024, DIM, 0.8);
 
         // Every fifth document, so the scope is both large enough to fill
@@ -2065,8 +2125,11 @@ mod tests {
             .collect()
     }
 
+    /// Forced onto the graph path: these tests pin the predicate and the
+    /// exhaustive retry, which an exact scan never needs.
     fn widening_index(dim: usize, corpus: &[(String, Vec<f32>)]) -> USearchVectorIndex {
-        let index = USearchVectorIndex::new(dim, None).unwrap();
+        let mut index = USearchVectorIndex::new(dim, None).unwrap();
+        index.exact_search_max = 0;
         for (i, (id, vector)) in corpus.iter().enumerate() {
             index
                 .add_embedding_with_content(
