@@ -5711,7 +5711,9 @@ wikiSearchMaxResults: number; wikiSnippetMaxChars: number; wikiContextLimit: num
  */
 webFetchPageCount: number;
 /**
- * Per-page character budget for fetched page text in the prompt.
+ * Ceiling on any one fetched page's text in the prompt. The room a page
+ * actually gets is its share of the turn's page budget, which is derived
+ * from the model's context window; this only caps that share.
  */
 webPageMaxChars: number;
 /**

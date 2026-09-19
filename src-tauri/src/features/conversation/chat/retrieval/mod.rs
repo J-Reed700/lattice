@@ -24,6 +24,7 @@ mod followup_context;
 mod kb_retrieval;
 mod keyword;
 mod overlap;
+mod page_budget;
 mod pipeline;
 mod policy;
 mod rerank;
@@ -161,6 +162,10 @@ pub(super) struct RetrievalPipelineOutcome {
     /// The post-rerank sufficiency verdict for the turn, after any corrective
     /// retry. `None` when knowledge-base retrieval did not run.
     pub(super) sufficiency: Option<SufficiencyVerdict>,
+    /// Every web page retrieval tried to open before the model ran. The tool
+    /// loop starts from this, so it never re-fetches a page the prompt carries
+    /// or retries one that is already known to be blocked.
+    pub(super) pages_read: super::fetch_memory::FetchMemory,
 }
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
@@ -588,6 +593,8 @@ pub(super) fn build_web_source_citations(
 fn infer_category(path: &str) -> String {
     infer_category_impl(path)
 }
+
+pub(in crate::features::conversation::chat) use self::tool_format::fetched_page_text_room;
 
 pub(super) fn format_tool_result(
     tool_name: &str,

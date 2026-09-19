@@ -1,7 +1,7 @@
 use crate::features::function_calling::domain::FunctionResult;
 use crate::features::function_calling::dto::{
-    CustomQueryToolOutput, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput,
-    WikiSummaryOutput,
+    CustomQueryToolOutput, FetchUrlContentOutput, GetDocumentOutput, SemanticSearchOutput,
+    WebSearchOutput, WikiSearchOutput, WikiSummaryOutput,
 };
 use crate::features::settings::dto::ToolOutputSettingsDto;
 use crate::shared::text_utils::{build_excerpt, safe_truncate};
@@ -162,6 +162,30 @@ pub(super) fn format_tool_result(
                 return safe_truncate(&rendered, max_chars);
             }
         }
+        "fetch_url_content" => {
+            if let Ok(page) = serde_json::from_value::<FetchUrlContentOutput>(data.clone()) {
+                return render_fetched_page(&page, max_chars);
+            }
+        }
+        "web_search" => {
+            if let Ok(output) = serde_json::from_value::<WebSearchOutput>(data.clone()) {
+                let mut rendered = format!(
+                    "Web results for \"{}\" ({}):",
+                    output.query,
+                    output.results.len()
+                );
+                for (index, result) in output.results.iter().enumerate() {
+                    rendered.push_str(&format!(
+                        "\n\n[{}] {}\nURL: {}\n{}",
+                        index + 1,
+                        result.title,
+                        result.url,
+                        safe_truncate(result.snippet.trim(), excerpt_chars)
+                    ));
+                }
+                return safe_truncate(&rendered, max_chars);
+            }
+        }
         _ => {}
     }
 
@@ -178,4 +202,114 @@ pub(super) fn format_tool_result(
     let fallback = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
     let rendered = templates.default_template.replace("{json}", &fallback);
     safe_truncate(&rendered, max_chars)
+}
+
+/// Room kept for a fetched page's title, URL and the line saying how much of
+/// it is shown, so that the text is what gets cut and never the framing.
+const FETCHED_PAGE_FRAMING_CHARS: usize = 400;
+
+/// How many characters of `page`'s text fit a result of `max_chars`.
+///
+/// Shared with the tool loop, which records this figure so that a later request
+/// for the same page can be given exactly the part that was left out.
+pub(in crate::features::conversation::chat) fn fetched_page_text_room(max_chars: usize) -> usize {
+    max_chars.saturating_sub(FETCHED_PAGE_FRAMING_CHARS)
+}
+
+/// A fetched page as prose.
+///
+/// It used to reach the model through the generic fallback: the whole output
+/// struct as one line of JSON, every quotation mark and line break in the
+/// article escaped, with the fetch timing and content type along for the ride.
+/// That spends tokens on backslashes and makes an article harder to read than
+/// it was on the page.
+fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize) -> String {
+    let content = page.content.trim();
+    let room = fetched_page_text_room(max_chars);
+    let total = content.chars().count();
+    let extent = if total <= room {
+        format!(
+            "{} words — complete; this is the whole page",
+            page.word_count
+        )
+    } else {
+        format!(
+            "{} words; the first {room} characters are shown — request this URL again for the rest",
+            page.word_count
+        )
+    };
+    format!(
+        "{}\nURL: {}\n({extent})\n\n{}",
+        page.title.as_deref().unwrap_or("Untitled page"),
+        page.url,
+        safe_truncate(content, room)
+    )
+}
+
+#[cfg(test)]
+mod fetched_page_tests {
+    use super::*;
+    use crate::features::function_calling::domain::FunctionResult;
+
+    fn page(content: &str) -> FunctionResult {
+        FunctionResult::success(
+            serde_json::to_value(FetchUrlContentOutput {
+                url: "https://example.test/recap".to_string(),
+                title: Some("Silo Season 2, Explained".to_string()),
+                content: content.to_string(),
+                content_truncated: false,
+                word_count: content.split_whitespace().count(),
+                fetch_time_ms: 137.67,
+                content_type: Some("text/html".to_string()),
+            })
+            .unwrap_or_default(),
+        )
+    }
+
+    fn settings(max_chars: u32) -> ToolOutputSettingsDto {
+        ToolOutputSettingsDto {
+            max_chars,
+            ..ToolOutputSettingsDto::default()
+        }
+    }
+
+    /// As JSON the article's own punctuation came through escaped.
+    #[test]
+    fn a_fetched_page_reads_as_prose_not_as_escaped_json() {
+        let article = "Bernard said \"better tape\".\nThat was the mistake.";
+        let rendered =
+            format_tool_result("fetch_url_content", &page(article), &[], &settings(50_000));
+
+        assert!(
+            rendered.contains("Bernard said \"better tape\".\nThat was the mistake."),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("\\\""), "{rendered}");
+        assert!(!rendered.contains("fetch_time_ms"), "{rendered}");
+        assert!(rendered.contains("Silo Season 2, Explained"), "{rendered}");
+        assert!(
+            rendered.contains("https://example.test/recap"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("complete"), "{rendered}");
+    }
+
+    #[test]
+    fn a_page_longer_than_its_room_says_how_much_is_shown() {
+        let article = "word ".repeat(2_000);
+        let rendered =
+            format_tool_result("fetch_url_content", &page(&article), &[], &settings(3_000));
+
+        let room = fetched_page_text_room(3_000);
+        assert!(
+            rendered.contains(&format!("first {room} characters")),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("complete"), "{rendered}");
+        assert!(
+            rendered.chars().count() <= 3_000,
+            "got {}",
+            rendered.chars().count()
+        );
+    }
 }

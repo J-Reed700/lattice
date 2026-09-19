@@ -40,7 +40,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
         webSearchMaxResults: 5,
         webSnippetMaxChars: 500,
         webFetchPageCount: 3,
-        webPageMaxChars: 6000,
+        webPageMaxChars: 50000,
         webPageFetchTimeoutSecs: 12,
         deepResearchDepth: 3,
         deepResearchBranchQueries: 3,

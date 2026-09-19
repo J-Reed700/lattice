@@ -204,7 +204,9 @@ pub struct RetrievalTuningSettingsDto {
     /// 0 disables page reading and falls back to snippets alone.
     #[serde(default = "default_web_fetch_page_count")]
     pub web_fetch_page_count: u32,
-    /// Per-page character budget for fetched page text in the prompt.
+    /// Ceiling on any one fetched page's text in the prompt. The room a page
+    /// actually gets is its share of the turn's page budget, which is derived
+    /// from the model's context window; this only caps that share.
     #[serde(default = "default_web_page_max_chars")]
     pub web_page_max_chars: u32,
     /// Seconds any one page fetch may take before it is abandoned and the
@@ -834,8 +836,11 @@ fn default_web_fetch_page_count() -> u32 {
     3
 }
 
+/// The fetcher's own ceiling, so by default a page is only ever shortened by
+/// the turn's page budget — which knows the model's context window — and not
+/// by a constant that does not.
 fn default_web_page_max_chars() -> u32 {
-    6000
+    50_000
 }
 
 fn default_web_page_fetch_timeout_secs() -> u32 {
