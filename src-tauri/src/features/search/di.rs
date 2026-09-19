@@ -19,7 +19,10 @@ use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
 use crate::features::search::engine::text_search::SqliteTextSearch;
-use crate::features::search::engine::vector_search::{USearchVectorIndex, VectorIndexCompression};
+use crate::features::search::engine::vector_search::persistence::open_or_rebuild;
+use crate::features::search::engine::vector_search::{
+    IndexPersistence, USearchVectorIndex, VectorIndexCompression,
+};
 use crate::features::search::enrichment_service::SearchEnrichmentService;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
 use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
@@ -44,6 +47,11 @@ pub struct SearchDi {
     // Ports (exported so IndexingModule can write to the same USearch index)
     pub vector_search: Arc<dyn VectorSearchPort>,
     pub document_repo: Arc<dyn DocumentRepository>,
+
+    /// Writes the index and its manifest. `None` until an embedding model is
+    /// active, because there is no generation to stamp a manifest with before
+    /// then. Held by the composition root so shutdown can flush.
+    pub index_persistence: Option<Arc<IndexPersistence>>,
 }
 
 pub async fn build(
@@ -151,13 +159,35 @@ pub async fn build_with_compression(
     })
     .await
     .map_err(|e| AppError::InternalError(format!("Vector index open task failed: {e}")))??;
-    let usearch_index = Arc::new(usearch_index);
+    // Indexing publishes into this index a document at a time; saving the
+    // whole corpus after each one is what made indexing a folder quadratic.
+    let usearch_index = Arc::new(usearch_index.with_coalesced_saves());
 
-    // SQLite is authoritative: rebuilding also removes stale keys after interrupted writes.
+    // SQLite stays authoritative, but agreeing with it is now something the
+    // manifest can establish without reading every vector back. A rebuild is
+    // still what recovers from a crash between an SQLite commit and a save —
+    // it just no longer happens on launches where nothing changed.
     let mut coverage: Option<(usize, usize)> = None;
+    let mut index_persistence: Option<Arc<IndexPersistence>> = None;
     if let Some(identity) = &identity {
-        let mut rows =
-            crate::features::embedding::generation::restore(&db_pool, identity, dimension).await?;
+        let restore = || {
+            let pool = db_pool.clone();
+            let identity = identity.clone();
+            async move {
+                crate::features::embedding::generation::restore(&pool, &identity, dimension).await
+            }
+        };
+        open_or_rebuild(
+            &usearch_index,
+            &db_pool,
+            &usearch_index_path,
+            identity,
+            &generation,
+            dimension,
+            restore,
+        )
+        .await?;
+
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
             .fetch_one(&db_pool)
             .await?;
@@ -168,7 +198,7 @@ pub async fn build_with_compression(
         // pass, and the index would then mix the two. Late chunking therefore
         // starts from whatever that generation already holds and fills in as
         // documents are indexed.
-        if rows.len() < total as usize && !strategy.is_late_chunking() {
+        if usearch_index.count() < total as usize && !strategy.is_late_chunking() {
             // `identity` is only set for a local model with a recorded
             // artifact identity, so this always matches here.
             let stored = active.as_ref().and_then(|m| {
@@ -186,31 +216,38 @@ pub async fn build_with_compression(
                     AppError::InternalError(format!("Embedding model load task failed: {e}"))
                 })??;
                 crate::features::embedding::generation::prepare(&db_pool, &model).await?;
-                rows =
-                    crate::features::embedding::generation::restore(&db_pool, identity, dimension)
-                        .await?;
+                // The backfill moved SQLite, so this pass always rebuilds.
+                open_or_rebuild(
+                    &usearch_index,
+                    &db_pool,
+                    &usearch_index_path,
+                    identity,
+                    &generation,
+                    dimension,
+                    restore,
+                )
+                .await?;
             }
-        } else if rows.len() < total as usize {
+        } else if usearch_index.count() < total as usize {
             tracing::info!(
-                present = rows.len(),
+                present = usearch_index.count(),
                 total,
                 "Late chunking is on and this generation is incomplete; the missing chunks get \
                  their vectors when their documents are next indexed"
             );
         }
-        let expected = rows.len();
-        coverage = Some((expected, usize::try_from(total).unwrap_or(0)));
-        let index = Arc::clone(&usearch_index);
-        let added = tokio::task::spawn_blocking(move || index.rebuild_from_embeddings(rows))
-            .await
-            .map_err(|e| {
-                AppError::InternalError(format!("Vector index rebuild task failed: {e}"))
-            })??;
-        if added != expected {
-            return Err(AppError::InvalidState(
-                "Incomplete vector index rebuild".into(),
-            ));
-        }
+        coverage = Some((usearch_index.count(), usize::try_from(total).unwrap_or(0)));
+
+        let persistence = Arc::new(IndexPersistence::new(
+            Arc::clone(&usearch_index),
+            db_pool.clone(),
+            identity.clone(),
+            generation.clone(),
+            dimension,
+            usearch_index_path.clone(),
+        ));
+        tokio::spawn(Arc::clone(&persistence).run());
+        index_persistence = Some(persistence);
     }
 
     if let Some(marker) = reembed_marker.as_deref().filter(|m| m.exists()) {
@@ -297,6 +334,7 @@ pub async fn build_with_compression(
         search_enrichment_service,
         vector_search,
         document_repo,
+        index_persistence,
     })
 }
 

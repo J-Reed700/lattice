@@ -107,6 +107,9 @@ pub fn wipe_index_files(index_path: &Path) -> Result<()> {
             .unwrap_or_else(|| "index".to_string())
     ));
     let vectors_path = vectors_path_for(index_path);
+    // A manifest that outlived its index would vouch for a file that no longer
+    // exists, and the next launch would trust it.
+    let manifest_path = super::manifest::manifest_path_for(index_path);
 
     for p in [
         index_path,
@@ -114,6 +117,7 @@ pub fn wipe_index_files(index_path: &Path) -> Result<()> {
         &keymap_path,
         &stem_keymap_path,
         &vectors_path,
+        &manifest_path,
     ] {
         if p.exists() {
             if let Err(e) = std::fs::remove_file(p) {
