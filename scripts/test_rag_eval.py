@@ -157,6 +157,48 @@ class EvaluationTests(unittest.TestCase):
             score(self.dataset, self.rows, 2,
                   abstain_threshold=.02, abstain_field='sufficient')
 
+    def test_answer_spans_are_optional_and_validated_against_the_document(self):
+        self.assertIsNone(score(self.dataset, self.rows, 2)['passage_recall_at_k'])
+
+        query = self.dataset['queries'][0]
+        query['answer_spans'] = {'a': [[0, 5]]}
+        validate_dataset(self.dataset)
+
+        for bad in [{'c': [[0, 5]]},           # labelled irrelevant
+                    {'a': [[0, 99]]},          # past the end of the text
+                    {'a': [[3, 3]]},           # empty
+                    {'a': [[0, 5, 9]]},        # not a pair
+                    {'a': []},                 # no spans at all
+                    {}]:                       # no documents at all
+            query['answer_spans'] = bad
+            with self.assertRaises(ValueError):
+                validate_dataset(self.dataset)
+
+    def test_passage_recall_needs_the_runs_chunk_spans(self):
+        self.dataset['queries'][0]['answer_spans'] = {'a': [[0, 4]]}
+        # A document-level run says nothing about passages, so the metric stays null.
+        self.assertIsNone(score(self.dataset, self.rows, 2)['passage_recall_at_k'])
+
+        self.rows[0].update(chunk_ranked_ids=['a#0', 'b#0'],
+                            chunk_spans={'a#0': [0, 5], 'b#0': [0, 4]})
+        self.assertEqual(score(self.dataset, self.rows, 2)['passage_recall_at_k'], 1)
+        self.assertEqual(score(self.dataset, self.rows, 2)['passage_queries'], 1)
+
+        # A chunk that grazes the passage did not retrieve it.
+        self.rows[0]['chunk_spans'] = {'a#0': [3, 5], 'b#0': [0, 4]}
+        self.assertEqual(score(self.dataset, self.rows, 2)['passage_recall_at_k'], 0)
+
+        # Nor did a chunk that falls outside the scoring cutoff.
+        self.rows[0].update(chunk_ranked_ids=['b#0', 'b#1', 'a#0'],
+                            chunk_spans={'a#0': [0, 5], 'b#0': [0, 4], 'b#1': [0, 4]})
+        self.assertEqual(score(self.dataset, self.rows, 2)['passage_recall_at_k'], 0)
+
+    def test_malformed_chunk_spans_fail_rather_than_score_zero(self):
+        self.dataset['queries'][0]['answer_spans'] = {'a': [[0, 4]]}
+        self.rows[0].update(chunk_ranked_ids=['a#0'], chunk_spans={'a#0': [5, 5]})
+        with self.assertRaisesRegex(ValueError, 'chunk span'):
+            score(self.dataset, self.rows, 2)
+
     def test_abstention_predictor_is_null_when_the_metric_is_withheld(self):
         result = score(self.dataset, self.rows, 2)
         self.assertIsNone(result['abstention_predictor'])
