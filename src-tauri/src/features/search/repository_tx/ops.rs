@@ -86,6 +86,9 @@ pub async fn count_searchable_chunks(conn: &mut SqliteConnection) -> Result<i64,
 pub async fn optimize_index(conn: &mut SqliteConnection) -> Result<(), AppError> {
     query_with_heavy_timeout(|| async {
         sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('optimize')")
             .execute(conn)
             .await
     })
@@ -100,13 +103,27 @@ pub async fn optimize_index(conn: &mut SqliteConnection) -> Result<(), AppError>
 }
 
 pub async fn rebuild_index(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    // Rebuild both chunk indexes from the same expression the insert trigger
+    // uses. Indexing the raw `content` here instead would quietly drop every
+    // chunk's `[Document: … | Section: …]` prefix from the lexical branch,
+    // which is exactly the text a title or section query matches on.
     query_with_heavy_timeout(|| async {
         let mut tx = conn.begin().await?;
         sqlx::query("DELETE FROM chunks_fts")
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM chunks_trigram")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
-            "INSERT INTO chunks_fts(chunk_id, content) SELECT id, content FROM text_chunks",
+            "INSERT INTO chunks_fts(chunk_id, content) \
+             SELECT id, COALESCE(contextualized_content, content) FROM text_chunks",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO chunks_trigram(chunk_id, content) \
+             SELECT id, COALESCE(contextualized_content, content) FROM text_chunks",
         )
         .execute(&mut *tx)
         .await?;
@@ -143,12 +160,43 @@ mod tests {
             .execute(&mut *conn)
             .await
             .unwrap();
+        sqlx::query("DELETE FROM chunks_trigram")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
         assert!(search_bm25(&mut conn, "patent", 10)
             .await
             .unwrap()
             .is_empty());
         rebuild_index(&mut conn).await.unwrap();
         optimize_index(&mut conn).await.unwrap();
+        assert_eq!(search_bm25(&mut conn, "patent", 10).await.unwrap().len(), 1);
+        // The rebuild has to restore the CJK index too, or a Japanese query
+        // stops working after any maintenance run.
+        let trigram_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks_trigram")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(trigram_rows, 1);
+    }
+
+    /// Both indexes must hold the contextualized text, which is what the
+    /// insert trigger writes and what the search services rank.
+    #[tokio::test]
+    async fn rebuild_indexes_the_contextualized_text() {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) VALUES ('doc', '/manual.pdf', 'manual.pdf', 1, CURRENT_TIMESTAMP, 'checksum')")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, contextualized_content, chunk_index) \
+             VALUES ('chunk', 'doc', 'examination', '[Document: Patent manual] examination', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        rebuild_index(&mut conn).await.unwrap();
         assert_eq!(search_bm25(&mut conn, "patent", 10).await.unwrap().len(), 1);
     }
 }

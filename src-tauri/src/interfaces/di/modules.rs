@@ -348,6 +348,14 @@ impl SearchModule {
         &self.search.vector_search
     }
 
+    /// Writes the vector index and its manifest. `None` before a model is
+    /// active. Shutdown uses it so the coalesced saves are not lost.
+    pub fn index_persistence(
+        &self,
+    ) -> Option<&Arc<crate::features::search::engine::vector_search::IndexPersistence>> {
+        self.search.index_persistence.as_ref()
+    }
+
     pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
         &self.search.document_repo
     }

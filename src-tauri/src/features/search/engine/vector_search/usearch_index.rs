@@ -18,22 +18,23 @@
 //! and TOCTOU races.
 
 use super::compression::{VectorIndexCompression, VectorQuantization};
+use super::manifest::IndexConfig;
 use super::rescore_store::RescoreVectorStore;
 use crate::application::ports::vector_search_port::VectorIndexEntry;
 use crate::application::ports::VectorSearchPort;
 use crate::features::search::dto::SearchResultPortDto;
 use crate::features::search::engine::service::SearchResult;
-use crate::features::search::engine::vector_ops::cosine_similarity_naive;
+use crate::features::search::engine::vector_ops::cosine_similarity_simd;
 use crate::features::search::SearchServiceTrait;
 use crate::shared::error::AppError;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
-use sha2::{Digest, Sha256};
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
 /// Capacity reserved the first time a vector is inserted into an empty index.
@@ -43,13 +44,75 @@ use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 /// (or a unit test) doesn't pay for 10k slots it will never use.
 const INITIAL_INDEX_CAPACITY: usize = 1_024;
 
+/// HNSW graph parameters. Recorded in the manifest, so retuning any of them
+/// rebuilds rather than reusing a graph built to a different shape.
+///
+/// Measured on the v3 retrieval fixture (1,145 Qwen3 vectors, 194 queries)
+/// against exact cosine: 16/128/64 lost the true nearest chunk on 13 queries
+/// (recall@10 0.953), because a templated corpus packs into tight clusters and
+/// a narrow walk never leaves the one it lands in. 32/256/256 lost none
+/// (recall@10 0.999) for about 0.3 ms more per query.
+const HNSW_CONNECTIVITY: usize = 32;
+const HNSW_EXPANSION_ADD: usize = 256;
+const HNSW_EXPANSION_SEARCH: usize = 256;
+
+/// Up to this many vectors a query is answered by an exact scan instead of the
+/// graph. A personal library is usually this small, the scan costs under a
+/// microsecond per vector, and it cannot miss; the graph is still built and
+/// saved, so crossing the line needs no rebuild.
+const EXACT_SEARCH_MAX_VECTORS: usize = 20_000;
+
+/// When to write the index to disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavePolicy {
+    /// Write the whole index after every mutation. Correct, and fine for an
+    /// index nobody bulk-loads, but indexing a thousand-document folder this
+    /// way is a thousand full-corpus writes.
+    Immediate,
+    /// Mark the index dirty and let a flusher choose the moment — when a bulk
+    /// run goes quiet, at a periodic checkpoint, and on shutdown. Safe because
+    /// a launch that finds SQLite ahead of the index rebuilds from SQLite.
+    Coalesced,
+}
+
 /// Metadata stored alongside each vector for search result enrichment.
-/// Kept in a side map (not in USearch) so search results include content.
+///
+/// `content` is the one field that is *not* persisted with the key map: it is
+/// a second copy of `text_chunks.content`, and writing every chunk's text back
+/// to disk on every save is what made saving cost the whole corpus. It is
+/// filled in by whoever supplies the vector (indexing, or the startup rebuild)
+/// and re-filled from SQLite by `hydrate_content` when an index is loaded
+/// without a rebuild.
 #[derive(Clone, Debug)]
 struct VectorMeta {
     chunk_id: String,
     document_id: String,
     content: String,
+}
+
+/// Whether the in-memory index has changes the file on disk does not.
+#[derive(Default)]
+struct DirtyState {
+    /// When the index first moved ahead of the file, so a long bulk run can
+    /// still be checkpointed instead of never going quiet.
+    dirty_since: Option<Instant>,
+    /// When it last moved, so a run that has finished can be recognised.
+    last_mutation: Option<Instant>,
+}
+
+impl DirtyState {
+    fn mark(&mut self) {
+        let now = Instant::now();
+        self.dirty_since.get_or_insert(now);
+        self.last_mutation = Some(now);
+    }
+}
+
+/// How long the index has owed a save, and how long it has been quiet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyFor {
+    pub since_first_mutation: std::time::Duration,
+    pub since_last_mutation: std::time::Duration,
 }
 
 /// Consolidated mutable state protected by a single `RwLock`.
@@ -64,64 +127,6 @@ struct KeyState {
     key_to_id: HashMap<u64, String>,
     /// Metadata map: string ID → chunk metadata
     metadata: HashMap<String, VectorMeta>,
-    /// Fingerprint of each vector as it was handed in, by string ID. Kept per
-    /// entry so that removing one can take exactly its share back out of
-    /// `fingerprint_sum`.
-    fingerprints: HashMap<String, u64>,
-    /// Wrapping sum of `fingerprints`' values. See [`IndexFingerprint`].
-    fingerprint_sum: u64,
-}
-
-/// What an index holds, in a form that can be compared without reading it back.
-///
-/// Every vector contributes a hash of its ID and its full-precision values, and
-/// the contributions are combined by wrapping addition. Addition is commutative
-/// and invertible, so the total does not depend on insertion order, can be kept
-/// current as vectors come and go, and comes out the same for the rows SQLite
-/// returns in whatever order it returns them.
-///
-/// This exists so that start-up can tell "the index on disk is exactly what the
-/// database holds" from "something was interrupted" without rebuilding to find
-/// out. The rebuild is a single-threaded HNSW construction — about a second per
-/// thousand vectors — and it used to run on every launch, after a successful
-/// load, with the rest of the app waiting behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct IndexFingerprint {
-    pub count: usize,
-    pub sum: u64,
-}
-
-impl IndexFingerprint {
-    /// The fingerprint an index would have if it held exactly these vectors.
-    pub fn of_rows<'a>(rows: impl IntoIterator<Item = (&'a str, &'a [f32])>) -> Self {
-        let mut fingerprint = Self::default();
-        for (id, vector) in rows {
-            fingerprint.count += 1;
-            fingerprint.sum = fingerprint.sum.wrapping_add(vector_fingerprint(id, vector));
-        }
-        fingerprint
-    }
-}
-
-/// Hash of one vector under its ID. SHA-256 rather than the standard library's
-/// hasher because this is written to disk and compared across releases, and
-/// `DefaultHasher` promises no stability between them.
-fn vector_fingerprint(id: &str, vector: &[f32]) -> u64 {
-    let mut bytes = Vec::with_capacity(std::mem::size_of_val(vector));
-    for value in vector {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    let mut hasher = Sha256::new();
-    // Length-prefixed, so ("ab", …) and ("a", b…) can never hash alike.
-    hasher.update((id.len() as u64).to_le_bytes());
-    hasher.update(id.as_bytes());
-    hasher.update(&bytes);
-    let digest = hasher.finalize();
-    let mut head = [0u8; 8];
-    for (slot, byte) in head.iter_mut().zip(digest.iter()) {
-        *slot = *byte;
-    }
-    u64::from_le_bytes(head)
 }
 
 /// USearch-backed vector index implementing both `VectorSearchPort` (application layer)
@@ -150,6 +155,11 @@ pub struct USearchVectorIndex {
     /// `Some` exactly when `compression.is_active()`.
     rescore: Option<RescoreVectorStore>,
 
+    /// Largest index a query scans exactly rather than walking the graph.
+    /// Always [`EXACT_SEARCH_MAX_VECTORS`] outside tests, which lower it to
+    /// reach the graph path without building twenty thousand vectors.
+    exact_search_max: usize,
+
     /// Path for persisting the index to disk
     index_path: Option<PathBuf>,
 
@@ -157,26 +167,61 @@ pub struct USearchVectorIndex {
     keymap_path: Option<PathBuf>,
     /// Serialize disk snapshots (including their shared temporary filename).
     persistence: Mutex<()>,
+    /// When mutations reach the disk.
+    save_policy: SavePolicy,
+    /// Tracks whether a save is owed, and how long the index has been quiet.
+    dirty: Mutex<DirtyState>,
 }
 
 /// Serializable key map for persistence alongside the USearch index file.
+///
+/// Deliberately still JSON. Once the chunk text is gone an entry is a handful
+/// of short strings, so parsing it is no longer what startup waits on — the
+/// content hydration query is — and a format anyone can open in a text editor
+/// is worth more than the milliseconds a binary encoding would save.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeyMapData {
     id_to_key: HashMap<String, u64>,
     next_key: u64,
     metadata: HashMap<String, SerializableMeta>,
-    /// Absent from a key map written before fingerprints existed. Such an index
-    /// cannot vouch for its contents, so start-up rebuilds it once and the
-    /// rebuilt index can.
-    #[serde(default)]
-    fingerprints: HashMap<String, u64>,
 }
 
+/// The persisted half of [`VectorMeta`]. Chunk text is deliberately absent:
+/// SQLite already holds it.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SerializableMeta {
     chunk_id: String,
     document_id: String,
-    content: String,
+}
+
+/// Where a file is staged before it replaces its final name.
+///
+/// Deterministic rather than randomized, so a crash leaves at most one stale
+/// temporary per file and the next open can clear it by name.
+fn temp_path_for(path: &Path) -> PathBuf {
+    let mut p = path.as_os_str().to_owned();
+    p.push(".tmp");
+    PathBuf::from(p)
+}
+
+/// Write `bytes` so that readers see either the previous file or the whole new
+/// one, never a prefix of it.
+pub(super) fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            AppError::FileStorage(format!(
+                "Failed to create directory for {}: {e}",
+                path.display()
+            ))
+        })?;
+    }
+    let temp = temp_path_for(path);
+    std::fs::write(&temp, bytes)
+        .map_err(|e| AppError::FileStorage(format!("Failed to write {}: {e}", temp.display())))?;
+    std::fs::rename(&temp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        AppError::FileStorage(format!("Failed to replace {}: {e}", path.display()))
+    })
 }
 
 /// USearch scalar kind for a compression configuration.
@@ -212,9 +257,9 @@ impl USearchVectorIndex {
             dimensions: compression.stored_dimension(dimension),
             metric: MetricKind::Cos,
             quantization: scalar_kind_for(&compression),
-            connectivity: 16,
-            expansion_add: 128,
-            expansion_search: 64,
+            connectivity: HNSW_CONNECTIVITY,
+            expansion_add: HNSW_EXPANSION_ADD,
+            expansion_search: HNSW_EXPANSION_SEARCH,
             multi: false,
         };
 
@@ -243,22 +288,129 @@ impl USearchVectorIndex {
                 id_to_key: HashMap::new(),
                 key_to_id: HashMap::new(),
                 metadata: HashMap::new(),
-                fingerprints: HashMap::new(),
-                fingerprint_sum: 0,
             }),
             next_key: AtomicU64::new(1),
             dimension,
             compression,
             rescore,
+            exact_search_max: EXACT_SEARCH_MAX_VECTORS,
             index_path,
             keymap_path,
             persistence: Mutex::new(()),
+            save_policy: SavePolicy::Immediate,
+            dirty: Mutex::new(DirtyState::default()),
         })
+    }
+
+    /// Stop writing the whole index after every mutation; a flusher decides
+    /// when instead. See [`SavePolicy`].
+    #[must_use]
+    pub fn with_coalesced_saves(mut self) -> Self {
+        self.save_policy = SavePolicy::Coalesced;
+        self
     }
 
     /// The storage configuration this index was opened with.
     pub fn compression(&self) -> &VectorIndexCompression {
         &self.compression
+    }
+
+    /// The graph and vector layout, for the manifest that decides whether this
+    /// index can be reused on the next launch.
+    pub fn index_config(&self) -> IndexConfig {
+        IndexConfig::new(
+            self.dimension,
+            &self.compression,
+            HNSW_CONNECTIVITY,
+            HNSW_EXPANSION_ADD,
+            HNSW_EXPANSION_SEARCH,
+        )
+    }
+
+    /// The index holds changes the file on disk does not.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.lock().dirty_since.is_some()
+    }
+
+    /// How overdue a save is, or `None` when nothing is owed.
+    pub fn dirty_for(&self) -> Option<DirtyFor> {
+        let state = self.dirty.lock();
+        let since_first_mutation = state.dirty_since?.elapsed();
+        Some(DirtyFor {
+            since_first_mutation,
+            since_last_mutation: state
+                .last_mutation
+                .map_or(since_first_mutation, |at| at.elapsed()),
+        })
+    }
+
+    /// Record that the in-memory index moved ahead of the file, and persist it
+    /// now if that is this index's policy.
+    fn note_mutation(&self) -> Result<()> {
+        self.dirty.lock().mark();
+        match self.save_policy {
+            SavePolicy::Immediate => self.save_to_disk(),
+            SavePolicy::Coalesced => Ok(()),
+        }
+    }
+
+    /// The `count` stored vectors nearest to `query`, nearest first, as
+    /// parallel key and distance lists.
+    ///
+    /// A small index is scanned exactly; see [`EXACT_SEARCH_MAX_VECTORS`]. The
+    /// scan has no predicate, so a scoped query ranks every vector and keeps the
+    /// in-scope ones. Past that size the graph answers, and the scope runs as a
+    /// predicate inside the traversal: the filter costs a hash lookup per
+    /// visited node instead of a discarded candidate per hit. The predicate
+    /// sees only the USearch key, and it must not panic, because USearch calls
+    /// it back through a plain `extern "C"` trampoline that unwinding would
+    /// cross.
+    fn nearest(
+        &self,
+        state: &KeyState,
+        query: &[f32],
+        count: usize,
+        scope: Option<&HashSet<String>>,
+    ) -> Result<(Vec<u64>, Vec<f32>)> {
+        let in_scope = |key: u64, scope: &HashSet<String>| {
+            state
+                .key_to_id
+                .get(&key)
+                .map(|id| {
+                    let doc_id = state
+                        .metadata
+                        .get(id)
+                        .map_or(id.as_str(), |m| m.document_id.as_str());
+                    scope.contains(doc_id)
+                })
+                .unwrap_or(false)
+        };
+        let failed = |e| AppError::InternalError(format!("USearch search failed: {}", e));
+
+        let index_size = self.index.size();
+        if index_size <= self.exact_search_max {
+            let Some(scope) = scope else {
+                let matches = self.index.exact_search(query, count).map_err(failed)?;
+                return Ok((matches.keys, matches.distances));
+            };
+            let matches = self.index.exact_search(query, index_size).map_err(failed)?;
+            return Ok(matches
+                .keys
+                .into_iter()
+                .zip(matches.distances)
+                .filter(|(key, _)| in_scope(*key, scope))
+                .take(count)
+                .unzip());
+        }
+
+        let matches = match scope {
+            None => self.index.search(query, count),
+            Some(scope) => self
+                .index
+                .filtered_search(query, count, |key| in_scope(key, scope)),
+        }
+        .map_err(failed)?;
+        Ok((matches.keys, matches.distances))
     }
 
     /// Candidates to ask USearch for when `top_k` results are wanted.
@@ -291,7 +443,11 @@ impl USearchVectorIndex {
             return approximate;
         };
         match store.get(key) {
-            Some(full) => cosine_similarity_naive(query, &full),
+            // The rescore runs `top_k * rescore_factor` times per query over
+            // full-width vectors, so it gets the SIMD kernel rather than the
+            // scalar one. Both agree to within f32 reassociation noise; see
+            // the property test in `vector_ops`.
+            Some(full) => cosine_similarity_simd(query, &full),
             None => {
                 tracing::debug!(key, "no full vector to rescore against; using ANN score");
                 approximate
@@ -326,9 +482,16 @@ impl USearchVectorIndex {
         compression: VectorIndexCompression,
     ) -> Result<Self> {
         let instance = Self::with_compression(dimension, Some(index_path.clone()), compression)?;
+        instance.discard_stale_temporaries();
 
         if index_path.exists() {
             let path_str = index_path.to_string_lossy().to_string();
+            // `load`, not `view`: `view` maps the file read-only for an
+            // instant, allocation-free open, but this index is mutated in
+            // place every time a document is indexed, and USearch cannot grow
+            // or rewrite a viewed index. The startup cost `view` would save is
+            // reading one already-built graph, which is exactly the cost the
+            // manifest check exists to make rare.
             instance.index.load(&path_str).map_err(|e| {
                 AppError::InternalError(format!("Failed to load USearch index from disk: {}", e))
             })?;
@@ -359,21 +522,6 @@ impl USearchVectorIndex {
         }
 
         Ok(instance)
-    }
-
-    /// Whether this index holds exactly the vectors `expected` describes — no
-    /// more, no fewer, and none of them different.
-    ///
-    /// False whenever the index cannot vouch for itself: a vector with no
-    /// recorded fingerprint (a key map from before they existed), or a USearch
-    /// size that disagrees with the key map (a save that was interrupted
-    /// between the two files).
-    pub fn holds_exactly(&self, expected: IndexFingerprint) -> bool {
-        let state = self.state.read();
-        state.fingerprints.len() == state.id_to_key.len()
-            && state.id_to_key.len() == expected.count
-            && self.index.size() == expected.count
-            && state.fingerprint_sum == expected.sum
     }
 
     /// Rebuild the index from SQLite embeddings.
@@ -531,11 +679,6 @@ impl USearchVectorIndex {
 
         state.id_to_key.insert(id.clone(), key);
         state.key_to_id.insert(key, id.clone());
-        // Of the vector as handed in, not as stored: compression is lossy, and
-        // the point is to compare against what the database holds.
-        let fingerprint = vector_fingerprint(&id, &embedding);
-        state.fingerprints.insert(id.clone(), fingerprint);
-        state.fingerprint_sum = state.fingerprint_sum.wrapping_add(fingerprint);
 
         if let (Some(content), Some(chunk_id), Some(doc_id)) = (content, chunk_id, document_id) {
             state.metadata.insert(
@@ -552,6 +695,12 @@ impl USearchVectorIndex {
     }
 
     /// Save the index and key map to disk.
+    ///
+    /// Both go out through a temporary file and a rename, so a crash mid-save
+    /// leaves the previous snapshot intact rather than a half-written graph
+    /// USearch would refuse to load. The manifest that vouches for this
+    /// snapshot is written by the caller afterwards — see
+    /// [`super::manifest`] — because only it knows what SQLite looked like.
     pub fn save_to_disk(&self) -> Result<()> {
         let _snapshot = self.persistence.lock();
         // Hold the same read lock used by searches while saving the vectors
@@ -565,9 +714,14 @@ impl USearchVectorIndex {
                 })?;
             }
 
-            let path_str = path.to_string_lossy().to_string();
-            self.index.save(&path_str).map_err(|e| {
+            let temp = temp_path_for(path);
+            let temp_str = temp.to_string_lossy().to_string();
+            self.index.save(&temp_str).map_err(|e| {
                 AppError::FileStorage(format!("Failed to save USearch index: {}", e))
+            })?;
+            std::fs::rename(&temp, path).map_err(|e| {
+                let _ = std::fs::remove_file(&temp);
+                AppError::FileStorage(format!("Failed to replace USearch index: {}", e))
             })?;
 
             tracing::debug!(path = %path.display(), "USearch index saved to disk");
@@ -578,7 +732,33 @@ impl USearchVectorIndex {
             tracing::debug!(path = %path.display(), "Key map saved to disk");
         }
 
+        *self.dirty.lock() = DirtyState::default();
+
         Ok(())
+    }
+
+    /// Remove temporaries a crashed save left behind.
+    ///
+    /// They are never read — the real files are only ever replaced by an
+    /// atomic rename — but leaving a corpus-sized file lying around is not
+    /// something a user should have to clean up by hand.
+    fn discard_stale_temporaries(&self) {
+        for path in [self.index_path.as_deref(), self.keymap_path.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(temp_path_for)
+        {
+            if path.exists() {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        tracing::info!(path = %path.display(), "Removed a temporary file from an interrupted index save")
+                    }
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), error = %e, "Could not remove a stale index temporary")
+                    }
+                }
+            }
+        }
     }
 
     /// Save the key map to a JSON file (atomic via temp file + rename).
@@ -595,28 +775,37 @@ impl USearchVectorIndex {
                         SerializableMeta {
                             chunk_id: m.chunk_id.clone(),
                             document_id: m.document_id.clone(),
-                            content: m.content.clone(),
                         },
                     )
                 })
                 .collect(),
-            fingerprints: state.fingerprints.clone(),
         };
 
-        // Atomic write via temp file + rename
-        let temp_path = path.with_extension("tmp");
-        let file = std::fs::File::create(&temp_path).map_err(|e| {
-            AppError::FileStorage(format!("Failed to create temp key map file: {}", e))
-        })?;
-        let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &data)
+        let bytes = serde_json::to_vec(&data)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize key map: {}", e)))?;
-        std::io::Write::flush(&mut writer)
-            .map_err(|e| AppError::FileStorage(format!("Failed to flush key map: {}", e)))?;
-        std::fs::rename(&temp_path, path)
-            .map_err(|e| AppError::FileStorage(format!("Failed to rename key map file: {}", e)))?;
+        write_file_atomically(path, &bytes)
+    }
 
-        Ok(())
+    /// Re-attach chunk text to keys loaded from disk.
+    ///
+    /// The key map deliberately does not persist content, so an index opened
+    /// without a rebuild knows which chunk each vector is but not what it
+    /// says. `rows` is `(embedding id, content)` straight out of SQLite.
+    /// Returns how many keys were filled. Unknown ids are ignored: SQLite
+    /// holds chunks this generation has no vector for.
+    pub fn hydrate_content<I>(&self, rows: I) -> usize
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        let mut state = self.state.write();
+        let mut filled = 0;
+        for (id, content) in rows {
+            if let Some(meta) = state.metadata.get_mut(&id) {
+                meta.content = content;
+                filled += 1;
+            }
+        }
+        filled
     }
 
     /// Load the key map from a JSON file.
@@ -644,16 +833,11 @@ impl USearchVectorIndex {
                 VectorMeta {
                     chunk_id: m.chunk_id,
                     document_id: m.document_id,
-                    content: m.content,
+                    // Filled by `hydrate_content` from SQLite; see `KeyMapData`.
+                    content: String::new(),
                 },
             );
         }
-
-        state.fingerprint_sum = data
-            .fingerprints
-            .values()
-            .fold(0u64, |sum, fingerprint| sum.wrapping_add(*fingerprint));
-        state.fingerprints = data.fingerprints;
 
         self.next_key.store(data.next_key, Ordering::SeqCst);
 
@@ -663,11 +847,13 @@ impl USearchVectorIndex {
 
 /// Flush the USearch index to disk on drop.
 ///
-/// This ensures that any embeddings added during the application's lifetime
-/// are persisted even if `save_to_disk()` wasn't explicitly called.
+/// Best-effort only. Tauri exits the process from inside its event loop, so in
+/// the real app nothing that `AppHandle` owns is ever dropped; the shutdown
+/// flush in [`super::persistence::IndexPersistence`] is what actually saves.
+/// This still covers tests and any index that is genuinely dropped.
 impl Drop for USearchVectorIndex {
     fn drop(&mut self) {
-        if self.index_path.is_some() {
+        if self.index_path.is_some() && self.is_dirty() {
             if let Err(e) = self.save_to_disk() {
                 // Cannot propagate errors from Drop, so log at error level
                 tracing::error!(error = %e, "Failed to flush USearch index to disk during drop");
@@ -734,6 +920,9 @@ impl VectorSearchPort for USearchVectorIndex {
         let rescoring = self.compression.is_active();
         let mut candidate_k = self.candidate_window(top_k, index_size);
         if allowed_document_ids.is_some() {
+            // A predicate keeps out-of-scope neighbours out of the result set
+            // but cannot conjure in-scope ones the traversal never reached, so
+            // a scoped search still asks for a wider window than an open one.
             let widened_start = top_k.saturating_mul(4).max(32).min(index_size);
             candidate_k = candidate_k.max(widened_start);
         }
@@ -743,20 +932,27 @@ impl VectorSearchPort for USearchVectorIndex {
         // untouched `query_embedding` stays the reference for rescoring.
         let projected_query = self.compression.project(query_embedding)?;
 
+        // At most two passes: the sized window, then — only if the scope is so
+        // sparse that the first traversal could not fill it — one exhaustive
+        // pass. The old code doubled `candidate_k` until it gave up, which on
+        // a real session cost nine passes over 29,766 vectors to return the
+        // empty list its first pass had already established.
         loop {
-            let matches = self
-                .index
-                .search(projected_query.as_ref(), candidate_k)
-                .map_err(|e| AppError::InternalError(format!("USearch search failed: {}", e)))?;
+            let (keys, distances) = self.nearest(
+                &state,
+                projected_query.as_ref(),
+                candidate_k,
+                allowed_document_ids,
+            )?;
 
             let mut results = Vec::new();
-            // The best similarity any in-scope candidate reached this round.
-            // Widening is worth doing when the scope filter is what emptied the
-            // window, and pointless when the threshold is: USearch returns
-            // neighbours nearest first, so a wider window can only add vectors
-            // that score lower than the ones already rejected.
-            let mut best_in_scope: Option<f32> = None;
-            for (&key, &distance) in matches.keys.iter().zip(matches.distances.iter()) {
+            // The best similarity any candidate reached. A second pass is
+            // worth doing when the scope is what emptied the window, and
+            // pointless when the threshold is: USearch returns neighbours
+            // nearest first, so a wider window can only add vectors that score
+            // lower than the ones already rejected.
+            let mut best_seen: Option<f32> = None;
+            for (&key, &distance) in keys.iter().zip(distances.iter()) {
                 let Some(id) = state.key_to_id.get(&key) else {
                     continue;
                 };
@@ -769,18 +965,12 @@ impl VectorSearchPort for USearchVectorIndex {
                 } else {
                     (id.as_str(), id.as_str(), "")
                 };
-                if let Some(scope) = allowed_document_ids {
-                    if !scope.contains(doc_id) {
-                        continue;
-                    }
-                }
 
                 // USearch cosine distance = 1.0 - cosine_similarity; rescoring
                 // replaces it with the exact full-precision cosine. Threshold
                 // is applied to the score we report, not to the lossy one.
                 let similarity = self.candidate_similarity(key, query_embedding, distance);
-                best_in_scope =
-                    Some(best_in_scope.map_or(similarity, |best: f32| best.max(similarity)));
+                best_seen = Some(best_seen.map_or(similarity, |best: f32| best.max(similarity)));
                 if similarity < threshold {
                     continue;
                 }
@@ -802,57 +992,44 @@ impl VectorSearchPort for USearchVectorIndex {
                 Self::sort_by_score_desc(&mut results, |r| r.score);
             }
 
-            let exhausted = candidate_k >= index_size;
-            if results.len() >= top_k || exhausted {
+            if results.len() >= top_k || candidate_k >= index_size {
                 if results.len() > top_k {
                     results.truncate(top_k);
                 }
                 return Ok(results);
             }
 
-            // Nothing in scope came close enough. USearch returns neighbours
-            // nearest first, so reaching further out can only find vectors that
-            // score lower than the ones just rejected — stop instead of
-            // rescanning the index one doubling at a time. A real session spent
-            // nine widening rounds over 29,766 vectors to return the empty list
-            // its first round had already established.
-            //
-            // When rescoring is active the approximate order USearch returns is
-            // not exactly the order of true cosine, so a vector further out can
-            // still rescore slightly higher. Give that reordering room: only
-            // stop when the nearest in-scope vector misses by more than
+            // When rescoring is active the approximate order USearch returns
+            // is not exactly the order of true cosine, so a vector further out
+            // can still rescore slightly higher. Give that reordering room:
+            // only stop when the nearest candidate misses by more than
             // quantization could explain.
-            if let Some(best) = best_in_scope {
+            if let Some(best) = best_seen {
                 let margin = if rescoring { RESCORE_ORDER_MARGIN } else { 0.0 };
                 if best + margin < threshold {
                     tracing::debug!(
-                        candidate_k = candidate_k,
+                        candidate_k,
                         best_similarity = best,
-                        threshold = threshold,
-                        "USearch scoped search stopping: nearest in-scope vector is below threshold"
+                        threshold,
+                        "USearch search stopping: nearest candidate is below threshold"
                     );
                     return Ok(results);
                 }
             }
 
-            let next_candidate_k = candidate_k.saturating_mul(2).min(index_size);
-            if next_candidate_k == candidate_k {
-                return Ok(results);
-            }
             tracing::debug!(
-                current_candidate_k = candidate_k,
-                next_candidate_k = next_candidate_k,
-                top_k = top_k,
-                "USearch scoped search widening candidate window"
+                candidate_k,
+                index_size,
+                top_k,
+                "USearch scoped search falling back to an exhaustive pass"
             );
-            candidate_k = next_candidate_k;
+            candidate_k = index_size;
         }
     }
 
     fn add_embedding(&self, id: String, embedding: Vec<f32>) -> Result<()> {
         self.add_internal(id, embedding, None, None, None)?;
-        // Persist after each mutation to prevent data loss
-        self.save_to_disk()
+        self.note_mutation()
     }
 
     fn add_embedding_with_content(
@@ -870,8 +1047,7 @@ impl VectorSearchPort for USearchVectorIndex {
             Some(chunk_id),
             Some(document_id),
         )?;
-        // Persist after each mutation to prevent data loss
-        self.save_to_disk()
+        self.note_mutation()
     }
 
     fn publish_embeddings(&self, entries: Vec<VectorIndexEntry>) -> Result<()> {
@@ -895,7 +1071,7 @@ impl VectorSearchPort for USearchVectorIndex {
                 true,
             )?;
         }
-        self.save_to_disk()
+        self.note_mutation()
     }
 
     fn remove_embedding(&self, id: &str) -> Result<()> {
@@ -918,14 +1094,11 @@ impl VectorSearchPort for USearchVectorIndex {
             state.id_to_key.remove(id);
             state.key_to_id.remove(&key);
             state.metadata.remove(id);
-            if let Some(fingerprint) = state.fingerprints.remove(id) {
-                state.fingerprint_sum = state.fingerprint_sum.wrapping_sub(fingerprint);
-            }
             changed = true;
         }
         drop(state);
         if changed {
-            self.save_to_disk()?;
+            self.note_mutation()?;
         }
         Ok(())
     }
@@ -943,9 +1116,12 @@ impl VectorSearchPort for USearchVectorIndex {
         state.id_to_key.clear();
         state.key_to_id.clear();
         state.metadata.clear();
-        state.fingerprints.clear();
-        state.fingerprint_sum = 0;
         self.next_key.store(1, Ordering::SeqCst);
+        drop(state);
+        // No save here: `clear` is only ever the first half of a rebuild, and
+        // writing an empty index between the two halves would hand a crash a
+        // file claiming the library has no vectors.
+        self.dirty.lock().mark();
         Ok(())
     }
 
@@ -973,15 +1149,12 @@ impl SearchServiceTrait for USearchVectorIndex {
         let candidate_k = self.candidate_window(top_k, self.index.size());
         let projected_query = self.compression.project(query_embedding)?;
 
-        let matches = self
-            .index
-            .search(projected_query.as_ref(), candidate_k)
-            .map_err(|e| AppError::InternalError(format!("USearch search failed: {}", e)))?;
+        let (keys, distances) =
+            self.nearest(&state, projected_query.as_ref(), candidate_k, None)?;
 
-        let mut results: Vec<SearchResult> = matches
-            .keys
+        let mut results: Vec<SearchResult> = keys
             .iter()
-            .zip(matches.distances.iter())
+            .zip(distances.iter())
             .enumerate()
             .filter_map(|(idx, (&key, &distance))| {
                 let similarity = self.candidate_similarity(key, query_embedding, distance);
@@ -1083,6 +1256,9 @@ impl SearchServiceTrait for USearchVectorIndex {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
+    // The scalar reference, so these assertions do not simply repeat whatever
+    // the SIMD kernel the rescore now uses happens to compute.
+    use crate::features::search::engine::vector_ops::cosine_similarity_naive;
 
     fn make_test_index(dim: usize) -> USearchVectorIndex {
         USearchVectorIndex::new(dim, None).unwrap_or_else(|e| {
@@ -1292,161 +1468,41 @@ mod tests {
             .unwrap_or_else(|e| panic!("search failed: {}", e));
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].content, "test content");
+        assert_eq!(results[0].chunk_id, "chunk_1");
+        assert_eq!(results[0].doc_id, "doc_1");
+        // Chunk text is not persisted with the key map — SQLite already has
+        // it, and a copy of the whole corpus is what made every save expensive.
+        assert_eq!(results[0].content, "");
+
+        assert_eq!(
+            index2.hydrate_content([("emb_1".to_string(), "test content".to_string())]),
+            1
+        );
+        let rehydrated = VectorSearchPort::search(&index2, &[1.0, 0.0, 0.0, 0.0], 1, 0.0).unwrap();
+        assert_eq!(rehydrated[0].content, "test content");
     }
 
-    type Row = (String, Vec<f32>, String, String, String);
-
-    fn row(n: usize, vector: [f32; 4]) -> Row {
-        (
-            format!("emb_{n}"),
-            vector.to_vec(),
-            format!("content {n}"),
-            format!("chunk_{n}"),
-            format!("doc_{n}"),
-        )
-    }
-
-    fn library() -> Vec<Row> {
-        vec![
-            row(1, [1.0, 0.0, 0.0, 0.0]),
-            row(2, [0.0, 1.0, 0.0, 0.0]),
-            row(3, [0.0, 0.0, 1.0, 0.0]),
-        ]
-    }
-
-    fn fingerprint_of(rows: &[Row]) -> IndexFingerprint {
-        IndexFingerprint::of_rows(
-            rows.iter()
-                .map(|(id, vector, ..)| (id.as_str(), vector.as_slice())),
-        )
-    }
-
-    /// The whole point: an index saved by one run and opened by the next can
-    /// say it holds what the database holds, so start-up need not rebuild it.
     #[test]
-    fn an_index_reopened_from_disk_still_vouches_for_what_it_holds() {
-        let temp_dir = tempfile::TempDir::new().unwrap_or_else(|e| panic!("tempdir: {e}"));
-        let index_path = temp_dir.path().join("library.usearch");
-        {
-            let index = USearchVectorIndex::open_or_create(4, index_path.clone())
-                .unwrap_or_else(|e| panic!("open_or_create failed: {e}"));
-            let added = index
-                .rebuild_from_embeddings(library())
-                .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
-            assert_eq!(added, 3);
-        }
-        let reopened = USearchVectorIndex::open_or_create(4, index_path)
-            .unwrap_or_else(|e| panic!("reopen failed: {e}"));
-
-        assert!(reopened.holds_exactly(fingerprint_of(&library())));
-    }
-
-    /// SQLite returns rows in whatever order it likes, and not the order they
-    /// were inserted in. That must not read as a different library.
-    #[test]
-    fn the_order_rows_come_back_in_does_not_matter() {
+    fn hydration_ignores_chunks_this_generation_has_no_vector_for() {
         let index = make_test_index(4);
-        let _ = index
-            .rebuild_from_embeddings(library())
-            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
-
-        let mut shuffled = library();
-        shuffled.reverse();
-        assert!(index.holds_exactly(fingerprint_of(&shuffled)));
-    }
-
-    /// The case a comparison of IDs alone would wave through: a chunk
-    /// re-embedded in place keeps its ID and changes its vector.
-    #[test]
-    fn a_vector_that_changed_under_the_same_id_is_noticed() {
-        let index = make_test_index(4);
-        let _ = index
-            .rebuild_from_embeddings(library())
-            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
-
-        let mut reembedded = library();
-        reembedded[1] = row(2, [0.0, 0.9, 0.1, 0.0]);
-        assert!(!index.holds_exactly(fingerprint_of(&reembedded)));
-    }
-
-    /// The interrupted writes the unconditional rebuild existed to heal.
-    #[test]
-    fn a_row_the_index_lacks_or_a_row_it_should_not_have_is_noticed() {
-        let index = make_test_index(4);
-        let _ = index
-            .rebuild_from_embeddings(library())
-            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
-
-        let mut one_more = library();
-        one_more.push(row(4, [0.0, 0.0, 0.0, 1.0]));
-        assert!(!index.holds_exactly(fingerprint_of(&one_more)));
-
-        let mut one_fewer = library();
-        one_fewer.pop();
-        assert!(!index.holds_exactly(fingerprint_of(&one_fewer)));
-    }
-
-    /// Ordinary use — indexing a document, deleting one — must leave the index
-    /// able to vouch for itself, or every launch after any activity rebuilds.
-    #[test]
-    fn the_fingerprint_follows_vectors_as_they_are_added_and_removed() {
-        let index = make_test_index(4);
-        let _ = index
-            .rebuild_from_embeddings(library())
-            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
-
         index
             .add_embedding_with_content(
-                "emb_4".into(),
-                vec![0.0, 0.0, 0.0, 1.0],
-                "content 4".into(),
-                "chunk_4".into(),
-                "doc_4".into(),
+                "emb_1".into(),
+                vec![1.0, 0.0, 0.0, 0.0],
+                String::new(),
+                "chunk_1".into(),
+                "doc_1".into(),
             )
-            .unwrap_or_else(|e| panic!("add failed: {e}"));
-        let mut grown = library();
-        grown.push(row(4, [0.0, 0.0, 0.0, 1.0]));
-        assert!(index.holds_exactly(fingerprint_of(&grown)));
-
-        VectorSearchPort::remove_embedding(&index, "emb_2")
-            .unwrap_or_else(|e| panic!("remove failed: {e}"));
-        grown.remove(1);
-        assert!(index.holds_exactly(fingerprint_of(&grown)));
-
-        VectorSearchPort::clear(&index).unwrap_or_else(|e| panic!("clear failed: {e}"));
-        assert!(index.holds_exactly(IndexFingerprint::default()));
-    }
-
-    /// A key map written before fingerprints existed says nothing about its
-    /// vectors. It must not be taken at its word; it is rebuilt once instead.
-    #[test]
-    fn a_key_map_with_no_fingerprints_cannot_vouch_for_anything() {
-        let temp_dir = tempfile::TempDir::new().unwrap_or_else(|e| panic!("tempdir: {e}"));
-        let index_path = temp_dir.path().join("library.usearch");
-        {
-            let index = USearchVectorIndex::open_or_create(4, index_path.clone())
-                .unwrap_or_else(|e| panic!("open_or_create failed: {e}"));
-            let _ = index
-                .rebuild_from_embeddings(library())
-                .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
-        }
-        let keymap_path = temp_dir.path().join("library.keymap.json");
-        let mut keymap: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&keymap_path).unwrap_or_else(|e| panic!("read keymap: {e}")),
-        )
-        .unwrap_or_else(|e| panic!("parse keymap: {e}"));
-        keymap
-            .as_object_mut()
-            .unwrap_or_else(|| panic!("keymap is an object"))
-            .remove("fingerprints");
-        std::fs::write(&keymap_path, keymap.to_string())
-            .unwrap_or_else(|e| panic!("write keymap: {e}"));
-
-        let reopened = USearchVectorIndex::open_or_create(4, index_path)
-            .unwrap_or_else(|e| panic!("reopen failed: {e}"));
-        assert_eq!(reopened.count(), 3, "the old key map must still load");
-        assert!(!reopened.holds_exactly(fingerprint_of(&library())));
+            .unwrap();
+        assert_eq!(
+            index.hydrate_content([
+                ("emb_1".to_string(), "kept".to_string()),
+                ("emb_absent".to_string(), "dropped".to_string()),
+            ]),
+            1
+        );
+        let hits = VectorSearchPort::search(&index, &[1.0, 0.0, 0.0, 0.0], 1, 0.0).unwrap();
+        assert_eq!(hits[0].content, "kept");
     }
 
     #[test]
@@ -1475,7 +1531,92 @@ mod tests {
         assert_eq!(hits.len(), 128);
         assert!(hits
             .iter()
-            .all(|hit| hit.doc_id == "pdf" && hit.content.starts_with("Source passage")));
+            .all(|hit| hit.doc_id == "pdf" && hit.chunk_id.starts_with("chunk_")));
+    }
+
+    /// The whole point of coalescing: publishing does not touch the disk, and
+    /// one save afterwards captures everything that was published.
+    #[test]
+    fn coalesced_publication_writes_once_instead_of_once_per_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coalesced.usearch");
+        let index = USearchVectorIndex::new(4, Some(path.clone()))
+            .unwrap()
+            .with_coalesced_saves();
+
+        for document in 0..16 {
+            index
+                .publish_embeddings(
+                    (0..4)
+                        .map(|chunk| VectorIndexEntry {
+                            id: format!("emb_{document}_{chunk}"),
+                            embedding: vec![1.0, document as f32 / 16.0, chunk as f32, 0.0],
+                            content: String::new(),
+                            chunk_id: format!("chunk_{document}_{chunk}"),
+                            document_id: format!("doc_{document}"),
+                        })
+                        .collect(),
+                )
+                .unwrap();
+            assert!(
+                !path.exists(),
+                "document {document} wrote the whole index to disk"
+            );
+        }
+        assert!(index.is_dirty());
+
+        index.save_to_disk().unwrap();
+        assert!(!index.is_dirty());
+        let loaded = USearchVectorIndex::open_or_create(4, path).unwrap();
+        assert_eq!(
+            loaded.count(),
+            64,
+            "one save must capture every publication"
+        );
+    }
+
+    /// An index without a flusher — the summaries index, the eval harness, the
+    /// tests above — keeps writing on every mutation.
+    #[test]
+    fn the_default_policy_still_saves_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("immediate.usearch");
+        let index = USearchVectorIndex::new(4, Some(path.clone())).unwrap();
+        index
+            .add_embedding("a".into(), vec![1.0, 0.0, 0.0, 0.0])
+            .unwrap();
+        assert!(path.exists());
+        assert!(!index.is_dirty());
+    }
+
+    #[test]
+    fn a_save_replaces_the_index_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("atomic.usearch");
+        let index = USearchVectorIndex::new(4, Some(path.clone()))
+            .unwrap()
+            .with_coalesced_saves();
+        index
+            .add_embedding("a".into(), vec![1.0, 0.0, 0.0, 0.0])
+            .unwrap();
+        index.save_to_disk().unwrap();
+
+        let temp = PathBuf::from({
+            let mut p = path.clone().into_os_string();
+            p.push(".tmp");
+            p
+        });
+        assert!(
+            !temp.exists(),
+            "a finished save must not leave its staging file behind"
+        );
+
+        // What a crash between `save` and `rename` leaves. It must never be
+        // mistaken for the index itself.
+        std::fs::write(&temp, b"half a graph").unwrap();
+        let reopened = USearchVectorIndex::open_or_create(4, path).unwrap();
+        assert_eq!(reopened.count(), 1);
+        assert!(!temp.exists(), "a stale staging file should be cleaned up");
     }
 
     #[test]
@@ -1826,7 +1967,7 @@ mod tests {
             expected.iter().map(String::as_str).collect::<Vec<_>>(),
             "rescoring must still work against the reloaded side store"
         );
-        assert!(hits.iter().all(|h| h.content.starts_with("Passage")));
+        assert!(hits.iter().all(|h| h.chunk_id.starts_with("chunk_")));
     }
 
     /// A deleted chunk must not be resurrected by a stale full-precision copy.
@@ -1874,14 +2015,121 @@ mod tests {
         assert!(hits[0].score > 0.99, "score was {}", hits[0].score);
     }
 
+    /// The predicate runs inside the graph traversal now, so the properties
+    /// that used to fall out of post-filtering have to be pinned explicitly:
+    /// nothing out of scope survives, and a scope with enough members still
+    /// yields a full `top_k`.
+    #[test]
+    fn a_scoped_search_returns_only_allowed_documents_and_still_fills_top_k() {
+        scoped_search_fills_top_k_with_the_best_in_scope_chunks(EXACT_SEARCH_MAX_VECTORS);
+    }
+
+    /// The same contract past the exact-scan size, where the scope runs as a
+    /// predicate inside the graph traversal instead.
+    #[test]
+    fn a_scoped_graph_search_returns_only_allowed_documents_and_still_fills_top_k() {
+        scoped_search_fills_top_k_with_the_best_in_scope_chunks(0);
+    }
+
+    fn scoped_search_fills_top_k_with_the_best_in_scope_chunks(exact_search_max: usize) {
+        const DIM: usize = 16;
+        const TOP_K: usize = 10;
+        let corpus = widening_corpus(DIM, 512);
+        let mut index = widening_index(DIM, &corpus);
+        index.exact_search_max = exact_search_max;
+        let query = synthetic_vector(2_024, DIM, 0.8);
+
+        // Every fifth document, so the scope is both large enough to fill
+        // `top_k` and selective enough that post-filtering would have had to
+        // widen.
+        let scope: HashSet<String> = (0..512)
+            .filter(|i| i % 5 == 0)
+            .map(|i| format!("doc{i}"))
+            .collect();
+
+        let hits =
+            VectorSearchPort::search_scoped(&index, &query, TOP_K, 0.0, Some(&scope)).unwrap();
+
+        assert_eq!(hits.len(), TOP_K, "a satisfiable scope must fill top_k");
+        assert!(
+            hits.iter().all(|h| scope.contains(&h.doc_id)),
+            "an out-of-scope document survived the predicate: {hits:?}"
+        );
+
+        // …and they are the best in-scope chunks, not merely in-scope ones.
+        let mut in_scope: Vec<(String, f32)> = corpus
+            .iter()
+            .filter(|(id, _)| scope.contains(&format!("doc{}", id.trim_start_matches("chunk"))))
+            .map(|(id, v)| (id.clone(), cosine_similarity_naive(&query, v)))
+            .collect();
+        in_scope.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(CmpOrdering::Equal));
+        let expected: Vec<&str> = in_scope
+            .iter()
+            .take(TOP_K)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(
+            hits.iter().map(|h| h.chunk_id.as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    /// A scope of one document out of five hundred: the first traversal will
+    /// not find it, and the single exhaustive retry must.
+    #[test]
+    fn a_scope_of_one_distant_document_is_still_reached() {
+        const DIM: usize = 16;
+        let corpus = widening_corpus(DIM, 512);
+        let index = widening_index(DIM, &corpus);
+        let query = synthetic_vector(2_024, DIM, 0.8);
+
+        // The worst-ranked chunk that still clears the bar. A negative cosine
+        // is filtered out by the threshold, so scoping to one of those would
+        // be testing the threshold rather than the traversal.
+        let worst = exact_cosine_ranking(&query, &corpus)
+            .into_iter()
+            .rfind(|id| {
+                corpus
+                    .iter()
+                    .find(|(candidate, _)| candidate == id)
+                    .is_some_and(|(_, v)| cosine_similarity_naive(&query, v) > 0.05)
+            })
+            .expect("some chunk clears the bar");
+        let doc = format!("doc{}", worst.trim_start_matches("chunk"));
+        let scope: HashSet<String> = [doc.clone()].into();
+
+        let hits = VectorSearchPort::search_scoped(&index, &query, 5, 0.0, Some(&scope)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].doc_id, doc);
+        assert_eq!(hits[0].chunk_id, worst);
+    }
+
+    #[test]
+    fn an_empty_scope_returns_nothing_without_searching() {
+        let index = widening_index(16, &widening_corpus(16, 32));
+        let scope: HashSet<String> = HashSet::new();
+        assert!(VectorSearchPort::search_scoped(
+            &index,
+            &synthetic_vector(1, 16, 0.8),
+            5,
+            0.0,
+            Some(&scope)
+        )
+        .unwrap()
+        .is_empty());
+    }
+
     fn widening_corpus(dim: usize, count: u64) -> Vec<(String, Vec<f32>)> {
         (0..count)
             .map(|i| (format!("chunk{i}"), synthetic_vector(i, dim, 0.8)))
             .collect()
     }
 
+    /// Forced onto the graph path: these tests pin the predicate and the
+    /// exhaustive retry, which an exact scan never needs.
     fn widening_index(dim: usize, corpus: &[(String, Vec<f32>)]) -> USearchVectorIndex {
-        let index = USearchVectorIndex::new(dim, None).unwrap();
+        let mut index = USearchVectorIndex::new(dim, None).unwrap();
+        index.exact_search_max = 0;
         for (i, (id, vector)) in corpus.iter().enumerate() {
             index
                 .add_embedding_with_content(

@@ -1,4 +1,7 @@
-use crate::domain::embedding_constants::DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME;
+use crate::domain::embedding_constants::{
+    DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME, QWEN3_EMBEDDING_MODEL_CURATED_ID,
+    QWEN3_EMBEDDING_MODEL_DISPLAY_NAME,
+};
 use crate::domain::model_metadata::ModelType;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -43,6 +46,14 @@ impl ModelCatalogCache {
             DEFAULT_EMBEDDING_MODEL_DISPLAY_NAME.to_string(),
             ModelType::TextEmbeddings,
         );
+        // Both first-run defaults, by catalog id and display name, so the
+        // classifier never has to fall back to substring guessing for either.
+        for name in [
+            QWEN3_EMBEDDING_MODEL_CURATED_ID,
+            QWEN3_EMBEDDING_MODEL_DISPLAY_NAME,
+        ] {
+            catalog.insert(name.to_lowercase(), ModelType::TextEmbeddings);
+        }
         catalog.insert(
             "all-distilroberta-v1".to_string(),
             ModelType::TextEmbeddings,

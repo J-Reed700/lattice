@@ -12,9 +12,6 @@
 use crate::shared::error::{AppError, Result};
 
 /// Validates that a pointer is properly aligned for type T.
-///
-/// `pub(crate)` instead of private only because an internal test in
-/// `features/search/engine/index_tests.rs` exercises it directly.
 pub(crate) fn validate_alignment<T>(ptr: *const u8) -> Result<()> {
     let alignment = ptr as usize % std::mem::align_of::<T>();
     if alignment != 0 {

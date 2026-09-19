@@ -75,6 +75,82 @@ CREATE TABLE IF NOT EXISTS text_embeddings (
     FOREIGN KEY (chunk_id) REFERENCES text_chunks(id) ON DELETE CASCADE
 );
 
+-- Vectors prepared for a model that is not the one the library was indexed
+-- with. Declared here (rather than only in `embedding::generation::ensure_schema`,
+-- which still creates it for in-memory test databases) so the triggers below
+-- can reference it.
+CREATE TABLE IF NOT EXISTS embedding_generation_vectors (
+    model_identity TEXT NOT NULL,
+    chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE,
+    content_hash TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    dimension INTEGER NOT NULL,
+    PRIMARY KEY(model_identity, chunk_id)
+);
+
+-- =====================================================================
+-- VECTOR INDEX FRESHNESS
+-- =====================================================================
+-- The HNSW vector index lives in a file outside SQLite and is rebuilt from
+-- these tables whenever the two can have drifted apart. Reading every
+-- embedding blob just to discover that nothing changed costs seconds at ten
+-- thousand chunks and minutes at a million, so the index instead records the
+-- counter below in its manifest and rebuilds only when the counter has moved.
+--
+-- Maintained by triggers rather than by the Rust write paths: a trigger fires
+-- inside whatever transaction did the write, cannot be forgotten by a new
+-- caller, and costs one row update on a single-row table.
+CREATE TABLE IF NOT EXISTS vector_index_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    write_counter INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO vector_index_state (id, write_counter) VALUES (1, 0);
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_chunk_insert
+AFTER INSERT ON text_chunks BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_chunk_update
+AFTER UPDATE ON text_chunks BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_chunk_delete
+AFTER DELETE ON text_chunks BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_embedding_insert
+AFTER INSERT ON text_embeddings BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_embedding_update
+AFTER UPDATE ON text_embeddings BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_embedding_delete
+AFTER DELETE ON text_embeddings BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_generation_insert
+AFTER INSERT ON embedding_generation_vectors BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_generation_update
+AFTER UPDATE ON embedding_generation_vectors BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_generation_delete
+AFTER DELETE ON embedding_generation_vectors BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
 CREATE TABLE IF NOT EXISTS image_embeddings (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
@@ -160,21 +236,40 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     tokenize='porter unicode61 remove_diacritics 2'
 );
 
+-- The same text, tokenized as overlapping 3-character windows.
+--
+-- `unicode61` splits on whitespace and punctuation, which Japanese and Chinese
+-- do not use between words: it indexes a whole run of Han or Kana as one token,
+-- so a query for a few characters of a long run matches nothing at all. FTS5's
+-- built-in trigram tokenizer is the standard answer. It is only consulted for a
+-- query that actually contains CJK (see `search::engine::fts_query`), and it
+-- costs roughly the content size again in index pages.
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_trigram USING fts5(
+    chunk_id UNINDEXED,
+    content,
+    tokenize='trigram'
+);
+
 -- Indexes the contextualized text when the chunker produced one, else the raw
--- chunk body.
+-- chunk body. Both chunk indexes are written together: a query that reaches
+-- only one of them must not see a different corpus.
 CREATE TRIGGER chunks_fts_insert AFTER INSERT ON text_chunks BEGIN
   INSERT INTO chunks_fts(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+  INSERT INTO chunks_trigram(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
 END;
 
 CREATE TRIGGER chunks_fts_update AFTER UPDATE ON text_chunks BEGIN
   DELETE FROM chunks_fts WHERE chunk_id = old.id;
+  DELETE FROM chunks_trigram WHERE chunk_id = old.id;
   INSERT INTO chunks_fts(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
+  INSERT INTO chunks_trigram(chunk_id, content) VALUES(new.id, COALESCE(new.contextualized_content, new.content));
 END;
 
 CREATE TRIGGER chunks_fts_delete
 AFTER DELETE ON text_chunks
 BEGIN
     DELETE FROM chunks_fts WHERE chunk_id = old.id;
+    DELETE FROM chunks_trigram WHERE chunk_id = old.id;
 END;
 
 -- Legacy document-level FTS5 table. No search path reads it; it is retained

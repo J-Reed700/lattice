@@ -1,0 +1,126 @@
+{
+  "queries": 78,
+  "retrieval_queries": 68,
+  "k": 5,
+  "recall_at_k": 0.9485294117647058,
+  "ndcg_at_k": 0.9351739160481282,
+  "mrr_at_k": 0.9558823529411765,
+  "retrieval_abstention_accuracy": 0.8717948717948718,
+  "p95_latency_ms": 53.794250000000005,
+  "answer_judgments": 0,
+  "grounded_claim_fraction": null,
+  "citation_precision": null,
+  "abstention_accuracy": null,
+  "abstain_threshold": 0.02,
+  "abstention_predictor": "threshold",
+  "by_dimension": {
+    "current versus superseded policy": {
+      "queries": 18,
+      "retrieval_queries": 18,
+      "k": 5,
+      "recall_at_k": 1.0,
+      "ndcg_at_k": 0.9237591030367369,
+      "mrr_at_k": 0.9444444444444444,
+      "retrieval_abstention_accuracy": 1.0
+    },
+    "entity collisions": {
+      "queries": 7,
+      "retrieval_queries": 6,
+      "k": 5,
+      "recall_at_k": 1.0,
+      "ndcg_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "retrieval_abstention_accuracy": 0.8571428571428571
+    },
+    "exact identifiers and numeric distinctions": {
+      "queries": 32,
+      "retrieval_queries": 29,
+      "k": 5,
+      "recall_at_k": 0.9885057471264368,
+      "ndcg_at_k": 0.9394068654371912,
+      "mrr_at_k": 0.9655172413793104,
+      "retrieval_abstention_accuracy": 0.90625
+    },
+    "graded and multi-document relevance": {
+      "queries": 37,
+      "retrieval_queries": 37,
+      "k": 5,
+      "recall_at_k": 0.9054054054054054,
+      "ndcg_at_k": 0.948552379147219,
+      "mrr_at_k": 1.0,
+      "retrieval_abstention_accuracy": 1.0
+    },
+    "long-context tail facts": {
+      "queries": 3,
+      "retrieval_queries": 2,
+      "k": 5,
+      "recall_at_k": 1.0,
+      "ndcg_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "retrieval_abstention_accuracy": 0.6666666666666666
+    },
+    "multilingual and cross-lingual retrieval": {
+      "queries": 8,
+      "retrieval_queries": 6,
+      "k": 5,
+      "recall_at_k": 0.8611111111111112,
+      "ndcg_at_k": 0.9114624226949911,
+      "mrr_at_k": 0.9166666666666666,
+      "retrieval_abstention_accuracy": 0.75
+    },
+    "near-duplicate distractors": {
+      "queries": 13,
+      "retrieval_queries": 11,
+      "k": 5,
+      "recall_at_k": 0.9696969696969696,
+      "ndcg_at_k": 0.9256713524571315,
+      "mrr_at_k": 0.9090909090909091,
+      "retrieval_abstention_accuracy": 0.8461538461538461
+    },
+    "negation and exception handling": {
+      "queries": 20,
+      "retrieval_queries": 20,
+      "k": 5,
+      "recall_at_k": 0.925,
+      "ndcg_at_k": 0.9532181164632213,
+      "mrr_at_k": 0.975,
+      "retrieval_abstention_accuracy": 1.0
+    },
+    "scope and applicability boundaries": {
+      "queries": 9,
+      "retrieval_queries": 8,
+      "k": 5,
+      "recall_at_k": 1.0,
+      "ndcg_at_k": 0.9851213591471728,
+      "mrr_at_k": 1.0,
+      "retrieval_abstention_accuracy": 0.8888888888888888
+    },
+    "semantic paraphrase": {
+      "queries": 10,
+      "retrieval_queries": 10,
+      "k": 5,
+      "recall_at_k": 0.9166666666666666,
+      "ndcg_at_k": 0.9489132794535837,
+      "mrr_at_k": 0.95,
+      "retrieval_abstention_accuracy": 1.0
+    },
+    "topical hard negatives": {
+      "queries": 40,
+      "retrieval_queries": 34,
+      "k": 5,
+      "recall_at_k": 0.9754901960784313,
+      "ndcg_at_k": 0.9738488914569231,
+      "mrr_at_k": 1.0,
+      "retrieval_abstention_accuracy": 0.85
+    },
+    "unanswerable questions": {
+      "queries": 10,
+      "retrieval_queries": 0,
+      "k": 5,
+      "recall_at_k": null,
+      "ndcg_at_k": null,
+      "mrr_at_k": null,
+      "retrieval_abstention_accuracy": 0.0
+    }
+  }
+}

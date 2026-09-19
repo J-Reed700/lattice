@@ -3,9 +3,13 @@
 //! Combines vector similarity search with keyword BM25 search using
 //! Reciprocal Rank Fusion for optimal relevance.
 
+use crate::features::search::engine::fusion::{
+    FusionResult, ReciprocalRankFusion, ThreeBranchWeights,
+};
 use crate::features::search::engine::recency::{RecencyConfig, RecencyScorer};
 use crate::features::search::engine::reranker::{blend_rerank_scores, Reranker};
 use crate::shared::error::{AppError, Result};
+use crate::shared::text_utils::safe_truncate;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -40,8 +44,6 @@ pub struct SearchConfig {
     pub min_score: f32,
     /// Enable reranking
     pub enable_reranking: bool,
-    /// Recency boost factor
-    pub recency_boost: f32,
     /// Maximum results to fetch before filtering
     pub max_results: usize,
     /// Run the experimental learned sparse branch when the loaded model supports it.
@@ -66,7 +68,6 @@ impl Default for SearchConfig {
             keyword_weight: crate::shared::constants::DEFAULT_KEYWORD_FUSION_WEIGHT,
             min_score: 0.5,
             enable_reranking: false,
-            recency_boost: 0.1,
             max_results: 100,
             sparse_enabled: default_sparse_enabled(),
         }
@@ -108,10 +109,10 @@ pub struct HybridSearchResult {
 
 /// Per-branch `(rank, score)` for every candidate each branch returned.
 ///
-/// Kept separately from the fused result because the fusion helper collapses
-/// its inputs pairwise and cannot report a faithful per-branch rank; these maps
-/// are built from the branch outputs themselves, so `vector_rank` still means
-/// "position in the vector branch" no matter how many branches were fused.
+/// The fused result reports per-branch *ranks*; these maps also carry each
+/// branch's own score, which the fusion deliberately discards because the
+/// branches score on incomparable scales. The UI's per-branch score columns
+/// and the evaluation's branch diagnostics read them from here.
 #[derive(Debug, Default)]
 struct BranchSignals {
     vector: HashMap<String, (usize, f32)>,
@@ -130,6 +131,22 @@ impl BranchSignals {
             .collect()
     }
 }
+
+/// A result on its way out, plus the text the cross-encoder should judge it on.
+///
+/// The two are carried together rather than as parallel vectors because
+/// reranking sorts them, and a sort that reorders one and not the other scores
+/// every passage against the wrong neighbour.
+struct Candidate {
+    result: HybridSearchResult,
+    /// The chunk body. `result.content` is the 200-character display preview.
+    rerank_text: String,
+}
+
+/// How much of a chunk is copied for the cross-encoder. Its tokenizer truncates
+/// to the model's own sequence length (512 tokens) well inside this; the cap
+/// only stops a pathological chunk being cloned in full.
+const RERANK_DOCUMENT_MAX_CHARS: usize = 4000;
 
 impl From<HybridSearchResult> for crate::features::search::engine::service::SearchResult {
     fn from(result: HybridSearchResult) -> Self {
@@ -384,14 +401,21 @@ impl HybridSearchService {
     async fn finalize_results(
         &self,
         query_text: &str,
-        mut results: Vec<HybridSearchResult>,
+        mut candidates: Vec<Candidate>,
         top_k: usize,
     ) -> Vec<HybridSearchResult> {
         let candidate_limit = self.candidate_limit(top_k);
-        results.truncate(candidate_limit);
-        if results.len() <= 1 || query_text.trim().is_empty() {
-            results.truncate(top_k);
-            return results;
+        candidates.truncate(candidate_limit);
+        let finish = |mut candidates: Vec<Candidate>| {
+            candidates.truncate(top_k);
+            candidates
+                .into_iter()
+                .map(|candidate| candidate.result)
+                .collect::<Vec<_>>()
+        };
+
+        if candidates.len() <= 1 || query_text.trim().is_empty() {
+            return finish(candidates);
         }
 
         let Some(reranker) = self
@@ -400,29 +424,42 @@ impl HybridSearchService {
             .filter(|_| self.config.enable_reranking)
             .filter(|reranker| reranker.is_available())
         else {
-            results.truncate(top_k);
-            return results;
+            return finish(candidates);
         };
 
-        let documents: Vec<String> = results
+        // The chunk body, not the preview the result carries for display: the
+        // chat path feeds the cross-encoder its passages, and direct search fed
+        // it a 200-character window, so the two disagreed about the same
+        // corpus. The cross-encoder's tokenizer truncates to its own sequence
+        // length; this cap only bounds what is copied to reach it, and cuts on
+        // a character boundary.
+        let documents: Vec<String> = candidates
             .iter()
-            .map(|result| result.content.clone())
+            .map(|candidate| safe_truncate(&candidate.rerank_text, RERANK_DOCUMENT_MAX_CHARS))
             .collect();
-        let original_scores: Vec<f32> = results.iter().map(|result| result.score).collect();
+        let original_scores: Vec<f32> = candidates
+            .iter()
+            .map(|candidate| candidate.result.score)
+            .collect();
         let rerank_result = reranker
-            .rerank(query_text, documents, results.len())
+            .rerank(query_text, documents, candidates.len())
             .await
             .and_then(|ranked| blend_rerank_scores(&original_scores, &ranked));
 
         match rerank_result {
             Ok(scores) => {
-                for (result, score) in results.iter_mut().zip(scores) {
-                    result.score = score;
+                for (candidate, score) in candidates.iter_mut().zip(scores) {
+                    candidate.result.score = score;
                 }
-                results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+                candidates.sort_by(|a, b| {
+                    b.result
+                        .score
+                        .partial_cmp(&a.result.score)
+                        .unwrap_or(Ordering::Equal)
+                });
                 tracing::debug!(
-                    candidate_count = results.len(),
-                    result_count = top_k.min(results.len()),
+                    candidate_count = candidates.len(),
+                    result_count = top_k.min(candidates.len()),
                     "Applied shared cross-encoder reranker"
                 );
             }
@@ -431,8 +468,30 @@ impl HybridSearchService {
             }
         }
 
-        results.truncate(top_k);
-        results
+        finish(candidates)
+    }
+
+    /// The vector branch, off the executor thread.
+    ///
+    /// The USearch query is synchronous and CPU-bound. Awaiting it inline
+    /// inside `try_join!` blocks the runtime thread, so the BM25 branch it was
+    /// supposed to run beside cannot make progress until it returns — the two
+    /// branches were concurrent on paper only.
+    async fn vector_branch(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<crate::features::search::engine::service::SearchResult>> {
+        let vector_search = Arc::clone(&self.vector_search);
+        let embedding = query_embedding.to_vec();
+        let min_score = self.config.min_score;
+        tokio::task::spawn_blocking(move || {
+            // A cosine-similarity floor, on the same scale the index scores —
+            // never a fused RRF score, which tops out near 0.09.
+            vector_search.search_with_threshold(&embedding, top_k, min_score)
+        })
+        .await
+        .map_err(|error| AppError::InternalError(format!("Vector search task failed: {error}")))?
     }
 
     /// Perform hybrid search (legacy method for backward compatibility)
@@ -464,14 +523,13 @@ impl HybridSearchService {
         results.into_iter().map(|r| (r.chunk_id, r.score)).collect()
     }
 
-    /// Fuse vector and BM25 results using Reciprocal Rank Fusion
+    /// Fuse vector and BM25 results using weighted Reciprocal Rank Fusion
     fn fuse_results(
         &self,
         vector_results: Vec<(String, f32)>,
         bm25_results: Vec<(String, f32)>,
-    ) -> Vec<crate::features::search::engine::fusion::FusionResult> {
-        let rrf = crate::features::search::engine::fusion::ReciprocalRankFusion::new(self.rrf_k);
-        rrf.fuse_weighted(
+    ) -> Vec<FusionResult> {
+        ReciprocalRankFusion::new(self.rrf_k).fuse_weighted(
             vector_results,
             bm25_results,
             self.config.vector_weight,
@@ -487,9 +545,9 @@ impl HybridSearchService {
     /// intermediate lists rather than the branches a caller means.
     async fn enrich_fused_results(
         &self,
-        fused_results: Vec<crate::features::search::engine::fusion::FusionResult>,
+        fused_results: Vec<FusionResult>,
         signals: &BranchSignals,
-    ) -> Result<Vec<HybridSearchResult>> {
+    ) -> Result<Vec<Candidate>> {
         if fused_results.is_empty() {
             return Ok(vec![]);
         }
@@ -509,22 +567,27 @@ impl HybridSearchService {
             let sparse = signals.sparse.get(&fusion_result.id).copied();
             let keyword_score = bm25.map(|(_, score)| score);
 
-            enriched.push(HybridSearchResult {
-                chunk_id: fusion_result.id.clone(),
-                document_id,
-                score: fusion_result.score,
-                vector_score: vector.map(|(_, score)| score),
-                keyword_score,
-                content: metadata
-                    .map(|m| m.snippet.clone())
+            enriched.push(Candidate {
+                rerank_text: metadata
+                    .map(|m| m.content.clone())
                     .unwrap_or_else(String::new),
-                metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
-                id: fusion_result.id.clone(),
-                bm25_score: keyword_score,
-                vector_rank: vector.map(|(rank, _)| rank),
-                bm25_rank: bm25.map(|(rank, _)| rank),
-                sparse_score: sparse.map(|(_, score)| score),
-                sparse_rank: sparse.map(|(rank, _)| rank),
+                result: HybridSearchResult {
+                    chunk_id: fusion_result.id.clone(),
+                    document_id,
+                    score: fusion_result.score,
+                    vector_score: vector.map(|(_, score)| score),
+                    keyword_score,
+                    content: metadata
+                        .map(|m| m.snippet.clone())
+                        .unwrap_or_else(String::new),
+                    metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
+                    id: fusion_result.id.clone(),
+                    bm25_score: keyword_score,
+                    vector_rank: vector.map(|(rank, _)| rank),
+                    bm25_rank: bm25.map(|(rank, _)| rank),
+                    sparse_score: sparse.map(|(_, score)| score),
+                    sparse_rank: sparse.map(|(rank, _)| rank),
+                },
             });
         }
 
@@ -535,7 +598,7 @@ impl HybridSearchService {
     async fn convert_vector_results(
         &self,
         results: Vec<crate::features::search::engine::service::SearchResult>,
-    ) -> Result<Vec<HybridSearchResult>> {
+    ) -> Result<Vec<Candidate>> {
         if results.is_empty() {
             return Ok(vec![]);
         }
@@ -550,22 +613,27 @@ impl HybridSearchService {
                 .map(|m| m.document_id.clone())
                 .unwrap_or_else(|| result.id.clone());
 
-            enriched.push(HybridSearchResult {
-                chunk_id: result.id.clone(),
-                document_id,
-                score: result.score,
-                vector_score: Some(result.score),
-                keyword_score: None,
-                content: metadata
-                    .map(|m| m.snippet.clone())
+            enriched.push(Candidate {
+                rerank_text: metadata
+                    .map(|m| m.content.clone())
                     .unwrap_or_else(String::new),
-                metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
-                id: result.id.clone(),
-                bm25_score: None,
-                vector_rank: Some(rank),
-                bm25_rank: None,
-                sparse_score: None,
-                sparse_rank: None,
+                result: HybridSearchResult {
+                    chunk_id: result.id.clone(),
+                    document_id,
+                    score: result.score,
+                    vector_score: Some(result.score),
+                    keyword_score: None,
+                    content: metadata
+                        .map(|m| m.snippet.clone())
+                        .unwrap_or_else(String::new),
+                    metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
+                    id: result.id.clone(),
+                    bm25_score: None,
+                    vector_rank: Some(rank),
+                    bm25_rank: None,
+                    sparse_score: None,
+                    sparse_rank: None,
+                },
             });
         }
 
@@ -576,7 +644,7 @@ impl HybridSearchService {
     async fn convert_bm25_results(
         &self,
         results: Vec<crate::features::search::engine::bm25::BM25Result>,
-    ) -> Result<Vec<HybridSearchResult>> {
+    ) -> Result<Vec<Candidate>> {
         if results.is_empty() {
             return Ok(vec![]);
         }
@@ -591,22 +659,27 @@ impl HybridSearchService {
                 .map(|m| m.document_id.clone())
                 .unwrap_or_else(|| result.document_id.clone());
 
-            enriched.push(HybridSearchResult {
-                chunk_id: result.chunk_id.clone(),
-                document_id,
-                score: result.score,
-                vector_score: None,
-                keyword_score: Some(result.score),
-                content: metadata
-                    .map(|m| m.snippet.clone())
+            enriched.push(Candidate {
+                rerank_text: metadata
+                    .map(|m| m.content.clone())
                     .unwrap_or_else(String::new),
-                metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
-                id: result.chunk_id.clone(),
-                bm25_score: Some(result.score),
-                vector_rank: None,
-                bm25_rank: Some(rank),
-                sparse_score: None,
-                sparse_rank: None,
+                result: HybridSearchResult {
+                    chunk_id: result.chunk_id.clone(),
+                    document_id,
+                    score: result.score,
+                    vector_score: None,
+                    keyword_score: Some(result.score),
+                    content: metadata
+                        .map(|m| m.snippet.clone())
+                        .unwrap_or_else(String::new),
+                    metadata: metadata.and_then(|m| serde_json::to_value(&m.metadata).ok()),
+                    id: result.chunk_id.clone(),
+                    bm25_score: Some(result.score),
+                    vector_rank: None,
+                    bm25_rank: Some(rank),
+                    sparse_score: None,
+                    sparse_rank: None,
+                },
             });
         }
 
@@ -636,11 +709,9 @@ impl HybridSearchTrait for HybridSearchService {
                     ));
                 }
 
-                let vector_results = self.vector_search.search_with_threshold(
-                    query_embedding,
-                    self.candidate_limit(top_k),
-                    self.config.min_score,
-                )?;
+                let vector_results = self
+                    .vector_branch(query_embedding, self.candidate_limit(top_k))
+                    .await?;
                 let results = self.convert_vector_results(vector_results).await?;
                 Ok(self.finalize_results(query_text, results, top_k).await)
             }
@@ -683,11 +754,9 @@ impl HybridSearchTrait for HybridSearchService {
                 if query_text.trim().is_empty() {
                     // Fall back to vector-only if no text
                     tracing::warn!("No query text provided, falling back to vector-only search");
-                    let vector_results = self.vector_search.search_with_threshold(
-                        query_embedding,
-                        self.candidate_limit(top_k),
-                        self.config.min_score,
-                    )?;
+                    let vector_results = self
+                        .vector_branch(query_embedding, self.candidate_limit(top_k))
+                        .await?;
                     let results = self.convert_vector_results(vector_results).await?;
                     return Ok(self.finalize_results(query_text, results, top_k).await);
                 }
@@ -705,14 +774,8 @@ impl HybridSearchTrait for HybridSearchService {
                 let (core, sparse_outcome) = tokio::join!(
                     async {
                         tokio::try_join!(
-                            async {
-                                self.vector_search.search_with_threshold(
-                                    query_embedding,
-                                    expanded_limit,
-                                    self.config.min_score,
-                                )
-                            },
-                            async { self.bm25_search.search(query_text, expanded_limit).await }
+                            self.vector_branch(query_embedding, expanded_limit),
+                            self.bm25_search.search(query_text, expanded_limit)
                         )
                     },
                     async {
@@ -760,20 +823,26 @@ impl HybridSearchTrait for HybridSearchService {
                     .map(|result| (result.chunk_id, result.score))
                     .collect();
 
-                // Fuse results using RRF. BM25 stays in the fusion even when
-                // sparse runs: the sparse head can only activate terms that are
-                // in the model's vocabulary, so exact identifiers, code symbols
-                // and quoted strings still need a literal branch.
+                // Fuse results using weighted RRF. BM25 stays in the fusion
+                // even when sparse runs: the sparse head can only activate
+                // terms that are in the model's vocabulary, so exact
+                // identifiers, code symbols and quoted strings still need a
+                // literal branch. The two of them share the configured keyword
+                // weight, so turning sparse on adds a second opinion about the
+                // lexical side rather than moving the vector/lexical balance.
                 let fused_results = if sparse_tuples.is_empty() {
                     self.fuse_results(vector_tuples, bm25_tuples)
                 } else {
-                    crate::features::search::engine::fusion::ReciprocalRankFusion::new(self.rrf_k)
-                        .fuse_three_sources(
-                            vector_tuples,
-                            bm25_tuples,
-                            sparse_tuples,
-                            expanded_limit.max(candidate_limit),
-                        )
+                    ReciprocalRankFusion::new(self.rrf_k).fuse_three_sources(
+                        vector_tuples,
+                        bm25_tuples,
+                        sparse_tuples,
+                        ThreeBranchWeights::splitting_keyword_weight(
+                            self.config.vector_weight,
+                            self.config.keyword_weight,
+                        ),
+                        expanded_limit.max(candidate_limit),
+                    )
                 };
 
                 // Enrich a wider first-stage pool so the cross-encoder can promote

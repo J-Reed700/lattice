@@ -32,23 +32,21 @@
 //!
 //! ### Vector Search
 //! - **USearch HNSW**: Production-grade HNSW via USearch v2.x with persistence and SIMD
-//! - **Brute Force**: Linear search for small datasets or exact results
 //!
 //! ### Keyword Search
-//! - **BM25**: Best Match 25 ranking function using SQLite FTS5
+//! - **BM25**: Best Match 25 ranking over two SQLite FTS5 indexes: `porter
+//!   unicode61` for space-separated scripts, `trigram` for CJK
 //! - **File Search**: Fast filename and path matching
 //!
 //! ### Hybrid Search
-//! - **Fusion**: Combines vector and keyword results using Reciprocal Rank Fusion
+//! - **Fusion**: Combines vector and keyword results using weighted Reciprocal Rank Fusion
 //! - **Recency Scoring**: Boosts recent documents in search results
-//! - **Query Expansion**: Expands queries with synonyms and related terms
 //!
 //! ## Performance Characteristics
 //!
 //! | Search Type | Time Complexity | Memory | Accuracy |
 //! |-------------|----------------|---------|----------|
 //! | HNSW        | O(log N)       | High    | ~95%     |
-//! | Brute Force | O(N)           | Medium  | 100%     |
 //! | BM25        | O(k)           | Low     | Good     |
 //! | Hybrid      | O(log N + k)   | High    | Excellent|
 //!
@@ -88,18 +86,6 @@
 //! let results = service.search("machine learning", 20).await?;
 //! ```
 //!
-//! ### With Query Expansion
-//!
-//! ```rust,no_run
-//! use lattice::features::search::engine::{QueryExpander, QueryExpansionConfig};
-//!
-//! let expander = QueryExpander::new(QueryExpansionConfig::default());
-//! let expanded = expander.expand("ML").await?;
-//! // Returns: ["ML", "machine learning", "artificial intelligence"]
-//!
-//! let results = service.search_with_expansion(&expanded, 20).await?;
-//! ```
-//!
 //! ## Configuration
 //!
 //! Search behavior can be tuned via `SearchConfig`:
@@ -113,8 +99,8 @@
 //!     keyword_weight: 0.3,       // 30% keyword relevance
 //!     min_score: 0.5,            // Minimum similarity threshold
 //!     enable_reranking: true,    // Post-process results
-//!     recency_boost: 0.1,        // Boost recent documents 10%
 //!     max_results: 100,          // Fetch top 100 before filtering
+//!     ..Default::default()
 //! };
 //! ```
 //!
@@ -149,8 +135,8 @@
 // Engine sub-modules (flattened from former `modules/` subdirectory).
 pub mod bm25;
 pub mod builder;
+pub mod fts_query;
 pub mod fusion;
-pub mod index;
 pub mod profiler;
 pub mod qwen3_reranker;
 pub mod recency;
@@ -163,7 +149,6 @@ pub mod vector_ops;
 pub mod hybrid;
 pub mod query_expansion;
 pub mod sparse_search;
-pub mod strategies;
 pub mod text_search;
 pub mod vector_search;
 
@@ -171,24 +156,19 @@ pub use bm25::{BM25Result, BM25Search};
 pub use builder::{
     HybridSearchBuilder, Ready as SearchReady, Uninitialized as SearchUninitialized,
 };
-pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedFusion};
+pub use fusion::{FusionResult, ReciprocalRankFusion, ThreeBranchWeights, WeightedRanking};
 pub use hybrid::{HybridSearchResult, HybridSearchService, SearchConfig, SearchMode};
-pub use index::EmbeddingIndex;
 pub use profiler::{PerformanceMetrics, Profiler};
-pub use query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
 pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};
 pub use reranker::{
     blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
     Reranker, RerankerService,
 };
-pub use service::{BruteForceSearch, SearchResult};
+pub use service::SearchResult;
 pub use sparse_search::{SparseSearchService, SqliteSparseTermStore};
 pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_vector};
 pub use vector_search::USearchVectorIndex;
 
 #[cfg(test)]
 mod vector_ops_test;
-
-#[cfg(test)]
-mod index_tests;
