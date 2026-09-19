@@ -130,6 +130,35 @@ pub fn pooling_token_indices(
     Ok(groups)
 }
 
+/// Group consecutive chunks into forward passes.
+///
+/// A span longer than the model window used to drop back to chunk-first
+/// wholesale, which threw away the only thing late chunking buys. Packing whole
+/// chunks into windows instead keeps every chunk conditioned on its neighbours;
+/// only the conditioning that crosses a window edge is lost.
+///
+/// `chunk_tokens` are the chunks' own token counts and `budget` is what is left
+/// of the window once the shared prefix is counted. Because tokenizing the
+/// pieces separately can differ from tokenizing their concatenation, the packing
+/// is an estimate: the caller re-tokenizes each window for real and answers an
+/// overflowing one on its own. A chunk that exceeds `budget` by itself becomes a
+/// window of one rather than being dropped.
+pub fn window_groups(chunk_tokens: &[usize], budget: usize) -> Vec<Range<usize>> {
+    let mut windows = Vec::new();
+    let (mut start, mut used) = (0, 0);
+    for (index, tokens) in chunk_tokens.iter().enumerate() {
+        if index > start && used + tokens > budget {
+            windows.push(start..index);
+            (start, used) = (index, 0);
+        }
+        used += tokens;
+    }
+    if start < chunk_tokens.len() {
+        windows.push(start..chunk_tokens.len());
+    }
+    windows
+}
+
 /// Reject ranges that do not address whole characters inside `span_text`
 /// before any tokenization work happens.
 pub fn validate_chunk_ranges(
@@ -283,6 +312,26 @@ mod tests {
             validate_chunk_ranges(span, &[8..9]),
             Err(LateChunkingError::InvalidRange { chunk: 0 })
         ));
+    }
+
+    #[test]
+    fn windows_hold_as_many_whole_chunks_as_fit() {
+        // Four 400-token chunks in a 1000-token budget: two, then two.
+        assert_eq!(window_groups(&[400, 400, 400, 400], 1000), vec![0..2, 2..4]);
+        // A span that fits is one window, which is the original behaviour.
+        assert_eq!(window_groups(&[400, 400], 1000), vec![0..2]);
+        assert!(window_groups(&[], 1000).is_empty());
+    }
+
+    #[test]
+    fn a_chunk_larger_than_the_budget_still_gets_its_own_window() {
+        assert_eq!(window_groups(&[2000, 10], 1000), vec![0..1, 1..2]);
+        assert_eq!(window_groups(&[10, 20, 30], 0), vec![0..1, 1..2, 2..3]);
+        // Every chunk lands in exactly one window, in order.
+        let windows = window_groups(&[300, 300, 300, 300, 300], 700);
+        assert_eq!(windows.first().map(|w| w.start), Some(0));
+        assert_eq!(windows.last().map(|w| w.end), Some(5));
+        assert!(windows.windows(2).all(|pair| pair[0].end == pair[1].start));
     }
 
     #[test]
