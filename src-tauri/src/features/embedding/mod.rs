@@ -16,6 +16,8 @@
 //! - `crate::features::embedding::remote_service` — RemoteEmbeddingService
 //! - `crate::features::embedding::generator` — EmbeddingGenerator, ModelConfig
 //! - `crate::features::embedding::late_chunking` — late-chunking strategy + pooling rules
+//! - `crate::features::embedding::prefixes` — per-family query/document instruction prefixes
+//! - `crate::features::embedding::qwen3_encoder` — batched, cache-free Qwen3 forward pass
 //! - `crate::features::embedding::validator` — validation utilities
 //! - `crate::features::embedding::persistence_mapper` — EmbeddingMapper, EmbeddingDTO
 //! - `crate::features::embedding::repository` — Embedding, EmbeddingRepository (port impl)
@@ -41,6 +43,8 @@ pub mod input_policy;
 pub mod late_chunking;
 pub mod persistence_mapper;
 pub mod plugin;
+pub mod prefixes;
+pub mod qwen3_encoder;
 pub mod remote_service;
 pub mod repository;
 pub mod repository_tx;
