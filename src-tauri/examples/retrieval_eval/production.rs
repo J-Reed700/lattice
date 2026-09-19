@@ -269,7 +269,7 @@ impl ProductionIndex {
                     let contextualized: Vec<ContextualizedChunk> =
                         prepared.iter().map(|p| p.chunk.clone()).collect();
                     (
-                        model.embed_contextualized_chunks(&contextualized).await?,
+                        embed_cached(&model, &model_identity, &contextualized).await?,
                         Vec::new(),
                     )
                 }
@@ -662,6 +662,54 @@ fn sufficiency_input(result: &HybridSearchResult) -> SearchResultDto {
 }
 
 /// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
+/// Chunk-first embeddings, read from `RETRIEVAL_EVAL_EMBED_CACHE` when that
+/// names a directory. Embedding the corpus is most of a run's wall time, and a
+/// change to search, fusion or the index does not alter a single vector, so a
+/// cached run takes seconds. The key covers the model and the exact text, not
+/// the embedding code: clear the directory after changing how text is embedded.
+async fn embed_cached(
+    model: &CandleEmbeddingService,
+    model_identity: &str,
+    chunks: &[ContextualizedChunk],
+) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+    let Some(dir) = std::env::var_os("RETRIEVAL_EVAL_EMBED_CACHE").map(PathBuf::from) else {
+        return Ok(model.embed_contextualized_chunks(chunks).await?);
+    };
+    std::fs::create_dir_all(&dir)?;
+    let paths: Vec<PathBuf> = chunks
+        .iter()
+        .map(|chunk| {
+            let mut hasher = Sha256::new();
+            hasher.update(model_identity.as_bytes());
+            hasher.update([0]);
+            hasher.update(chunk.contextualized_content.as_bytes());
+            dir.join(format!("{}.f32", hex::encode(hasher.finalize())))
+        })
+        .collect();
+    let cached: Option<Vec<Vec<f32>>> = paths
+        .iter()
+        .map(|path| {
+            let bytes = std::fs::read(path).ok()?;
+            (bytes.len() == model.dimension() * 4).then(|| {
+                bytes
+                    .chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect()
+            })
+        })
+        .collect();
+    if let Some(vectors) = cached {
+        return Ok(vectors);
+    }
+    let vectors = model.embed_contextualized_chunks(chunks).await?;
+    for (path, vector) in paths.iter().zip(&vectors) {
+        let bytes: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(path, bytes)?;
+    }
+    Ok(vectors)
+}
+
 fn prepare_chunks(
     model: &CandleEmbeddingService,
     chunker: &SemanticChunker,
