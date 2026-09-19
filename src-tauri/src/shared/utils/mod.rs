@@ -14,7 +14,7 @@ pub mod supervised_task;
 pub use alignment::{bytes_to_f32_slice, bytes_to_f32_vec};
 pub use atomic_fs::AtomicFs;
 pub use autorelease::with_autorelease_pool;
-pub use compute_device::best_available_compute_device;
+pub use compute_device::{best_available_compute_device, gpu_acceleration_available};
 pub use http_client::{reqwest_client_builder, should_disable_system_proxy};
 pub use path::{path_to_string, validate_path};
 pub use retry::{retry_with_backoff, RetryConfig};

@@ -29,7 +29,8 @@ Understand how each search mode works under the hood and when to use them.
 
 2. **Embedding Generation**
    - The tokenized query is fed into a transformer model
-   - The model outputs a 384-dimensional vector (embedding)
+   - The model outputs a vector (embedding) — 1024 numbers for the default
+     Qwen3-Embedding-0.6B, 384 for all-MiniLM-L6-v2 on machines without a GPU
    - This vector represents the semantic meaning of your query
 
 3. **Similarity Calculation**

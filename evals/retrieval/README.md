@@ -39,6 +39,7 @@ shipping behavior and experiments:
 
 | Capability | Decision | Production behavior |
 | --- | --- | --- |
+| First-run embedding model | Qwen3 where there is a GPU | `Qwen3-Embedding-0.6B` on a machine with a working Metal (or CUDA) backend, `all-MiniLM-L6-v2` on CPU-only machines, where 0.6B parameters would make bulk indexing an overnight job |
 | Vector + keyword fusion | Keep and default on | Weighted RRF: vector `0.7`, keyword `0.3`, `k = 10` |
 | Qwen3 vector compression | Keep and default on | 256 Matryoshka dimensions with i8 storage; non-Matryoshka models fall back to full precision |
 | Corrective retrieval retry | Keep | Sufficiency may trigger one retry; it must not suppress an answer by itself |
@@ -181,6 +182,9 @@ searches rescore over-fetched neighbours against full-precision vectors.
 Truncation only works on a model trained with Matryoshka Representation Learning
 (Qwen3-Embedding-0.6B is; all-MiniLM-L6-v2 is not), so measure it against an
 uncompressed run on the same model before reading anything into the numbers.
+Because Qwen3 is the first-run default wherever there is a GPU, the settings
+default of 256 dimensions at i8 is live on those installs from the first
+document indexed, where it used to be inert behind MiniLM.
 
 ### Learned sparse retrieval
 
