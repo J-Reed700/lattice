@@ -153,7 +153,9 @@ pub async fn build_with_compression(
     .map_err(|e| AppError::InternalError(format!("Vector index open task failed: {e}")))??;
     let usearch_index = Arc::new(usearch_index);
 
-    // SQLite is authoritative: rebuilding also removes stale keys after interrupted writes.
+    // SQLite is authoritative. An index that does not hold exactly what it holds
+    // — stale keys after an interrupted write, a vector re-embedded in place —
+    // is rebuilt from it. One that does is left alone: see `IndexFingerprint`.
     let mut coverage: Option<(usize, usize)> = None;
     if let Some(identity) = &identity {
         let mut rows =
@@ -201,15 +203,32 @@ pub async fn build_with_compression(
         let expected = rows.len();
         coverage = Some((expected, usize::try_from(total).unwrap_or(0)));
         let index = Arc::clone(&usearch_index);
-        let added = tokio::task::spawn_blocking(move || index.rebuild_from_embeddings(rows))
-            .await
-            .map_err(|e| {
-                AppError::InternalError(format!("Vector index rebuild task failed: {e}"))
-            })??;
-        if added != expected {
-            return Err(AppError::InvalidState(
-                "Incomplete vector index rebuild".into(),
-            ));
+        // Hashing every stored vector is a few hundred milliseconds; rebuilding
+        // the graph from them is about a second per thousand. Both are kept off
+        // the async runtime.
+        let reused = tokio::task::spawn_blocking(move || -> Result<bool> {
+            let in_database = super::engine::vector_search::IndexFingerprint::of_rows(
+                rows.iter()
+                    .map(|(id, vector, ..)| (id.as_str(), vector.as_slice())),
+            );
+            if index.holds_exactly(in_database) {
+                return Ok(true);
+            }
+            let added = index.rebuild_from_embeddings(rows)?;
+            if added != expected {
+                return Err(AppError::InvalidState(
+                    "Incomplete vector index rebuild".into(),
+                ));
+            }
+            Ok(false)
+        })
+        .await
+        .map_err(|e| AppError::InternalError(format!("Vector index rebuild task failed: {e}")))??;
+        if reused {
+            tracing::info!(
+                vectors = expected,
+                "Vector index on disk holds exactly what the database does; rebuild skipped"
+            );
         }
     }
 
