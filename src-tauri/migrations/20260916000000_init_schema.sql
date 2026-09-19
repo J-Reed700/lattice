@@ -549,6 +549,10 @@ CREATE TABLE IF NOT EXISTS journal_conversation_entries (
 CREATE TABLE IF NOT EXISTS daily_notes_workspace (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    -- The journal that owns this page. NULL means unfiled: quick captures and
+    -- vault imports arrive with no journal context and belong to none. A page
+    -- created inside a journal is owned by it and dies with it.
+    journal_id TEXT REFERENCES journals(id) ON DELETE CASCADE,
     content TEXT NOT NULL DEFAULT '',
     linked_document_ids TEXT NOT NULL DEFAULT '[]',
     linked_conversation_ids TEXT NOT NULL DEFAULT '[]',
@@ -558,6 +562,9 @@ CREATE TABLE IF NOT EXISTS daily_notes_workspace (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_daily_notes_workspace_journal
+    ON daily_notes_workspace(journal_id, updated_at DESC);
 
 -- =====================================================================
 -- Batch jobs and web assets

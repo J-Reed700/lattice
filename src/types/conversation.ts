@@ -287,8 +287,18 @@ export type DisplayMessage = ConversationMessage | OptimisticMessage;
  */
 export interface RetrievalTrace {
   searchedDocuments: number;
+  /** Passages from documents in the vault. Web results are not counted here. */
   passages: number;
+  /** Documents in the vault. Web results are `webPages`, never files. */
   files: number;
+  /**
+   * Web pages carried into the answer.
+   *
+   * Counted apart from `files` because they are not the user's documents:
+   * folding them in made a web-only answer in an empty space report that it had
+   * read ten files, which reads as a scope leak rather than a working search.
+   */
+  webPages?: number;
   scope: 'vault' | 'linked';
   /** Why the knowledge base could not be searched, straight from the backend. */
   unavailableReason?: string;
@@ -309,6 +319,7 @@ export const RetrievalTraceSchema = z.object({
   searchedDocuments: z.number().int().min(0).max(100_000_000),
   passages: z.number().int().min(0).max(1000),
   files: z.number().int().min(0).max(1000),
+  webPages: z.number().int().min(0).max(1000).optional(),
   scope: z.enum(['vault', 'linked']),
   unavailableReason: z.string().max(400).optional(),
   kbSufficient: z.boolean().optional(),

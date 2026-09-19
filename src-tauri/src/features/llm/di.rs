@@ -268,7 +268,11 @@ impl Container {
             .get_or_load(cache_key, generation, || async {
                 if active.location().is_local() {
                     self.model_loader()
-                        .load_utility_local(&active, generation_config)
+                        .load_utility_local(
+                            &active,
+                            generation_config,
+                            settings.llm.local_context_window,
+                        )
                         .await
                 } else {
                     self.model_loader()

@@ -17,6 +17,7 @@ use crate::application::ports::backup_port::{BackupInfoData, BackupPort};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use chrono::Utc;
+use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 #[cfg(test)]
 use std::fs;
@@ -136,6 +137,25 @@ fn validate_sql_safe_path(path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Connection options for opening an existing backup file read-only.
+///
+/// Built from `SqliteConnectOptions` rather than from a `sqlite://…?mode=ro`
+/// string on purpose, and it must stay that way: a DSN is a URL, and a Windows
+/// path is not a URL component. `Path::canonicalize` on Windows returns the
+/// verbatim form (`\\?\C:\Users\me\backups\x.db`), and sqlx splits a DSN at its
+/// *first* `?` — so the `\\?\` prefix alone truncated the filename to `\\` and
+/// turned the rest of the path plus `mode=ro` into one nonsense query
+/// parameter, failing with "unknown query parameter". Every backup path this
+/// adapter produces is canonicalized, so validation and restore were broken for
+/// all Windows users, not just in tests. Handing the `Path` straight to sqlx
+/// means no quoting, escaping or separator convention is ever involved.
+///
+/// `mode=ro` is the only thing the old URL encoded; everything else is left at
+/// sqlx's defaults so behaviour is unchanged.
+fn read_only_backup_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new().filename(path).read_only(true)
+}
+
 /// Backup adapter using SQLite backup API
 pub struct BackupAdapter {
     pool: SqlitePool,
@@ -195,9 +215,9 @@ impl BackupAdapter {
     /// Get file count from backup database
     async fn get_backup_file_count(&self, path: &Path) -> Option<usize> {
         // Open backup database read-only
-        let connection_string = format!("sqlite://{}?mode=ro", path.display());
-
-        let pool = SqlitePool::connect(&connection_string).await.ok()?;
+        let pool = SqlitePool::connect_with(read_only_backup_options(path))
+            .await
+            .ok()?;
 
         let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
@@ -211,9 +231,7 @@ impl BackupAdapter {
 
     /// Get version from backup metadata
     async fn get_backup_version(&self, path: &Path) -> Option<String> {
-        let connection_string = format!("sqlite://{}?mode=ro", path.display());
-
-        let pool = match SqlitePool::connect(&connection_string).await {
+        let pool = match SqlitePool::connect_with(read_only_backup_options(path)).await {
             Ok(pool) => pool,
             Err(error) => {
                 warn!(
@@ -288,9 +306,7 @@ impl BackupAdapter {
         }
 
         // Try to open the backup database
-        let connection_string = format!("sqlite://{}?mode=ro", path.display());
-
-        let pool = SqlitePool::connect(&connection_string)
+        let pool = SqlitePool::connect_with(read_only_backup_options(path))
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
@@ -538,16 +554,28 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::tempdir;
 
+    /// Open a read-write pool on an existing fixture file.
+    ///
+    /// Options rather than a `sqlite://…` string for the same reason production
+    /// uses them (see [`read_only_backup_options`]): several of these fixtures
+    /// are paths that came back out of the adapter, which canonicalizes them,
+    /// and a canonicalized Windows path carries a `\\?\` prefix that no DSN can
+    /// survive. Asserting through an options-built pool also keeps the tests
+    /// from quietly passing on a DSN habit we have just removed.
+    async fn connect_fixture_pool(path: &Path) -> SqlitePool {
+        SqlitePoolOptions::new()
+            .connect_with(SqliteConnectOptions::new().filename(path))
+            .await
+            .unwrap()
+    }
+
     async fn create_test_pool() -> (SqlitePool, PathBuf, tempfile::TempDir) {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
         std::fs::File::create(&db_path).unwrap();
 
-        let pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let pool = connect_fixture_pool(&db_path).await;
 
         sqlx::query(
             r#"
@@ -885,10 +913,7 @@ mod tests {
 
         assert!(db_path.exists());
 
-        let new_pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let new_pool = connect_fixture_pool(&db_path).await;
 
         let restored_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&new_pool)
@@ -952,10 +977,7 @@ mod tests {
         );
 
         // Verify safety backup is valid SQLite database
-        let safety_pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", safety_backup.display()))
-            .await
-            .unwrap();
+        let safety_pool = connect_fixture_pool(&safety_backup).await;
 
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&safety_pool)
@@ -987,10 +1009,7 @@ mod tests {
         // Close the pool before restore
         pool.close().await;
 
-        let new_pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let new_pool = connect_fixture_pool(&db_path).await;
 
         let adapter2 = BackupAdapter::new(new_pool.clone(), db_path.clone());
 
@@ -1026,10 +1045,7 @@ mod tests {
             );
         }
 
-        let verify_pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let verify_pool = connect_fixture_pool(&db_path).await;
 
         let final_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&verify_pool)
@@ -1093,10 +1109,7 @@ mod tests {
 
         assert!(db_path.exists());
 
-        let new_pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let new_pool = connect_fixture_pool(&db_path).await;
 
         let integrity: (String,) = sqlx::query_as("PRAGMA integrity_check")
             .fetch_one(&new_pool)

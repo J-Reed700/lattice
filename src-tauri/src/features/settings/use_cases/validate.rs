@@ -94,6 +94,7 @@ impl ValidateSettingsUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::MockSettingsRepository;
+    use crate::shared::test_paths;
 
     #[test]
     fn test_validate_default_settings() {
@@ -218,12 +219,16 @@ mod tests {
         let repository = Arc::new(MockSettingsRepository::new());
         let use_case = ValidateSettingsUseCase::new(repository);
 
-        // /tmp should exist on most systems
-        let is_valid = use_case.validate_folder_path("/tmp");
+        // A directory that certainly exists on this host. `/tmp` only exists on
+        // Unix; on Windows the string resolves to a non-existent `C:\tmp`, so
+        // the "valid folder" case was asserting the opposite of what it meant.
+        let existing = tempfile::tempdir().unwrap();
+        let is_valid = use_case.validate_folder_path(existing.path().to_str().unwrap());
         assert!(is_valid);
 
-        // Nonexistent path
-        let is_valid = use_case.validate_folder_path("/nonexistent/path/12345");
+        // Nonexistent path, spelled absolutely for this host.
+        let is_valid =
+            use_case.validate_folder_path(&test_paths::abs_str("nonexistent/path/12345"));
         assert!(!is_valid);
     }
 

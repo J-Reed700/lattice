@@ -404,6 +404,21 @@ impl SettingsRepository {
                     .to_string(),
             );
         }
+        if tuning.web_fetch_page_count > 10 {
+            result.add_error(
+                "search",
+                "web_fetch_page_count must be 10 or fewer".to_string(),
+            );
+        }
+        if tuning.web_fetch_page_count > 0
+            && (tuning.web_page_max_chars == 0 || tuning.web_page_fetch_timeout_secs == 0)
+        {
+            result.add_error(
+                "search",
+                "web_page_max_chars and web_page_fetch_timeout_secs must be greater than 0 when page fetching is enabled"
+                    .to_string(),
+            );
+        }
         if tuning.deep_research_depth == 0 || tuning.deep_research_depth > 4 {
             result.add_error(
                 "search",

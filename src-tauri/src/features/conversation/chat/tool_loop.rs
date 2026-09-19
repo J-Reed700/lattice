@@ -20,10 +20,11 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use super::cancellation::is_cancel_requested;
+use super::fetch_memory::{self, Delivery, FetchMemory, Recall};
 use super::prompting::render_tool_followup_prompt;
 use super::retrieval::{
-    build_web_source_citations, deduplicate_sources, format_tool_result,
-    record_tool_document_references,
+    build_web_source_citations, deduplicate_sources, fetched_page_text_room, format_tool_result,
+    merge_tool_sources, record_tool_document_references,
 };
 use super::ChatStreamEventDto;
 
@@ -97,6 +98,21 @@ impl<'a, R: tauri::Runtime> StreamEmitter<'a, R> {
         })
     }
 
+    /// Say what the turn is working on, for the stretches that produce no text.
+    ///
+    /// Best-effort: losing a progress note must never fail a generation that is
+    /// otherwise going fine, so the error is logged and swallowed rather than
+    /// propagated the way `content` propagates a dead frontend.
+    pub(super) fn activity(&self, detail: &str) {
+        if let Err(error) = self.emit(ChatStreamEventDto {
+            status: Some("activity".to_owned()),
+            detail: Some(detail.to_owned()),
+            ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
+        }) {
+            warn!(%error, "Failed to emit activity update");
+        }
+    }
+
     /// Emit the terminal event. Idempotent, so belt-and-braces calls on
     /// several exit paths cannot produce duplicates.
     pub(super) fn done(&mut self) {
@@ -147,12 +163,16 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     retrieval_trace: &mut Option<super::RetrievalTraceDto>,
     tools_ref: Option<&[crate::application::ports::ToolDefinition]>,
     time_budget: Duration,
+    pages_already_read: FetchMemory,
 ) -> Result<ToolLoopOutcome> {
     use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
 
     const MAX_TOOL_ITERATIONS: usize = 5;
     const CANCEL_POLL_INTERVAL_MS: u64 = 200;
+    /// How often to repeat the current activity while nothing else is happening.
+    /// Often enough to read as alive, rare enough not to spam the event channel.
+    const ACTIVITY_HEARTBEAT: Duration = Duration::from_secs(5);
     const EMPTY_RESPONSE_RETRY_HINT: &str =
         "Previous generation produced no text. Respond directly to the user query.";
     // One deadline for the whole turn: tool rounds and provider retries share it.
@@ -199,6 +219,11 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
 
+    // Pages are remembered for the whole turn, not just the round that found
+    // them — and the turn started before this loop did: retrieval has usually
+    // opened the top results already. Starting from its record is what stops
+    // round one being spent asking for pages the prompt already carries.
+    let mut fetch_memory = pages_already_read;
     for iteration in 0..MAX_TOOL_ITERATIONS {
         timings.iterations = (iteration + 1) as u32;
         if is_cancel_requested(request_id) {
@@ -232,16 +257,26 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                     emitter.content(&text)
                 };
                 let on_retry = |attempt| emitter.status("retrying", attempt);
+                emitter.activity(thinking_label(iteration));
                 let completion = timeout(
                     remaining,
                     llm.complete_with_retry_progress(&native_request, &on_text, &on_retry),
                 );
                 tokio::pin!(completion);
+                let mut last_heartbeat = Instant::now();
                 loop {
                     tokio::select! {
                         result = &mut completion => break result.map_err(|_| budget_exhausted())?,
                         _ = tokio::time::sleep(Duration::from_millis(CANCEL_POLL_INTERVAL_MS)) => {
                             if is_cancel_requested(request_id) { return Err(cancellation_error()); }
+                            // Until the first text arrives there is nothing else
+                            // to show, and on a slow model that can be minutes.
+                            if !first_text_received.load(std::sync::atomic::Ordering::Relaxed)
+                                && last_heartbeat.elapsed() >= ACTIVITY_HEARTBEAT
+                            {
+                                last_heartbeat = Instant::now();
+                                emitter.activity(thinking_label(iteration));
+                            }
                         }
                     }
                 }
@@ -426,9 +461,27 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             });
                         }
 
-                        for tc in &tool_calls {
+                        for (call_index, tc) in tool_calls.iter().enumerate() {
                             let tool_call_start = Instant::now();
                             timings.tool_call_count = timings.tool_call_count.saturating_add(1);
+                            // What is left of the window, shared between the
+                            // calls this round still has to answer. The
+                            // configured cap alone let one round of page
+                            // fetches outgrow a small model's entire context.
+                            let result_allowance = tool_result_allowance(
+                                llm.max_context_tokens(),
+                                chars_in_flight(
+                                    &native_request.input,
+                                    &tool_context,
+                                    &current_prompt,
+                                ),
+                                tool_calls.len().saturating_sub(call_index),
+                                tool_output_settings.max_chars as usize,
+                            );
+                            let round_output_settings = ToolOutputSettingsDto {
+                                max_chars: u32::try_from(result_allowance).unwrap_or(u32::MAX),
+                                ..tool_output_settings.clone()
+                            };
                             if is_cancel_requested(request_id) {
                                 emit_cancelled_stream(window, conv_id, request_id);
                                 return Err(cancellation_error());
@@ -455,6 +508,64 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 ));
                                 continue;
                             }
+                            // A URL this turn already failed on costs a request
+                            // to learn nothing. Answer it from memory so the
+                            // round can still spend its time somewhere useful.
+                            if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                                if let Some(reason) = fetch_memory.previous_failure(url) {
+                                    let notice = format!(
+                                        "Not retried: {url} already failed this turn ({reason}). Use a different source.",
+                                    );
+                                    warn!(
+                                        requested_function = tc.name.as_str(),
+                                        resolved_function = resolved_tool,
+                                        url,
+                                        reason,
+                                        "Skipping a URL that already failed this turn"
+                                    );
+                                    timings.tool_failure_count =
+                                        timings.tool_failure_count.saturating_add(1);
+                                    if let Some(id) = &tc.id {
+                                        native_request.input.push(CompletionInput::ToolResult {
+                                            id: id.clone(),
+                                            output: notice.clone(),
+                                        });
+                                    }
+                                    tool_context.push(format!("System: [{notice}]"));
+                                    timings.tool_execution_ms = timings
+                                        .tool_execution_ms
+                                        .saturating_add(elapsed_ms(tool_call_start));
+                                    continue;
+                                }
+                                // A page this turn already read is answered
+                                // from memory: no request, no politeness delay,
+                                // and nothing re-sent that the model has.
+                                if let Some(recall) = fetch_memory.recall(url) {
+                                    let notice = recalled_page_notice(url, &recall);
+                                    info!(
+                                        requested_function = tc.name.as_str(),
+                                        resolved_function = resolved_tool,
+                                        url,
+                                        already_whole =
+                                            matches!(recall, Recall::AlreadyWhole { .. }),
+                                        "Answered a repeat page request from this turn's memory"
+                                    );
+                                    timings.tool_success_count =
+                                        timings.tool_success_count.saturating_add(1);
+                                    if let Some(id) = &tc.id {
+                                        native_request.input.push(CompletionInput::ToolResult {
+                                            id: id.clone(),
+                                            output: notice.clone(),
+                                        });
+                                    }
+                                    tool_context.push(format!("System: [{notice}]"));
+                                    timings.tool_execution_ms = timings
+                                        .tool_execution_ms
+                                        .saturating_add(elapsed_ms(tool_call_start));
+                                    continue;
+                                }
+                            }
+                            emitter.activity(&tool_activity_label(resolved_tool, &tc.arguments));
                             info!(
                                 requested_function = tc.name.as_str(),
                                 resolved_function = resolved_tool,
@@ -476,17 +587,18 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         highlight_terms,
                                         tool_output_settings,
                                     );
-                                    let tool_chunk_ids: std::collections::HashSet<_> =
-                                        tool_sources.iter().map(|s| s.chunk_id.clone()).collect();
+                                    let mut tool_chunk_ids = std::collections::HashSet::new();
                                     if !tool_sources.is_empty() {
-                                        let added = tool_sources.len();
-                                        sources.extend(tool_sources);
+                                        let offered = tool_sources.len();
+                                        let before = sources.len();
+                                        tool_chunk_ids = merge_tool_sources(sources, tool_sources);
                                         *sources = deduplicate_sources(std::mem::take(sources));
                                         super::retrieval::assign_citation_ids(sources);
                                         info!(
                                             requested_function = tc.name.as_str(),
                                             resolved_function = resolved_tool,
-                                            added_sources = added,
+                                            offered_sources = offered,
+                                            added_sources = sources.len().saturating_sub(before),
                                             merged_sources = sources.len(),
                                             "Tool call added verifiable sources"
                                         );
@@ -513,7 +625,7 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         resolved_tool,
                                         &result,
                                         highlight_terms,
-                                        tool_output_settings,
+                                        &round_output_settings,
                                     );
                                     for source in sources
                                         .iter()
@@ -557,6 +669,38 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                         "System: [Tool '{}' result (excerpted): {}]",
                                         resolved_tool, result_text
                                     ));
+                                    if result.success && resolved_tool == "fetch_url_content" {
+                                        if let (Some(url), Some(page)) = (
+                                            fetch_memory::fetch_target(&tc.arguments),
+                                            result.data.clone().and_then(|data| {
+                                                serde_json::from_value::<FetchUrlContentOutput>(
+                                                    data,
+                                                )
+                                                .ok()
+                                            }),
+                                        ) {
+                                            let room = fetched_page_text_room(result_allowance);
+                                            let text = page.content.trim();
+                                            let delivery = if text.chars().count() <= room {
+                                                Delivery::Whole
+                                            } else {
+                                                Delivery::Clipped { shown_chars: room }
+                                            };
+                                            fetch_memory.record_page(url, text, delivery);
+                                        }
+                                    }
+                                    if !result.success {
+                                        if let Some(url) = fetch_memory::fetch_target(&tc.arguments)
+                                        {
+                                            fetch_memory.record_failure(
+                                                url,
+                                                result
+                                                    .error_message
+                                                    .as_deref()
+                                                    .unwrap_or("the fetch did not succeed"),
+                                            );
+                                        }
+                                    }
                                     info!(
                                         requested_function = tc.name.as_str(),
                                         resolved_function = resolved_tool,
@@ -579,6 +723,9 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                             output: format!("Tool failed: {e}"),
                                         });
                                     }
+                                    if let Some(url) = fetch_memory::fetch_target(&tc.arguments) {
+                                        fetch_memory.record_failure(url, &e.to_string());
+                                    }
                                     tool_context.push(format!(
                                         "System: [Tool '{}' failed: {}]",
                                         resolved_tool, e
@@ -588,6 +735,13 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                             timings.tool_execution_ms = timings
                                 .tool_execution_ms
                                 .saturating_add(elapsed_ms(tool_call_start));
+                        }
+
+                        // Restate the whole dead list once per round. A single
+                        // failure line among several results is easy for the
+                        // model to read past; the standing list is not.
+                        if let Some(advisory) = fetch_memory.advisory() {
+                            tool_context.push(format!("System: [{advisory}]"));
                         }
 
                         let followup_prompt_start = Instant::now();
@@ -828,6 +982,106 @@ fn available_tool_names(
     names
 }
 
+/// What to show while the model is producing no text.
+///
+/// The first round is plain thinking; later rounds follow tool results, and
+/// saying so is the difference between "stuck" and "on its third source".
+fn thinking_label(iteration: usize) -> &'static str {
+    if iteration == 0 {
+        "Thinking"
+    } else {
+        "Reading what it found and thinking"
+    }
+}
+
+/// Share of the context window the prompt may fill. The rest is the reply's.
+const CONTEXT_FILL_LIMIT: f64 = 0.75;
+
+/// Characters per token, rounded down, so the estimate errs towards leaving room.
+const CHARS_PER_TOKEN: usize = 3;
+
+/// A result cut shorter than this says too little to have been worth the round
+/// that asked for it, so a nearly full window still gets this much.
+const MIN_TOOL_RESULT_CHARS: usize = 1_500;
+
+/// Roughly how many characters the next generation already has to read. The
+/// native request and the rendered transcript carry the same turn in two forms
+/// and only one is sent, so the larger of the two is the honest figure.
+fn chars_in_flight(
+    native_input: &[crate::application::ports::llm_port::CompletionInput],
+    transcript: &[String],
+    prompt: &str,
+) -> usize {
+    use crate::application::ports::llm_port::CompletionInput;
+    let native: usize = native_input
+        .iter()
+        .map(|item| match item {
+            CompletionInput::Message { content, .. } => content.chars().count(),
+            CompletionInput::ToolResult { output, .. } => output.chars().count(),
+            CompletionInput::ToolCall {
+                name, arguments, ..
+            } => name.len() + arguments.to_string().len(),
+            CompletionInput::Native { value } => value.to_string().len(),
+        })
+        .sum();
+    let rendered: usize = transcript
+        .iter()
+        .map(|line| line.chars().count())
+        .sum::<usize>()
+        + prompt.chars().count();
+    native.max(rendered)
+}
+
+/// How many characters one tool result may take, given the model's window,
+/// what is already in it, and how many results this round has still to fit.
+fn tool_result_allowance(
+    context_tokens: usize,
+    chars_in_flight: usize,
+    calls_left: usize,
+    configured_max: usize,
+) -> usize {
+    let window_chars =
+        ((context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize).saturating_mul(CHARS_PER_TOKEN);
+    let share = window_chars.saturating_sub(chars_in_flight) / calls_left.max(1);
+    share.clamp(MIN_TOOL_RESULT_CHARS.min(configured_max), configured_max)
+}
+
+/// What the model is told when it asks for a page this turn already read.
+///
+/// Says where the text already is, because "already fetched" alone invites the
+/// model to conclude the content was lost and ask a third way.
+fn recalled_page_notice(url: &str, recall: &Recall) -> String {
+    match recall {
+        Recall::AlreadyWhole { word_count } => format!(
+            "Not fetched again: {url} was already read in full this turn ({word_count} words) and its complete text is in your context above. There is nothing more on that page. Answer from it, or choose a different source.",
+        ),
+        Recall::Remainder { text, shown_chars } => format!(
+            "Continuation of {url}. The first {shown_chars} characters are in your context above; this is the rest of the page, and with it you have the whole page:\n\n{text}",
+        ),
+    }
+}
+
+/// What to show while one tool call runs. Names the host for a fetch, because
+/// "Reading thereviewgeek.com" is the difference between visible progress and a
+/// spinner, and a blocked site is then obvious rather than mysterious.
+fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
+    match tool {
+        "fetch_url_content" => match fetch_memory::fetch_target(arguments)
+            .and_then(|url| url::Url::parse(url).ok())
+            .and_then(|url| url.host_str().map(|host| host.to_string()))
+        {
+            Some(host) => format!("Reading {host}"),
+            None => "Reading a web page".to_string(),
+        },
+        "web_search" => "Searching the web".to_string(),
+        "wiki_search" | "wiki_summary" => "Checking Wikipedia".to_string(),
+        "semantic_search" => "Searching your documents".to_string(),
+        "list_documents" => "Looking through your documents".to_string(),
+        "get_document" => "Opening a document".to_string(),
+        other => format!("Running {other}"),
+    }
+}
+
 fn emit_cancelled_stream<R: tauri::Runtime>(
     window: &tauri::Window<R>,
     conversation_id: &str,
@@ -842,5 +1096,95 @@ fn emit_cancelled_stream<R: tauri::Runtime>(
         },
     ) {
         warn!("Failed to emit cancellation event: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::ports::llm_port::CompletionInput;
+
+    /// Four page fetches in one round on a 32k-token model. At the configured
+    /// 50,000 characters each they are ~200,000 characters — several times the
+    /// model's whole window — and the next generation simply failed.
+    #[test]
+    fn a_round_of_results_is_made_to_fit_a_small_window() {
+        let context_tokens = 32_768;
+        let window_chars = (context_tokens as f64 * CONTEXT_FILL_LIMIT) as usize * CHARS_PER_TOKEN;
+        let already = 20_000;
+
+        let mut spent = already;
+        for calls_left in (1..=4).rev() {
+            spent += tool_result_allowance(context_tokens, spent, calls_left, 50_000);
+        }
+        assert!(
+            spent <= window_chars,
+            "{spent} characters in a {window_chars}-character window"
+        );
+    }
+
+    /// The model in the log has a 131k window. It should get whole pages.
+    #[test]
+    fn a_large_window_gives_each_result_the_configured_maximum() {
+        assert_eq!(tool_result_allowance(131_072, 20_000, 4, 50_000), 50_000);
+    }
+
+    /// A result of nothing would make the round that asked for it worthless.
+    #[test]
+    fn a_full_window_still_leaves_a_result_worth_reading() {
+        assert_eq!(
+            tool_result_allowance(8_192, 1_000_000, 3, 50_000),
+            MIN_TOOL_RESULT_CHARS
+        );
+    }
+
+    #[test]
+    fn a_configured_maximum_below_the_floor_is_respected() {
+        assert_eq!(tool_result_allowance(131_072, 0, 1, 800), 800);
+    }
+
+    #[test]
+    fn what_is_in_flight_is_the_larger_of_the_two_forms_of_the_turn() {
+        let native = vec![
+            CompletionInput::Message {
+                role: "user".to_string(),
+                content: "x".repeat(100),
+            },
+            CompletionInput::ToolResult {
+                id: "1".to_string(),
+                output: "y".repeat(400),
+            },
+        ];
+        let transcript = vec!["z".repeat(50)];
+        assert_eq!(chars_in_flight(&native, &transcript, "prompt"), 500);
+        assert_eq!(chars_in_flight(&[], &transcript, "prompt"), 56);
+    }
+
+    /// "Already fetched" alone invites the model to think the text was lost.
+    #[test]
+    fn a_page_already_read_in_full_is_pointed_back_to_the_context() {
+        let notice = recalled_page_notice(
+            "https://example.test/recap",
+            &Recall::AlreadyWhole { word_count: 3521 },
+        );
+        assert!(notice.contains("https://example.test/recap"), "{notice}");
+        assert!(notice.contains("3521 words"), "{notice}");
+        assert!(notice.contains("in your context above"), "{notice}");
+    }
+
+    #[test]
+    fn the_rest_of_a_clipped_page_says_where_the_first_part_is() {
+        let notice = recalled_page_notice(
+            "https://example.test/recap",
+            &Recall::Remainder {
+                text: "and then the flames came down.".to_string(),
+                shown_chars: 12_000,
+            },
+        );
+        assert!(notice.contains("first 12000 characters"), "{notice}");
+        assert!(
+            notice.ends_with("and then the flames came down."),
+            "{notice}"
+        );
     }
 }

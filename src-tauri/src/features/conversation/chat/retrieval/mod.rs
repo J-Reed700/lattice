@@ -24,10 +24,12 @@ mod followup_context;
 mod kb_retrieval;
 mod keyword;
 mod overlap;
+mod page_budget;
 mod pipeline;
 mod policy;
 mod rerank;
 mod source_citations;
+pub use self::source_citations::WEB_SOURCE_PREFIX;
 mod sufficiency;
 mod tool_format;
 use self::conversation_helpers::{
@@ -63,8 +65,12 @@ use self::source_citations::{
     build_web_source_citations as build_web_source_citations_impl,
     citation_ids_by_chunk as citation_ids_by_chunk_impl,
     deduplicate_sources as deduplicate_sources_impl, infer_category as infer_category_impl,
+    merge_tool_sources as merge_tool_sources_impl,
 };
 use self::sufficiency::assess_sufficiency;
+/// The reason codes a [`SufficiencyVerdict`] carries, so the prompt can explain
+/// a weak-evidence turn in the same terms the trace records it.
+pub(in crate::features::conversation::chat) use self::sufficiency::reason as sufficiency_reason;
 pub(super) use self::sufficiency::SufficiencyVerdict;
 use self::tool_format::format_tool_result as format_tool_result_impl;
 
@@ -156,6 +162,10 @@ pub(super) struct RetrievalPipelineOutcome {
     /// The post-rerank sufficiency verdict for the turn, after any corrective
     /// retry. `None` when knowledge-base retrieval did not run.
     pub(super) sufficiency: Option<SufficiencyVerdict>,
+    /// Every web page retrieval tried to open before the model ran. The tool
+    /// loop starts from this, so it never re-fetches a page the prompt carries
+    /// or retries one that is already known to be blocked.
+    pub(super) pages_read: super::fetch_memory::FetchMemory,
 }
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
@@ -283,6 +293,7 @@ pub(super) async fn run_retrieval_pipeline(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
+    request_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     router_settings: &RouterSettingsDto,
@@ -299,6 +310,7 @@ pub(super) async fn run_retrieval_pipeline(
         container,
         conv_service,
         conversation_id,
+        request_id,
         validated_message,
         llm,
         router_settings,
@@ -535,6 +547,15 @@ pub(super) fn deduplicate_sources(sources: Vec<SourceDto>) -> Vec<SourceDto> {
     deduplicate_sources_impl(sources)
 }
 
+/// Fold tool-supplied sources into the turn's list, collapsing repeat visits to
+/// the same web page onto the entry the model was already given.
+pub(super) fn merge_tool_sources(
+    sources: &mut Vec<SourceDto>,
+    incoming: Vec<SourceDto>,
+) -> std::collections::HashSet<String> {
+    merge_tool_sources_impl(sources, incoming)
+}
+
 /// Number the final source list so the prompt can cite the same numbers.
 pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
     assign_citation_ids_impl(sources)
@@ -572,6 +593,8 @@ pub(super) fn build_web_source_citations(
 fn infer_category(path: &str) -> String {
     infer_category_impl(path)
 }
+
+pub(in crate::features::conversation::chat) use self::tool_format::fetched_page_text_room;
 
 pub(super) fn format_tool_result(
     tool_name: &str,

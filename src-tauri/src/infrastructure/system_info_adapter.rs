@@ -57,8 +57,47 @@ impl SystemInfoAdapter {
         }
     }
 
-    /// Detect GPU information (platform-specific).
+    /// Detect GPU information.
+    ///
+    /// The sidecar's own device list answers this for every platform at once,
+    /// so it is consulted first; see
+    /// [`backend_devices`](crate::features::llm::engine::system::backend_devices)
+    /// for why asking beats guessing. The platform-specific probes below are the
+    /// fallback for when that has not run, and they are weaker than they look —
+    /// the Windows one cannot see an AMD or Intel card at all.
     fn detect_gpu_info(&self) -> Option<GpuInfo> {
+        if let Some(gpu) = Self::gpu_from_sidecar_probe() {
+            return Some(gpu);
+        }
+        self.detect_gpu_platform()
+    }
+
+    /// The cached `--list-devices` answer, if anything has probed yet.
+    fn gpu_from_sidecar_probe() -> Option<GpuInfo> {
+        use crate::features::llm::engine::system::{cached_backend_devices, GPUVendor};
+
+        let device = cached_backend_devices()?
+            .iter()
+            .filter(|device| device.is_accelerator())
+            .max_by_key(|device| device.total_mib)?;
+
+        Some(GpuInfo {
+            name: device.name.clone(),
+            vram_gb: (device.total_mib > 0).then(|| device.total_gb()),
+            compute_type: match device.vendor() {
+                GPUVendor::Apple => ComputeType::Metal,
+                GPUVendor::Nvidia => ComputeType::Cuda,
+                GPUVendor::AMD => ComputeType::Rocm,
+                // The port models only these three backends, and Intel/Arc runs
+                // through SYCL or Vulkan; `None` here would read as "no GPU",
+                // which is worse than naming the nearest neighbour.
+                GPUVendor::Intel | GPUVendor::Unknown => ComputeType::None,
+            },
+        })
+    }
+
+    /// Platform-specific fallback, used only when the probe has not run.
+    fn detect_gpu_platform(&self) -> Option<GpuInfo> {
         #[cfg(target_os = "macos")]
         {
             self.detect_gpu_macos()
@@ -240,25 +279,22 @@ impl SystemInfoAdapter {
             .ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = output_str.trim().split(',').collect();
+        // "NVIDIA GeForce RTX 4090, 24564 MiB" -> ("NVIDIA GeForce RTX 4090", "24564 MiB").
+        // split_once gives us both halves without indexing, which `clippy::indexing_slicing`
+        // (denied crate-wide) rejects, and it returns None when nvidia-smi prints nothing.
+        let (name, vram_str) = output_str.trim().split_once(',')?;
+        let vram_gb = vram_str
+            .trim()
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|mb| mb / 1024.0);
 
-        if parts.len() >= 2 {
-            let name = parts[0].trim().to_string();
-            let vram_str = parts[1].trim();
-            let vram_gb = vram_str
-                .split_whitespace()
-                .next()
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|mb| mb / 1024.0);
-
-            Some(GpuInfo {
-                name,
-                vram_gb,
-                compute_type: ComputeType::Cuda,
-            })
-        } else {
-            None
-        }
+        Some(GpuInfo {
+            name: name.trim().to_string(),
+            vram_gb,
+            compute_type: ComputeType::Cuda,
+        })
     }
 }
 

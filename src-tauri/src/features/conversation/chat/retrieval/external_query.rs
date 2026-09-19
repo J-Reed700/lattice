@@ -136,6 +136,14 @@ fn build_external_search_terms(
         .collect()
 }
 
+/// Above this many content terms a message has stopped being query-shaped.
+/// Search engines weigh every word they are given, so a rambling paragraph
+/// buries its own subject under filler ("really", "need", "watched") and the
+/// deep-research branch queries then append yet more terms to that paragraph.
+/// Past the ceiling the keyword builder earns its keep: it ranks the terms and
+/// keeps the top handful.
+const MAX_RAW_WEB_QUERY_TERMS: usize = 12;
+
 fn should_use_raw_web_query(query: &str) -> bool {
     if query.is_empty() {
         return false;
@@ -154,7 +162,7 @@ fn should_use_raw_web_query(query: &str) -> bool {
         return terms.first().is_some_and(|term| term.len() >= 6);
     }
 
-    true
+    terms.len() <= MAX_RAW_WEB_QUERY_TERMS
 }
 
 fn is_generic_web_search_command(query: &str) -> bool {

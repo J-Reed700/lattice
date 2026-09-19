@@ -29,6 +29,39 @@ describe('RetrievalTrace', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('reports a web-only turn as web pages, not as files', () => {
+    // The turn that prompted this: a chat in a space holding no documents,
+    // answered entirely from the web. Counting those pages as "files" claimed
+    // it had read ten of the user's documents, which reads as a scope leak.
+    const { container } = render(
+      <RetrievalTrace
+        trace={{ searchedDocuments: 0, passages: 0, files: 0, webPages: 10, scope: 'linked' }}
+      />
+    );
+    expect(container.textContent).toBe('Retrieved 10 web pages · this space');
+    expect(container.textContent).not.toContain('file');
+  });
+
+  it('keeps documents and web pages apart on a mixed turn', () => {
+    const { container } = render(
+      <RetrievalTrace
+        trace={{ searchedDocuments: 43, passages: 6, files: 3, webPages: 2, scope: 'vault' }}
+      />
+    );
+    expect(container.textContent).toBe(
+      'Searched 43 documents · 6 passages from 3 files · 2 web pages'
+    );
+  });
+
+  it('renders nothing when the turn read neither documents nor web pages', () => {
+    const { container } = render(
+      <RetrievalTrace
+        trace={{ searchedDocuments: 0, passages: 0, files: 0, webPages: 0, scope: 'vault' }}
+      />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('renders the document, passage and file counts', () => {
     const { container } = render(
       <RetrievalTrace

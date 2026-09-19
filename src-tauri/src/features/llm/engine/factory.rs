@@ -71,6 +71,9 @@ pub enum LLMConfig {
         /// only acceptable in test fixtures that don't reach the
         /// sidecar dispatch path.
         app_handle: Option<tauri::AppHandle>,
+        /// The user's explicit context window, if they set one. `None` lets the
+        /// sidecar size it from the model and the GPU.
+        context_window: Option<u32>,
     },
     /// Ollama HTTP API
     Ollama {
@@ -125,6 +128,7 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
             n_gpu_layers,
             generation_config,
             app_handle,
+            context_window,
         } => {
             // The Tauri AppHandle is populated through
             // Container::with_app_handle.
@@ -135,7 +139,14 @@ pub async fn create_llm(config: LLMConfig) -> std::result::Result<Arc<dyn LLMPor
                         .to_string(),
                 )
             })?;
-            create_local_llm_sidecar(&app, &model_path, n_gpu_layers, generation_config).await
+            create_local_llm_sidecar(
+                &app,
+                &model_path,
+                n_gpu_layers,
+                generation_config,
+                context_window,
+            )
+            .await
         }
         LLMConfig::Ollama {
             endpoint,
@@ -202,10 +213,11 @@ async fn create_local_llm_sidecar(
     model_path: &Path,
     n_gpu_layers: i32,
     generation_config: GenerationConfig,
+    context_window: Option<u32>,
 ) -> std::result::Result<Arc<dyn LLMPort>, LLMError> {
     use crate::features::llm::engine::sidecar_client::SidecarLLMClient;
     use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SidecarManager};
-    use crate::features::llm::engine::system::detect_capabilities;
+    use crate::features::llm::engine::system::detect_capabilities_with_app;
 
     info!(
         "Creating local LLM (sidecar) from: {}",
@@ -228,13 +240,16 @@ async fn create_local_llm_sidecar(
         )));
     }
 
-    let capabilities = detect_capabilities().await;
+    let capabilities = detect_capabilities_with_app(app).await;
     tracing::info!(
         "Detected system capabilities for sidecar: {}",
         capabilities.summary()
     );
 
     let mut config = SidecarConfig::from_capabilities(model_path.to_path_buf(), &capabilities);
+    if let Some(requested) = context_window {
+        config = config.with_context_override(requested, &capabilities);
+    }
 
     if n_gpu_layers >= 0 {
         let override_ngl = u32::try_from(n_gpu_layers).unwrap_or(99);
@@ -986,6 +1001,7 @@ mod tests {
             n_gpu_layers: 0,
             generation_config: GenerationConfig::default(),
             app_handle: None,
+            context_window: None,
         };
 
         let result = create_llm(config).await;
@@ -999,6 +1015,7 @@ mod tests {
             n_gpu_layers: 0,
             generation_config: GenerationConfig::default(),
             app_handle: None,
+            context_window: None,
         };
 
         // Should always succeed with fallback

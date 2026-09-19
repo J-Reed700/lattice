@@ -23,6 +23,61 @@ use super::{select_informative_terms, tokenize_keyword_terms};
 /// is unchanged — plan retrieval from this catalog — so the system prompt must
 /// stay one prompt with one cached prefix; only the evidence about the failed
 /// attempt is new.
+/// How long the planner may take before the turn gives up and falls back to the
+/// local plan.
+///
+/// This used to be 5 seconds, which the planner could not meet: unlike the
+/// other utility calls it prefills a whole document catalog — up to 16k tokens
+/// — before writing anything, so it is prefill-bound, not generation-bound. The
+/// result was that planning timed out on every single turn and the feature was
+/// dead weight that still cost its timeout twice a turn.
+const PLANNER_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long to stop asking after the planner proves it cannot answer in time.
+///
+/// A longer timeout is only an improvement if the planner can actually use it.
+/// When it cannot — a small machine, a loaded server — paying it on every turn
+/// is worse than the 5 seconds it replaced, so one timeout stands the planner
+/// down and the turn goes straight to the local plan until the cooldown ends.
+const PLANNER_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+
+/// When the planner was last seen to time out. Process-wide and deliberately
+/// coarse: the question it answers is "is this model, right now, too slow to
+/// plan", which is a property of the machine rather than of any one turn.
+static PLANNER_STOOD_DOWN_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+/// Whether the planner is currently standing down, and for how much longer.
+fn planner_cooling_off() -> Option<Duration> {
+    let guard = PLANNER_STOOD_DOWN_AT.lock().ok()?;
+    let since = guard.as_ref()?.elapsed();
+    PLANNER_COOLDOWN.checked_sub(since)
+}
+
+fn stand_planner_down() {
+    if let Ok(mut guard) = PLANNER_STOOD_DOWN_AT.lock() {
+        *guard = Some(Instant::now());
+    }
+}
+
+/// A planner that answers in time earns back the next turn's attempt.
+fn planner_is_answering() {
+    if let Ok(mut guard) = PLANNER_STOOD_DOWN_AT.lock() {
+        *guard = None;
+    }
+}
+
+/// Room kept for the JSON scaffolding wrapped around the payload and for the
+/// plan the model writes back. The plan itself is small: a few queries and IDs.
+const PLANNER_OUTPUT_RESERVE_TOKENS: usize = 512;
+
+/// `count_tokens` is a chars/4 estimate, and a real tokenizer charges more than
+/// that for the punctuation and opaque document IDs a catalog is full of. Spend
+/// only part of the measured headroom so an under-count still lands inside the
+/// window rather than failing the whole planning call.
+fn spendable(headroom: usize) -> usize {
+    headroom * 4 / 5
+}
+
 const CORRECTION_INSTRUCTION: &str = "The previous retrieval pass for this same request was judged insufficient. Return different queries: other wording, narrower or broader phrasing, or the specific terms the request implies but does not state. Do not repeat any query in queries_already_tried. top_result_titles is what that pass returned; prefer queries that would reach different material. Leave opening_document_ids empty and start_at_beginning false.";
 
 /// A short message is a continuation, not a new research request, when it
@@ -508,12 +563,35 @@ async fn plan_with(
     correction: Option<&CorrectionRequest>,
     summaries: &HashMap<String, String>,
 ) -> Result<CorpusSearchPlan> {
-    // Bound catalog input by the provider's real window. All candidates remain
-    // searchable even when only a portion of a large catalog can be shown.
-    let budget = llm
-        .max_context_tokens()
-        .saturating_sub(llm.count_tokens(question) + 2048)
-        .min(16000);
+    let history = history.unwrap_or("");
+    let history: String = history
+        .chars()
+        .rev()
+        .take(4000)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+
+    // Bound catalog input by the room actually left in the provider's window.
+    // Everything that is not catalog has to fit as well — the system prompt, the
+    // conversation excerpt, the correction block and the plan the model writes
+    // back — so each is measured and subtracted. Budgeting against the question
+    // alone left the rest uncounted, and a catalog sized to that phantom
+    // headroom pushed the request past the window: llama-server answered
+    // `exceed_context_size_error` and the turn fell back to a local plan without
+    // the planner ever running.
+    let correction_cost = correction
+        .and_then(|correction| serde_json::to_string(correction).ok())
+        .map(|json| llm.count_tokens(&json))
+        .unwrap_or(0);
+    let reserved = llm.count_tokens(PLANNER_SYSTEM)
+        + llm.count_tokens(question)
+        + llm.count_tokens(&history)
+        + correction_cost
+        + PLANNER_OUTPUT_RESERVE_TOKENS;
+    let budget = spendable(llm.max_context_tokens().saturating_sub(reserved)).min(16000);
+
     let mut catalog_tokens = 0;
     // Summaries are counted against the same budget as everything else: a
     // richer catalog that silently showed fewer documents would trade away the
@@ -529,15 +607,6 @@ async fn plan_with(
             catalog_tokens += cost;
             true
         })
-        .collect();
-    let history = history.unwrap_or("");
-    let history: String = history
-        .chars()
-        .rev()
-        .take(4000)
-        .collect::<String>()
-        .chars()
-        .rev()
         .collect();
     let mut payload = serde_json::json!({
         "request": question, "recent_conversation": history,
@@ -555,7 +624,13 @@ async fn plan_with(
         );
     }
     let prompt = serde_json::to_string(&payload)?;
-    let response = tokio::time::timeout(Duration::from_secs(5), async {
+    if let Some(remaining) = planner_cooling_off() {
+        return Err(AppError::InvalidState(format!(
+            "Document retrieval planning stood down for another {}s after timing out",
+            remaining.as_secs()
+        )));
+    }
+    let response = tokio::time::timeout(PLANNER_TIMEOUT, async {
         if llm.supports_typed_completions() {
             llm.complete(&CompletionRequest {
                 input: vec![
@@ -576,7 +651,18 @@ async fn plan_with(
         } else {
             llm.generate(&prompt, &[format!("System: {PLANNER_SYSTEM}")], None).await
         }
-    }).await.map_err(|_| AppError::InvalidState("Document retrieval planning timed out".into()))??;
+    })
+    .await
+    .map_err(|_| {
+        stand_planner_down();
+        tracing::warn!(
+            timeout_s = PLANNER_TIMEOUT.as_secs(),
+            cooldown_s = PLANNER_COOLDOWN.as_secs(),
+            "Corpus planner timed out; standing it down so later turns do not pay the timeout again"
+        );
+        AppError::InvalidState("Document retrieval planning timed out".into())
+    })??;
+    planner_is_answering();
     let response = response
         .trim()
         .trim_start_matches("```json")

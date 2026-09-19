@@ -219,9 +219,16 @@ impl ConversationRepository {
             .collect())
     }
 
-    /// Resolve one consistent search scope. General searches the vault; named
-    /// spaces search only their assigned documents. A stored document must have
-    /// searchable text before it contributes to the scope count.
+    /// Resolve one consistent search scope. Every space, General included,
+    /// searches only the documents assigned to it: a document filed into a named
+    /// space must never surface in a chat belonging to another one. General also
+    /// picks up documents that were never filed anywhere, so an unassigned import
+    /// stays findable instead of silently disappearing from every search.
+    ///
+    /// General used to mean "the whole vault", which let a document the user had
+    /// deliberately filed into one space leak into unrelated chats. This is the
+    /// single chokepoint every retrieval path derives its allow-list from, so the
+    /// rule is enforced here rather than trusted to each caller.
     pub async fn retrieval_document_scope(
         &self,
         conversation_id: &str,
@@ -238,10 +245,16 @@ impl ConversationRepository {
         let ids = sqlx::query_scalar::<_, String>(
             "SELECT d.id FROM documents d
              WHERE EXISTS (SELECT 1 FROM text_chunks c WHERE c.document_id = d.id)
-               AND (? = 'space_general' OR EXISTS (
-                 SELECT 1 FROM document_space_memberships m
-                 WHERE m.document_id = d.id AND m.space_id = ?
-               ))",
+               AND (
+                 EXISTS (
+                   SELECT 1 FROM document_space_memberships m
+                   WHERE m.document_id = d.id AND m.space_id = ?
+                 )
+                 OR (? = 'space_general' AND NOT EXISTS (
+                   SELECT 1 FROM document_space_memberships m
+                   WHERE m.document_id = d.id
+                 ))
+               )",
         )
         .bind(&space_id)
         .bind(&space_id)
@@ -285,8 +298,7 @@ impl ConversationRepository {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn retrieval_scope_general_searches_vault_and_named_spaces_stay_scoped() {
+    async fn scope_fixture() -> ConversationRepository {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -297,29 +309,81 @@ mod tests {
             CREATE TABLE text_chunks (document_id TEXT);
             CREATE TABLE document_space_memberships (document_id TEXT, space_id TEXT);
             INSERT INTO conversations VALUES ('general', 'space_general'), ('patent', 'patent'), ('empty', 'empty');
-            INSERT INTO documents VALUES ('a'), ('b'), ('unfinished');
-            INSERT INTO text_chunks VALUES ('a'), ('a'), ('b');
-            INSERT INTO document_space_memberships VALUES ('a', 'patent'), ('unfinished', 'patent');")
+            INSERT INTO documents VALUES ('filed_general'), ('filed_patent'), ('filed_both'), ('unfiled'), ('unindexed');
+            INSERT INTO text_chunks VALUES ('filed_general'), ('filed_patent'), ('filed_both'), ('unfiled');
+            INSERT INTO document_space_memberships VALUES
+                ('filed_general', 'space_general'),
+                ('filed_patent', 'patent'),
+                ('filed_both', 'space_general'), ('filed_both', 'patent'),
+                ('unindexed', 'patent');")
             .execute(&pool).await.unwrap();
-        let repo = ConversationRepository::new(pool);
-        let (_, general) = repo
-            .retrieval_document_scope("general")
+        ConversationRepository::new(pool)
+    }
+
+    async fn scope_of(repo: &ConversationRepository, conversation: &str) -> HashSet<String> {
+        repo.retrieval_document_scope(conversation)
             .await
             .unwrap()
-            .unwrap();
-        assert_eq!(general, ["a".to_string(), "b".to_string()].into());
-        let (_, patent) = repo
-            .retrieval_document_scope("patent")
-            .await
             .unwrap()
-            .unwrap();
-        assert_eq!(patent, ["a".to_string()].into());
-        let (_, empty) = repo
-            .retrieval_document_scope("empty")
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(empty.is_empty());
+            .1
+    }
+
+    /// The reported bug: documents filed into a named space were reachable from
+    /// a General chat, so a question about one subject was answered with another
+    /// subject's library.
+    #[tokio::test]
+    async fn a_document_filed_into_a_named_space_never_reaches_a_general_chat() {
+        let repo = scope_fixture().await;
+        let general = scope_of(&repo, "general").await;
+
+        assert!(!general.contains("filed_patent"));
+        assert!(general.contains("filed_general"));
+    }
+
+    /// Filing somewhere else must not hide a document from the space it is also
+    /// filed in: membership is additive, not exclusive.
+    #[tokio::test]
+    async fn a_document_in_two_spaces_is_visible_from_both() {
+        let repo = scope_fixture().await;
+
+        assert!(scope_of(&repo, "general").await.contains("filed_both"));
+        assert!(scope_of(&repo, "patent").await.contains("filed_both"));
+    }
+
+    /// Closing the leak must not make an unassigned import vanish from every
+    /// search. Documents filed nowhere belong to General.
+    #[tokio::test]
+    async fn a_document_filed_nowhere_stays_searchable_from_general_only() {
+        let repo = scope_fixture().await;
+
+        assert!(scope_of(&repo, "general").await.contains("unfiled"));
+        assert!(!scope_of(&repo, "patent").await.contains("unfiled"));
+    }
+
+    #[tokio::test]
+    async fn a_named_space_sees_only_its_own_members() {
+        let repo = scope_fixture().await;
+
+        assert_eq!(
+            scope_of(&repo, "patent").await,
+            ["filed_patent".to_string(), "filed_both".to_string(),].into()
+        );
+    }
+
+    /// A document with no extracted text cannot be evidence, whatever it is
+    /// filed under.
+    #[tokio::test]
+    async fn a_document_without_searchable_text_is_in_no_scope() {
+        let repo = scope_fixture().await;
+
+        assert!(!scope_of(&repo, "patent").await.contains("unindexed"));
+    }
+
+    #[tokio::test]
+    async fn an_empty_space_and_a_missing_conversation_are_distinguishable() {
+        let repo = scope_fixture().await;
+
+        assert!(scope_of(&repo, "empty").await.is_empty());
         assert!(repo
             .retrieval_document_scope("missing")
             .await

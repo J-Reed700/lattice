@@ -8,12 +8,23 @@ use crate::features::search::dto::{SearchModeDto, SearchRequestDto};
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
 
+/// Tools that can reach the user's own documents, and therefore may only run
+/// through this module's scope check. Anything else — web and wiki lookups —
+/// touches nothing in the vault and goes straight to the executor.
+///
+/// A tool added to the registry without being listed here would read documents
+/// with no space scope at all, which is exactly the leak this module exists to
+/// prevent. `every_vault_tool_is_scoped` fails when that happens.
+pub(super) fn reads_the_vault(name: &str) -> bool {
+    matches!(name, "semantic_search" | "get_document" | "list_documents")
+}
+
 pub(super) async fn execute(
     container: &Container,
     conversation_id: &str,
     call: FunctionCall,
 ) -> Result<FunctionResult> {
-    if !matches!(call.name.as_str(), "semantic_search" | "get_document") {
+    if !reads_the_vault(&call.name) {
         return container.function_executor().execute(call).await;
     }
     let repository = ConversationRepository::new(container.db_pool().clone());
@@ -23,6 +34,14 @@ pub(super) async fn execute(
         .ok_or_else(|| {
             AppError::InvalidState("Could not resolve this conversation's document scope".into())
         })?;
+    if call.name == "list_documents" {
+        // Browsing is a read of the vault like any other. Left unscoped it
+        // handed the model every filename, path and tag in the library, so a
+        // chat in one space could enumerate another space's documents even
+        // though `get_document` would then refuse to open them.
+        let listing = container.function_executor().execute(call).await?;
+        return Ok(confine_listing(listing, &allowed));
+    }
     if call.name == "get_document" {
         let id = call
             .arguments
@@ -107,6 +126,37 @@ pub(super) async fn execute(
     Ok(FunctionResult::success(serde_json::to_value(output)?))
 }
 
+/// Drop documents outside the conversation's scope from a `list_documents`
+/// result, and restate the counts so the model is not told about rows it
+/// cannot see.
+///
+/// The underlying tool paginates before this runs, so a page may come back
+/// partly empty; `total` is therefore reported as what the caller can actually
+/// reach on this page. Under-reporting is the safe direction — the alternative
+/// leaks the size of a library the chat has no access to.
+fn confine_listing(
+    mut listing: FunctionResult,
+    allowed: &std::collections::HashSet<String>,
+) -> FunctionResult {
+    let Some(data) = listing.data.as_mut() else {
+        return listing;
+    };
+    let Some(documents) = data.get_mut("documents").and_then(|d| d.as_array_mut()) else {
+        return listing;
+    };
+    documents.retain(|document| {
+        document
+            .get("document_id")
+            .and_then(|id| id.as_str())
+            .is_some_and(|id| allowed.contains(id))
+    });
+    let visible = documents.len();
+    if let Some(object) = data.as_object_mut() {
+        object.insert("total".into(), serde_json::json!(visible));
+    }
+    listing
+}
+
 fn ensure_allowed_document(id: &str, allowed: &std::collections::HashSet<String>) -> Result<()> {
     if allowed.contains(id) {
         Ok(())
@@ -127,5 +177,110 @@ mod tests {
         assert!(ensure_allowed_document("b", &allowed).is_err());
         assert!(ensure_allowed_document("", &allowed).is_err());
         assert!(ensure_allowed_document("a", &Default::default()).is_err());
+    }
+
+    /// A tripwire, not a behaviour test. Any new tool in the registry has to be
+    /// classified deliberately: either it reaches the vault and must be scoped
+    /// here, or it does not and belongs on this list. Adding one without that
+    /// decision is how a scope leak gets reintroduced.
+    #[test]
+    fn every_vault_tool_is_scoped() {
+        use crate::features::function_calling::trait_def::FunctionRegistryTrait;
+
+        let registry =
+            crate::features::function_calling::registry::init_function_registry().unwrap();
+        let mut names: Vec<String> = registry
+            .list_tools()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        names.sort();
+
+        assert_eq!(
+            names,
+            [
+                "fetch_url_content",
+                "get_document",
+                "list_documents",
+                "semantic_search",
+                "web_search",
+                "wiki_search",
+                "wiki_summary",
+            ],
+            "a tool was added or removed: decide whether it reads the vault, \
+             then update `reads_the_vault` and this list together"
+        );
+
+        for name in ["semantic_search", "get_document", "list_documents"] {
+            assert!(
+                reads_the_vault(name),
+                "{name} must run through the scope check"
+            );
+        }
+        for name in [
+            "web_search",
+            "fetch_url_content",
+            "wiki_search",
+            "wiki_summary",
+        ] {
+            assert!(!reads_the_vault(name), "{name} does not touch the vault");
+        }
+    }
+
+    fn listing(ids: &[&str]) -> FunctionResult {
+        FunctionResult::success(serde_json::json!({
+            "documents": ids
+                .iter()
+                .map(|id| serde_json::json!({
+                    "document_id": id,
+                    "filename": format!("{id}.pdf"),
+                }))
+                .collect::<Vec<_>>(),
+            "total": ids.len(),
+            "limit": 20,
+            "offset": 0,
+            "has_more": false,
+        }))
+    }
+
+    fn ids_in(result: &FunctionResult) -> Vec<String> {
+        result.data.as_ref().unwrap()["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["document_id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Browsing must not reveal that another space's documents exist: filenames
+    /// and paths are content too.
+    #[test]
+    fn browsing_cannot_see_documents_outside_the_scope() {
+        let allowed = std::collections::HashSet::from(["mine".to_string()]);
+
+        let confined = confine_listing(listing(&["mine", "theirs"]), &allowed);
+
+        assert_eq!(ids_in(&confined), ["mine"]);
+        assert_eq!(confined.data.as_ref().unwrap()["total"], 1);
+    }
+
+    #[test]
+    fn an_empty_scope_hides_every_document() {
+        let confined = confine_listing(listing(&["a", "b"]), &Default::default());
+
+        assert!(ids_in(&confined).is_empty());
+        assert_eq!(confined.data.as_ref().unwrap()["total"], 0);
+    }
+
+    /// A result shaped differently — an error, or a future schema change — must
+    /// pass through rather than be silently emptied or panic.
+    #[test]
+    fn a_result_without_a_document_list_is_left_alone() {
+        let allowed = std::collections::HashSet::from(["mine".to_string()]);
+        let failure = FunctionResult::error("boom", "no listing");
+
+        let confined = confine_listing(failure, &allowed);
+
+        assert!(!confined.success);
     }
 }

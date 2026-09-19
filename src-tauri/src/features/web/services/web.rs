@@ -42,6 +42,7 @@ use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::stealth;
 use async_trait::async_trait;
+use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use futures::future::join_all;
 use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
@@ -67,11 +68,47 @@ const SITE_SLOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Sites tracked at once before idle entries are dropped. `WebService` is a
 /// container singleton, so the map would otherwise live for the whole process.
 const MAX_TRACKED_SITES: usize = 64;
+/// Most of an article's text sits well inside this; past it a page is a
+/// dump, and the prompt has better uses for the room.
+const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
 /// Hosts that queue with the site they mirror rather than on their own.
 const SITE_ALIASES: &[(&str, &str)] = &[
     ("html.duckduckgo.com", "duckduckgo.com"),
     ("lite.duckduckgo.com", "duckduckgo.com"),
 ];
+
+/// Words too common to steer a search, at the length [`followup_terms`] keeps.
+const FOLLOWUP_STOPWORDS: &[&str] = &[
+    "about", "after", "also", "been", "before", "could", "every", "from", "have", "here", "into",
+    "just", "more", "most", "only", "over", "should", "some", "such", "than", "that", "their",
+    "them", "then", "there", "these", "they", "this", "those", "were", "what", "when", "where",
+    "which", "while", "will", "with", "would", "your",
+];
+
+/// The words of `text` that could usefully extend a search query: lowercased,
+/// long enough to mean something, not a bare number, not a function word.
+fn followup_terms(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| token.len() >= 4)
+        .filter(|token| !token.chars().all(|ch| ch.is_ascii_digit()))
+        .map(str::to_ascii_lowercase)
+        .filter(|token| !FOLLOWUP_STOPWORDS.contains(&token.as_str()))
+}
+
+/// Shorten `content` to at most `max_chars`, reporting whether anything was cut.
+///
+/// Counted in characters, not bytes: slicing at a byte offset panics when a
+/// multi-byte character straddles it, which any long page in a non-Latin
+/// script — or one curly quote in the wrong place — will do.
+fn cap_page_text(content: String, max_chars: usize) -> (String, bool) {
+    if content.chars().count() <= max_chars {
+        return (content, false);
+    }
+    (
+        crate::shared::text_utils::safe_truncate(&content, max_chars),
+        true,
+    )
+}
 
 /// Paces requests per site.
 ///
@@ -277,56 +314,82 @@ impl WebService {
             .map(|element| element.text().collect::<String>().trim().to_string())
     }
 
-    /// Resolve DuckDuckGo redirect links and normalize extracted URLs.
+    /// Normalize an extracted search-result href into the URL of the page it
+    /// actually points at.
+    ///
+    /// Made of two steps on purpose. Making the href absolute and unwrapping a
+    /// search engine's redirect used to be tangled together, and a
+    /// protocol-relative `//duckduckgo.com/l/?uddg=...` — which is exactly what
+    /// DuckDuckGo's HTML endpoint emits — matched the "starts with //" arm
+    /// first and was returned as the result, redirect and all. Every fetch of
+    /// one of those comes back as an empty page, so the model is handed a
+    /// result it can never read and goes looking for the same page again.
     fn normalize_search_url(&self, raw: &str) -> Option<String> {
-        let trimmed = raw.trim();
+        let absolute = Self::absolutize_search_url(raw.trim())?;
+        Some(Self::unwrap_redirect_url(&absolute).unwrap_or(absolute))
+    }
+
+    /// Turn an href into an absolute URL, without interpreting it further.
+    fn absolutize_search_url(trimmed: &str) -> Option<String> {
         if trimmed.is_empty() {
             return None;
         }
-
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            return Some(trimmed.to_string());
+        }
+        if let Some(rest) = trimmed.strip_prefix("//") {
+            return Some(format!("https://{}", rest));
+        }
         if trimmed.starts_with("/ck/a?") {
             return Some(format!("https://www.bing.com{}", trimmed));
         }
-
-        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            if trimmed.contains("bing.com/ck/a?") {
-                return Some(trimmed.to_string());
-            }
-            if trimmed.contains("duckduckgo.com/l/?") || trimmed.contains("html.duckduckgo.com/l/?")
-            {
-                if let Ok(parsed) = Url::parse(trimmed) {
-                    for (k, v) in parsed.query_pairs() {
-                        if k == "uddg" && (v.starts_with("http://") || v.starts_with("https://")) {
-                            return Some(v.into_owned());
-                        }
-                    }
-                }
-            }
-            return Some(trimmed.to_string());
-        }
-
-        if trimmed.starts_with("//") {
-            return Some(format!("https:{}", trimmed));
-        }
-
         if trimmed.starts_with("/l/?") {
-            let redirect = format!("https://duckduckgo.com{}", trimmed);
-            if let Ok(parsed) = Url::parse(&redirect) {
-                for (k, v) in parsed.query_pairs() {
-                    if k == "uddg" && (v.starts_with("http://") || v.starts_with("https://")) {
-                        return Some(v.into_owned());
-                    }
-                }
-            }
-            return None;
+            return Some(format!("https://duckduckgo.com{}", trimmed));
         }
-
         // Fallback for host/path-like values.
-        if trimmed.contains('.') && !trimmed.contains(' ') {
+        if trimmed.contains('.') && !trimmed.contains(' ') && !trimmed.starts_with('/') {
             return Some(format!(
                 "https://{}",
                 trimmed.trim_start_matches('/').trim_end_matches('/')
             ));
+        }
+        None
+    }
+
+    /// The destination behind a search engine's click-tracking redirect, when
+    /// the URL is one. Returns `None` for an ordinary URL, so a caller can keep
+    /// what it already had.
+    ///
+    /// Both engines carry the destination in the link itself, so there is no
+    /// reason to spend a request finding out where it goes: DuckDuckGo puts it
+    /// in `uddg` as plain text, Bing in `u` as base64url behind a two-character
+    /// prefix. Fetching the wrapper instead returns a page of script with no
+    /// article text in it.
+    fn unwrap_redirect_url(url: &str) -> Option<String> {
+        let parsed = Url::parse(url).ok()?;
+        let host = parsed.host_str()?;
+
+        if host.ends_with("duckduckgo.com") && parsed.path() == "/l/" {
+            return parsed
+                .query_pairs()
+                .find(|(key, _)| key == "uddg")
+                .map(|(_, value)| value.into_owned())
+                .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
+        }
+
+        if host.ends_with("bing.com") && parsed.path() == "/ck/a" {
+            let raw = parsed
+                .query_pairs()
+                .find(|(key, _)| key == "u")
+                .map(|(_, value)| value.into_owned())?;
+            // The payload is base64url with the padding stripped and a short
+            // marker in front ("a1" today). Decode what follows the marker and
+            // accept it only if it really is a URL.
+            let encoded = raw.get(2..)?;
+            let decoded = BASE64_URL_SAFE_NO_PAD.decode(encoded).ok()?;
+            let decoded = String::from_utf8(decoded).ok()?;
+            return Some(decoded)
+                .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
         }
 
         None
@@ -752,43 +815,69 @@ impl WebService {
         results
     }
 
+    /// Follow-up queries that look somewhere the searches so far did not.
+    ///
+    /// The vocabulary comes from the results themselves: a word several of
+    /// them use is part of how the topic is written about, where a word only
+    /// one of them uses is usually that site's name or its headline style. So
+    /// terms are ranked by how many results mention them, and a term has to
+    /// appear in at least two to count.
+    ///
+    /// Every follow-up extends `root_query`, never an earlier follow-up, and
+    /// never with a term in `used_terms` — which holds the root's own words and
+    /// everything already tried. The previous version took the first words of
+    /// the top result's title whatever they were and appended them to the last
+    /// query, so a search for a Silo recap went out as "… recap silo ultimate
+    /// guide" and then "… recap silo ultimate guide silo ultimate guide": the
+    /// same search again, plus the title of the page it had already found.
+    ///
+    /// Returns nothing when the results offer no new shared vocabulary. Not
+    /// searching is better than searching for noise.
     fn derive_followup_queries(
-        &self,
-        seed_query: &str,
+        root_query: &str,
+        used_terms: &mut HashSet<String>,
         results: &[WebSearchResult],
         branch_queries: usize,
     ) -> Vec<String> {
-        let mut terms: Vec<String> = Vec::new();
-        let mut seen = HashSet::new();
+        const RESULTS_CONSIDERED: usize = 8;
+        const MIN_RESULTS_SHARING_A_TERM: usize = 2;
+        const TERMS_PER_FOLLOWUP: usize = 2;
 
-        for result in results.iter().take(8) {
-            for token in format!("{} {}", result.title, result.snippet)
-                .split(|ch: char| !ch.is_ascii_alphanumeric())
-                .filter(|token| token.len() >= 4)
-            {
-                let normalized = token.to_ascii_lowercase();
-                if seen.insert(normalized.clone()) {
-                    terms.push(normalized);
+        // How many results mention each term, and the order terms were first
+        // met in, so that ties break the same way on every run.
+        let mut ranked: Vec<(String, usize)> = Vec::new();
+        for result in results.iter().take(RESULTS_CONSIDERED) {
+            let text = format!("{} {}", result.title, result.snippet);
+            // A result that repeats a word is still one result.
+            let mut seen_here = HashSet::new();
+            for term in followup_terms(&text) {
+                if used_terms.contains(&term) || !seen_here.insert(term.clone()) {
+                    continue;
                 }
-                if terms.len() >= branch_queries.saturating_mul(6) {
-                    break;
+                match ranked.iter_mut().find(|(known, _)| *known == term) {
+                    Some((_, count)) => *count += 1,
+                    None => ranked.push((term, 1)),
                 }
-            }
-            if terms.len() >= branch_queries.saturating_mul(6) {
-                break;
             }
         }
+        ranked.retain(|(_, count)| *count >= MIN_RESULTS_SHARING_A_TERM);
+        // Stable, so equally common terms stay in first-met order.
+        ranked.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
 
         let mut queries = Vec::new();
-        for chunk in terms.chunks(3) {
+        for pair in ranked.chunks(TERMS_PER_FOLLOWUP) {
             if queries.len() >= branch_queries {
                 break;
             }
-            let suffix = chunk.join(" ");
-            let followup = format!("{seed_query} {suffix}").trim().to_string();
-            if followup.len() > seed_query.len() {
-                queries.push(followup);
+            let suffix = pair
+                .iter()
+                .map(|(term, _)| term.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            for (term, _) in pair {
+                used_terms.insert(term.clone());
             }
+            queries.push(format!("{} {suffix}", root_query.trim()));
         }
         queries
     }
@@ -1212,6 +1301,9 @@ impl WebServiceTrait for WebService {
         let mut seen_domains = HashSet::new();
         let mut last_error: Option<String> = None;
         let mut frontier = vec![query.to_string()];
+        // The root's own words, then every term a follow-up has spent, so no
+        // follow-up repeats the query it extends or one that came before it.
+        let mut used_followup_terms: HashSet<String> = followup_terms(query).collect();
 
         for _ in 0..depth {
             if frontier.is_empty() {
@@ -1243,7 +1335,7 @@ impl WebServiceTrait for WebService {
             let level_results: Vec<QueryResults> = join_all(searches).await;
 
             let mut next_frontier = Vec::new();
-            for (frontier_query, query_results) in level_queries.iter().zip(level_results) {
+            for query_results in level_results {
                 let QueryResults {
                     results,
                     providers_used: used_by_query,
@@ -1271,13 +1363,12 @@ impl WebServiceTrait for WebService {
                 }
 
                 if depth > 1 {
-                    for followup in self
-                        .derive_followup_queries(frontier_query, &results, branch_queries)
-                        .into_iter()
-                        .take(branch_queries)
-                    {
-                        next_frontier.push(followup);
-                    }
+                    next_frontier.extend(Self::derive_followup_queries(
+                        query,
+                        &mut used_followup_terms,
+                        &results,
+                        branch_queries,
+                    ));
                 }
             }
             frontier = next_frontier;
@@ -1341,7 +1432,12 @@ impl WebServiceTrait for WebService {
         // Validate URL for security
         self.validate_url(url)?;
 
-        stealth::random_delay(500, 2000).await;
+        // Paced per site, like the searches: repeat requests to one host are
+        // spaced and never overlap, and a host this process has not contacted
+        // is contacted at once. This used to be a blind 0.5–2s sleep before
+        // every fetch, which a host seeing us for the first time cannot even
+        // observe — it only made the user wait, once per page per round.
+        let _site_slot = self.pacer.acquire(url).await;
 
         let start = Instant::now();
         let profile = stealth::random_profile();
@@ -1389,13 +1485,7 @@ impl WebServiceTrait for WebService {
         let title = self.extract_title(&html);
         let content = self.extract_article_text(&html);
 
-        // Truncate if needed (50k chars default)
-        let max_len = 50000;
-        let (final_content, truncated) = if content.len() > max_len {
-            (content[..max_len].to_string(), true)
-        } else {
-            (content, false)
-        };
+        let (final_content, truncated) = cap_page_text(content, MAX_FETCHED_PAGE_CHARS);
 
         let word_count = final_content.split_whitespace().count();
 
@@ -1546,6 +1636,63 @@ mod tests {
         );
     }
 
+    /// The exact href shape DuckDuckGo's HTML endpoint emits. This is the one
+    /// that used to slip through: protocol-relative, so it was made absolute
+    /// and returned without ever being unwrapped.
+    #[test]
+    fn a_protocol_relative_duckduckgo_redirect_resolves_to_its_destination() {
+        let service = WebService::new().unwrap();
+        let raw = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.thereviewgeek.com%2Fsilo%2Ds1e2review%2F&rut=c99505e363ada8be";
+        assert_eq!(
+            service.normalize_search_url(raw).as_deref(),
+            Some("https://www.thereviewgeek.com/silo-s1e2review/")
+        );
+    }
+
+    #[test]
+    fn an_absolute_duckduckgo_redirect_resolves_to_its_destination() {
+        let service = WebService::new().unwrap();
+        let raw = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%2Fb&rut=deadbeef";
+        assert_eq!(
+            service.normalize_search_url(raw).as_deref(),
+            Some("https://example.com/a/b")
+        );
+    }
+
+    /// Bing hides the destination in `u` as base64url behind a two-character
+    /// marker. Taken verbatim from a search that fetched the wrapper and got
+    /// back a page with no article text in it.
+    #[test]
+    fn a_bing_redirect_with_a_payload_resolves_to_its_destination() {
+        let service = WebService::new().unwrap();
+        let raw = "https://www.bing.com/ck/a?!&&p=fc5438df02&ptn=3&fclid=398e7e7c&u=a1aHR0cHM6Ly9lbi5tLndpa2lwZWRpYS5vcmcvd2lraS9TaWxvXyhUVl9zZXJpZXMp&ntb=1";
+        assert_eq!(
+            service.normalize_search_url(raw).as_deref(),
+            Some("https://en.m.wikipedia.org/wiki/Silo_(TV_series)")
+        );
+    }
+
+    /// A wrapper we cannot read is still a better result than no result: the
+    /// fetch may follow it server-side. Only a decodable payload is replaced.
+    #[test]
+    fn a_redirect_without_a_readable_destination_is_left_alone() {
+        let service = WebService::new().unwrap();
+        for raw in [
+            "https://www.bing.com/ck/a?!&&p=abc123",
+            "https://duckduckgo.com/l/?rut=deadbeef",
+            "https://www.bing.com/ck/a?u=a1bm90LWEtdXJs",
+        ] {
+            assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
+        }
+    }
+
+    #[test]
+    fn an_ordinary_result_url_passes_through_untouched() {
+        let service = WebService::new().unwrap();
+        let raw = "https://example.com/silo/recap?season=1";
+        assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
+    }
+
     #[test]
     fn test_detect_duckduckgo_challenge_page() {
         let service = WebService::new().unwrap();
@@ -1628,6 +1775,155 @@ mod tests {
             SitePacer::site_key("https://www.theguardian.co.uk/news")
         );
         assert_eq!(SitePacer::site_key("not a url"), None);
+    }
+
+    fn found(title: &str, snippet: &str) -> WebSearchResult {
+        WebSearchResult {
+            title: title.to_string(),
+            url: format!("https://example.test/{}", title.len()),
+            snippet: snippet.to_string(),
+            published_date: None,
+            source: None,
+        }
+    }
+
+    type Service = WebService;
+
+    /// The turn in the log. The root query's first result was titled "Silo
+    /// Ultimate Guide: Every Episode Recap…", and the follow-ups that went out
+    /// were "<root> silo ultimate guide" and then "<root> silo ultimate guide
+    /// silo ultimate guide".
+    #[test]
+    fn a_followup_never_repeats_words_the_query_already_has() {
+        let root = "Silo Season 1 Season 2 episode summaries plot recap";
+        let results = vec![
+            found(
+                "Silo Ultimate Guide: Every Episode Recap, Review & Ending Explained",
+                "Catch up on Silo with every episode recap and ending explained.",
+            ),
+            found(
+                "Silo Season 2 Explained: Every Episode",
+                "Juliette reaches Silo 17 while Bernard loses control. Ending explained.",
+            ),
+            found(
+                "Silo Season 1 Recap",
+                "Juliette becomes sheriff and Bernard is revealed.",
+            ),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
+
+        assert!(
+            !followups.is_empty(),
+            "shared vocabulary should yield follow-ups"
+        );
+        let root_terms: HashSet<String> = followup_terms(root).collect();
+        for followup in &followups {
+            let suffix = followup
+                .strip_prefix(root)
+                .expect("extends the root")
+                .trim();
+            for word in suffix.split_whitespace() {
+                assert!(
+                    !root_terms.contains(word),
+                    "{followup:?} repeats {word:?} from the query it extends"
+                );
+            }
+        }
+    }
+
+    /// Words only one result uses are that site's name or its headline, not the
+    /// topic's vocabulary. "ultimate" and "guide" are in exactly one title here.
+    #[test]
+    fn a_word_only_one_result_uses_does_not_steer_the_search() {
+        let root = "Silo recap";
+        let results = vec![
+            found("Silo Ultimate Guide", "Juliette and Bernard."),
+            found("Silo explained", "Juliette and Bernard again."),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let followups = Service::derive_followup_queries(root, &mut used, &results, 3);
+
+        assert_eq!(followups, vec!["Silo recap juliette bernard".to_string()]);
+    }
+
+    /// The second level used to extend the first level's query, so its suffix
+    /// stacked. Now every level extends the root and spends fresh terms.
+    #[test]
+    fn a_second_round_of_followups_spends_new_terms_on_the_same_root() {
+        let root = "Silo recap";
+        let results = vec![
+            found("one", "juliette bernard solo safeguard"),
+            found("two", "juliette bernard solo safeguard"),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        let first = Service::derive_followup_queries(root, &mut used, &results, 1);
+        let second = Service::derive_followup_queries(root, &mut used, &results, 1);
+
+        assert_eq!(first, vec!["Silo recap juliette bernard".to_string()]);
+        assert_eq!(second, vec!["Silo recap solo safeguard".to_string()]);
+    }
+
+    /// Searching for noise is worse than not searching.
+    #[test]
+    fn results_with_no_shared_new_vocabulary_yield_no_followups() {
+        let root = "Silo recap";
+        let results = vec![
+            found("Collider", "alpha"),
+            found("Vulture", "bravo"),
+            found("2026 2025 1999", "with from that this"),
+        ];
+        let mut used: HashSet<String> = followup_terms(root).collect();
+        assert!(Service::derive_followup_queries(root, &mut used, &results, 3).is_empty());
+    }
+
+    /// The old cap was `content[..50000]`. This input puts a three-byte
+    /// character across the byte offset the cap lands on, which panicked.
+    #[test]
+    fn capping_page_text_never_splits_a_character() {
+        let content = "€".repeat(10);
+        assert!(
+            !content.is_char_boundary(4),
+            "fixture must straddle the cut"
+        );
+        let (capped, truncated) = cap_page_text(content, 4);
+        assert_eq!(capped, "€€€€");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn page_text_within_the_cap_is_left_alone() {
+        let (capped, truncated) = cap_page_text("short page".to_string(), 50);
+        assert_eq!(capped, "short page");
+        assert!(!truncated);
+    }
+
+    /// A page fetch used to sleep 0.5–2s before every request. Two different
+    /// hosts have nothing to wait on each other for.
+    #[tokio::test]
+    async fn first_contact_with_a_host_is_not_delayed() {
+        let pacer = SitePacer::with_interval(Duration::from_secs(30));
+        let started = Instant::now();
+        drop(
+            pacer
+                .acquire("https://collider.com/silo-season-1-recap/")
+                .await,
+        );
+        drop(
+            pacer
+                .acquire("https://fugitives.com/silo-season-2-full-recap/")
+                .await,
+        );
+        drop(
+            pacer
+                .acquire("https://www.theastromech.com/2026/09/silo.html")
+                .await,
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "three different hosts waited {:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test]

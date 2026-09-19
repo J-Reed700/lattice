@@ -27,4 +27,4 @@ pub use dimension_metadata::{
     read_metadata, wipe_index_files, DimensionCheck, IndexDimensionMetadata,
 };
 pub use rescore_store::{vectors_path_for, RescoreVectorStore};
-pub use usearch_index::USearchVectorIndex;
+pub use usearch_index::{IndexFingerprint, USearchVectorIndex};

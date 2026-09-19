@@ -78,29 +78,90 @@ impl FileLibraryPort for SqliteFileLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Stored paths must be spelled with the host separator. `indexed_folders`
+    // builds its `LIKE` pattern with `directory_prefix_pattern`, which appends
+    // `std::path::MAIN_SEPARATOR` — a backslash on Windows — so POSIX-spelled
+    // fixture rows would be asked to match `\`-separated children and count
+    // zero documents.
+    use crate::shared::test_paths::abs_str;
+
     async fn fixture() -> (SqlitePool, SqliteFileLibrary) {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        sqlx::raw_sql("INSERT INTO watch_folders (id, path, recursive, enabled, last_scan, created_at)
-                VALUES ('watch', '/vault/a%_', 1, 1, NULL, '2026-01-01');
-            INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, indexed_at, checksum, status) VALUES
-                ('d1', '/vault/a%_/inside', 'inside', 1, '2026-01-01', '2026-01-01', 'checksum', 'indexed'),
-                ('d2', '/vault/abc/sibling', 'sibling', 1, '2026-01-01', '', 'checksum', 'pending'),
-                ('d3', '/vault/a%_-sibling/other', 'other', 1, '2025-01-01', '2025-01-01', 'checksum', 'indexed');")
-            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO watch_folders (id, path, recursive, enabled, last_scan, created_at)
+                VALUES ('watch', ?1, 1, 1, NULL, '2026-01-01')",
+        )
+        .bind(watched_folder())
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Bound rather than inlined: a Windows path is full of backslashes,
+        // which are far easier to get wrong inside a SQL literal than as
+        // parameters.
+        for (id, path, name, modified, indexed, status) in [
+            (
+                "d1",
+                inside_document(),
+                "inside",
+                "2026-01-01",
+                "2026-01-01",
+                "indexed",
+            ),
+            (
+                "d2",
+                abs_str("vault/abc/sibling"),
+                "sibling",
+                "2026-01-01",
+                "",
+                "pending",
+            ),
+            (
+                "d3",
+                abs_str("vault/a%_-sibling/other"),
+                "other",
+                "2025-01-01",
+                "2025-01-01",
+                "indexed",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, indexed_at, checksum, status)
+                    VALUES (?1, ?2, ?3, 1, ?4, ?5, 'checksum', ?6)",
+            )
+            .bind(id)
+            .bind(path)
+            .bind(name)
+            .bind(modified)
+            .bind(indexed)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
         let repo = SqliteFileLibrary::new(pool.clone());
         (pool, repo)
     }
 
-    /// The folder pattern must match documents inside `/vault/a%_` without
-    /// dragging in `/vault/abc` or `/vault/a%_-sibling`: `%` and `_` in the
+    /// The watched folder, whose name deliberately contains both `LIKE`
+    /// metacharacters.
+    fn watched_folder() -> String {
+        abs_str("vault/a%_")
+    }
+
+    fn inside_document() -> String {
+        abs_str("vault/a%_/inside")
+    }
+
+    /// The folder pattern must match documents inside the `a%_` folder without
+    /// dragging in its `abc` or `a%_-sibling` neighbours: `%` and `_` in the
     /// path are literal, so the LIKE pattern has to escape them.
     #[tokio::test]
     async fn document_counts_match_the_folder_and_exclude_siblings() {
         let (_, repo) = fixture().await;
         let folders = repo.indexed_folders().await.unwrap();
         assert_eq!(folders.len(), 1);
-        assert_eq!(folders[0].path, "/vault/a%_");
+        assert_eq!(folders[0].path, watched_folder());
         assert_eq!(folders[0].document_count, 1);
     }
 
@@ -110,7 +171,7 @@ mod tests {
         assert!(repo.indexing_activities(0).await.unwrap().is_empty());
         let activities = repo.indexing_activities(usize::MAX).await.unwrap();
         assert_eq!(activities.len(), 3);
-        assert_eq!(activities[0].file_path, "/vault/a%_/inside");
+        assert_eq!(activities[0].file_path, inside_document());
         assert_eq!(activities[2].status, "pending");
         assert_eq!(activities[2].timestamp, "");
     }

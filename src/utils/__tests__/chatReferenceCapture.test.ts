@@ -7,6 +7,7 @@ import { captureChatReferenceToWorkspaceNote } from '@/utils/chatReferenceCaptur
 const buildNote = (overrides: Partial<WorkspaceNote>): WorkspaceNote => ({
   id: 'note_1',
   title: 'Research Inbox · 2026-02-22',
+  journalId: null,
   content: '',
   linkedDocumentIds: [],
   linkedConversationIds: [],

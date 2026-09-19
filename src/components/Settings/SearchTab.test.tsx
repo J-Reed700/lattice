@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SearchTab } from './SearchTab';
+import { describeReranker, formatDownloadSize, SearchTab } from './SearchTab';
 import { VaultAPI } from '../../lib/api';
 import { makeAppSettings } from '../../tests/fixtures/appSettings';
 
@@ -183,5 +183,142 @@ describe('SearchTab', () => {
         })
       );
     });
+  });
+});
+
+describe('the reranking row', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(VaultAPI, 'getSettings').mockResolvedValue({
+      ok: true,
+      data: structuredClone(baseSettings),
+    });
+    vi.spyOn(VaultAPI, 'updateSettings').mockResolvedValue({
+      ok: true,
+      data: structuredClone(baseSettings),
+    });
+  });
+
+  it('offers the download, with its size, when the model is missing', async () => {
+    vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
+      ok: true,
+      data: {
+        installed: false,
+        enabled: false,
+        active: false,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    });
+
+    renderSearchTab();
+
+    expect(await screen.findByRole('button', { name: /Download \(91 MB\)/ })).toBeInTheDocument();
+  });
+
+  it('says so when the switch is on but nothing can rerank', async () => {
+    vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
+      ok: true,
+      data: {
+        installed: false,
+        enabled: true,
+        active: false,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    });
+
+    renderSearchTab();
+
+    expect(
+      await screen.findByText(/Switched on, but the reranker model is not downloaded/)
+    ).toBeInTheDocument();
+  });
+
+  it('stops offering the download once the model is installed', async () => {
+    vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
+      ok: true,
+      data: {
+        installed: true,
+        enabled: true,
+        active: true,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    });
+
+    renderSearchTab();
+
+    await screen.findByText(/A cross-encoder rescores the shortlist/);
+    expect(screen.queryByRole('button', { name: /Download/ })).not.toBeInTheDocument();
+  });
+
+  it('downloading does not switch reranking on', async () => {
+    const downloadReranker = vi.spyOn(VaultAPI, 'downloadReranker').mockResolvedValue({
+      ok: true,
+      data: {
+        installed: true,
+        enabled: false,
+        active: false,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    });
+    vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
+      ok: true,
+      data: {
+        installed: false,
+        enabled: false,
+        active: false,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    });
+
+    renderSearchTab();
+
+    await userEvent.click(await screen.findByRole('button', { name: /Download/ }));
+
+    await waitFor(() => expect(downloadReranker).toHaveBeenCalledTimes(1));
+    // Acquiring the model is not consent to use it.
+    expect(VaultAPI.updateSettings).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Model ready\. Switch on/)).toBeInTheDocument();
+  });
+});
+
+describe('describeReranker', () => {
+  const status = {
+    modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+    downloadBytes: 90_870_598,
+  };
+
+  it('says nothing before the status has loaded', () => {
+    expect(describeReranker(undefined)).toBeUndefined();
+  });
+
+  it('reports a failed download over any other state', () => {
+    expect(
+      describeReranker(
+        { ...status, installed: true, enabled: true, active: true },
+        new Error('network unreachable')
+      )
+    ).toContain('network unreachable');
+  });
+
+  it('distinguishes never-downloaded from on-but-unusable', () => {
+    const idle = describeReranker({ ...status, installed: false, enabled: false, active: false });
+    const broken = describeReranker({ ...status, installed: false, enabled: true, active: false });
+    expect(idle).not.toEqual(broken);
+    expect(broken).toMatch(/not being reranked/);
+  });
+});
+
+describe('formatDownloadSize', () => {
+  it('rounds to whole megabytes', () => {
+    expect(formatDownloadSize(90_870_598)).toBe('91 MB');
+  });
+
+  it('switches to gigabytes past a thousand megabytes', () => {
+    expect(formatDownloadSize(2_400_000_000)).toBe('2.4 GB');
   });
 });

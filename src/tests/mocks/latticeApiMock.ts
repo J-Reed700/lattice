@@ -185,6 +185,28 @@ export function createVaultAPIMock() {
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
+    // Default to the state a fresh install is really in: the reranker model is
+    // downloaded on demand and is not there yet.
+    getRerankerStatus: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        installed: false,
+        enabled: false,
+        active: false,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    }),
+    downloadReranker: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        installed: true,
+        enabled: false,
+        active: false,
+        modelName: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        downloadBytes: 90_870_598,
+      },
+    }),
     testLlamaCppConnection: vi.fn().mockResolvedValue({ ok: true, data: { endpoint: '/v1/chat/completions', models: ['test-model'] } }),
   testOllamaConnection: vi.fn().mockResolvedValue({
       ok: true,

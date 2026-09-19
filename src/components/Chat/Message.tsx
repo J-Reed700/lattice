@@ -15,6 +15,7 @@ import { usePassageReferenceIds, useSettingsQuery } from '@/hooks/queries';
 import { useDownloadedModels } from '@/hooks/useDownloadedModels';
 import { toast } from '@/stores/toastStore';
 
+import { ActivityNote } from './ActivityNote';
 import { CitationFootnote } from './CitationFootnote';
 import { FilePreviewModal } from './FilePreviewModal';
 import { MessageActions } from './MessageActions';
@@ -85,6 +86,7 @@ export function Message({
   const lastMessageSources = useConversationsStore((s) => s.lastMessageSources);
   const messageRetrieval = useConversationsStore((s) => s.messageRetrieval);
   const liveRetrieval = useConversationsStore((s) => s.liveRetrieval);
+  const liveActivity = useConversationsStore((s) => s.liveActivity);
   const inFlightGenerations = useConversationsStore((s) => s.inFlightGenerations);
   const regenerateResponse = useConversationsStore((s) => s.regenerateResponse);
   const truncateAfter = useConversationsStore((s) => s.truncateAfter);
@@ -564,6 +566,9 @@ export function Message({
         )}
 
         <RetrievalTrace trace={retrievalTrace} />
+        {!isUser && isPending && (
+          <ActivityNote detail={conversationId ? liveActivity.get(conversationId) ?? null : null} />
+        )}
 
         {/* Body prose — tiptap.css styles inherit `font-family` from this wrapper. */}
         {isUser && isEditing ? (

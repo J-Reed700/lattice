@@ -3,10 +3,15 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { NUMBER_FIELD_CLASS, SWITCH_CLASS } from './settingsStyles';
+import {
+  useDownloadRerankerMutation,
+  useRerankerStatusQuery,
+} from '../../hooks/queries/useRerankerQuery';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../../hooks/queries/useSettingsQuery';
 import { toast } from '../../stores/toastStore';
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '../ui';
 
+import type { RerankerStatusDto } from '../../lib/bindings';
 import type {
   RetrievalTuningSettings as ApiRetrievalTuningSettings,
   SearchSettings as ApiSearchSettings,
@@ -217,6 +222,41 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+export function formatDownloadSize(bytes: number): string {
+  const megabytes = bytes / 1_000_000;
+  return megabytes >= 1000
+    ? `${(megabytes / 1000).toFixed(1)} GB`
+    : `${Math.round(megabytes)} MB`;
+}
+
+/**
+ * Say what reranking is actually doing.
+ *
+ * The switch on its own cannot answer this. Reranking needs a cross-encoder
+ * model that is downloaded on demand, and with the model absent the switch
+ * changes nothing — search returns the shortlist its first stage produced.
+ * That silence is what this line exists to break.
+ */
+export function describeReranker(
+  status: RerankerStatusDto | undefined,
+  downloadError?: Error | null
+): string | undefined {
+  if (downloadError) {
+    return `Could not download the reranker: ${downloadError.message}`;
+  }
+  if (!status) {
+    return undefined;
+  }
+  if (!status.installed) {
+    return status.enabled
+      ? 'Switched on, but the reranker model is not downloaded, so results are not being reranked.'
+      : 'Needs a one-time model download before it can run.';
+  }
+  return status.enabled
+    ? 'A cross-encoder rescores the shortlist before the answer is written.'
+    : 'Model ready. Switch on to rescore the shortlist before answering.';
+}
+
 function toFinite(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -295,6 +335,8 @@ function normalizeTuningPairBounds(
 export function SearchTab() {
   const { data: settings, isPending, refetch } = useSettingsQuery();
   const { mutate: updateSettings } = useUpdateSettingsMutation();
+  const { data: rerankerStatus } = useRerankerStatusQuery();
+  const downloadReranker = useDownloadRerankerMutation();
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   // A half-typed number is UI state, so each field may hold a draft while it
   // has focus. Everything else reads the query — the repository is the source
@@ -447,13 +489,31 @@ export function SearchTab() {
       <PageHeader title="Search" />
 
       <SettingsSection title="Retrieval">
-        <SettingsRow label="Rerank results" htmlFor="search-rerank">
-          <Switch
-            id="search-rerank"
-            checked={searchSettings.enableReranking}
-            onCheckedChange={(checked) => saveSearchUpdates({ enableReranking: checked })}
-            className={SWITCH_CLASS}
-          />
+        <SettingsRow
+          label="Rerank results"
+          hint={describeReranker(rerankerStatus, downloadReranker.error)}
+          htmlFor="search-rerank"
+        >
+          <div className="flex items-center gap-3">
+            {rerankerStatus && !rerankerStatus.installed ? (
+              <button
+                type="button"
+                onClick={() => downloadReranker.mutate()}
+                disabled={downloadReranker.isPending}
+                className="h-8 shrink-0 rounded-sm border border-border-default px-2.5 text-sm text-text-primary transition-colors duration-fast hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {downloadReranker.isPending
+                  ? 'Downloading…'
+                  : `Download (${formatDownloadSize(rerankerStatus.downloadBytes)})`}
+              </button>
+            ) : null}
+            <Switch
+              id="search-rerank"
+              checked={searchSettings.enableReranking}
+              onCheckedChange={(checked) => saveSearchUpdates({ enableReranking: checked })}
+              className={SWITCH_CLASS}
+            />
+          </div>
         </SettingsRow>
 
         <SettingsRow label="Corrective retry" htmlFor="search-corrective-retry">

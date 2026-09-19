@@ -85,20 +85,37 @@ mod tests {
 
     #[test]
     fn directory_pattern_appends_separator() {
+        // The separator becomes part of a `LIKE` pattern, so it is escaped like
+        // any other character in the prefix. On Windows `MAIN_SEPARATOR` is `\`,
+        // which is also `LIKE_ESCAPE_CHAR`, so the *correct* pattern spells it
+        // as the two characters `\\`.
+        //
+        // Expecting a bare `\` here — as this test originally did, because it
+        // had only ever run on Unix — would be expecting a broken pattern:
+        // `/data/notes\%` makes the backslash escape the trailing `%`, so the
+        // wildcard becomes a literal percent sign and the pattern matches
+        // nothing at all. Build the expectation with `escape_like` so it stays
+        // correct on both platforms rather than encoding one separator by hand.
         let sep = std::path::MAIN_SEPARATOR;
+        let escaped_sep = escape_like(&sep.to_string());
         assert_eq!(
             directory_prefix_pattern("/data/notes"),
-            format!("/data/notes{}%", sep)
+            format!("/data/notes{}%", escaped_sep)
         );
         // Already-terminated paths are not double-separated.
         assert_eq!(
             directory_prefix_pattern(&format!("/data/notes{}", sep)),
-            format!("/data/notes{}%", sep)
+            format!("/data/notes{}%", escaped_sep)
         );
     }
 
     /// The behaviour that matters is what SQLite actually matches, so assert
     /// against a real database rather than on the pattern string alone.
+    ///
+    /// This is also the guard on the escaping of the separator itself: the rows
+    /// are spelled with the host's `MAIN_SEPARATOR`, so on Windows a pattern
+    /// that emitted a single `\` before the `%` would escape the wildcard and
+    /// match nothing, failing here rather than silently matching the wrong set.
     #[tokio::test]
     async fn sqlite_matches_only_the_intended_subtree() {
         let pool = SqlitePoolOptions::new()

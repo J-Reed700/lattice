@@ -13,7 +13,10 @@ impl DocumentProgress {
     pub(super) fn new(sources: &[SourceDto]) -> Self {
         let mut progress = Self::default();
         for source in sources {
-            if source.document_id.starts_with("web:") {
+            if source
+                .document_id
+                .starts_with(super::super::retrieval::WEB_SOURCE_PREFIX)
+            {
                 continue;
             }
             progress.add(&source.document_id, &source.content);

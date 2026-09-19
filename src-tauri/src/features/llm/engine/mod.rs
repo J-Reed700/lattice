@@ -6,6 +6,7 @@
 // Engine sub-modules.
 pub mod circuit_breaker;
 pub mod factory;
+pub mod gguf_metadata;
 pub mod model_catalog_adapter;
 pub mod model_storage_adapter;
 pub mod models;

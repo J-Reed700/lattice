@@ -14,6 +14,15 @@ import type { LLMSettings as ApiLLMSettings } from '../../../types/api/settings'
 const STALL_TIMEOUT_MIN = 15;
 const STALL_TIMEOUT_MAX = 180;
 
+// Bounds for an explicit local context window. The floor is a window that can
+// still hold a turn; the ceiling is the largest any current model is trained
+// for, so a typo cannot ask for something no model supports.
+const LOCAL_CONTEXT_WINDOW_MIN = 512;
+const LOCAL_CONTEXT_WINDOW_MAX = 262144;
+// What switching off Auto starts from — the previous fixed default, so the
+// first thing a user sees is the behaviour they had before.
+const LOCAL_CONTEXT_WINDOW_FALLBACK = 8192;
+
 export function TuningTab() {
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
 
@@ -24,6 +33,7 @@ export function TuningTab() {
     repeatPenalty: 1.1,
     maxTokens: 131072,
     contextWindow: 131072,
+    localContextWindow: null as number | null,
     timeoutSeconds: 30,
   });
   const [routerDraft, setRouterDraft] = useState<ApiLLMSettings['router'] | null>(null);
@@ -38,6 +48,7 @@ export function TuningTab() {
       repeatPenalty: llmSettings.repeatPenalty,
       maxTokens: llmSettings.maxTokens,
       contextWindow: llmSettings.contextWindow,
+      localContextWindow: llmSettings.localContextWindow,
       timeoutSeconds: llmSettings.timeoutSeconds,
     });
     setRouterDraft(llmSettings.router);
@@ -234,6 +245,53 @@ export function TuningTab() {
             }
             className={NUMBER_FIELD_CLASS}
           />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Local model context window"
+          hint="Auto sizes the window from what the model was trained for and how much memory your GPU reports. Override it only if you know you want a different one — a window larger than the model was trained for is stretched by rope scaling, which costs quality, and one too large for the card falls back to CPU."
+          htmlFor="tuning-local-context-window"
+        >
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
+              <input
+                type="checkbox"
+                checked={runtimeDraft.localContextWindow === null}
+                onChange={(event) => {
+                  const next = event.target.checked ? null : LOCAL_CONTEXT_WINDOW_FALLBACK;
+                  setRuntimeDraft((previous) => ({ ...previous, localContextWindow: next }));
+                  void saveLlmUpdates({ localContextWindow: next });
+                }}
+              />
+              Auto
+            </label>
+            <input
+              id="tuning-local-context-window"
+              type="number"
+              min={LOCAL_CONTEXT_WINDOW_MIN}
+              max={LOCAL_CONTEXT_WINDOW_MAX}
+              step={1}
+              disabled={runtimeDraft.localContextWindow === null}
+              value={runtimeDraft.localContextWindow ?? ''}
+              onChange={(event) =>
+                setRuntimeDraft((previous) => ({
+                  ...previous,
+                  localContextWindow: Math.round(
+                    toFinite(event.target.value, previous.localContextWindow ?? LOCAL_CONTEXT_WINDOW_FALLBACK)
+                  ),
+                }))
+              }
+              onBlur={() => {
+                if (runtimeDraft.localContextWindow === null) return;
+                const clamped = Math.round(
+                  clamp(runtimeDraft.localContextWindow, LOCAL_CONTEXT_WINDOW_MIN, LOCAL_CONTEXT_WINDOW_MAX)
+                );
+                setRuntimeDraft((previous) => ({ ...previous, localContextWindow: clamped }));
+                void saveLlmUpdates({ localContextWindow: clamped });
+              }}
+              className={NUMBER_FIELD_CLASS}
+            />
+          </div>
         </SettingsRow>
 
         <SettingsRow

@@ -174,6 +174,8 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   find_similar: { domain: 'search', command: 'find_similar' },
   search_with_recency: { domain: 'search', command: 'search_with_recency' },
   batch_search: { domain: 'search', command: 'batch_search' },
+  reranker_status: { domain: 'search', command: 'reranker_status' },
+  download_reranker: { domain: 'search', command: 'download_reranker' },
 
   // File domain
   open_file: { domain: 'file', command: 'open_file' },
@@ -1500,16 +1502,45 @@ const VaultAPI = {
     apiCall<void>('update_daily_note_content', { request: { noteId, content } }),
 
   /**
-   * Lists all persisted notes in the Daily Notes workspace.
+   * Lists persisted notes in the Daily Notes workspace.
+   *
+   * With a `journalId`, only the pages that journal owns — which is what a
+   * journal's sidebar wants. Without one, every page across every journal,
+   * for the cross-journal surfaces (reference inbox, weekly synthesis).
    */
-  listWorkspaceNotes: async (): Promise<ApiResult<ListWorkspaceNotesResponse>> =>
-    apiCall<Wire.ListWorkspaceNotesResponseDto>('list_workspace_notes'),
+  listWorkspaceNotes: async (journalId?: string): Promise<ApiResult<ListWorkspaceNotesResponse>> =>
+    apiCall<Wire.ListWorkspaceNotesResponseDto>('list_workspace_notes', {
+      request: { journalId: journalId ?? null },
+    }),
 
   /**
-   * Creates a new persisted workspace note.
+   * Whether reranking is switched on, and whether its model is on disk.
+   *
+   * The two are independent: the setting can be on with nothing installed, in
+   * which case search silently returns its unreranked shortlist. `active` is
+   * the only field that says what will actually happen.
    */
-  createWorkspaceNote: async (title?: string): Promise<ApiResult<WorkspaceNote>> =>
-    apiCall<Wire.WorkspaceNoteDto>('create_workspace_note', { request: { title } }),
+  getRerankerStatus: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
+    apiCall<Wire.RerankerStatusDto>('reranker_status'),
+
+  /**
+   * Fetches the reranker model. Does not switch reranking on — acquiring the
+   * model and choosing to use it stay separate decisions.
+   */
+  downloadReranker: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
+    apiCall<Wire.RerankerStatusDto>('download_reranker'),
+
+  /**
+   * Creates a new persisted workspace note, owned by `journalId` when given.
+   * An unowned page is unfiled and appears in no journal's page list.
+   */
+  createWorkspaceNote: async (
+    title?: string,
+    journalId?: string,
+  ): Promise<ApiResult<WorkspaceNote>> =>
+    apiCall<Wire.WorkspaceNoteDto>('create_workspace_note', {
+      request: { title, journalId: journalId ?? null },
+    }),
 
   /**
    * Persists a workspace note update.

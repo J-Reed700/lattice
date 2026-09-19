@@ -8,8 +8,8 @@ use crate::features::daily_notes::commands::{
     list_workspace_notes_impl, quick_capture_impl, update_daily_note_content_impl,
     update_workspace_note_impl, CreateWorkspaceNoteRequestDto, DailyNoteCompatDto,
     DailyNoteCursorRequestDto, DailyNotesRangeRequestDto, DeleteWorkspaceNoteRequestDto,
-    ListWorkspaceNotesResponseDto, QuickCaptureResultDto, UpdateDailyNoteContentRequestDto,
-    WorkspaceNoteDto,
+    ListWorkspaceNotesRequestDto, ListWorkspaceNotesResponseDto, QuickCaptureResultDto,
+    UpdateDailyNoteContentRequestDto, WorkspaceNoteDto,
 };
 use crate::interfaces::di::Container;
 use crate::shared::api_result::ApiError;
@@ -21,9 +21,11 @@ use tauri::{
 #[tauri::command]
 #[specta::specta]
 pub async fn list_workspace_notes(
+    request: Option<ListWorkspaceNotesRequestDto>,
     container: State<'_, Container>,
 ) -> Result<ListWorkspaceNotesResponseDto, ApiError> {
-    let notes = list_workspace_notes_impl(container.inner())
+    let journal_id = request.and_then(|request| request.journal_id);
+    let notes = list_workspace_notes_impl(container.inner(), journal_id.as_deref())
         .await
         .map_err(ApiError::from)?;
     Ok(ListWorkspaceNotesResponseDto { notes })

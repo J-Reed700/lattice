@@ -47,6 +47,7 @@ use tauri::Emitter;
 use tracing::{info, warn};
 
 mod cancellation;
+mod fetch_memory;
 mod persistence;
 mod prompting;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
@@ -61,6 +62,7 @@ use self::persistence::{
 };
 use self::prompting::{build_kb_context, enforce_numeric_citation_format, PromptMessageBuilder};
 pub use self::retrieval::RetrievalSubTimingMetrics;
+use self::retrieval::WEB_SOURCE_PREFIX;
 use self::retrieval::{
     assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, load_recent_document_metadata,
     run_retrieval_pipeline, RouterDecisionOutcome,
@@ -115,6 +117,58 @@ pub struct ChatResponse {
     pub timing_metrics: Option<ConversationFlowTimingMetrics>,
 }
 
+/// What a turn's sources amount to, for the line the UI shows above an answer.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TraceCounts {
+    /// Passages from documents in the user's vault.
+    passages: usize,
+    /// Distinct vault documents those passages came from.
+    files: usize,
+    /// Distinct web pages, which are not files and are never counted as any.
+    web_pages: usize,
+}
+
+/// Split a turn's sources into vault documents and web pages.
+///
+/// Web results are shaped like document sources so citations can treat them
+/// alike, and the counts used to be taken over the whole list. A web-only
+/// answer in a space containing no documents therefore announced "10 passages
+/// from 10 files" — a claim to have read ten of the user's documents, made by a
+/// turn that never touched the vault. The prefix on the id is what separates
+/// them.
+fn trace_counts(sources: &[SourceDto]) -> TraceCounts {
+    let (vault, web): (Vec<_>, Vec<_>) = sources
+        .iter()
+        .partition(|source| !source.document_id.starts_with(WEB_SOURCE_PREFIX));
+    TraceCounts {
+        passages: vault
+            .iter()
+            .map(|source| {
+                source
+                    .chunk_excerpts
+                    .as_ref()
+                    .map_or(1, |excerpts| excerpts.len().max(1))
+            })
+            .sum(),
+        files: vault
+            .iter()
+            .map(|source| source.document_id.as_str())
+            .collect::<HashSet<_>>()
+            .len(),
+        web_pages: web
+            .iter()
+            .map(|source| source.document_id.as_str())
+            .collect::<HashSet<_>>()
+            .len(),
+    }
+}
+
+/// Keeps a count of zero out of the wire entirely, so a trace that touched no
+/// web pages looks exactly like one written before the field existed.
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 /// Retrieval trace for one turn.
 ///
 /// `searched_documents` is the size of the document set the hard space-scope
@@ -128,6 +182,16 @@ pub struct RetrievalTraceDto {
     pub searched_documents: usize,
     pub passages: usize,
     pub files: usize,
+
+    /// Web pages carried into the answer, counted apart from `files`.
+    ///
+    /// `files` means documents in the user's vault and nothing else. Web
+    /// results used to be counted there too, so a web-only answer in a space
+    /// holding no documents still reported "10 passages from 10 files" — which
+    /// reads as though it had searched the vault, and is the sort of claim that
+    /// makes a correctly scoped answer look like a leak.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub web_pages: usize,
     /// "vault" | "linked"
     pub scope: String,
     /// Why the knowledge base could not be searched, when it could not be.
@@ -176,6 +240,16 @@ pub struct ChatStreamEventDto {
     pub attempt: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieval: Option<RetrievalTraceDto>,
+
+    /// What the turn is doing right now, in words meant for a person.
+    ///
+    /// A tool round emits no text at all while the model reasons and writes its
+    /// tool calls — on a slow model that is minutes of a spinner with nothing
+    /// behind it, which is indistinguishable from a hang. This is the only
+    /// signal the UI has during that stretch, so it is sent when a phase starts
+    /// and repeated on a heartbeat to show the turn is still alive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl ChatStreamEventDto {
@@ -358,12 +432,36 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         "chat_with_conversation: START"
     );
 
+    let turn_id = request_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // Register the turn before any of the slow work below it — request
+    // validation, a cold model load, opening the conversation. The composer
+    // shows Stop from the moment it sends, so a turn that only becomes
+    // cancellable once that work is done leaves every stop press in the
+    // meantime with nothing to act on. When the caller named the conversation
+    // (every store caller does) the turn registers right here, under the id
+    // exactly as the caller wrote it — the same id `get_or_create_conversation_id`
+    // hands back and the same one a cancel arrives with, which is what lets the
+    // registry match the three up. Only a brand-new conversation has to wait
+    // until its id exists.
+    let mut turn_guard = match conversation_id.as_deref() {
+        Some(id) if !id.trim().is_empty() => {
+            Some(TurnCancellationGuard::start(turn_id.clone(), id)?)
+        }
+        _ => None,
+    };
+    let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
+
     let flow_start = Instant::now();
     let mut flow_metrics = ConversationFlowTimingMetrics::default();
 
     let validate_start = Instant::now();
     let validated_message = validate_and_guard_chat_request(container, &message).await?;
     flow_metrics.validate_request_ms = elapsed_ms(validate_start);
+    if is_cancel_requested(&turn_id) {
+        return Err(cancellation_error());
+    }
     let search_flags = SearchFlags::from_preferences(tool_preferences.as_ref());
 
     info!(
@@ -376,17 +474,24 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     );
 
     let llm_start = Instant::now();
+    // A cold load is the longest stretch of the turn. It is not raced against
+    // the cancellation flag: dropping it mid-flight would abandon a half-started
+    // sidecar. The turn is registered by now, so a stop press during the load is
+    // recorded and acted on the moment it returns — before any generation.
     let llm = container.get_or_load_llm().await?;
     flow_metrics.load_llm_ms = elapsed_ms(llm_start);
 
     let conversation_init_start = Instant::now();
     let conv_id =
         get_or_create_conversation_id(container, conversation_id, &validated_message, &llm).await?;
-    let turn_id = request_id
-        .filter(|id| !id.trim().is_empty())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let _turn_guard = TurnCancellationGuard::start(turn_id.clone(), &conv_id)?;
+    if turn_guard.is_none() {
+        turn_guard = Some(TurnCancellationGuard::start(turn_id.clone(), &conv_id)?);
+    }
+    let _turn_guard = turn_guard;
     flow_metrics.conversation_init_ms = elapsed_ms(conversation_init_start);
+    if is_cancel_requested(&turn_id) {
+        return Err(cancellation_error());
+    }
 
     let conv_service = container.conversation_service();
 
@@ -429,6 +534,9 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     )
     .await?;
     flow_metrics.router_ms = elapsed_ms(router_start);
+    if is_cancel_requested(&turn_id) {
+        return Err(cancellation_error());
+    }
 
     // DIAGNOSTIC: Log context info before LLM generation
     tracing::info!(
@@ -443,6 +551,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         container,
         &conv_service,
         &conv_id,
+        &turn_id,
         &validated_message,
         &llm,
         &router_settings,
@@ -458,15 +567,24 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     .await;
     flow_metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);
     flow_metrics.retrieval_subtimings = Some(retrieval.sub_timings.clone());
-    let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
     if is_cancel_requested(&turn_id) {
         return Err(cancellation_error());
     }
 
     let prompt_build_start = Instant::now();
+    // Fetched web pages are carried whole where the window allows, so they are
+    // no longer small enough to ignore: what they fill is not there for the
+    // user's own passages.
+    let web_context_tokens = retrieval
+        .web_context
+        .as_deref()
+        .map(|text| llm.count_tokens(text))
+        .unwrap_or(0);
     let budgeted_results = budget_search_results_for_prompt(
         &retrieval.search_response.results,
-        retrieval.available_for_rag,
+        retrieval
+            .available_for_rag
+            .saturating_sub(web_context_tokens),
         &llm,
     );
     if budgeted_results.len() < retrieval.search_response.results.len() {
@@ -509,21 +627,16 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         || !retrieval.sources.is_empty()
         || retrieval.kb_unavailable_reason.is_some()
     {
-        let passages: usize = retrieval
-            .sources
-            .iter()
-            .map(|s| s.chunk_excerpts.as_ref().map_or(1, |c| c.len().max(1)))
-            .sum();
-        let files = retrieval
-            .sources
-            .iter()
-            .map(|s| s.document_id.as_str())
-            .collect::<HashSet<_>>()
-            .len();
+        let TraceCounts {
+            passages,
+            files,
+            web_pages,
+        } = trace_counts(&retrieval.sources);
         let trace = RetrievalTraceDto {
             searched_documents: retrieval.searched_documents,
             passages,
             files,
+            web_pages,
             scope: if retrieval.scope_is_linked {
                 "linked"
             } else {
@@ -568,9 +681,10 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         &citation_ids_by_chunk(&retrieval.sources),
     );
     let has_linked_web_sources_context = linked_web_sources_context.is_some();
+    let retrieval_web_context = retrieval.web_context.is_some();
     let has_grounded_context = followup_context_text.is_some()
         || kb_context.is_some()
-        || retrieval.web_context.is_some()
+        || retrieval_web_context
         || has_linked_web_sources_context;
 
     let enhanced_message = PromptMessageBuilder::new(
@@ -585,6 +699,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     .with_web_context(retrieval.web_context.clone())
     .with_web_search_error(retrieval.web_search_error.clone())
     .with_kb_unavailable_reason(retrieval.kb_unavailable_reason.clone())
+    .with_kb_sufficiency(retrieval.sufficiency.as_ref())
     .build();
     flow_metrics.prompt_build_ms = elapsed_ms(prompt_build_start);
 
@@ -607,10 +722,18 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
         .map(str::trim)
         .is_some_and(|mode| mode.eq_ignore_ascii_case("query"));
     // Initial retrieval is a candidate set, not proof that it can answer the
-    // question. Keep scoped document reads/searches available for recovery.
+    // question. Keep scoped document reads/searches available for recovery, and
+    // — when the turn carries web results — the ability to open one of them.
+    // Retrieval reads the top pages itself, but it cites more URLs than it
+    // reads; without this the model can see a link that plainly holds the
+    // answer and have no way to follow it.
     let grounded_tools: Vec<_> = tool_definitions
         .iter()
-        .filter(|tool| matches!(tool.name.as_str(), "semantic_search" | "get_document"))
+        .filter(|tool| {
+            matches!(tool.name.as_str(), "semantic_search" | "get_document")
+                || (tool.name == "fetch_url_content"
+                    && (retrieval_web_context || has_linked_web_sources_context))
+        })
         .cloned()
         .collect();
     let selected_tools = if has_grounded_context && !force_tools_for_turn {
@@ -655,6 +778,7 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
             &mut retrieval_trace,
             tools_ref,
             generation_time_budget(search_flags),
+            std::mem::take(&mut retrieval.pages_read),
         )
         .await
         {
@@ -1210,6 +1334,123 @@ fn generate_title(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vault_source(document_id: &str, chunk_id: &str) -> SourceDto {
+        SourceDto {
+            document_id: document_id.to_string(),
+            chunk_id: chunk_id.to_string(),
+            content: "text".to_string(),
+            score: 1.0,
+            path: None,
+            position: None,
+            file_name: "doc.pdf".to_string(),
+            file_path: "/doc.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            category: "PDF Document".to_string(),
+            file_size_bytes: 1,
+            modified_at: String::new(),
+            excerpt: None,
+            highlights: None,
+            section: None,
+            chunk_index: None,
+            page_number: None,
+            chunk_excerpts: None,
+            citation_id: None,
+        }
+    }
+
+    fn web_source(url: &str) -> SourceDto {
+        SourceDto {
+            document_id: format!("{WEB_SOURCE_PREFIX}{url}"),
+            mime_type: "text/html".to_string(),
+            category: "Web Article".to_string(),
+            ..vault_source("unused", url)
+        }
+    }
+
+    /// The turn that started all of this: a chat in a space holding no
+    /// documents, answered entirely from the web, which reported "10 passages
+    /// from 10 files" and so looked exactly like a scope leak.
+    #[test]
+    fn a_web_only_turn_reports_no_files_and_no_passages() {
+        let sources: Vec<SourceDto> = (0..10)
+            .map(|index| web_source(&format!("https://example.com/{index}")))
+            .collect();
+        assert_eq!(
+            trace_counts(&sources),
+            TraceCounts {
+                passages: 0,
+                files: 0,
+                web_pages: 10
+            }
+        );
+    }
+
+    #[test]
+    fn a_vault_turn_counts_documents_and_no_web_pages() {
+        let sources = vec![
+            vault_source("doc-a", "chunk-1"),
+            vault_source("doc-a", "chunk-2"),
+            vault_source("doc-b", "chunk-3"),
+        ];
+        assert_eq!(
+            trace_counts(&sources),
+            TraceCounts {
+                passages: 3,
+                files: 2,
+                web_pages: 0
+            }
+        );
+    }
+
+    /// A deep-research turn reads both. Each has to be counted as what it is.
+    #[test]
+    fn a_mixed_turn_keeps_the_two_apart() {
+        let sources = vec![
+            vault_source("doc-a", "chunk-1"),
+            web_source("https://example.com/one"),
+            web_source("https://example.com/two"),
+            web_source("https://example.com/one"),
+        ];
+        assert_eq!(
+            trace_counts(&sources),
+            TraceCounts {
+                passages: 1,
+                files: 1,
+                web_pages: 2
+            }
+        );
+    }
+
+    #[test]
+    fn a_turn_with_no_sources_counts_nothing() {
+        assert_eq!(trace_counts(&[]), TraceCounts::default());
+    }
+
+    /// Zero web pages must not appear on the wire at all, so a trace that read
+    /// only documents looks the same as one written before the field existed.
+    #[test]
+    fn a_trace_without_web_pages_omits_the_field() {
+        let trace = RetrievalTraceDto {
+            searched_documents: 3,
+            passages: 2,
+            files: 1,
+            scope: "vault".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&trace).expect("serialize");
+        assert!(json.get("webPages").is_none(), "got {json}");
+
+        let with_web = RetrievalTraceDto {
+            web_pages: 4,
+            ..trace
+        };
+        let json = serde_json::to_value(&with_web).expect("serialize");
+        assert_eq!(
+            json.get("webPages").and_then(serde_json::Value::as_u64),
+            Some(4)
+        );
+    }
 
     /// The sufficiency fields are additive. A trace written before the check
     /// existed carries none of them, and a reader that treated a missing

@@ -29,6 +29,7 @@ use crate::shared::error::AppError;
 use crate::shared::result::Result;
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -63,6 +64,64 @@ struct KeyState {
     key_to_id: HashMap<u64, String>,
     /// Metadata map: string ID → chunk metadata
     metadata: HashMap<String, VectorMeta>,
+    /// Fingerprint of each vector as it was handed in, by string ID. Kept per
+    /// entry so that removing one can take exactly its share back out of
+    /// `fingerprint_sum`.
+    fingerprints: HashMap<String, u64>,
+    /// Wrapping sum of `fingerprints`' values. See [`IndexFingerprint`].
+    fingerprint_sum: u64,
+}
+
+/// What an index holds, in a form that can be compared without reading it back.
+///
+/// Every vector contributes a hash of its ID and its full-precision values, and
+/// the contributions are combined by wrapping addition. Addition is commutative
+/// and invertible, so the total does not depend on insertion order, can be kept
+/// current as vectors come and go, and comes out the same for the rows SQLite
+/// returns in whatever order it returns them.
+///
+/// This exists so that start-up can tell "the index on disk is exactly what the
+/// database holds" from "something was interrupted" without rebuilding to find
+/// out. The rebuild is a single-threaded HNSW construction — about a second per
+/// thousand vectors — and it used to run on every launch, after a successful
+/// load, with the rest of the app waiting behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IndexFingerprint {
+    pub count: usize,
+    pub sum: u64,
+}
+
+impl IndexFingerprint {
+    /// The fingerprint an index would have if it held exactly these vectors.
+    pub fn of_rows<'a>(rows: impl IntoIterator<Item = (&'a str, &'a [f32])>) -> Self {
+        let mut fingerprint = Self::default();
+        for (id, vector) in rows {
+            fingerprint.count += 1;
+            fingerprint.sum = fingerprint.sum.wrapping_add(vector_fingerprint(id, vector));
+        }
+        fingerprint
+    }
+}
+
+/// Hash of one vector under its ID. SHA-256 rather than the standard library's
+/// hasher because this is written to disk and compared across releases, and
+/// `DefaultHasher` promises no stability between them.
+fn vector_fingerprint(id: &str, vector: &[f32]) -> u64 {
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(vector));
+    for value in vector {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let mut hasher = Sha256::new();
+    // Length-prefixed, so ("ab", …) and ("a", b…) can never hash alike.
+    hasher.update((id.len() as u64).to_le_bytes());
+    hasher.update(id.as_bytes());
+    hasher.update(&bytes);
+    let digest = hasher.finalize();
+    let mut head = [0u8; 8];
+    for (slot, byte) in head.iter_mut().zip(digest.iter()) {
+        *slot = *byte;
+    }
+    u64::from_le_bytes(head)
 }
 
 /// USearch-backed vector index implementing both `VectorSearchPort` (application layer)
@@ -106,6 +165,11 @@ struct KeyMapData {
     id_to_key: HashMap<String, u64>,
     next_key: u64,
     metadata: HashMap<String, SerializableMeta>,
+    /// Absent from a key map written before fingerprints existed. Such an index
+    /// cannot vouch for its contents, so start-up rebuilds it once and the
+    /// rebuilt index can.
+    #[serde(default)]
+    fingerprints: HashMap<String, u64>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -179,6 +243,8 @@ impl USearchVectorIndex {
                 id_to_key: HashMap::new(),
                 key_to_id: HashMap::new(),
                 metadata: HashMap::new(),
+                fingerprints: HashMap::new(),
+                fingerprint_sum: 0,
             }),
             next_key: AtomicU64::new(1),
             dimension,
@@ -293,6 +359,21 @@ impl USearchVectorIndex {
         }
 
         Ok(instance)
+    }
+
+    /// Whether this index holds exactly the vectors `expected` describes — no
+    /// more, no fewer, and none of them different.
+    ///
+    /// False whenever the index cannot vouch for itself: a vector with no
+    /// recorded fingerprint (a key map from before they existed), or a USearch
+    /// size that disagrees with the key map (a save that was interrupted
+    /// between the two files).
+    pub fn holds_exactly(&self, expected: IndexFingerprint) -> bool {
+        let state = self.state.read();
+        state.fingerprints.len() == state.id_to_key.len()
+            && state.id_to_key.len() == expected.count
+            && self.index.size() == expected.count
+            && state.fingerprint_sum == expected.sum
     }
 
     /// Rebuild the index from SQLite embeddings.
@@ -450,6 +531,11 @@ impl USearchVectorIndex {
 
         state.id_to_key.insert(id.clone(), key);
         state.key_to_id.insert(key, id.clone());
+        // Of the vector as handed in, not as stored: compression is lossy, and
+        // the point is to compare against what the database holds.
+        let fingerprint = vector_fingerprint(&id, &embedding);
+        state.fingerprints.insert(id.clone(), fingerprint);
+        state.fingerprint_sum = state.fingerprint_sum.wrapping_add(fingerprint);
 
         if let (Some(content), Some(chunk_id), Some(doc_id)) = (content, chunk_id, document_id) {
             state.metadata.insert(
@@ -514,6 +600,7 @@ impl USearchVectorIndex {
                     )
                 })
                 .collect(),
+            fingerprints: state.fingerprints.clone(),
         };
 
         // Atomic write via temp file + rename
@@ -562,6 +649,12 @@ impl USearchVectorIndex {
             );
         }
 
+        state.fingerprint_sum = data
+            .fingerprints
+            .values()
+            .fold(0u64, |sum, fingerprint| sum.wrapping_add(*fingerprint));
+        state.fingerprints = data.fingerprints;
+
         self.next_key.store(data.next_key, Ordering::SeqCst);
 
         Ok(())
@@ -584,6 +677,12 @@ impl Drop for USearchVectorIndex {
         }
     }
 }
+
+/// How far a compressed vector's approximate rank may misrepresent its true
+/// cosine. Quantization perturbs each component slightly, so a candidate can
+/// rescore a little above or below its neighbours; the scoped search will not
+/// abandon a widening pass over a gap smaller than this.
+const RESCORE_ORDER_MARGIN: f32 = 0.05;
 
 impl VectorSearchPort for USearchVectorIndex {
     fn search(
@@ -651,6 +750,12 @@ impl VectorSearchPort for USearchVectorIndex {
                 .map_err(|e| AppError::InternalError(format!("USearch search failed: {}", e)))?;
 
             let mut results = Vec::new();
+            // The best similarity any in-scope candidate reached this round.
+            // Widening is worth doing when the scope filter is what emptied the
+            // window, and pointless when the threshold is: USearch returns
+            // neighbours nearest first, so a wider window can only add vectors
+            // that score lower than the ones already rejected.
+            let mut best_in_scope: Option<f32> = None;
             for (&key, &distance) in matches.keys.iter().zip(matches.distances.iter()) {
                 let Some(id) = state.key_to_id.get(&key) else {
                     continue;
@@ -674,6 +779,8 @@ impl VectorSearchPort for USearchVectorIndex {
                 // replaces it with the exact full-precision cosine. Threshold
                 // is applied to the score we report, not to the lossy one.
                 let similarity = self.candidate_similarity(key, query_embedding, distance);
+                best_in_scope =
+                    Some(best_in_scope.map_or(similarity, |best: f32| best.max(similarity)));
                 if similarity < threshold {
                     continue;
                 }
@@ -701,6 +808,31 @@ impl VectorSearchPort for USearchVectorIndex {
                     results.truncate(top_k);
                 }
                 return Ok(results);
+            }
+
+            // Nothing in scope came close enough. USearch returns neighbours
+            // nearest first, so reaching further out can only find vectors that
+            // score lower than the ones just rejected — stop instead of
+            // rescanning the index one doubling at a time. A real session spent
+            // nine widening rounds over 29,766 vectors to return the empty list
+            // its first round had already established.
+            //
+            // When rescoring is active the approximate order USearch returns is
+            // not exactly the order of true cosine, so a vector further out can
+            // still rescore slightly higher. Give that reordering room: only
+            // stop when the nearest in-scope vector misses by more than
+            // quantization could explain.
+            if let Some(best) = best_in_scope {
+                let margin = if rescoring { RESCORE_ORDER_MARGIN } else { 0.0 };
+                if best + margin < threshold {
+                    tracing::debug!(
+                        candidate_k = candidate_k,
+                        best_similarity = best,
+                        threshold = threshold,
+                        "USearch scoped search stopping: nearest in-scope vector is below threshold"
+                    );
+                    return Ok(results);
+                }
             }
 
             let next_candidate_k = candidate_k.saturating_mul(2).min(index_size);
@@ -786,6 +918,9 @@ impl VectorSearchPort for USearchVectorIndex {
             state.id_to_key.remove(id);
             state.key_to_id.remove(&key);
             state.metadata.remove(id);
+            if let Some(fingerprint) = state.fingerprints.remove(id) {
+                state.fingerprint_sum = state.fingerprint_sum.wrapping_sub(fingerprint);
+            }
             changed = true;
         }
         drop(state);
@@ -808,6 +943,8 @@ impl VectorSearchPort for USearchVectorIndex {
         state.id_to_key.clear();
         state.key_to_id.clear();
         state.metadata.clear();
+        state.fingerprints.clear();
+        state.fingerprint_sum = 0;
         self.next_key.store(1, Ordering::SeqCst);
         Ok(())
     }
@@ -1156,6 +1293,160 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "test content");
+    }
+
+    type Row = (String, Vec<f32>, String, String, String);
+
+    fn row(n: usize, vector: [f32; 4]) -> Row {
+        (
+            format!("emb_{n}"),
+            vector.to_vec(),
+            format!("content {n}"),
+            format!("chunk_{n}"),
+            format!("doc_{n}"),
+        )
+    }
+
+    fn library() -> Vec<Row> {
+        vec![
+            row(1, [1.0, 0.0, 0.0, 0.0]),
+            row(2, [0.0, 1.0, 0.0, 0.0]),
+            row(3, [0.0, 0.0, 1.0, 0.0]),
+        ]
+    }
+
+    fn fingerprint_of(rows: &[Row]) -> IndexFingerprint {
+        IndexFingerprint::of_rows(
+            rows.iter()
+                .map(|(id, vector, ..)| (id.as_str(), vector.as_slice())),
+        )
+    }
+
+    /// The whole point: an index saved by one run and opened by the next can
+    /// say it holds what the database holds, so start-up need not rebuild it.
+    #[test]
+    fn an_index_reopened_from_disk_still_vouches_for_what_it_holds() {
+        let temp_dir = tempfile::TempDir::new().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let index_path = temp_dir.path().join("library.usearch");
+        {
+            let index = USearchVectorIndex::open_or_create(4, index_path.clone())
+                .unwrap_or_else(|e| panic!("open_or_create failed: {e}"));
+            let added = index
+                .rebuild_from_embeddings(library())
+                .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
+            assert_eq!(added, 3);
+        }
+        let reopened = USearchVectorIndex::open_or_create(4, index_path)
+            .unwrap_or_else(|e| panic!("reopen failed: {e}"));
+
+        assert!(reopened.holds_exactly(fingerprint_of(&library())));
+    }
+
+    /// SQLite returns rows in whatever order it likes, and not the order they
+    /// were inserted in. That must not read as a different library.
+    #[test]
+    fn the_order_rows_come_back_in_does_not_matter() {
+        let index = make_test_index(4);
+        let _ = index
+            .rebuild_from_embeddings(library())
+            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
+
+        let mut shuffled = library();
+        shuffled.reverse();
+        assert!(index.holds_exactly(fingerprint_of(&shuffled)));
+    }
+
+    /// The case a comparison of IDs alone would wave through: a chunk
+    /// re-embedded in place keeps its ID and changes its vector.
+    #[test]
+    fn a_vector_that_changed_under_the_same_id_is_noticed() {
+        let index = make_test_index(4);
+        let _ = index
+            .rebuild_from_embeddings(library())
+            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
+
+        let mut reembedded = library();
+        reembedded[1] = row(2, [0.0, 0.9, 0.1, 0.0]);
+        assert!(!index.holds_exactly(fingerprint_of(&reembedded)));
+    }
+
+    /// The interrupted writes the unconditional rebuild existed to heal.
+    #[test]
+    fn a_row_the_index_lacks_or_a_row_it_should_not_have_is_noticed() {
+        let index = make_test_index(4);
+        let _ = index
+            .rebuild_from_embeddings(library())
+            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
+
+        let mut one_more = library();
+        one_more.push(row(4, [0.0, 0.0, 0.0, 1.0]));
+        assert!(!index.holds_exactly(fingerprint_of(&one_more)));
+
+        let mut one_fewer = library();
+        one_fewer.pop();
+        assert!(!index.holds_exactly(fingerprint_of(&one_fewer)));
+    }
+
+    /// Ordinary use — indexing a document, deleting one — must leave the index
+    /// able to vouch for itself, or every launch after any activity rebuilds.
+    #[test]
+    fn the_fingerprint_follows_vectors_as_they_are_added_and_removed() {
+        let index = make_test_index(4);
+        let _ = index
+            .rebuild_from_embeddings(library())
+            .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
+
+        index
+            .add_embedding_with_content(
+                "emb_4".into(),
+                vec![0.0, 0.0, 0.0, 1.0],
+                "content 4".into(),
+                "chunk_4".into(),
+                "doc_4".into(),
+            )
+            .unwrap_or_else(|e| panic!("add failed: {e}"));
+        let mut grown = library();
+        grown.push(row(4, [0.0, 0.0, 0.0, 1.0]));
+        assert!(index.holds_exactly(fingerprint_of(&grown)));
+
+        VectorSearchPort::remove_embedding(&index, "emb_2")
+            .unwrap_or_else(|e| panic!("remove failed: {e}"));
+        grown.remove(1);
+        assert!(index.holds_exactly(fingerprint_of(&grown)));
+
+        VectorSearchPort::clear(&index).unwrap_or_else(|e| panic!("clear failed: {e}"));
+        assert!(index.holds_exactly(IndexFingerprint::default()));
+    }
+
+    /// A key map written before fingerprints existed says nothing about its
+    /// vectors. It must not be taken at its word; it is rebuilt once instead.
+    #[test]
+    fn a_key_map_with_no_fingerprints_cannot_vouch_for_anything() {
+        let temp_dir = tempfile::TempDir::new().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let index_path = temp_dir.path().join("library.usearch");
+        {
+            let index = USearchVectorIndex::open_or_create(4, index_path.clone())
+                .unwrap_or_else(|e| panic!("open_or_create failed: {e}"));
+            let _ = index
+                .rebuild_from_embeddings(library())
+                .unwrap_or_else(|e| panic!("rebuild failed: {e}"));
+        }
+        let keymap_path = temp_dir.path().join("library.keymap.json");
+        let mut keymap: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&keymap_path).unwrap_or_else(|e| panic!("read keymap: {e}")),
+        )
+        .unwrap_or_else(|e| panic!("parse keymap: {e}"));
+        keymap
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("keymap is an object"))
+            .remove("fingerprints");
+        std::fs::write(&keymap_path, keymap.to_string())
+            .unwrap_or_else(|e| panic!("write keymap: {e}"));
+
+        let reopened = USearchVectorIndex::open_or_create(4, index_path)
+            .unwrap_or_else(|e| panic!("reopen failed: {e}"));
+        assert_eq!(reopened.count(), 3, "the old key map must still load");
+        assert!(!reopened.holds_exactly(fingerprint_of(&library())));
     }
 
     #[test]
@@ -1581,5 +1872,79 @@ mod tests {
         let hits = VectorSearchPort::search(&index, &vector, 1, 0.0).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].score > 0.99, "score was {}", hits[0].score);
+    }
+
+    fn widening_corpus(dim: usize, count: u64) -> Vec<(String, Vec<f32>)> {
+        (0..count)
+            .map(|i| (format!("chunk{i}"), synthetic_vector(i, dim, 0.8)))
+            .collect()
+    }
+
+    fn widening_index(dim: usize, corpus: &[(String, Vec<f32>)]) -> USearchVectorIndex {
+        let index = USearchVectorIndex::new(dim, None).unwrap();
+        for (i, (id, vector)) in corpus.iter().enumerate() {
+            index
+                .add_embedding_with_content(
+                    id.clone(),
+                    vector.clone(),
+                    format!("passage {i}"),
+                    id.clone(),
+                    format!("doc{i}"),
+                )
+                .unwrap();
+        }
+        index
+    }
+
+    /// The logged waste: a scoped search whose scope was satisfiable but whose
+    /// threshold nothing could clear widened nine times across the whole index
+    /// before returning the empty list its first pass had already established.
+    /// The answer must stay empty — this pins the result, while the widening
+    /// loop now gives up once the nearest in-scope vector misses the bar.
+    #[test]
+    fn an_unreachable_threshold_still_returns_nothing() {
+        const DIM: usize = 16;
+        let corpus = widening_corpus(DIM, 128);
+        let index = widening_index(DIM, &corpus);
+        let query = synthetic_vector(7_777, DIM, 0.8);
+        let scope: HashSet<String> = (0..128).map(|i| format!("doc{i}")).collect();
+
+        let hits =
+            VectorSearchPort::search_scoped(&index, &query, 10, 0.999_9, Some(&scope)).unwrap();
+
+        assert!(hits.is_empty());
+    }
+
+    /// The property the early stop must not break. Here the scope — not the
+    /// threshold — is what empties the first candidate windows, so widening is
+    /// the only way to reach the answer and it has to keep going.
+    #[test]
+    fn a_scope_that_only_distant_documents_satisfy_is_still_reached() {
+        const DIM: usize = 16;
+        let corpus = widening_corpus(DIM, 128);
+        let index = widening_index(DIM, &corpus);
+        let query = synthetic_vector(7_777, DIM, 0.8);
+
+        // Scope to the single worst-ranked document that still clears the bar,
+        // so every early candidate window is filtered away entirely.
+        let ranked = exact_cosine_ranking(&query, &corpus);
+        let worst = ranked
+            .iter()
+            .rev()
+            .find(|id| {
+                corpus
+                    .iter()
+                    .find(|(candidate, _)| candidate == *id)
+                    .is_some_and(|(_, v)| cosine_similarity_naive(&query, v) > 0.05)
+            })
+            .expect("some chunk clears the bar")
+            .clone();
+        let doc = format!("doc{}", worst.trim_start_matches("chunk"));
+        let scope: HashSet<String> = [doc.clone()].into();
+
+        let hits = VectorSearchPort::search_scoped(&index, &query, 3, 0.05, Some(&scope)).unwrap();
+
+        assert_eq!(hits.len(), 1, "widening must still reach a distant scope");
+        assert_eq!(hits[0].doc_id, doc);
     }
 }

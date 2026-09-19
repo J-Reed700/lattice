@@ -1,4 +1,7 @@
 use super::*;
+use crate::features::conversation::chat::cancellation::is_cancel_requested;
+use crate::features::conversation::chat::fetch_memory::{Delivery, FetchMemory};
+use std::time::Duration;
 
 use crate::domain::qa::hyde::HyDEInterpretation;
 
@@ -33,12 +36,21 @@ fn dominant_result_terms(
     (ranked.into_iter().take(limit).collect(), total)
 }
 
+/// Retrieval for one turn.
+///
+/// Cancellation is checked at the phase boundaries rather than by racing the
+/// phases themselves: an external search or a corrective retry dropped
+/// mid-await would abandon work the pipeline cannot clean up. A cancelled turn
+/// returns whatever the outcome holds so far, and the caller — which re-checks
+/// the flag the moment this returns — turns that into the cancellation error
+/// without ever reading it.
 // This orchestration boundary exposes the complete per-turn retrieval configuration.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_retrieval_pipeline(
     container: &Container,
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,
+    request_id: &str,
     validated_message: &str,
     llm: &Arc<dyn crate::application::ports::LLMPort>,
     router_settings: &RouterSettingsDto,
@@ -117,8 +129,13 @@ pub(super) async fn run_retrieval_pipeline(
         searched_documents: 0,
         scope_is_linked: false,
         sufficiency: None,
+        pages_read: FetchMemory::default(),
     };
     let tuning = &search_settings.retrieval_tuning;
+    // The embedding and utility models may both have been cold.
+    if is_cancel_requested(request_id) {
+        return outcome;
+    }
 
     let mut retrieval_plan = RetrievalPlan::from_router(
         router_settings,
@@ -155,12 +172,14 @@ pub(super) async fn run_retrieval_pipeline(
         container,
         conv_service,
         conversation_id,
+        request_id,
         validated_message,
         utility_llm: &utility_llm,
         search_flags,
         highlight_terms,
         excerpt_chars: tool_output_settings.excerpt_chars as usize,
         tuning,
+        page_budget_chars: super::page_budget::page_budget_chars(available_for_rag),
         wiki_planned: retrieval_plan.should_search_wiki,
         web_planned: retrieval_plan.should_search_web,
     };
@@ -183,6 +202,12 @@ pub(super) async fn run_retrieval_pipeline(
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
     };
+
+    // The phase below is the long one — KB retrieval with its corrective
+    // retries, and wiki/web lookups over the network.
+    if is_cancel_requested(request_id) {
+        return outcome;
+    }
 
     let run_kb = outcome.short_circuit_response.is_none() && retrieval_plan.should_search_kb;
     // KB and the external phase overlap only when no KB result can close the
@@ -274,6 +299,10 @@ pub(super) async fn run_retrieval_pipeline(
         );
     }
 
+    if is_cancel_requested(request_id) {
+        return outcome;
+    }
+
     if external_phase.is_none() && outcome.short_circuit_response.is_none() && external.is_planned()
     {
         let interpret = outcome.interpretation.hyde_text.is_none();
@@ -350,16 +379,49 @@ pub(super) async fn run_retrieval_pipeline(
 
 /// Borrowed inputs of the wiki/web phase, shared so the phase can run beside
 /// KB retrieval without copying turn state.
+/// Below this many characters of extracted text, a page is not carrying an
+/// article — it is a cookie wall, a paywall stub or pure navigation — and the
+/// search snippet says as much in less space.
+const MIN_USEFUL_PAGE_CHARS: usize = 400;
+
+/// One web result's page, as much of it as the prompt had room for.
+struct FetchedPage {
+    text: String,
+    word_count: usize,
+    /// How many characters of the page the prompt carries, when that is not
+    /// all of them. The rest is held in the turn's fetch memory.
+    clipped_at: Option<usize>,
+}
+
+/// What came of trying to read one web result.
+enum PageOutcome {
+    Read(FetchedPage),
+    /// Why it could not be read. Said in the prompt, so the model does not
+    /// spend a round finding out for itself.
+    Unreadable(String),
+}
+
+/// A failed or empty page is replaced by the next result down, so that one
+/// blocked site does not cost the turn a page. Bounded, because every wave
+/// waits on the network.
+const MAX_PAGE_FETCH_WAVES: usize = 3;
+
+/// A research turn was asked to go deep; it reads this many times the pages.
+const DEEP_RESEARCH_PAGE_MULTIPLIER: usize = 2;
+
 struct ExternalLookup<'a> {
     container: &'a Container,
     conv_service: &'a Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &'a str,
+    request_id: &'a str,
     validated_message: &'a str,
     utility_llm: &'a Arc<dyn crate::application::ports::LLMPort>,
     search_flags: SearchFlags,
     highlight_terms: &'a [String],
     excerpt_chars: usize,
     tuning: &'a RetrievalTuningSettingsDto,
+    /// Characters of fetched page text this turn's prompt has room for.
+    page_budget_chars: usize,
     wiki_planned: bool,
     web_planned: bool,
 }
@@ -385,6 +447,9 @@ pub(super) struct ExternalSearchResult {
     /// Surfaced to the prompt. Web search only: wiki failures are just logged.
     pub(super) error: Option<String>,
     pub(super) elapsed_ms: u64,
+    /// Every page this search tried to open, readable or not, for the tool
+    /// loop to start from.
+    pub(super) pages: crate::features::conversation::chat::fetch_memory::FetchMemory,
 }
 
 impl ExternalLookup<'_> {
@@ -419,10 +484,27 @@ impl ExternalLookup<'_> {
                 if !interpret {
                     return None;
                 }
+                // The expansion is a full utility-model generation, and in this
+                // phase only the wiki search reads it: the web search has its
+                // own rewritten query, and everything else wants the turn's
+                // type. Generating it regardless held the web search back until
+                // it finished — on a single-slot local model, behind it.
+                if search_wiki {
+                    return hyde_service
+                        .interpret_query_with_context(
+                            self.validated_message,
+                            hyde_context.as_deref(),
+                        )
+                        .await
+                        .ok();
+                }
                 hyde_service
-                    .interpret_query_with_context(self.validated_message, hyde_context.as_deref())
+                    .classify_query_with_context(self.validated_message, hyde_context.as_deref())
                     .await
                     .ok()
+                    .map(|query_type| {
+                        HyDEInterpretation::raw_only(self.validated_message, query_type)
+                    })
             },
             async {
                 if !search_web {
@@ -670,6 +752,194 @@ impl ExternalLookup<'_> {
         searched
     }
 
+    /// How many readable pages this turn wants in its prompt.
+    fn pages_wanted(&self) -> usize {
+        let configured = self.tuning.web_fetch_page_count as usize;
+        if self.search_flags.deep_research_mode {
+            configured.saturating_mul(DEEP_RESEARCH_PAGE_MULTIPLIER)
+        } else {
+            configured
+        }
+    }
+
+    /// Read one page, or say why not.
+    async fn fetch_one_page(
+        &self,
+        url: String,
+    ) -> std::result::Result<crate::features::function_calling::dto::FetchUrlContentOutput, String>
+    {
+        let timeout = Duration::from_secs(self.tuning.web_page_fetch_timeout_secs.max(1) as u64);
+        let call = crate::features::function_calling::domain::FunctionCall::new(
+            uuid::Uuid::new_v4().to_string(),
+            "fetch_url_content",
+            serde_json::json!({ "url": url }),
+        );
+        let executor = self.container.function_executor();
+        let outcome = match tokio::time::timeout(timeout, executor.execute(call)).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(error)) => return Err(error.to_string()),
+            Err(_) => return Err(format!("timed out after {}s", timeout.as_secs())),
+        };
+        if !outcome.success {
+            return Err(outcome
+                .error_message
+                .unwrap_or_else(|| "the fetch did not succeed".to_string()));
+        }
+        let data = outcome
+            .data
+            .ok_or_else(|| "the fetch returned no content".to_string())?;
+        let output = serde_json::from_value::<
+            crate::features::function_calling::dto::FetchUrlContentOutput,
+        >(data)
+        .map_err(|error| format!("the fetched page could not be parsed: {error}"))?;
+        // Extraction can succeed on a page that is all navigation, a cookie
+        // wall or a video player. The snippet says as much in less space.
+        if output.content.trim().len() < MIN_USEFUL_PAGE_CHARS {
+            return Err("the page had no readable article text".to_string());
+        }
+        Ok(output)
+    }
+
+    /// Open the top web results and read them.
+    ///
+    /// A search provider returns a headline and about a sentence of context.
+    /// Answering "what does this page say" from that is not possible, so the
+    /// highest-ranked results are fetched and their article text is what the
+    /// prompt carries. Each wave's fetches run side by side, and every one is
+    /// individually fallible: a block, a timeout or a page with no extractable
+    /// article is replaced by the next result down in a following wave, so one
+    /// site refusing the request does not leave the turn a page short.
+    ///
+    /// The pages share the turn's page budget rather than each being cut to a
+    /// fixed size — see [`super::page_budget`]. Everything tried is recorded in
+    /// the returned memory, which the tool loop starts from. The returned vector
+    /// is index-aligned with `results`; `None` is a result that was never tried.
+    async fn fetch_page_texts(
+        &self,
+        results: &[crate::features::function_calling::dto::WebSearchResult],
+    ) -> (Vec<Option<PageOutcome>>, FetchMemory) {
+        let mut outcomes: Vec<Option<PageOutcome>> = (0..results.len()).map(|_| None).collect();
+        let mut memory = FetchMemory::default();
+
+        let wanted = self.pages_wanted().min(results.len());
+        if wanted == 0 {
+            return (outcomes, memory);
+        }
+        // Reading pages is the slowest thing the external phase does. A stop
+        // press that landed during the search itself should not buy the user
+        // another round of network fetches.
+        if is_cancel_requested(self.request_id) {
+            debug!("Turn cancelled before page fetching — keeping snippets only");
+            return (outcomes, memory);
+        }
+
+        let started = Instant::now();
+        let mut read: Vec<(
+            usize,
+            crate::features::function_calling::dto::FetchUrlContentOutput,
+        )> = Vec::new();
+        let mut next = 0usize;
+        let mut attempted = 0usize;
+        for wave in 0..MAX_PAGE_FETCH_WAVES {
+            let short_by = wanted.saturating_sub(read.len());
+            if short_by == 0 || next >= results.len() {
+                break;
+            }
+            if wave > 0 && is_cancel_requested(self.request_id) {
+                break;
+            }
+            let batch: Vec<(usize, String)> = results
+                .iter()
+                .enumerate()
+                .skip(next)
+                .take(short_by)
+                .map(|(slot, result)| (slot, result.url.clone()))
+                .collect();
+            next += batch.len();
+            attempted += batch.len();
+
+            let fetched = futures::future::join_all(
+                batch
+                    .iter()
+                    .map(|(_, url)| self.fetch_one_page(url.clone())),
+            )
+            .await;
+            for ((slot, url), fetched) in batch.into_iter().zip(fetched) {
+                match fetched {
+                    Ok(output) => read.push((slot, output)),
+                    Err(reason) => {
+                        debug!(
+                            url = url.as_str(),
+                            reason = reason.as_str(),
+                            "Page could not be read — keeping its snippet"
+                        );
+                        memory.record_failure(&url, &reason);
+                        if let Some(outcome) = outcomes.get_mut(slot) {
+                            *outcome = Some(PageOutcome::Unreadable(reason));
+                        }
+                    }
+                }
+            }
+        }
+
+        let lengths: Vec<usize> = read
+            .iter()
+            .map(|(_, output)| output.content.trim().chars().count())
+            .collect();
+        let budgets = super::page_budget::allocate(
+            &lengths,
+            self.page_budget_chars,
+            self.tuning.web_page_max_chars as usize,
+        );
+
+        let mut carried = 0usize;
+        let mut carried_whole = 0usize;
+        let mut total_words = 0usize;
+        for (((slot, output), length), budget) in read.into_iter().zip(lengths).zip(budgets) {
+            let full = output.content.trim();
+            let Some(result) = results.get(slot) else {
+                continue;
+            };
+            // No room for it in this prompt. It is still remembered, so the
+            // model can ask for it and be answered without a request.
+            if budget < MIN_USEFUL_PAGE_CHARS.min(length) {
+                memory.record_page(&result.url, full, Delivery::Clipped { shown_chars: 0 });
+                continue;
+            }
+            let whole = budget >= length;
+            let delivery = if whole {
+                Delivery::Whole
+            } else {
+                Delivery::Clipped {
+                    shown_chars: budget,
+                }
+            };
+            memory.record_page(&result.url, full, delivery);
+            carried += 1;
+            carried_whole += usize::from(whole);
+            total_words += output.word_count;
+            if let Some(outcome) = outcomes.get_mut(slot) {
+                *outcome = Some(PageOutcome::Read(FetchedPage {
+                    text: safe_truncate(full, budget),
+                    word_count: output.word_count,
+                    clipped_at: (!whole).then_some(budget),
+                }));
+            }
+        }
+
+        info!(
+            wanted = wanted,
+            attempted = attempted,
+            carried = carried,
+            carried_whole = carried_whole,
+            total_words = total_words,
+            page_budget_chars = self.page_budget_chars,
+            elapsed_ms = elapsed_ms(started),
+            "Web page content fetched for prompt context"
+        );
+        (outcomes, memory)
+    }
+
     async fn web_search(&self, web_query: &str) -> ExternalSearchResult {
         let web_search_start = Instant::now();
         let tuning = self.tuning;
@@ -784,6 +1054,9 @@ impl ExternalLookup<'_> {
                                     self.excerpt_chars,
                                 );
 
+                                let (pages, page_memory) =
+                                    self.fetch_page_texts(&output.results).await;
+                                searched.pages = page_memory;
                                 let context_text = output
                                     .results
                                     .iter()
@@ -799,13 +1072,20 @@ impl ExternalLookup<'_> {
                                             &result.snippet,
                                             tuning.web_snippet_max_chars as usize,
                                         );
+                                        // A page that was read in full replaces the
+                                        // search engine's one-line blurb. The snippet
+                                        // stays for the rest, so a fetch that failed
+                                        // degrades to what the old behaviour gave.
+                                        let body =
+                                            render_page_body(pages.get(i).and_then(Option::as_ref));
                                         format!(
-                                            "[{}] {}\nURL: {}\nSnippet: {}{}",
+                                            "[{}] {}\nURL: {}\nSnippet: {}{}{}",
                                             i + 1,
                                             result.title,
                                             result.url,
                                             snippet,
-                                            published_line
+                                            published_line,
+                                            body
                                         )
                                     })
                                     .collect::<Vec<_>>()
@@ -863,11 +1143,36 @@ pub(super) fn attach_wiki_results(
 
 /// Merge web results after any wiki results: citations are appended, and the
 /// web context follows whatever context is already there.
+/// What the prompt says about one web result's page.
+///
+/// Says outright whether the text is the whole page. Left unsaid, a model that
+/// wants detail assumes there is more and spends a generation round fetching a
+/// page it already has; told a page failed, it does not try that page again.
+fn render_page_body(page: Option<&PageOutcome>) -> String {
+    match page {
+        Some(PageOutcome::Read(page)) => match page.clipped_at {
+            None => format!(
+                "\nPage content ({} words — complete; this is the whole page and there is nothing more to fetch):\n{}",
+                page.word_count, page.text
+            ),
+            Some(shown) => format!(
+                "\nPage content ({} words; the first {} characters are shown — call fetch_url_content with this URL if you need the rest):\n{}",
+                page.word_count, shown, page.text
+            ),
+        },
+        Some(PageOutcome::Unreadable(reason)) => format!(
+            "\nPage could not be read ({reason}). Only the snippet above is available. Do not fetch this URL; it will fail the same way."
+        ),
+        None => String::new(),
+    }
+}
+
 pub(super) fn attach_web_results(
     outcome: &mut RetrievalPipelineOutcome,
     web: ExternalSearchResult,
 ) {
     outcome.sub_timings.web_search_ms = web.elapsed_ms;
+    outcome.pages_read.absorb(web.pages);
     if web.error.is_some() {
         outcome.web_search_error = web.error;
     }
@@ -888,5 +1193,53 @@ pub(super) fn attach_web_results(
             }
             _ => Some(context_text),
         };
+    }
+}
+
+#[cfg(test)]
+mod page_rendering_tests {
+    use super::*;
+
+    fn read(clipped_at: Option<usize>) -> PageOutcome {
+        PageOutcome::Read(FetchedPage {
+            text: "Juliette walks past the hill.".to_string(),
+            word_count: 3521,
+            clipped_at,
+        })
+    }
+
+    /// The old label said only "truncated", or nothing. A model that wants
+    /// detail reads silence as "there may be more" and fetches the page again.
+    #[test]
+    fn a_whole_page_is_called_complete_in_so_many_words() {
+        let body = render_page_body(Some(&read(None)));
+        assert!(body.contains("3521 words"), "{body}");
+        assert!(body.contains("complete"), "{body}");
+        assert!(body.contains("nothing more to fetch"), "{body}");
+        assert!(body.ends_with("Juliette walks past the hill."), "{body}");
+    }
+
+    #[test]
+    fn a_clipped_page_says_how_much_is_shown_and_how_to_get_the_rest() {
+        let body = render_page_body(Some(&read(Some(12_000))));
+        assert!(body.contains("first 12000 characters"), "{body}");
+        assert!(body.contains("fetch_url_content"), "{body}");
+        assert!(!body.contains("complete"), "{body}");
+    }
+
+    /// The blocked page in the log was requested again a round later because
+    /// nothing in the prompt said it had already failed.
+    #[test]
+    fn a_page_that_could_not_be_read_says_why_and_not_to_try_again() {
+        let body = render_page_body(Some(&PageOutcome::Unreadable(
+            "HTTP 403 Forbidden".to_string(),
+        )));
+        assert!(body.contains("HTTP 403 Forbidden"), "{body}");
+        assert!(body.contains("Do not fetch this URL"), "{body}");
+    }
+
+    #[test]
+    fn a_result_that_was_never_opened_adds_nothing() {
+        assert_eq!(render_page_body(None), "");
     }
 }

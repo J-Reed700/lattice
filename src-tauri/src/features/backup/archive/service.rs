@@ -587,7 +587,7 @@ mod tests {
 
     use crate::application::ports::settings_port::MockSettingsRepository;
     use crate::application::ports::SettingsRepositoryPort;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use sqlx::SqlitePool;
 
     /// The blob every seeded document points at: it is in the archive.
@@ -597,14 +597,25 @@ mod tests {
     /// on disk, and it is not in the archive.
     const ORPHAN_BLOB: &str = "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9";
 
+    /// Open a read-write pool on a fixture file.
+    ///
+    /// Built from `SqliteConnectOptions` rather than a `sqlite://…` string for
+    /// the reason `snapshot.rs` and `adapter.rs` do: a DSN is a URL and a
+    /// Windows path is not a URL component, so a drive letter becomes the
+    /// authority and a `\\?\` verbatim prefix truncates the filename at its
+    /// `?`. Passing the `Path` through sidesteps the whole question.
+    async fn connect_fixture_pool(db_path: &Path) -> SqlitePool {
+        SqlitePoolOptions::new()
+            .connect_with(SqliteConnectOptions::new().filename(db_path))
+            .await
+            .unwrap()
+    }
+
     /// A file-backed pool with one row in it, built the way `adapter.rs`
     /// builds its fixtures.
     async fn seeded_pool(db_path: &Path, rows: u32) -> SqlitePool {
         std::fs::File::create(db_path).unwrap();
-        let pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let pool = connect_fixture_pool(db_path).await;
         sqlx::query(
             "CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, checksum TEXT NOT NULL)",
         )
@@ -626,10 +637,7 @@ mod tests {
     }
 
     async fn document_count(db_path: &Path) -> i64 {
-        let pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", db_path.display()))
-            .await
-            .unwrap();
+        let pool = connect_fixture_pool(db_path).await;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&pool)
             .await
