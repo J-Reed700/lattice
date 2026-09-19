@@ -483,7 +483,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(search.search("日本語サポート", 10).await.unwrap().is_empty());
+        assert!(search
+            .search("日本語サポート", 10)
+            .await
+            .unwrap()
+            .is_empty());
         assert!(!search.search("中文支持", 10).await.unwrap().is_empty());
 
         sqlx::query("DELETE FROM text_chunks WHERE id = 'chunk'")

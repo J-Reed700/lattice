@@ -172,6 +172,8 @@ pub struct ProductionIndex {
     /// Chunk id to its position inside its document, so ranking rows stay attributable
     /// without a database round trip inside the timed region.
     chunk_positions: HashMap<String, usize>,
+    /// `document#chunk` locator to the UTF-8 byte range the chunk covers in its document.
+    chunk_spans: HashMap<String, (usize, usize)>,
     /// The sparse branch, kept so it can also be run on its own for the branch diagnostics.
     /// `None` when the branch is off, which is also what the run row reports.
     sparse: Option<Arc<SparseSearchService>>,
@@ -236,6 +238,7 @@ impl ProductionIndex {
 
         let mut entries = Vec::new();
         let mut chunk_positions = HashMap::new();
+        let mut chunk_spans = HashMap::new();
         for document in documents {
             let file_name = format!("{}.md", document.id);
             let title = document.title.clone().unwrap_or_else(|| file_name.clone());
@@ -325,6 +328,10 @@ impl ProductionIndex {
                 .await?;
 
                 chunk_positions.insert(chunk_id.clone(), item.chunk.chunk_index);
+                chunk_spans.insert(
+                    format!("{}#{}", document.id, item.chunk.chunk_index),
+                    (item.chunk.start_idx, item.chunk.end_idx),
+                );
                 if let Some(sparse) = sparse_terms.get(item.chunk.chunk_index) {
                     sparse_entries.push((chunk_id.clone(), sparse.clone()));
                 }
@@ -398,6 +405,7 @@ impl ProductionIndex {
             service,
             top_k,
             chunk_positions,
+            chunk_spans,
             sparse,
             reranked,
         })
@@ -443,6 +451,19 @@ impl ProductionIndex {
             });
         }
         Ok((ranked, sufficiency))
+    }
+
+    /// Byte ranges for the given chunks, keyed by locator, so the scorer can tell whether the
+    /// retrieved chunk held the answer passage and not merely the right document.
+    pub fn spans_for(&self, chunks: &[RankedChunk]) -> HashMap<String, [usize; 2]> {
+        chunks
+            .iter()
+            .filter_map(|chunk| {
+                let locator = chunk.locator();
+                let (start, end) = self.chunk_spans.get(&locator).copied()?;
+                Some((locator, [start, end]))
+            })
+            .collect()
     }
 
     /// The learned sparse branch on its own, collapsed to its document ranking, or `None`

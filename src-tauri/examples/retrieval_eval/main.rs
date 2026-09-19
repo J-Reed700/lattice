@@ -604,6 +604,7 @@ async fn run_production(
             "scores": scores,
             "first_stage_ranked_ids": first_stage_ids,
             "chunk_ranked_ids": chunks.iter().map(production::RankedChunk::locator).collect::<Vec<_>>(),
+            "chunk_spans": index.spans_for(&chunks),
             "branch_ranked_ids": branches,
             "top_score": top_score,
             "score_spread": score_spread,
