@@ -24,6 +24,7 @@
 //! - Dimension: read from `config.json::hidden_size`. Exposed via `dimension()`
 //!   so the USearch index can be sized to match (and re-built on mismatch).
 
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -38,9 +39,10 @@ use candle_transformers::models::jina_bert::{
 use candle_transformers::models::modernbert::{Config as ModernBertConfig, ModernBert};
 use candle_transformers::models::nomic_bert::{Config as NomicBertConfig, NomicBertModel};
 use candle_transformers::models::xlm_roberta::{Config as XlmRobertaConfig, XLMRobertaModel};
+use lru::LruCache;
 use serde::Deserialize;
 use std::sync::Arc;
-use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer};
+use tokenizers::{PaddingDirection, PaddingParams, PaddingStrategy, Tokenizer};
 use tokio::sync::Mutex;
 
 use crate::application::ports::embedding_port::{span_chunk_texts, sparse_not_supported};
@@ -50,6 +52,8 @@ use crate::features::embedding::late_chunking::{
     l2_normalize_in_place, mean_pool_rows, pooling_token_indices, strategy_identity,
     validate_chunk_ranges, window_groups, EmbeddingStrategy, LateChunkingError,
 };
+use crate::features::embedding::prefixes::EmbeddingPrefixes;
+use crate::features::embedding::qwen3_encoder::Qwen3Encoder;
 use crate::features::embedding::sparse_head::{SparseHead, MAX_PASSAGE_TERMS, MAX_QUERY_TERMS};
 use crate::features::embedding::EmbeddingServiceTrait;
 use crate::shared::error::AppError;
@@ -132,8 +136,33 @@ enum ModelVariant {
     JinaBert(JinaBertModel),
     NomicBert(NomicBertModel),
     ModernBert(ModernBert),
-    Qwen3(candle_transformers::models::qwen3::Model),
+    Qwen3(Qwen3Encoder),
 }
+
+/// The padded tokens (`rows × the longest row`) one encoder batch may cost.
+/// Sixteen rows of a 512-token BERT, which is what the old fixed batch of 16
+/// cost at its worst — now it is a ceiling on the worst case instead of the
+/// shape of every case.
+const ENCODER_PADDED_TOKEN_BUDGET: usize = 16 * 512;
+
+/// The same ceiling for Qwen3, at a quarter the size. Attention materializes
+/// `rows × heads × len²` scores, so its cost grows with the square of the
+/// longest row rather than with the padded token count. At the 2048-token
+/// window this budget is two rows and about 0.5 GB of transient scores in F32
+/// (half that at F16); at a 512-token chunk it is eight rows and about 134 MB.
+/// Any larger and a batch of window-length passages allocates more than a
+/// gigabyte in a single pass.
+const QWEN3_PADDED_TOKEN_BUDGET: usize = 4 * 1024;
+
+/// Rows per batch regardless of the token budget. Thousands of one-token rows
+/// fit any budget but cost more in per-row tensor bookkeeping than the batching
+/// saves.
+const MAX_BATCH_ROWS: usize = 64;
+
+/// Queries kept in the per-service embedding cache. A chat turn re-embeds the
+/// same question a handful of times — first-pass retrieval, planner rewrites,
+/// tool-loop searches — so this only has to outlive a turn, not a session.
+const QUERY_CACHE_CAPACITY: usize = 256;
 
 /// The weights file Candle prefers: a memory-mappable safetensors archive.
 pub const WEIGHTS_SAFETENSORS: &str = "model.safetensors";
@@ -207,6 +236,17 @@ pub struct CandleEmbeddingService {
     /// for every other model, which is what makes `supports_sparse()` false
     /// and keeps the sparse retrieval branch from ever starting.
     sparse_head: Option<Arc<SparseHead>>,
+    /// The instruction strings this model family was trained with, resolved
+    /// once at load from [`super::prefixes`].
+    prefixes: &'static EmbeddingPrefixes,
+    /// Query vectors for queries this service already embedded, keyed by the
+    /// exact prefixed string the model saw.
+    ///
+    /// The cache belongs to the service, so switching models cannot serve a
+    /// stale vector: the new model gets a new service and an empty cache, and
+    /// the old one is dropped with its entries. Documents are never cached —
+    /// they are embedded once, and 256 of them would be a pointless megabyte.
+    query_cache: std::sync::Mutex<LruCache<String, Arc<Vec<f32>>>>,
 }
 
 impl CandleEmbeddingService {
@@ -232,10 +272,22 @@ impl CandleEmbeddingService {
     pub fn open(model_dir: impl AsRef<Path>, identity: ArtifactIdentity) -> Result<Self> {
         // Uploading the weights is thousands of Metal dispatches; drain what
         // they autorelease here instead of leaving it on the loading thread.
-        with_autorelease_pool(|| Self::open_in_pool(model_dir.as_ref(), identity))
+        with_autorelease_pool(|| Self::open_in_pool(model_dir.as_ref(), identity, None))
     }
 
-    fn open_in_pool(dir: &Path, identity: ArtifactIdentity) -> Result<Self> {
+    /// `open` with the weights dtype pinned rather than chosen by
+    /// [`weights_dtype`]. Only the dtype-validation tests need this; production
+    /// takes what the architecture and device imply.
+    #[cfg(test)]
+    fn open_as(
+        model_dir: impl AsRef<Path>,
+        identity: ArtifactIdentity,
+        dtype: DType,
+    ) -> Result<Self> {
+        with_autorelease_pool(|| Self::open_in_pool(model_dir.as_ref(), identity, Some(dtype)))
+    }
+
+    fn open_in_pool(dir: &Path, identity: ArtifactIdentity, dtype: Option<DType>) -> Result<Self> {
         let config_path = dir.join("config.json");
         let tokenizer_path = dir.join("tokenizer.json");
 
@@ -278,13 +330,17 @@ impl CandleEmbeddingService {
         }
 
         let pooling = read_pooling_strategy(dir);
+        let prefixes = resolve_prefixes(dir, &config_bytes, architecture);
 
         let device = crate::shared::utils::best_available_compute_device("embedding");
+        let dtype = dtype.unwrap_or_else(|| weights_dtype(architecture, &device));
         tracing::info!(
             device = ?device,
+            dtype = ?dtype,
             model_type = %config.model_type,
             hidden_size = config.hidden_size,
             pooling = ?pooling,
+            prefixes = prefixes.id,
             "Loading Candle embedding model"
         );
 
@@ -294,11 +350,13 @@ impl CandleEmbeddingService {
             tokenizer.clone(),
             super::input_policy::model_token_limit(dir)?.min(2048),
         )?;
-        // Preserve model-specific padding IDs (RoBERTa uses 1, BERT usually 0).
+        // Preserve model-specific padding IDs (RoBERTa uses 1, BERT usually 0,
+        // Qwen3 pads with its end-of-text token).
         let padding = tokenizer.get_padding().cloned().unwrap_or_else(|| {
             let pad_id = tokenizer
                 .token_to_id("[PAD]")
                 .or_else(|| tokenizer.token_to_id("<pad>"))
+                .or_else(|| tokenizer.token_to_id("<|endoftext|>"))
                 .unwrap_or(0);
             PaddingParams {
                 pad_id,
@@ -308,18 +366,18 @@ impl CandleEmbeddingService {
                 ..Default::default()
             }
         });
+        // Right padding is load-bearing for both paths: the encoders mask it
+        // out by attention mask, and Qwen3's causal attention makes it
+        // unreachable from every position that gets pooled. Left padding would
+        // silently shift every position.
         tokenizer.with_padding(Some(PaddingParams {
             strategy: PaddingStrategy::BatchLongest,
+            direction: PaddingDirection::Right,
             ..padding
         }));
         tokenizer
             .with_truncation(None)
             .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
-        if architecture == ModelArchitecture::Qwen3 {
-            // Qwen3 runs one unpadded sequence per causal pass, so the shared
-            // tokenizer is configured for that once instead of cloned per batch.
-            tokenizer.with_padding(None);
-        }
 
         let var_builder = if weights_path
             .file_name()
@@ -329,7 +387,7 @@ impl CandleEmbeddingService {
             // same reader `sparse_head` already uses for `sparse_linear.pt`.
             // It cannot be mmapped (tensors are pickled, not laid out flat),
             // so this materializes the weights once at load time.
-            VarBuilder::from_pth(&weights_path, DType::F32, &device)
+            VarBuilder::from_pth(&weights_path, dtype, &device)
                 .map_err(|e| LoadError::Candle(format!("pytorch_model.bin load: {}", e)))?
         } else {
             // SAFETY: we mmap a model file that we own and never mutate after
@@ -339,7 +397,7 @@ impl CandleEmbeddingService {
             // stream into GPU buffers anyway.
             #[allow(unsafe_code)]
             let mmaped = unsafe {
-                VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
+                VarBuilder::from_mmaped_safetensors(&[&weights_path], dtype, &device)
                     .map_err(|e| LoadError::Candle(format!("safetensors load: {}", e)))?
             };
             mmaped
@@ -405,8 +463,7 @@ impl CandleEmbeddingService {
                     var_builder
                 };
                 ModelVariant::Qwen3(
-                    candle_transformers::models::qwen3::Model::new(&cfg, vb)
-                        .map_err(|e| LoadError::Candle(e.to_string()))?,
+                    Qwen3Encoder::new(&cfg, vb).map_err(|e| LoadError::Candle(e.to_string()))?,
                 )
             }
             ModelArchitecture::Mpnet => unreachable!("rejected above"),
@@ -441,6 +498,10 @@ impl CandleEmbeddingService {
             identity,
             strategy: EmbeddingStrategy::default(),
             sparse_head: sparse_head.map(Arc::new),
+            prefixes,
+            query_cache: std::sync::Mutex::new(LruCache::new(
+                NonZeroUsize::new(QUERY_CACHE_CAPACITY).unwrap_or(NonZeroUsize::MIN),
+            )),
         })
     }
 
@@ -674,6 +735,30 @@ impl CandleEmbeddingService {
         span_text: &str,
         chunk_ranges: &[Range<usize>],
     ) -> Result<Vec<Vec<f32>>> {
+        // The model's document prefix conditions the span the same way the
+        // chunker's context prefix does: it goes in front of everything and is
+        // pooled into nothing. Shifting the ranges past it keeps them pointing
+        // at the same characters, and keeps them out of the prefix, so the
+        // per-chunk fallback below re-adds the prefix per chunk rather than
+        // slicing a piece of it into one.
+        if !self.prefixes.document.is_empty() && !chunk_ranges.is_empty() {
+            let offset = self.prefixes.document.len();
+            let shifted: Vec<Range<usize>> = chunk_ranges
+                .iter()
+                .map(|range| range.start + offset..range.end + offset)
+                .collect();
+            let prefixed = self.prefixes.document_input(span_text);
+            return self.embed_span_inner(&prefixed, &shifted).await;
+        }
+        self.embed_span_inner(span_text, chunk_ranges).await
+    }
+
+    /// [`Self::embed_span`] once the document prefix has been applied.
+    async fn embed_span_inner(
+        &self,
+        span_text: &str,
+        chunk_ranges: &[Range<usize>],
+    ) -> Result<Vec<Vec<f32>>> {
         if self.strategy.is_late_chunking() && !chunk_ranges.is_empty() {
             match self
                 .embed_late_chunked_windows(span_text, chunk_ranges)
@@ -704,15 +789,14 @@ impl CandleEmbeddingService {
             let ids = encoding.get_ids();
             let length = ids.len();
             let hidden_states = match &*guard {
-                // A fresh lightweight clone shares weights but starts with an empty
-                // KV cache, exactly as the batch path does.
-                ModelVariant::Qwen3(template) => {
-                    let mut model = template.clone();
+                // No KV cache to clear, so no clone: the encoder is stateless
+                // across passes, exactly as the batch path needs it to be.
+                ModelVariant::Qwen3(model) => {
                     let input = Tensor::new(ids, &device)
                         .and_then(|t| t.unsqueeze(0))
                         .map_err(|e| LoadError::Candle(e.to_string()))?;
                     model
-                        .forward(&input, 0)
+                        .forward(&input)
                         .map_err(|e| LoadError::Candle(e.to_string()))?
                 }
                 model => {
@@ -745,10 +829,139 @@ impl CandleEmbeddingService {
         .await
     }
 
-    /// Run a forward pass + pool + L2-normalize for a batch of texts.
-    /// Single hot path used by both `embed_single` and `embed_batch`.
-    async fn forward(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        Ok(self.forward_with_sparse(texts, None).await?.0)
+    /// The padded-token ceiling for one forward pass on this architecture.
+    fn padded_token_budget(&self) -> usize {
+        match self.architecture {
+            ModelArchitecture::Qwen3 => QWEN3_PADDED_TOKEN_BUDGET,
+            _ => ENCODER_PADDED_TOKEN_BUDGET,
+        }
+    }
+
+    /// Group `texts` into batches of similar length, returning each batch as
+    /// indices into `texts`.
+    ///
+    /// Padding is what a batch actually costs: every row is padded out to the
+    /// longest row in it, so a 12-token query batched with a 2000-token passage
+    /// pays for 2000 tokens. Sorting by length first puts similar rows
+    /// together, and budgeting by `rows × longest row` rather than by a fixed
+    /// row count means a batch of long passages cannot blow up memory while a
+    /// batch of short ones is free to be much larger than 16.
+    ///
+    /// This is also the single place inputs are validated against the model
+    /// window; the forward pass takes its texts as already checked.
+    fn plan_batches(&self, texts: &[String]) -> Result<Vec<Vec<usize>>> {
+        let mut by_length: Vec<(usize, usize)> = Vec::with_capacity(texts.len());
+        for (index, text) in texts.iter().enumerate() {
+            let tokens = self.input_policy.count(text)?;
+            if tokens > self.input_policy.max_tokens {
+                // `count` already tokenized; `validate` is here only to raise
+                // the one over-long-input message the splitter also uses.
+                self.input_policy.validate(text)?;
+            }
+            by_length.push((tokens, index));
+        }
+        by_length.sort_unstable();
+
+        let budget = self.padded_token_budget();
+        let mut batches: Vec<Vec<usize>> = Vec::new();
+        let mut current: Vec<usize> = Vec::new();
+        for (tokens, index) in by_length {
+            // Ascending order, so `tokens` is this batch's longest row once the
+            // row joins it.
+            let full = current.len() >= MAX_BATCH_ROWS
+                || tokens.saturating_mul(current.len() + 1) > budget;
+            if full && !current.is_empty() {
+                batches.push(std::mem::take(&mut current));
+            }
+            current.push(index);
+        }
+        if !current.is_empty() {
+            batches.push(current);
+        }
+        Ok(batches)
+    }
+
+    /// Embed `texts` in length-bucketed batches and hand the vectors back in
+    /// the caller's order.
+    ///
+    /// Each batch takes and releases the model lock on its own, so a query
+    /// embedding can slip between two indexing batches instead of waiting out
+    /// the whole run.
+    async fn forward_batched(
+        &self,
+        texts: Vec<String>,
+        sparse_terms: Option<usize>,
+    ) -> Result<(Vec<Vec<f32>>, Vec<SparseEmbedding>)> {
+        if texts.is_empty() {
+            return Ok((vec![], vec![]));
+        }
+        let plan = self.plan_batches(&texts)?;
+        let mut dense = vec![Vec::new(); texts.len()];
+        let mut sparse = vec![SparseEmbedding::empty(); texts.len()];
+        // Each text is handed to exactly one batch, so moving it out of the
+        // pending list is both the cheapest way to build the batch and the
+        // check that the plan covered every input exactly once.
+        let mut pending: Vec<Option<String>> = texts.into_iter().map(Some).collect();
+        for batch in plan {
+            let inputs: Vec<String> = batch
+                .iter()
+                .filter_map(|&index| pending.get_mut(index).and_then(Option::take))
+                .collect();
+            if inputs.len() != batch.len() {
+                return Err(AppError::InvalidState(
+                    "Embedding batch plan referenced an input twice".into(),
+                ));
+            }
+            let (batch_dense, batch_sparse) =
+                self.forward_with_sparse(inputs, sparse_terms).await?;
+            if batch_dense.len() != batch.len() {
+                return Err(AppError::EmbeddingFailed {
+                    reason: format!(
+                        "forward pass returned {} vectors for {} inputs",
+                        batch_dense.len(),
+                        batch.len()
+                    ),
+                });
+            }
+            for (&index, vector) in batch.iter().zip(batch_dense) {
+                if let Some(slot) = dense.get_mut(index) {
+                    *slot = vector;
+                }
+            }
+            for (&index, terms) in batch.iter().zip(batch_sparse) {
+                if let Some(slot) = sparse.get_mut(index) {
+                    *slot = terms;
+                }
+            }
+        }
+        Ok((dense, sparse))
+    }
+
+    /// Embed one string that already carries whichever prefix its role calls
+    /// for. Every public entry point funnels through here once it has decided
+    /// between the query and the document prefix.
+    async fn embed_prepared(&self, text: String) -> Result<Vec<f32>> {
+        let mut out = self.forward_batched(vec![text], None).await?.0;
+        out.pop().ok_or_else(|| AppError::EmbeddingFailed {
+            reason: "Forward pass returned no embeddings".into(),
+        })
+    }
+
+    /// A previously embedded query, if this service has seen it.
+    fn cached_query(&self, prefixed: &str) -> Option<Arc<Vec<f32>>> {
+        let mut cache = self
+            .query_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache.get(prefixed).map(Arc::clone)
+    }
+
+    fn cache_query(&self, prefixed: String, vector: Arc<Vec<f32>>) {
+        let mut cache = self
+            .query_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache.put(prefixed, vector);
     }
 
     /// The dense forward pass, optionally also reading the learned sparse head
@@ -762,6 +975,9 @@ impl CandleEmbeddingService {
     /// The returned sparse vector is empty (never absent) for a passage whose
     /// every token was special or scored zero, so the two returned vectors are
     /// always the same length and stay aligned with `texts`.
+    ///
+    /// `texts` is one padded batch and must already fit the model window;
+    /// [`Self::plan_batches`] is what decides both.
     async fn forward_with_sparse(
         &self,
         texts: Vec<String>,
@@ -778,10 +994,6 @@ impl CandleEmbeddingService {
             ),
             None => None,
         };
-
-        for text in &texts {
-            self.input_policy.validate(text)?;
-        }
 
         let guard = Arc::clone(&self.model).lock_owned().await;
         let tokenizer = Arc::clone(&self.tokenizer);
@@ -825,16 +1037,17 @@ impl CandleEmbeddingService {
         if self.sparse_head.is_none() {
             return Err(sparse_not_supported(self.identity.as_str()));
         }
-        let mut dense = Vec::with_capacity(texts.len());
-        let mut sparse = Vec::with_capacity(texts.len());
-        for batch in texts.chunks(16) {
-            let (batch_dense, batch_sparse) = self
-                .forward_with_sparse(batch.to_vec(), Some(MAX_PASSAGE_TERMS))
-                .await?;
-            dense.extend(batch_dense);
-            sparse.extend(batch_sparse);
-        }
-        Ok((dense, sparse))
+        self.forward_batched(self.as_documents(texts), Some(MAX_PASSAGE_TERMS))
+            .await
+    }
+
+    /// `texts` with the model's document prefix in front of each, which is
+    /// what a passage is actually embedded as.
+    fn as_documents(&self, texts: &[String]) -> Vec<String> {
+        texts
+            .iter()
+            .map(|text| self.prefixes.document_input(text).into_owned())
+            .collect()
     }
 }
 
@@ -844,27 +1057,25 @@ impl EmbeddingPort for CandleEmbeddingService {
         if text.is_empty() {
             return Err(AppError::InvalidInput("Cannot embed empty text".into()));
         }
-        let mut out = self.forward(vec![text.to_string()]).await?;
-        out.pop().ok_or_else(|| AppError::EmbeddingFailed {
-            reason: "Forward pass returned no embeddings".into(),
-        })
+        self.embed_prepared(self.prefixes.document_input(text).into_owned())
+            .await
     }
 
     async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
-        let query = if self.architecture == ModelArchitecture::Qwen3 {
-            format!("Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:{text}")
-        } else {
-            text.to_owned()
-        };
-        <Self as EmbeddingPort>::embed_single(self, &query).await
+        let query = self.prefixes.query_input(text).into_owned();
+        if let Some(cached) = self.cached_query(&query) {
+            return Ok(Vec::clone(&cached));
+        }
+        let vector = Arc::new(self.embed_prepared(query.clone()).await?);
+        self.cache_query(query, Arc::clone(&vector));
+        Ok(Vec::clone(&vector))
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let mut result = Vec::with_capacity(texts.len());
-        for batch in texts.chunks(16) {
-            result.extend(self.forward(batch.to_vec()).await?);
-        }
-        Ok(result)
+        Ok(self
+            .forward_batched(self.as_documents(texts), None)
+            .await?
+            .0)
     }
 
     fn split_text(
@@ -872,7 +1083,16 @@ impl EmbeddingPort for CandleEmbeddingService {
         text: &str,
         prefix: &str,
     ) -> Result<Vec<crate::application::ports::embedding_port::EmbeddingTextChunk>> {
-        self.input_policy.split(text, prefix)
+        // The model's document prefix is part of every passage the runtime
+        // embeds, so it has to be part of what the splitter measures against
+        // the window — otherwise a chunk sized to exactly fit overflows by the
+        // prefix's tokens at embedding time. It goes outside the chunker's
+        // context prefix, matching the order `embed_batch` builds.
+        if self.prefixes.document.is_empty() {
+            return self.input_policy.split(text, prefix);
+        }
+        self.input_policy
+            .split(text, &format!("{}{prefix}", self.prefixes.document))
     }
 
     fn uses_late_chunking(&self) -> bool {
@@ -909,13 +1129,26 @@ impl EmbeddingPort for CandleEmbeddingService {
         // A query is pruned much harder than a passage: every surviving term
         // becomes a row in the scoring join.
         let (_, mut sparse) = self
-            .forward_with_sparse(vec![text.to_owned()], Some(MAX_QUERY_TERMS))
+            .forward_batched(
+                vec![self.prefixes.query_input(text).into_owned()],
+                Some(MAX_QUERY_TERMS),
+            )
             .await?;
         Ok(sparse.pop().unwrap_or_default())
     }
 
     fn model_identity(&self) -> String {
-        strategy_identity(self.identity.as_str(), self.strategy)
+        let identity = strategy_identity(self.identity.as_str(), self.strategy);
+        // A document prefix goes into every stored vector, so it belongs in the
+        // key that decides whether those vectors are still the live generation.
+        // A policy that only prefixes queries leaves stored vectors alone and
+        // so leaves the identity alone — which is why Qwen3, whose instruction
+        // is query-side only, keeps the identity it already had.
+        if self.prefixes.document.is_empty() {
+            identity
+        } else {
+            format!("{identity}+prefix-{}", self.prefixes.id)
+        }
     }
 
     fn dimension(&self) -> usize {
@@ -1036,6 +1269,63 @@ fn read_pooling_strategy(model_dir: &Path) -> PoolingStrategy {
     PoolingStrategy::Cls
 }
 
+/// The dtype to load weights in.
+///
+/// Half precision only pays off where the model is large enough to be memory
+/// bound and the backend has half-precision kernels, which today means Qwen3 on
+/// a GPU: it halves the 1.2 GB of resident weights and measured about 7% faster
+/// on Metal. Its vectors match the F32 ones to a worst-case cosine of 0.999994
+/// over the v2 fixture's queries with no NaN or Inf
+/// (`qwen3_live_f16_matches_f32`), and pooling casts back to F32 before
+/// normalizing, where a sum of 1024 squared hidden states would otherwise
+/// overflow the f16 range.
+///
+/// Everything else stays F32. The BERT-family models are small enough that the
+/// dtype barely moves their throughput, and CPU has no half-precision kernels
+/// worth the conversion.
+fn weights_dtype(architecture: ModelArchitecture, device: &Device) -> DType {
+    match architecture {
+        ModelArchitecture::Qwen3 if !device.is_cpu() => DType::F16,
+        _ => DType::F32,
+    }
+}
+
+/// The instruction prefixes this checkpoint was trained with.
+///
+/// Resolution order is `config.json::_name_or_path`, then the directory the
+/// weights sit in, then what the architecture implies. Matching the recorded
+/// name first keeps the answer stable when a model directory is moved, which
+/// matters because a document prefix is part of the vector identity.
+fn resolve_prefixes(
+    dir: &Path,
+    config_bytes: &[u8],
+    architecture: ModelArchitecture,
+) -> &'static EmbeddingPrefixes {
+    let recorded = serde_json::from_slice::<serde_json::Value>(config_bytes)
+        .ok()
+        .and_then(|config| {
+            config
+                .get("_name_or_path")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        });
+
+    recorded
+        .as_deref()
+        .and_then(super::prefixes::prefixes_for)
+        .or_else(|| {
+            dir.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(super::prefixes::prefixes_for)
+        })
+        .unwrap_or(match architecture {
+            // Every Qwen3 checkpoint this runtime accepts is an embedding
+            // model, and the whole Qwen3-Embedding line is instruction-tuned.
+            ModelArchitecture::Qwen3 => &super::prefixes::QWEN3_INSTRUCT,
+            _ => &super::prefixes::NONE,
+        })
+}
+
 /// Run the encoder for one padded batch, returning (batch, seq, hidden).
 /// Shared by the pooled batch path and by late chunking, which needs the
 /// per-token states rather than a pooled vector.
@@ -1058,45 +1348,77 @@ where
         })?
 }
 
-/// Last-token embeddings for `texts`, one causal pass each. `tokenizer` is
-/// the unpadded one `open` configures for Qwen3.
+/// Last-token embeddings for one right-padded batch, from a single pass.
+///
+/// Right padding is what makes a batch exact rather than merely close. Qwen3 is
+/// causal: position `i` attends to `0..=i` and never to the pad tokens sitting
+/// to its right, so the hidden state at each row's last real token — the one
+/// last-token pooling reads — is the state that row would have produced alone.
+/// The padded rows do compute values past their own end; nothing reads them.
 fn qwen3_embed(
-    template: &candle_transformers::models::qwen3::Model,
+    model: &Qwen3Encoder,
     tokenizer: &Tokenizer,
     device: &Device,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>> {
-    let mut result = Vec::with_capacity(texts.len());
-    for text in texts {
-        let encoding = tokenizer
-            .encode(text.as_str(), true)
-            .map_err(|e| LoadError::Tokenizer(e.to_string()))?;
-        let ids = encoding.get_ids();
-        if ids.is_empty() {
-            return Err(AppError::InvalidInput(
-                "Cannot embed an empty token sequence".into(),
-            ));
-        }
-        // A fresh lightweight clone per input shares weights but starts with an
-        // empty KV cache. No padding enters causal attention and no state leaks
-        // between passages.
-        let mut model = template.clone();
-        let input = Tensor::new(ids, device)
-            .and_then(|t| t.unsqueeze(0))
-            .map_err(|e| LoadError::Candle(e.to_string()))?;
-        let hidden = model
-            .forward(&input, 0)
-            .map_err(|e| LoadError::Candle(e.to_string()))?;
-        let pooled = hidden
-            .narrow(1, ids.len() - 1, 1)
-            .and_then(|t| t.squeeze(1))
-            .map_err(|e| LoadError::Candle(e.to_string()))?;
-        let normalized = l2_normalize(&pooled).map_err(|e| LoadError::Candle(e.to_string()))?;
-        result.extend(
-            tensor_to_vec_of_vec(&normalized).map_err(|e| LoadError::Candle(e.to_string()))?,
-        );
+    let encodings =
+        tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|e| AppError::EmbeddingFailed {
+                reason: format!("tokenization: {}", e),
+            })?;
+
+    // The attention mask, not the id count, is each row's real length: the ids
+    // now run out to the longest row in the batch.
+    let lengths: Vec<usize> = encodings
+        .iter()
+        .map(|encoding| {
+            encoding
+                .get_attention_mask()
+                .iter()
+                .filter(|&&flag| flag == 1)
+                .count()
+        })
+        .collect();
+    if lengths.contains(&0) {
+        return Err(AppError::InvalidInput(
+            "Cannot embed an empty token sequence".into(),
+        ));
     }
-    Ok(result)
+
+    let batch_size = encodings.len();
+    let max_len = encodings
+        .iter()
+        .map(|encoding| encoding.get_ids().len())
+        .max()
+        .unwrap_or(0);
+    let mut input_ids = Vec::with_capacity(batch_size * max_len);
+    for encoding in &encodings {
+        input_ids.extend_from_slice(encoding.get_ids());
+    }
+
+    let input = Tensor::from_vec(input_ids, (batch_size, max_len), device).map_err(|e| {
+        AppError::EmbeddingFailed {
+            reason: format!("input_ids tensor: {}", e),
+        }
+    })?;
+    let hidden = model
+        .forward(&input)
+        .map_err(|e| LoadError::Candle(format!("Qwen3 forward: {}", e)))?;
+
+    let last_tokens = lengths
+        .iter()
+        .enumerate()
+        .map(|(row, &length)| hidden.i((row, length - 1, ..)))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| LoadError::Candle(format!("last-token pooling: {}", e)))?;
+    // Back to F32 before the norm: a sum of 1024 squared hidden states
+    // overflows f16 long before it overflows anything else.
+    let pooled = Tensor::stack(&last_tokens, 0)
+        .and_then(|t| t.to_dtype(DType::F32))
+        .map_err(|e| LoadError::Candle(format!("pooling: {}", e)))?;
+    let normalized = l2_normalize(&pooled).map_err(|e| LoadError::Candle(e.to_string()))?;
+    tensor_to_vec_of_vec(&normalized).map_err(|e| LoadError::Candle(e.to_string()).into())
 }
 
 /// One padded batch through an encoder model: dense vectors, plus the sparse
@@ -1494,6 +1816,90 @@ mod tests {
     }
 
     #[test]
+    fn length_buckets_stay_inside_the_padded_token_budget() {
+        let dir = TempDir::new().unwrap();
+        write_tiny_bert(dir.path());
+        let service =
+            CandleEmbeddingService::open(dir.path(), ArtifactIdentity::from_digest(&[1; 32]))
+                .unwrap();
+
+        // The tiny tokenizer is whitespace-free word-level, so one "word" per
+        // text: length is the word count, plus nothing (no special tokens).
+        let texts: Vec<String> = [1usize, 900, 3, 400, 2, 1200, 5]
+            .iter()
+            .map(|words| vec!["word"; *words].join(" "))
+            .collect();
+        let batches = service.plan_batches(&texts).unwrap();
+
+        let mut seen: Vec<usize> = batches.iter().flatten().copied().collect();
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            (0..texts.len()).collect::<Vec<_>>(),
+            "every input lands in exactly one batch"
+        );
+        for batch in &batches {
+            assert!(batch.len() <= MAX_BATCH_ROWS);
+            let longest = batch
+                .iter()
+                .map(|&index| service.input_policy.count(&texts[index]).unwrap())
+                .max()
+                .unwrap();
+            assert!(
+                batch.len() == 1 || longest * batch.len() <= ENCODER_PADDED_TOKEN_BUDGET,
+                "batch of {} rows × {longest} tokens exceeds the budget",
+                batch.len()
+            );
+        }
+        // Short texts share a batch; the 1200-token one is too wide to share.
+        assert!(batches.iter().any(|batch| batch.len() > 1));
+    }
+
+    #[test]
+    fn qwen3_falls_back_to_its_instruction_when_the_directory_says_nothing() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(
+            resolve_prefixes(dir.path(), b"{}", ModelArchitecture::Qwen3).id,
+            "qwen3-instruct"
+        );
+        assert_eq!(
+            resolve_prefixes(dir.path(), b"{}", ModelArchitecture::Bert).id,
+            "none"
+        );
+        // A recorded name wins over the directory it happens to sit in.
+        assert_eq!(
+            resolve_prefixes(
+                dir.path(),
+                br#"{"_name_or_path":"intfloat/e5-base-v2"}"#,
+                ModelArchitecture::Bert
+            )
+            .id,
+            "e5"
+        );
+    }
+
+    #[test]
+    fn a_document_prefix_joins_the_identity_and_a_query_only_one_does_not() {
+        let dir = TempDir::new().unwrap();
+        write_tiny_bert(dir.path());
+        let stored = ArtifactIdentity::from_digest(&[3; 32]);
+        let mut service = CandleEmbeddingService::open(dir.path(), stored.clone()).unwrap();
+
+        assert_eq!(EmbeddingPort::model_identity(&service), stored.as_str());
+        service.prefixes = &super::super::prefixes::QWEN3_INSTRUCT;
+        assert_eq!(
+            EmbeddingPort::model_identity(&service),
+            stored.as_str(),
+            "a query-side instruction leaves stored vectors untouched"
+        );
+        service.prefixes = &super::super::prefixes::E5;
+        assert_eq!(
+            EmbeddingPort::model_identity(&service),
+            format!("{}+prefix-e5", stored.as_str())
+        );
+    }
+
+    #[test]
     fn token_limit_and_pooling_do_not_depend_on_the_weights_file_name() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
@@ -1516,6 +1922,193 @@ mod tests {
         assert_eq!(
             super::super::input_policy::model_token_limit(dir.path()).unwrap(),
             limit
+        );
+    }
+}
+
+/// Checks that only real Qwen3-Embedding weights can answer: that a padded
+/// batch pools to the same vectors as one pass per input, and that half
+/// precision tracks full precision closely enough to share an index.
+///
+/// ```text
+/// LATTICE_QWEN3_EMBEDDING_DIR=/path/to/Qwen3-Embedding-0.6B \
+///   cargo test --lib qwen3_live -- --ignored --nocapture --test-threads=1
+/// ```
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+mod qwen3_live_tests {
+    use super::*;
+    use std::time::Instant;
+
+    const MODEL_DIR_ENV: &str = "LATTICE_QWEN3_EMBEDDING_DIR";
+
+    fn model_dir() -> PathBuf {
+        PathBuf::from(
+            std::env::var(MODEL_DIR_ENV)
+                .unwrap_or_else(|_| panic!("set {MODEL_DIR_ENV} to the Qwen3 weights directory")),
+        )
+    }
+
+    fn open(dtype: DType) -> CandleEmbeddingService {
+        CandleEmbeddingService::open_as(model_dir(), ArtifactIdentity::from_digest(&[0; 32]), dtype)
+            .expect("open Qwen3 weights")
+    }
+
+    /// Twelve passages spanning three orders of magnitude in length, which is
+    /// what makes the batching interesting: the short ones share a wide batch
+    /// and pick up hundreds of pad tokens they must be unaffected by.
+    fn sample_texts() -> Vec<String> {
+        let sentence = "Vector search indexes an embedding per chunk and ranks by cosine \
+                        similarity against the query vector. ";
+        let paragraph = "Retrieval augmented generation splits a corpus into passages, \
+                         embeds each one, and retrieves the nearest neighbours of the \
+                         question before the model writes a word. ";
+        vec![
+            "ok".to_owned(),
+            "What is Matryoshka representation learning?".to_owned(),
+            "Le chat dort sur le canapé pendant que la pluie tombe.".to_owned(),
+            "分词器把文本切成子词单元。".to_owned(),
+            sentence.to_owned(),
+            sentence.repeat(3),
+            paragraph.to_owned(),
+            paragraph.repeat(4),
+            paragraph.repeat(12),
+            sentence.repeat(40),
+            paragraph.repeat(30),
+            format!("{paragraph}{}", sentence.repeat(60)),
+        ]
+    }
+
+    /// Queries from the v2 retrieval fixture, if it is where it usually is.
+    fn fixture_queries() -> Vec<String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../evals/retrieval/synthetic-library-v2.json");
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Vec::new();
+        };
+        let Ok(fixture) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            return Vec::new();
+        };
+        fixture
+            .get("queries")
+            .and_then(|queries| queries.as_array())
+            .map(|queries| {
+                queries
+                    .iter()
+                    .filter_map(|query| {
+                        query
+                            .get("text")
+                            .or_else(|| query.get("query"))
+                            .and_then(|text| text.as_str())
+                            .map(str::to_owned)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn cosine(left: &[f32], right: &[f32]) -> f32 {
+        assert_eq!(left.len(), right.len());
+        left.iter().zip(right).map(|(a, b)| a * b).sum()
+    }
+
+    fn assert_finite(vectors: &[Vec<f32>], label: &str) {
+        for (row, vector) in vectors.iter().enumerate() {
+            assert!(
+                vector.iter().all(|value| value.is_finite()),
+                "{label} row {row} has a NaN or Inf"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires LATTICE_QWEN3_EMBEDDING_DIR to point at Qwen3-Embedding-0.6B weights"]
+    async fn qwen3_live_batching_matches_one_input_at_a_time() {
+        let service = open(DType::F32);
+        let texts = sample_texts();
+
+        let started = Instant::now();
+        let mut individually = Vec::with_capacity(texts.len());
+        for text in &texts {
+            individually.push(EmbeddingPort::embed_single(&service, text).await.unwrap());
+        }
+        let unbatched_secs = started.elapsed().as_secs_f64();
+
+        let started = Instant::now();
+        let batched = EmbeddingPort::embed_batch(&service, &texts).await.unwrap();
+        let batched_secs = started.elapsed().as_secs_f64();
+
+        assert_finite(&batched, "batched");
+        let mut worst = f32::INFINITY;
+        for (index, (one, many)) in individually.iter().zip(&batched).enumerate() {
+            let similarity = cosine(one, many);
+            worst = worst.min(similarity);
+            assert!(
+                similarity >= 0.9999,
+                "text {index} ({} chars): cosine {similarity} between the batched and \
+                 unbatched vectors",
+                texts[index].len()
+            );
+        }
+
+        println!(
+            "qwen3 f32: {:.2} texts/s one at a time, {:.2} texts/s batched ({:.2}x), \
+             worst cosine {worst:.6}",
+            texts.len() as f64 / unbatched_secs,
+            texts.len() as f64 / batched_secs,
+            unbatched_secs / batched_secs,
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires LATTICE_QWEN3_EMBEDDING_DIR to point at Qwen3-Embedding-0.6B weights"]
+    async fn qwen3_live_f16_matches_f32() {
+        let mut texts = sample_texts();
+        let queries = fixture_queries();
+        println!(
+            "comparing {} passages + {} queries",
+            texts.len(),
+            queries.len()
+        );
+        texts.extend(queries);
+
+        let full = {
+            let service = open(DType::F32);
+            let started = Instant::now();
+            let vectors = EmbeddingPort::embed_batch(&service, &texts).await.unwrap();
+            println!(
+                "qwen3 f32 batched: {:.2} texts/s",
+                texts.len() as f64 / started.elapsed().as_secs_f64()
+            );
+            vectors
+        };
+
+        let half = {
+            let service = open(DType::F16);
+            let started = Instant::now();
+            let vectors = EmbeddingPort::embed_batch(&service, &texts).await.unwrap();
+            println!(
+                "qwen3 f16 batched: {:.2} texts/s",
+                texts.len() as f64 / started.elapsed().as_secs_f64()
+            );
+            vectors
+        };
+
+        assert_finite(&full, "f32");
+        assert_finite(&half, "f16");
+        let mut worst = f32::INFINITY;
+        for (index, (f32_vector, f16_vector)) in full.iter().zip(&half).enumerate() {
+            let similarity = cosine(f32_vector, f16_vector);
+            worst = worst.min(similarity);
+            assert!(
+                similarity >= 0.999,
+                "text {index} ({} chars): cosine {similarity} between f32 and f16",
+                texts[index].len()
+            );
+        }
+        println!(
+            "worst f16-vs-f32 cosine over {} texts: {worst:.6}",
+            texts.len()
         );
     }
 }

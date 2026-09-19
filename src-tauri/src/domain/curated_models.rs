@@ -261,8 +261,11 @@ pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
 /// Get curated list of embedding models for semantic search.
 ///
 /// Returns models optimized for:
-/// - **Qwen3 Embedding 0.6B**: multilingual instruction-aware retrieval (1024 dim)
-/// - **all-MiniLM-L6-v2**: Compact, fast general-purpose embeddings (384 dim)
+/// - **Qwen3 Embedding 0.6B**: multilingual instruction-aware retrieval (1024 dim).
+///   The first-run default wherever a GPU backend is available.
+/// - **all-MiniLM-L6-v2**: Compact, fast general-purpose embeddings (384 dim).
+///   The first-run default on CPU-only machines, where 0.6B parameters would
+///   make bulk indexing impractical.
 ///
 /// These models generate vector representations for semantic similarity.
 /// All entries use safetensors files compatible with the Candle runtime.
@@ -272,13 +275,13 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
             id: "qwen3-embedding-0.6b".into(),
             name: "Qwen3 Embedding 0.6B".into(),
             category: ModelCategory::Embedding,
-            description: "Instruction-aware multilingual retrieval candidate. Local runtime uses up to 2048 tokens per passage; benchmark before changing your default.".into(),
+            description: "Instruction-aware multilingual retrieval, and the default wherever a GPU can run it. Local runtime uses up to 2048 tokens per passage and half precision on Metal.".into(),
             size_gb: 1.2,
             minimum_ram_gb: 6.0,
             recommended_ram_gb: 8.0,
             context_length: 2048,
             performance_tier: PerformanceTier::Balanced,
-            supported_quantizations: vec!["F32".into()],
+            supported_quantizations: vec!["F16".into(), "F32".into()],
             capabilities: vec!["embedding".into(), "retrieval".into(), "multilingual".into()],
             download_url: Some("https://huggingface.co/Qwen/Qwen3-Embedding-0.6B".into()),
             license: "Apache-2.0".into(),
