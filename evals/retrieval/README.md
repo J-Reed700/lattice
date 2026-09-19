@@ -6,7 +6,10 @@ For reproducible answer runs, evidence-bound human review, paired comparisons,
 and release gates, see [Evaluation evidence protocol](EVALUATION_PROTOCOL.md).
 Regex checks are diagnostics; unreviewed answers do not have verified accuracy.
 
-Three synthetic corpora are included:
+Four synthetic corpora are included. **Use `synthetic-library-v3.json` for any new
+comparison**: v2 saturates, and a fixture with no headroom cannot tell a retrieval
+change apart from noise. See
+[`SYNTHETIC_LIBRARY_V3.md`](SYNTHETIC_LIBRARY_V3.md).
 
 - `starter.json` is the small smoke fixture. It covers paraphrases,
   near-duplicate distractors, Spanish-to-English retrieval, an exact identifier at
@@ -27,8 +30,22 @@ Three synthetic corpora are included:
   long drill record whose recovery phrase is one digit-transposition away from the
   first. Forty new questions target those documents, six of them unanswerable but
   phrased entirely in corpus vocabulary.
+- `synthetic-library-v3.json` is the current fixture: 379 documents, 194
+  questions, 1.61 M characters of one person's messy vault. It exists because the
+  production path answers v2 at Recall@5 `0.9706` and a cross-encoder reranker
+  moved nothing on it. v3 adds the conditions v2 has none of: 16 documents of 28 k
+  to 87 k characters with the answer buried at an arbitrary depth (some a wall of
+  prose with no headings, some deep heading trees, some numbered-clause
+  agreements, some transcripts), weekly note series of 10 to 14 near-identical
+  instances differing by one fact, OCR-damaged scans with repeated page furniture,
+  markdown and CSV tables whose answer is one cell, five languages including
+  three-character CJK queries, one-line fragment notes with `[[wikilinks]]`, facts
+  that need two documents to assemble, and 21 unanswerable questions. It is
+  generated deterministically by `scripts/build_synthetic_library_v3.py`, which
+  proves at build time that every needle occurs in exactly the documents its query
+  marks relevant. Regenerate it rather than editing it.
 
-All three are regression fixtures rather than evidence of production quality.
+All four are regression fixtures rather than evidence of production quality.
 Replace or extend them with reviewed, representative document passages before
 promoting a model.
 
@@ -78,8 +95,26 @@ how many queries carry each dimension tag:
 
 ```sh
 python3 scripts/rag_eval.py \
-  evals/retrieval/synthetic-library-v2.json --validate-only
+  evals/retrieval/synthetic-library-v3.json --validate-only
 ```
+
+### Passage labels
+
+A query may carry `answer_spans`, mapping a positively graded document to the
+`[start, end]` UTF-8 byte ranges of the passage that answers it — the same units
+the chunker uses for `start_idx`/`end_idx`. v3 labels all 173 answerable queries;
+v1, v2 and `starter.json` carry none and score exactly as they did before the
+field existed.
+
+The scorer reports `passage_recall_at_k` beside `recall_at_k`, overall and per
+dimension, so a document that ranks first on topic while the chunk handed to the
+model holds none of the answer is visible rather than counted as a win. A span
+counts as retrieved when some chunk in the top `k` of `chunk_ranked_ids` covers
+at least half its bytes. The metric is null unless the run row carries a
+`chunk_spans` map from `document#chunk_index` to `[start, end]`; the harness does
+not emit that field yet, and
+[`SYNTHETIC_LIBRARY_V3.md`](SYNTHETIC_LIBRARY_V3.md) records exactly what it
+would take.
 
 ## Retrieval modes
 
