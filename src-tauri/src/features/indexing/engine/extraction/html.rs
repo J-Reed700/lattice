@@ -73,9 +73,12 @@ pub fn strip_html_tags(html: &str) -> String {
     let mut in_tag = false;
     let mut in_script_or_style = false;
 
-    let lowercase = html.to_lowercase();
+    // ASCII-only lowercasing keeps this string byte-for-byte aligned with
+    // `html`, which the offsets below index into. `str::to_lowercase` does not:
+    // 'İ' alone lowercases to two chars. Tag names are ASCII regardless.
+    let lowercase = html.to_ascii_lowercase();
 
-    for (i, ch) in html.chars().enumerate() {
+    for (i, ch) in html.char_indices() {
         match ch {
             '<' => {
                 in_tag = true;
@@ -173,5 +176,27 @@ mod tests {
         assert!(text.contains("Content"));
         assert!(!text.contains("<h1>"));
         assert!(!text.contains("ignore"));
+    }
+
+    /// The scan used to index a lowercased copy with a *char* counter, so any
+    /// multi-byte character before a tag either shifted the lookahead or
+    /// panicked on a byte that is not a character boundary.
+    #[test]
+    fn non_ascii_content_is_stripped_without_panicking() {
+        let html = "<p>日本語のテキスト🧪です</p><script>ignore()</script><p>Ωmega</p>";
+        let text = strip_html_tags(html);
+        assert!(text.contains("日本語のテキスト🧪です"));
+        assert!(text.contains("Ωmega"));
+        assert!(!text.contains("ignore"));
+        assert!(!text.contains('<'));
+
+        // Uppercase tags after multi-byte text still open and close the
+        // script block: ASCII lowercasing keeps the offsets aligned.
+        let shouted = "Ωμέγα<SCRIPT>ignore()</SCRIPT>tail";
+        assert_eq!(strip_html_tags(shouted), "Ωμέγαtail");
+
+        // 'İ' lowercases to two chars under full Unicode rules; the tag after
+        // it must still be found at the right offset.
+        assert_eq!(strip_html_tags("İ<b>x</b>"), "İx");
     }
 }

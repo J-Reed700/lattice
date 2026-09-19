@@ -139,6 +139,12 @@ impl ContentExtractor {
                 pptx::extract_pptx(path, self.max_file_size).await
             }
 
+            // CSV/TSV. Ahead of the `text/` catch-all below, which would
+            // otherwise swallow both of these and index a spreadsheet as code.
+            "text/csv" | "text/tab-separated-values" => {
+                csv::extract_csv_file(path, &mime_type, self.max_file_size).await
+            }
+
             // Code files (treat as text with proper MIME type)
             mime if mime.starts_with("text/")
                 || mime == "application/json"
@@ -146,11 +152,6 @@ impl ContentExtractor {
                 || mime == "application/graphql" =>
             {
                 html::extract_code_file(path, &mime_type, self.max_file_size).await
-            }
-
-            // CSV/TSV
-            "text/csv" | "text/tab-separated-values" => {
-                csv::extract_csv_file(path, &mime_type, self.max_file_size).await
             }
 
             _ => Err(
@@ -204,5 +205,35 @@ mod tests {
 
         assert!(!extractor.is_supported(Path::new("test.exe")));
         assert!(!extractor.is_supported(Path::new("test.jpg")));
+    }
+
+    /// `text/csv` matches the `text/` catch-all as readily as the arm meant
+    /// for it, so the arms' order is what decides whether a spreadsheet is
+    /// indexed as rows or as a wall of code.
+    #[tokio::test]
+    async fn a_csv_file_reaches_the_csv_extractor() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, separator, mime) in [
+            ("table.csv", ",", "text/csv"),
+            ("table.tsv", "\t", "text/tab-separated-values"),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(
+                &path,
+                format!("city{separator}population\nKyoto{separator}1463723\n"),
+            )
+            .unwrap();
+            let content = ContentExtractor::new()
+                .extract_from_file(&path)
+                .await
+                .unwrap();
+            assert_eq!(content.mime_type, mime);
+            // The "header: value" shape only the CSV extractor produces.
+            assert!(
+                content.text.contains("population: 1463723"),
+                "{name} was not read as a table: {}",
+                content.text
+            );
+        }
     }
 }
