@@ -446,6 +446,53 @@ mod tests {
         }
     }
 
+    /// The schema above is a copy; this one runs the real migration, so the
+    /// shipped triggers are what has to keep the trigram index in step.
+    #[tokio::test]
+    async fn the_migration_triggers_keep_both_indexes_in_step() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
+             VALUES ('doc', '/support.md', 'support.md', 1, CURRENT_TIMESTAMP, 'checksum')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO text_chunks (id, document_id, content, chunk_index) \
+             VALUES ('chunk', 'doc', '日本語サポート時間は月曜日から金曜日までです', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let search = BM25Search::new(pool.clone());
+        assert_eq!(
+            search
+                .search("日本語サポート", 10)
+                .await
+                .unwrap()
+                .first()
+                .map(|r| r.chunk_id.clone()),
+            Some("chunk".to_owned())
+        );
+
+        // An update re-indexes, and a delete clears, both tables at once.
+        sqlx::query("UPDATE text_chunks SET content = '中文支持时间' WHERE id = 'chunk'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(search.search("日本語サポート", 10).await.unwrap().is_empty());
+        assert!(!search.search("中文支持", 10).await.unwrap().is_empty());
+
+        sqlx::query("DELETE FROM text_chunks WHERE id = 'chunk'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(search.search("中文支持", 10).await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn maintenance_commands_cover_both_indexes() {
         let pool = setup_test_db().await.unwrap();
