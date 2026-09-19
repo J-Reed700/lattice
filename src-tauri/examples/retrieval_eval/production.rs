@@ -346,6 +346,13 @@ impl ProductionIndex {
         if entries.is_empty() {
             return Err("the fixture produced no indexable chunks".into());
         }
+        // Chunk size is a retrieval knob now, so the corpus's chunk count is
+        // part of what a run reports. stdout carries the JSONL rows.
+        eprintln!(
+            "indexed {} chunks from {} documents",
+            entries.len(),
+            documents.len()
+        );
         index.publish_embeddings(entries)?;
 
         // The same wiring `features::search::di::build` uses, minus recency and workspace scope.

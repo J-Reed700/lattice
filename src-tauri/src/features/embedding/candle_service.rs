@@ -48,7 +48,7 @@ use crate::application::ports::EmbeddingPort;
 use crate::domain::value_objects::{ArtifactIdentity, SparseEmbedding};
 use crate::features::embedding::late_chunking::{
     l2_normalize_in_place, mean_pool_rows, pooling_token_indices, strategy_identity,
-    validate_chunk_ranges, EmbeddingStrategy, LateChunkingError,
+    validate_chunk_ranges, window_groups, EmbeddingStrategy, LateChunkingError,
 };
 use crate::features::embedding::sparse_head::{SparseHead, MAX_PASSAGE_TERMS, MAX_QUERY_TERMS};
 use crate::features::embedding::EmbeddingServiceTrait;
@@ -575,6 +575,97 @@ impl CandleEmbeddingService {
         Ok(vectors)
     }
 
+    /// Late chunk a span of any length, one forward pass per window of whole
+    /// chunks.
+    ///
+    /// A span that fits the model window is a single window and behaves exactly
+    /// as [`embed_late_chunked`](Self::embed_late_chunked) always did. A longer
+    /// span used to fall back to chunk-first in its entirety, which threw away
+    /// the whole point of late chunking; now only the conditioning that would
+    /// have crossed a window edge is lost. Each window carries the span's shared
+    /// context prefix — the bytes before the first chunk range — so every chunk
+    /// stays conditioned on the document's identity.
+    async fn embed_late_chunked_windows(
+        &self,
+        span_text: &str,
+        chunk_ranges: &[Range<usize>],
+    ) -> std::result::Result<Vec<Vec<f32>>, LateChunkingError> {
+        validate_chunk_ranges(span_text, chunk_ranges)?;
+        let Some(prefix_end) = chunk_ranges.first().map(|range| range.start) else {
+            return Ok(Vec::new());
+        };
+        match self.embed_late_chunked(span_text, chunk_ranges).await {
+            Err(LateChunkingError::SpanTooLong { .. }) => {}
+            outcome => return outcome,
+        }
+
+        // Windowing reads a window as one contiguous slice, which only holds
+        // for ranges in chunk order. Anything else keeps the old whole-span
+        // fallback rather than pooling the wrong bytes.
+        if chunk_ranges.windows(2).any(|pair| match pair {
+            [a, b] => b.start < a.start || b.end < a.end,
+            _ => false,
+        }) {
+            return Err(LateChunkingError::InvalidRange { chunk: 0 });
+        }
+
+        let slice = |range: Range<usize>| {
+            span_text
+                .get(range)
+                .ok_or(LateChunkingError::InvalidRange { chunk: 0 })
+        };
+        let prefix = slice(0..prefix_end)?;
+        let count = |text: &str| {
+            self.input_policy
+                .count(text)
+                .map_err(LateChunkingError::Embedding)
+        };
+        let mut chunk_tokens = Vec::with_capacity(chunk_ranges.len());
+        for range in chunk_ranges {
+            chunk_tokens.push(count(slice(range.clone())?)?);
+        }
+        let budget = self.input_policy.max_tokens.saturating_sub(count(prefix)?);
+
+        let mut vectors = Vec::with_capacity(chunk_ranges.len());
+        for window in window_groups(&chunk_tokens, budget) {
+            // Ranges arrive in chunk order, so the window's text is one
+            // contiguous slice behind the shared prefix.
+            let Some(group) = chunk_ranges.get(window) else {
+                continue;
+            };
+            let (start, end) = match (group.first(), group.last()) {
+                (Some(first), Some(last)) => (first.start, last.end),
+                _ => continue,
+            };
+            let text = format!("{prefix}{}", slice(start..end)?);
+            let shifted: Vec<Range<usize>> = group
+                .iter()
+                .map(|range| prefix_end + (range.start - start)..prefix_end + (range.end - start))
+                .collect();
+            match self.embed_late_chunked(&text, &shifted).await {
+                Ok(pooled) => vectors.extend(pooled),
+                // One window that still will not fit answers for itself rather
+                // than dropping the whole span back to chunk-first.
+                Err(error) if error.allows_fallback() => {
+                    tracing::debug!(
+                        chunks = shifted.len(),
+                        reason = %error,
+                        "Late-chunking window is not poolable; embedding its chunks individually"
+                    );
+                    let texts =
+                        span_chunk_texts(&text, &shifted).map_err(LateChunkingError::Embedding)?;
+                    vectors.extend(
+                        <Self as EmbeddingPort>::embed_batch(self, &texts)
+                            .await
+                            .map_err(LateChunkingError::Embedding)?,
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(vectors)
+    }
+
     /// Late chunk when the strategy is on and the span is eligible; otherwise
     /// embed each chunk on its own. This is what the port and service traits
     /// expose, so callers never have to handle the fallback themselves.
@@ -584,7 +675,10 @@ impl CandleEmbeddingService {
         chunk_ranges: &[Range<usize>],
     ) -> Result<Vec<Vec<f32>>> {
         if self.strategy.is_late_chunking() && !chunk_ranges.is_empty() {
-            match self.embed_late_chunked(span_text, chunk_ranges).await {
+            match self
+                .embed_late_chunked_windows(span_text, chunk_ranges)
+                .await
+            {
                 Ok(vectors) => return Ok(vectors),
                 Err(error) if error.allows_fallback() => {
                     tracing::debug!(
