@@ -18,15 +18,25 @@ use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::hybrid::{HybridSearchService, SearchConfig, SearchMode};
 use crate::features::search::engine::reranker::{LazyReranker, Reranker};
+use crate::features::search::engine::sparse_search::SparseSearchService;
 use crate::features::search::engine::text_search::SqliteTextSearch;
 use crate::features::search::engine::vector_search::{USearchVectorIndex, VectorIndexCompression};
 use crate::features::search::enrichment_service::SearchEnrichmentService;
 use crate::features::search::use_cases::{HybridSearchUseCase, SemanticSearchUseCase};
-use crate::features::search::{BM25SearchTrait, HybridSearchTrait, SearchServiceTrait};
+use crate::features::search::{
+    BM25SearchTrait, HybridSearchTrait, SearchServiceTrait, SparseSearchTrait,
+};
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::services::traits::SearchEnrichmentServiceTrait;
 use crate::interfaces::di::Container;
 use crate::shared::error::{AppError, Result};
+
+/// Whether the learned sparse branch joins the fusion.
+///
+/// Off: `evals/retrieval/README.md` records the product decision to keep the
+/// BGE-M3 sparse branch out of the curated path. The service is still wired
+/// into both retrieval paths so the switch is the only thing that has to move.
+const SPARSE_BRANCH_ENABLED: bool = false;
 
 #[derive(Clone)]
 pub struct SearchDi {
@@ -255,16 +265,24 @@ pub async fn build_with_compression(
         // demonstrates a quality gain that justifies its latency. Chat uses
         // the same provider through its existing retrieval tuning setting.
         enable_reranking: false,
-        recency_boost: 1.0,
         max_results: 100,
         // Retained only for controlled experiments. The production evaluation
         // found that the third branch added cost without improving the good
         // two-way fusion configuration.
-        sparse_enabled: false,
+        sparse_enabled: SPARSE_BRANCH_ENABLED,
     };
 
     let dynamic_embedding =
         Arc::new(DynamicEmbedding::new(model_provider.clone())) as Arc<dyn EmbeddingPort>;
+    // Both retrieval paths get the same third branch, wired unconditionally and
+    // gated identically: `sparse_enabled` above is the product switch, and
+    // `SparseSearchTrait::is_available` tracks whether the loaded model has a
+    // sparse head at all. Neither path queried it before — direct search was
+    // never handed the service, and the chat use case had no slot for one.
+    let sparse_search = Arc::new(SparseSearchService::new(
+        db_pool.clone(),
+        Arc::clone(&dynamic_embedding),
+    )) as Arc<dyn SparseSearchTrait>;
     let hybrid_search_service = Arc::new(
         HybridSearchService::new(
             search_service.clone(),
@@ -273,18 +291,18 @@ pub async fn build_with_compression(
             search_enrichment_service.clone(),
             hybrid_config,
         )
-        .with_reranker(Arc::clone(&reranker)),
+        .with_reranker(Arc::clone(&reranker))
+        .with_sparse_search(Arc::clone(&sparse_search)),
     ) as Arc<dyn HybridSearchTrait>;
 
     let semantic_search_use_case = Arc::new(SemanticSearchUseCase::new(
         dynamic_embedding.clone(),
         vector_search.clone(),
     ));
-    let hybrid_search_use_case = Arc::new(HybridSearchUseCase::new(
-        dynamic_embedding,
-        vector_search.clone(),
-        text_search,
-    ));
+    let hybrid_search_use_case = Arc::new(
+        HybridSearchUseCase::new(dynamic_embedding, vector_search.clone(), text_search)
+            .with_sparse_search(sparse_search, SPARSE_BRANCH_ENABLED),
+    );
 
     Ok(SearchDi {
         runtime_index,

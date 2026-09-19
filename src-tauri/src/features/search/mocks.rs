@@ -777,6 +777,7 @@ mod tests {
 
         let custom = crate::features::search::enrichment_service::DocumentMetadata {
             snippet: "Custom snippet text".to_string(),
+            content: "Custom chunk body".to_string(),
             document_id: "chunk1".to_string(),
             metadata: custom_metadata,
         };
@@ -809,6 +810,7 @@ mod tests {
             "chunk1",
             crate::features::search::enrichment_service::DocumentMetadata {
                 snippet: "Configured".to_string(),
+                content: "Configured chunk body".to_string(),
                 document_id: "chunk1".to_string(),
                 metadata,
             },
@@ -844,6 +846,7 @@ mod tests {
             "chunk1",
             crate::features::search::enrichment_service::DocumentMetadata {
                 snippet: "Test".to_string(),
+                content: "Test chunk body".to_string(),
                 document_id: "chunk1".to_string(),
                 metadata: std::collections::HashMap::new(),
             },

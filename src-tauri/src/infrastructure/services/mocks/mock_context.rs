@@ -224,6 +224,7 @@ impl SearchEnrichmentServiceTrait for MockSearchEnrichmentService {
                     chunk_id.clone(),
                     crate::features::search::enrichment_service::DocumentMetadata {
                         snippet: "Mock content snippet for testing...".to_string(),
+                        content: "Mock chunk body for testing".to_string(),
                         document_id: chunk_id.clone(),
                         metadata: default_metadata,
                     },
