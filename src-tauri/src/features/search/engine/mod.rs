@@ -32,7 +32,6 @@
 //!
 //! ### Vector Search
 //! - **USearch HNSW**: Production-grade HNSW via USearch v2.x with persistence and SIMD
-//! - **Brute Force**: Linear search for small datasets or exact results
 //!
 //! ### Keyword Search
 //! - **BM25**: Best Match 25 ranking function using SQLite FTS5
@@ -48,7 +47,6 @@
 //! | Search Type | Time Complexity | Memory | Accuracy |
 //! |-------------|----------------|---------|----------|
 //! | HNSW        | O(log N)       | High    | ~95%     |
-//! | Brute Force | O(N)           | Medium  | 100%     |
 //! | BM25        | O(k)           | Low     | Good     |
 //! | Hybrid      | O(log N + k)   | High    | Excellent|
 //!
@@ -150,7 +148,6 @@
 pub mod bm25;
 pub mod builder;
 pub mod fusion;
-pub mod index;
 pub mod profiler;
 pub mod qwen3_reranker;
 pub mod recency;
@@ -173,7 +170,6 @@ pub use builder::{
 };
 pub use fusion::{FusionResult, ReciprocalRankFusion, WeightedFusion};
 pub use hybrid::{HybridSearchResult, HybridSearchService, SearchConfig, SearchMode};
-pub use index::EmbeddingIndex;
 pub use profiler::{PerformanceMetrics, Profiler};
 pub use query_expansion::{QueryExpander, QueryExpansion, QueryExpansionConfig};
 pub use qwen3_reranker::Qwen3RerankerService;
@@ -182,13 +178,10 @@ pub use reranker::{
     blend_rerank_scores, load_reranker, LazyReranker, MiniLmRerankerService, RerankResult,
     Reranker, RerankerService,
 };
-pub use service::{BruteForceSearch, SearchResult};
+pub use service::SearchResult;
 pub use sparse_search::{SparseSearchService, SqliteSparseTermStore};
 pub use vector_ops::{cosine_similarity_naive, cosine_similarity_simd, normalize_vector};
 pub use vector_search::USearchVectorIndex;
 
 #[cfg(test)]
 mod vector_ops_test;
-
-#[cfg(test)]
-mod index_tests;

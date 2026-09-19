@@ -28,6 +28,77 @@ mod property_tests {
         })
     }
 
+    /// A copy of a vector whose data pointer sits on a 16-byte boundary.
+    ///
+    /// `cosine_similarity_neon_impl` bails out to the scalar reference whenever
+    /// either pointer is not 16-byte aligned, so a test written against a plain
+    /// `Vec<f32>` can silently never execute the NEON kernel at all — it would
+    /// be comparing the naive implementation against itself and calling that
+    /// agreement. Over-allocate and hand back a slice starting at the first
+    /// 16-byte boundary so the real vector code is the thing under test.
+    struct Aligned16 {
+        storage: Vec<f32>,
+        offset: usize,
+        len: usize,
+    }
+
+    /// The boundary `cosine_similarity_neon_impl` gates on.
+    const NEON_ALIGNMENT: usize = 16;
+
+    impl Aligned16 {
+        fn new(values: &[f32]) -> Self {
+            // `Vec<f32>` is only guaranteed to be 4-byte aligned, so the first
+            // 16-byte boundary can be up to three elements in.
+            let mut storage = vec![0.0_f32; values.len() + 3];
+            let misalignment = storage.as_ptr() as usize % NEON_ALIGNMENT;
+            let offset =
+                ((NEON_ALIGNMENT - misalignment) % NEON_ALIGNMENT) / std::mem::size_of::<f32>();
+            storage[offset..offset + values.len()].copy_from_slice(values);
+
+            Self {
+                storage,
+                offset,
+                len: values.len(),
+            }
+        }
+
+        fn as_slice(&self) -> &[f32] {
+            &self.storage[self.offset..self.offset + self.len]
+        }
+
+        fn is_16_byte_aligned(&self) -> bool {
+            (self.as_slice().as_ptr() as usize).is_multiple_of(NEON_ALIGNMENT)
+        }
+    }
+
+    /// Pairs of equal-length vectors whose length sweeps `1..=max_len`.
+    ///
+    /// The sweep matters more than the values: AVX2 walks eight lanes at a time
+    /// and NEON four, and a length that is not a multiple of the lane count
+    /// leaves a remainder for the scalar tail loop. Covering every length up to
+    /// 200 hits every remainder of both widths many times over.
+    ///
+    /// Values stay inside a narrow range because cosine is scale invariant, so
+    /// bounding them costs no coverage while keeping the dot product away from
+    /// catastrophic cancellation — otherwise the test would be measuring float
+    /// cancellation rather than whether the two kernels agree.
+    fn equal_length_pair(max_len: usize) -> impl Strategy<Value = (Vec<f32>, Vec<f32>)> {
+        (1_usize..=max_len).prop_flat_map(|len| {
+            (
+                prop::collection::vec(-10.0_f32..10.0_f32, len),
+                prop::collection::vec(-10.0_f32..10.0_f32, len),
+            )
+        })
+    }
+
+    /// The absolute tolerance the SIMD kernels are held to.
+    ///
+    /// The vector paths reassociate the three running sums across lanes, so
+    /// they cannot be bit-identical to the sequential reference. This matches
+    /// the bound `matching_dimensions_are_unaffected_by_the_guard` already uses
+    /// in `vector_ops.rs`.
+    const SIMD_AGREEMENT_TOLERANCE: f32 = 1e-4;
+
     proptest! {
         /// Property: Cosine similarity must always return a value in [-1, 1]
         ///
@@ -548,6 +619,169 @@ mod property_tests {
         assert!(
             (sim - 1.0).abs() < 1e-5,
             "Sparse vectors should compute correctly"
+        );
+    }
+
+    proptest! {
+        /// The SIMD kernel must agree with the scalar reference at *every*
+        /// length, not just the neat ones. The vector rescore on the search hot
+        /// path calls the SIMD kernel directly, so disagreement here is a
+        /// ranking bug in production, not a rounding curiosity.
+        #[test]
+        fn prop_simd_matches_naive_at_every_length((a, b) in equal_length_pair(200)) {
+            let simd = cosine_similarity_simd(&a, &b);
+            let naive = cosine_similarity_naive(&a, &b);
+
+            prop_assert!(
+                (simd - naive).abs() < SIMD_AGREEMENT_TOLERANCE,
+                "len {}: simd {} vs naive {} (diff {})",
+                a.len(), simd, naive, (simd - naive).abs()
+            );
+        }
+
+        /// The same agreement on 16-byte-aligned buffers.
+        ///
+        /// This is the case that matters on aarch64: the NEON kernel checks
+        /// both pointers and falls back to the scalar path on any other
+        /// alignment, so without forcing alignment this property could pass
+        /// while the hand-written kernel was never run once.
+        #[test]
+        fn prop_simd_matches_naive_on_aligned_buffers((a, b) in equal_length_pair(200)) {
+            let a = Aligned16::new(&a);
+            let b = Aligned16::new(&b);
+            prop_assert!(
+                a.is_16_byte_aligned() && b.is_16_byte_aligned(),
+                "test buffers are not 16-byte aligned, so NEON would fall back to naive"
+            );
+
+            let simd = cosine_similarity_simd(a.as_slice(), b.as_slice());
+            let naive = cosine_similarity_naive(a.as_slice(), b.as_slice());
+
+            prop_assert!(
+                (simd - naive).abs() < SIMD_AGREEMENT_TOLERANCE,
+                "len {}: simd {} vs naive {} (diff {})",
+                a.len, simd, naive, (simd - naive).abs()
+            );
+        }
+
+        /// Unit-length inputs, which is what the production rescore actually
+        /// feeds the kernel. The denominator collapses to ~1.0 here, so any
+        /// disagreement is coming from the dot product itself rather than from
+        /// the two norms.
+        #[test]
+        fn prop_simd_matches_naive_for_unit_vectors((a, b) in equal_length_pair(200)) {
+            let mut a = a;
+            let mut b = b;
+            normalize_vector(&mut a);
+            normalize_vector(&mut b);
+
+            let a = Aligned16::new(&a);
+            let b = Aligned16::new(&b);
+            prop_assert!(
+                a.is_16_byte_aligned() && b.is_16_byte_aligned(),
+                "test buffers are not 16-byte aligned, so NEON would fall back to naive"
+            );
+
+            let simd = cosine_similarity_simd(a.as_slice(), b.as_slice());
+            let naive = cosine_similarity_naive(a.as_slice(), b.as_slice());
+
+            prop_assert!(
+                (simd - naive).abs() < SIMD_AGREEMENT_TOLERANCE,
+                "len {}: simd {} vs naive {} (diff {})",
+                a.len, simd, naive, (simd - naive).abs()
+            );
+        }
+    }
+
+    /// The widths the index actually stores. These all divide both lane counts
+    /// evenly, so they exercise the steady-state vector loop with no tail at
+    /// all — the opposite end of the range from the sweep above.
+    #[test]
+    fn simd_matches_naive_at_production_dimensions() {
+        for dim in [384_usize, 768, 1024] {
+            let raw_a: Vec<f32> = (0..dim).map(|i| ((i as f32) * 0.37).sin() * 7.0).collect();
+            let raw_b: Vec<f32> = (0..dim).map(|i| ((i as f32) * 0.11).cos() * 3.0).collect();
+
+            let mut unit_a = raw_a.clone();
+            let mut unit_b = raw_b.clone();
+            normalize_vector(&mut unit_a);
+            normalize_vector(&mut unit_b);
+
+            for (shape, a, b) in [
+                ("unnormalized", &raw_a, &raw_b),
+                ("unit length", &unit_a, &unit_b),
+            ] {
+                let a = Aligned16::new(a);
+                let b = Aligned16::new(b);
+                assert!(
+                    a.is_16_byte_aligned() && b.is_16_byte_aligned(),
+                    "dim {dim} ({shape}): buffers are not 16-byte aligned, NEON would fall back"
+                );
+
+                let simd = cosine_similarity_simd(a.as_slice(), b.as_slice());
+                let naive = cosine_similarity_naive(a.as_slice(), b.as_slice());
+
+                assert!(
+                    (simd - naive).abs() < SIMD_AGREEMENT_TOLERANCE,
+                    "dim {dim} ({shape}): simd {simd} vs naive {naive} (diff {})",
+                    (simd - naive).abs()
+                );
+            }
+        }
+    }
+
+    /// Evidence that the aligned tests above really do reach the NEON kernel
+    /// instead of sliding into its scalar fallback.
+    ///
+    /// The fallback has exactly two conditions — NEON must be detected, and
+    /// both pointers must clear a 16-byte gate — so asserting both of them is a
+    /// complete proof that the vector code ran, without having to guess at
+    /// rounding differences.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn neon_kernel_is_reached_on_aligned_buffers() {
+        assert!(
+            std::arch::is_aarch64_feature_detected!("neon"),
+            "NEON is not available, so every SIMD test here silently measured the naive path"
+        );
+
+        for len in [1_usize, 3, 4, 5, 7, 8, 9, 200, 384] {
+            let values: Vec<f32> = (0..len).map(|i| (i as f32) * 0.25 - 1.0).collect();
+            let buf = Aligned16::new(&values);
+
+            assert_eq!(
+                buf.as_slice().as_ptr() as usize % 16,
+                0,
+                "len {len}: buffer is not 16-byte aligned, so NEON would fall back to naive"
+            );
+        }
+    }
+
+    /// The other side of that gate. A misaligned slice takes the scalar
+    /// fallback, and must still return the same answer — the alignment check is
+    /// a safety measure, not a change of semantics.
+    #[test]
+    fn misaligned_input_still_agrees_with_naive() {
+        let raw_a: Vec<f32> = (0..201).map(|i| ((i as f32) * 0.19).sin() * 4.0).collect();
+        let raw_b: Vec<f32> = (0..201).map(|i| ((i as f32) * 0.07).cos() * 9.0).collect();
+
+        let aligned_a = Aligned16::new(&raw_a);
+        let aligned_b = Aligned16::new(&raw_b);
+
+        // Stepping one f32 past a 16-byte boundary lands four bytes in, which
+        // can never itself be a 16-byte boundary.
+        let a = &aligned_a.as_slice()[1..];
+        let b = &aligned_b.as_slice()[1..];
+        assert_ne!(a.as_ptr() as usize % 16, 0, "slice should be misaligned");
+        assert_ne!(b.as_ptr() as usize % 16, 0, "slice should be misaligned");
+
+        let simd = cosine_similarity_simd(a, b);
+        let naive = cosine_similarity_naive(a, b);
+
+        assert!(
+            (simd - naive).abs() < SIMD_AGREEMENT_TOLERANCE,
+            "misaligned: simd {simd} vs naive {naive} (diff {})",
+            (simd - naive).abs()
         );
     }
 }

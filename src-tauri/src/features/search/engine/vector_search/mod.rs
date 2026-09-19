@@ -17,6 +17,8 @@
 
 pub mod compression;
 pub mod dimension_metadata;
+pub mod manifest;
+pub mod persistence;
 pub mod rescore_store;
 pub mod runtime_index;
 pub mod usearch_index;
@@ -26,5 +28,10 @@ pub use dimension_metadata::{
     ensure_dimension_match, ensure_index_layout_match, metadata_path_for, read_dimension,
     read_metadata, wipe_index_files, DimensionCheck, IndexDimensionMetadata,
 };
+pub use manifest::{
+    manifest_path_for, read_manifest, read_source_stamp, write_manifest, IndexConfig,
+    IndexManifest, ManifestMismatch, SourceStamp, MANIFEST_FORMAT_VERSION,
+};
+pub use persistence::{IndexPersistence, StartupPath};
 pub use rescore_store::{vectors_path_for, RescoreVectorStore};
-pub use usearch_index::USearchVectorIndex;
+pub use usearch_index::{SavePolicy, USearchVectorIndex};

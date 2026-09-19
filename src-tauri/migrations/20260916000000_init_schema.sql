@@ -75,6 +75,82 @@ CREATE TABLE IF NOT EXISTS text_embeddings (
     FOREIGN KEY (chunk_id) REFERENCES text_chunks(id) ON DELETE CASCADE
 );
 
+-- Vectors prepared for a model that is not the one the library was indexed
+-- with. Declared here (rather than only in `embedding::generation::ensure_schema`,
+-- which still creates it for in-memory test databases) so the triggers below
+-- can reference it.
+CREATE TABLE IF NOT EXISTS embedding_generation_vectors (
+    model_identity TEXT NOT NULL,
+    chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE,
+    content_hash TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    dimension INTEGER NOT NULL,
+    PRIMARY KEY(model_identity, chunk_id)
+);
+
+-- =====================================================================
+-- VECTOR INDEX FRESHNESS
+-- =====================================================================
+-- The HNSW vector index lives in a file outside SQLite and is rebuilt from
+-- these tables whenever the two can have drifted apart. Reading every
+-- embedding blob just to discover that nothing changed costs seconds at ten
+-- thousand chunks and minutes at a million, so the index instead records the
+-- counter below in its manifest and rebuilds only when the counter has moved.
+--
+-- Maintained by triggers rather than by the Rust write paths: a trigger fires
+-- inside whatever transaction did the write, cannot be forgotten by a new
+-- caller, and costs one row update on a single-row table.
+CREATE TABLE IF NOT EXISTS vector_index_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    write_counter INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO vector_index_state (id, write_counter) VALUES (1, 0);
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_chunk_insert
+AFTER INSERT ON text_chunks BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_chunk_update
+AFTER UPDATE ON text_chunks BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_chunk_delete
+AFTER DELETE ON text_chunks BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_embedding_insert
+AFTER INSERT ON text_embeddings BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_embedding_update
+AFTER UPDATE ON text_embeddings BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_embedding_delete
+AFTER DELETE ON text_embeddings BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_generation_insert
+AFTER INSERT ON embedding_generation_vectors BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_generation_update
+AFTER UPDATE ON embedding_generation_vectors BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_vector_index_state_generation_delete
+AFTER DELETE ON embedding_generation_vectors BEGIN
+    UPDATE vector_index_state SET write_counter = write_counter + 1 WHERE id = 1;
+END;
+
 CREATE TABLE IF NOT EXISTS image_embeddings (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
