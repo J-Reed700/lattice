@@ -202,8 +202,12 @@ mod tests {
         });
 
         // First run panics → 1s backoff → second run clean-exits.
-        // Allow generous slack for slow CI; total ~2-3s.
-        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+        // Windows CI emits a backtrace for the intentional panic, which can
+        // take several seconds before the supervisor reaches its backoff.
+        let join_result = tokio::time::timeout(Duration::from_secs(30), handle)
+            .await
+            .expect("supervisor did not restart and exit within 30 seconds");
+        join_result.expect("supervisor task failed to join");
 
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
