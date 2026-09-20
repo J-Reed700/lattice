@@ -54,6 +54,10 @@ interface EntryEditorProps {
 const CONTEXT_RAIL_KEY = 'journal.contextRail.open';
 
 function readRailOpen(): boolean {
+  // At the minimum supported desktop width the journal index and context rail
+  // would otherwise leave almost no room for the page. Start compact windows
+  // with the rail closed; it remains available as an overlay from the header.
+  if (window.matchMedia('(max-width: 1023px)').matches) return false;
   try {
     return localStorage.getItem(CONTEXT_RAIL_KEY) !== '0';
   } catch {
@@ -113,6 +117,15 @@ export function EntryEditor({
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
+
+  useEffect(() => {
+    const compact = window.matchMedia('(max-width: 1023px)');
+    const closeForCompactLayout = (event: MediaQueryListEvent) => {
+      if (event.matches) setRailOpen(false);
+    };
+    compact.addEventListener('change', closeForCompactLayout);
+    return () => compact.removeEventListener('change', closeForCompactLayout);
+  }, []);
 
   const toggleRail = useCallback(() => {
     setRailOpen((open) => {

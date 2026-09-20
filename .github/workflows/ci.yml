@@ -190,7 +190,10 @@ jobs:
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Intel hosted runners need close to an hour for the release link alone
+    # after building the native x64 sidecar. Leave room for the actual package
+    # and runtime checks instead of cancelling a healthy build at minute 60.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

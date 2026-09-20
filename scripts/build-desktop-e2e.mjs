@@ -11,7 +11,12 @@ const platform = process.platform;
 if (!['darwin', 'linux', 'win32'].includes(platform)) throw new Error('Unsupported desktop platform');
 await mkdir(output, { recursive: true });
 const config = JSON.parse(await readFile(path.join(root, 'src-tauri/tauri.e2e.conf.json'), 'utf8'));
-config.identifier = `tech.lattice.compatibility.t${randomUUID().replaceAll('-', '')}`;
+const candidateToken = `t${randomUUID().replaceAll('-', '')}`;
+config.identifier = `tech.lattice.compatibility.${candidateToken}`;
+// Tauri's NSIS bundle chooses its own current-user install location. Give the
+// candidate a unique product name so that default location is isolated and we
+// test a real Unicode-and-spaces installation path on Windows.
+if (platform === 'win32') config.productName = `Lattice Compatibility café ${candidateToken}`;
 const configPath = path.join(output, 'config.json');
 await writeFile(configPath, JSON.stringify(config, null, 2));
 const env = { ...process.env };
@@ -36,7 +41,11 @@ run(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'),
 const target = path.resolve(root, process.env.CARGO_TARGET_DIR || 'src-tauri/target');
 const bundles = path.join(target, release ? 'release' : 'debug', 'bundle');
 // Keep each installed candidate separate, including spaces and Unicode in its path.
-const installed = path.join(output, `Installed apps café ${config.identifier.split('.').at(-1)}`);
+let installed = path.join(output, `Installed apps café ${candidateToken}`);
+if (platform === 'win32') {
+  if (!process.env.LOCALAPPDATA) throw new Error('LOCALAPPDATA is required for a current-user NSIS install');
+  installed = path.join(process.env.LOCALAPPDATA, config.productName);
+}
 await mkdir(installed, { recursive: true });
 let binary;
 if (platform === 'darwin') {
@@ -52,7 +61,7 @@ if (platform === 'darwin') {
   if (packages.length !== 1) throw new Error(`Expected one ${bundle} package, found ${packages.length}`);
   const installer = path.join(directory, packages[0]);
   if (platform === 'win32') {
-    run(installer, ['/S', `/D=${installed}`]);
+    run(installer, ['/S']);
     binary = path.join(installed, 'lattice-desktop.exe');
   } else {
     // Extract exactly the Debian package contents without changing the host's installed apps.

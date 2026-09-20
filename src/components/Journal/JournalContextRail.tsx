@@ -49,7 +49,7 @@ export function JournalContextRail({
   return (
     <aside
       aria-label="Beside this page"
-      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border-subtle bg-bg 2xl:w-[360px]"
+      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border-subtle bg-bg max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:shadow-xl 2xl:w-[360px]"
     >
       <div className="flex h-12 shrink-0 items-center gap-2 px-3">
         <div role="tablist" className="flex h-8 flex-1 items-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px]">

@@ -130,6 +130,16 @@ test('packaged desktop: onboarding, native file access, editing, close and persi
       if (!(await title.isExisting())) await create.click();
       await title.waitForDisplayed({ timeout: 30_000 });
       await (await browser.$('.ProseMirror[contenteditable="true"]')).waitForDisplayed({ timeout: 15_000 });
+      const writingWidth = await title.getSize('width');
+      assert.ok(writingWidth >= 240, `Journal writing column is only ${writingWidth}px wide`);
+      const showContext = await browser.$('button[aria-label="Show conversation and highlights"]');
+      await showContext.waitForDisplayed({ timeout: 15_000 });
+      await showContext.click();
+      const contextRail = await browser.$('aside[aria-label="Beside this page"]');
+      await contextRail.waitForDisplayed({ timeout: 15_000 });
+      assert.equal(await title.getSize('width'), writingWidth, 'Compact context rail must overlay rather than crush the page');
+      await (await browser.$('button[aria-label="Hide panel"]')).click();
+      await contextRail.waitForDisplayed({ timeout: 15_000, reverse: true });
       await browser.saveScreenshot(path.join(reports, 'journal-small-window.png'));
       results.checks.push('minimum-window-journal');
     });
