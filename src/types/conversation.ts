@@ -173,6 +173,25 @@ export interface SpaceDocument {
   modifiedAt: string | null;
 }
 
+/**
+ * A web page as the app read it: the article text the model was given, not the
+ * search engine's one-line snippet.
+ *
+ * Served from the page cache, so opening a cited article costs no request when
+ * the turn that cited it already read it.
+ */
+export interface WebPage {
+  /** The URL after redirects. */
+  url: string;
+  title: string | null;
+  /** Extracted article text, paragraphs separated by blank lines. */
+  text: string;
+  wordCount: number;
+  /** RFC 3339. When the text was actually fetched, not when it was served. */
+  fetchedAt: string;
+  fromCache: boolean;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -378,6 +397,8 @@ export const RetrievalTraceSchema = z.object({
  * before this existed has none — and never an empty turn.
  */
 export const TurnStepKindSchema = z.enum([
+  /** Not work: the turn was asked to research. See `TurnStepKind::DeepResearch`. */
+  'deep_research',
   'route',
   'plan',
   'search_documents',
@@ -395,6 +416,13 @@ export const TurnStepKindSchema = z.enum([
 
 export type TurnStepKind = z.infer<typeof TurnStepKindSchema>;
 
+export const TurnStepLinkSchema = z.object({
+  url: z.string().min(1).max(2048),
+  title: z.string().max(400).nullable().optional(),
+}).strict();
+
+export type TurnStepLink = z.infer<typeof TurnStepLinkSchema>;
+
 export const TurnStepSchema = z.object({
   /** Stable within the turn; a finish event carries the id of its start. */
   id: z.string().min(1).max(64),
@@ -410,6 +438,12 @@ export const TurnStepSchema = z.object({
   durationMs: z.number().int().min(0).nullable().optional(),
   /** What it produced: "8 passages from 3 files", "not enough support: …". */
   result: z.string().max(400).nullable().optional(),
+  /**
+   * For a search, the pages it found; for a page read, the page. A read knows
+   * its address from the start and a search only at the end, so either event
+   * may carry it. Absent on every step that went nowhere on the web.
+   */
+  links: z.array(TurnStepLinkSchema).max(12).optional(),
 }).strict();
 
 export type TurnStep = z.infer<typeof TurnStepSchema>;

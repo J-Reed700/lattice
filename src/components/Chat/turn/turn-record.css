@@ -43,6 +43,11 @@
   white-space: nowrap;
 }
 
+/* What a running turn is doing right now; the rest of the line is history. */
+.turn-record-live {
+  color: hsl(var(--text-secondary));
+}
+
 .turn-record-num {
   font-variant-numeric: tabular-nums;
 }
@@ -64,6 +69,14 @@
   border: 1px solid hsl(var(--border-subtle));
   border-radius: var(--radius-md);
   background-color: hsl(var(--surface-sunken));
+}
+
+/* With research cards in it the body is a column, not a box: the cards are
+   the raised thing, and a frame around them would flatten them again. */
+.turn-record-body[data-deck='true'] {
+  padding: 0.125rem 0 0.25rem;
+  border: 0;
+  background: none;
 }
 
 .turn-record-note {
@@ -89,6 +102,26 @@
   gap: 0.5rem;
   font-size: 0.75rem;
   line-height: 1.5;
+}
+
+/* One trip to the sources. The rule down the side is what groups it: a
+   heading alone reads as one more step. */
+.turn-record-round {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.125rem 0;
+  padding-left: 0.5rem;
+  border-left: 1px solid hsl(var(--border-default));
+}
+
+.turn-record-round-heading {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  color: hsl(var(--text-secondary));
 }
 
 /* A dot, not an icon: the state is a colour and nothing needs reading. */

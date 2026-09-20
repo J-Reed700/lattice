@@ -13,7 +13,7 @@ const buttonVariants = cva(
         default:
           "bg-[hsl(var(--action))] text-[hsl(var(--action-fg))] shadow-action hover:bg-[hsl(var(--action-hover))]",
         destructive:
-          "bg-[hsl(var(--danger))] text-white shadow-action hover:brightness-110",
+          "bg-[hsl(var(--danger))] text-[hsl(var(--accent-fg))] shadow-action hover:brightness-110",
         outline:
           "border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] text-[hsl(var(--text-primary))] shadow-control hover:border-[hsl(var(--border-strong))] hover:bg-[hsl(var(--surface-raised))]",
         secondary:

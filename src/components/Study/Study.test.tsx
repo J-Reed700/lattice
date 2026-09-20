@@ -5,6 +5,7 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { StudyCardDto } from '@/lib/bindings';
+import { queryClient } from '@/lib/queryClient';
 
 import { NewStudyDeck } from './NewStudyDeck';
 import { StudyPage } from './StudyPage';
@@ -22,7 +23,7 @@ const card: StudyCardDto = {
   dueAt: 0, intervalDays: 0, reviewCount: 0, lapses: 0,
 };
 function show(ui: React.ReactNode) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>{ui}</QueryClientProvider>);
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { ...queryClient.getDefaultOptions().queries, retry: false }, mutations: { retry: false } } })}>{ui}</QueryClientProvider>);
 }
 describe('Study', () => {
   beforeEach(() => { vi.resetAllMocks(); });

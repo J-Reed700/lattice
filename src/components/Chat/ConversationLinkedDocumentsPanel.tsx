@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { formatDistanceToNow } from 'date-fns';
 import { ChevronDown, ChevronRight, ExternalLink, Trash2 } from 'lucide-react';
 
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { toast } from '../../stores/toastStore';
+import { openExternalUrl } from '../../utils/openExternalUrl';
 import { getSourceExternalUrl } from '../../utils/sourcePreview';
 
 interface ConversationLinkedDocumentsPanelProps {
@@ -176,11 +176,7 @@ export function ConversationLinkedDocumentsPanel({
   };
 
   const handleOpenSourceUrl = async (url: string) => {
-    try {
-      await openExternal(url);
-    } catch {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    }
+    await openExternalUrl(url);
   };
 
   const handleLinkSource = async (

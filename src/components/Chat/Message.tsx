@@ -754,6 +754,7 @@ export function Message({
           record={messageId ? messageTurn.get(messageId) ?? null : null}
           liveSteps={isPending && conversationId ? liveSteps.get(conversationId) ?? null : null}
           isPending={!isUser && isPending}
+          isWriting={message.content.trim().length > 0}
           verification={verificationSummary ?? null}
         />
 

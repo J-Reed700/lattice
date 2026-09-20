@@ -95,6 +95,7 @@ import type {
   ConversationWebSourceDto,
   DocumentSpaceMembershipDto,
   SpaceDocument,
+  WebPage,
   // Function calling types (Wave 2B)
   FunctionDefinition,
   FunctionResult,
@@ -275,6 +276,7 @@ const COMMAND_DOMAIN_MAP: Record<string, { domain: string; command: string }> = 
   fork_conversation: { domain: 'conversation', command: 'fork_conversation' },
   regenerate_response: { domain: 'conversation', command: 'regenerate_response' },
   compact_conversation: { domain: 'conversation', command: 'compact_conversation' },
+  get_conversation_memory: { domain: 'conversation', command: 'get_conversation_memory' },
 
   // Passage references
   create_passage_reference: { domain: 'references', command: 'create_passage_reference' },
@@ -2689,6 +2691,14 @@ const VaultAPI = {
     }),
 
   /**
+   * The article text of a web page a turn cited, from the page cache.
+   *
+   * Falls back to one validated fetch when the cache no longer holds it.
+   */
+  readWebPage: async (url: string): Promise<ApiResult<WebPage>> =>
+    apiCall<WebPage>('read_web_page', { url }),
+
+  /**
    * Lists documents currently linked to a conversation context.
    */
   listConversationLinkedDocuments: async (
@@ -2842,6 +2852,26 @@ const VaultAPI = {
   ): Promise<ApiResult<{ compaction: Wire.CompactionRecordDto }>> =>
     apiCall('compact_conversation', {
       request: { conversationId, keepRecentMessages: keepRecentMessages ?? null },
+    }),
+
+  /**
+   * Reads what the bounded memory layer currently holds for one conversation:
+   * the active items with the quotations behind them, the counts, and the
+   * `mode` that says whether any of it is usable.
+   *
+   * Read-only on purpose. There is no companion write command, because an
+   * editable memory item would be a requirement with no source behind it —
+   * exactly the failure this layer exists to prevent.
+   *
+   * `includeHistory` also returns superseded and resolved items, for "what was
+   * my original budget?".
+   */
+  getConversationMemory: async (
+    conversationId: string,
+    includeHistory?: boolean
+  ): Promise<ApiResult<Wire.ConversationMemoryDetailsDto>> =>
+    apiCall<Wire.ConversationMemoryDetailsDto>('get_conversation_memory', {
+      request: { conversationId, includeHistory: includeHistory ?? null },
     }),
 
   /**

@@ -60,6 +60,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={verification()}
       />
     );
@@ -88,6 +89,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -105,6 +107,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -119,6 +122,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -132,6 +136,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -146,6 +151,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -159,6 +165,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -173,6 +180,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -187,6 +195,7 @@ describe('TurnRecord', () => {
         record={null}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -202,6 +211,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -219,6 +229,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -231,6 +242,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -248,6 +260,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -276,6 +289,7 @@ describe('TurnRecord', () => {
         })}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -302,6 +316,7 @@ describe('TurnRecord', () => {
         })}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -328,6 +343,7 @@ describe('TurnRecord', () => {
           }),
         ]}
         isPending
+        isWriting={false}
         verification={null}
       />
     );
@@ -340,8 +356,8 @@ describe('TurnRecord', () => {
     ).toBeInTheDocument();
   });
 
-  /** Once the model is writing, the answer is the progress indicator. */
-  it('folds itself once generation starts', () => {
+  /** Once the answer has text, the answer is the progress indicator. */
+  it('folds itself once the answer has text', () => {
     render(
       <TurnRecord
         trace={null}
@@ -351,11 +367,115 @@ describe('TurnRecord', () => {
           step({ id: 's1', kind: 'generate', label: 'Thinking', state: 'running' }),
         ]}
         isPending
+        isWriting
         verification={null}
       />
     );
 
     expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  /**
+   * A tool round generates for minutes and writes nothing. Folding when the
+   * generation step appeared hid every round after the first.
+   */
+  it('stays open through a generation that has written nothing yet', () => {
+    render(
+      <TurnRecord
+        trace={null}
+        record={null}
+        liveSteps={[
+          step({ id: 's0', kind: 'read_page', label: 'Reading example.com' }),
+          step({ id: 's1', kind: 'generate', label: 'Thinking', state: 'running' }),
+        ]}
+        isPending
+        isWriting={false}
+        verification={null}
+      />
+    );
+
+    expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  const twoRounds: TurnStep[] = [
+    step({ id: 's0', kind: 'web_search', label: 'Searching the web' }),
+    step({ id: 's1', kind: 'read_page', label: 'Reading first.example' }),
+    step({ id: 's2', kind: 'read_page', label: 'Reading blocked.example', state: 'failed' }),
+    step({ id: 's3', kind: 'generate', label: 'Thinking', result: '2 tool calls' }),
+    step({ id: 's4', kind: 'read_page', label: 'Reading second.example' }),
+    step({ id: 's5', kind: 'read_page', label: 'Reading third.example' }),
+    step({ id: 's6', kind: 'generate', label: 'Reading what it found and thinking' }),
+  ];
+
+  it('names each trip to the sources when the model went back for more', async () => {
+    render(
+      <TurnRecord
+        trace={trace({ searchedDocuments: 0, passages: 0, files: 0, webPages: 4 })}
+        record={record({ steps: twoRounds })}
+        liveSteps={null}
+        isPending={false}
+        isWriting
+        verification={null}
+      />
+    );
+
+    // At rest the line says the model looked more than once.
+    expect(screen.getByRole('button')).toHaveTextContent('Retrieved 4 web pages · 2 rounds');
+
+    await userEvent.click(screen.getByRole('button'));
+    const first = screen.getByText('Round 1').closest('li')!;
+    expect(first).toHaveTextContent('1 search · 1 page read · 1 could not be read');
+    expect(within(first).getByText('Reading blocked.example')).toBeInTheDocument();
+    const second = screen.getByText('Round 2').closest('li')!;
+    expect(second).toHaveTextContent('2 pages read');
+    expect(within(second).getByText('Reading third.example')).toBeInTheDocument();
+    // The generation that asked for the second trip sits between them, in neither.
+    expect(within(first).queryByText('Thinking')).not.toBeInTheDocument();
+    expect(within(second).queryByText('Thinking')).not.toBeInTheDocument();
+  });
+
+  it('does not number the only trip a turn made', async () => {
+    render(
+      <TurnRecord
+        trace={trace()}
+        record={record({ steps: twoRounds.slice(0, 4) })}
+        liveSteps={null}
+        isPending={false}
+        isWriting
+        verification={null}
+      />
+    );
+
+    expect(screen.getByRole('button')).not.toHaveTextContent('rounds');
+    await userEvent.click(screen.getByRole('button'));
+    expect(screen.queryByText('Round 1')).not.toBeInTheDocument();
+  });
+
+  /** A later round starts after the record has folded; it must still show. */
+  it('says which round is running on the folded line', () => {
+    render(
+      <TurnRecord
+        trace={trace({ searchedDocuments: 0, passages: 0, files: 0, webPages: 2 })}
+        record={null}
+        liveSteps={[
+          ...twoRounds.slice(0, 4),
+          step({
+            id: 's4',
+            kind: 'read_page',
+            label: 'Reading second.example',
+            state: 'running',
+            durationMs: undefined,
+          }),
+        ]}
+        isPending
+        isWriting
+        verification={null}
+      />
+    );
+
+    const line = screen.getByRole('button');
+    expect(line).toHaveAttribute('aria-expanded', 'false');
+    expect(line).toHaveTextContent('Round 2 · Reading second.example · Retrieved 2 web pages');
   });
 
   it('can be opened and closed by hand', async () => {
@@ -365,6 +485,7 @@ describe('TurnRecord', () => {
         record={record({ steps: [step({ id: 's0', kind: 'verify', label: 'Checking the answer' })] })}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -388,6 +509,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -402,6 +524,7 @@ describe('TurnRecord', () => {
         record={record()}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );
@@ -426,6 +549,7 @@ describe('TurnRecord', () => {
         })}
         liveSteps={null}
         isPending={false}
+        isWriting={false}
         verification={null}
       />
     );

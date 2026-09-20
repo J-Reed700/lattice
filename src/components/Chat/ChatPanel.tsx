@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import * as Popover from '@radix-ui/react-popover';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowUp, ChevronDown, Cpu, FileText, GitBranch, Library, MessageCircle, Paperclip, RefreshCw, Scissors, Settings2, Square } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, FileText, GitBranch, Library, MessageCircle, Paperclip, RefreshCw, Scissors, ScrollText, Settings2, Square } from 'lucide-react';
 
 import { useRegisterPaletteCommands } from '@/hooks/useRegisterPaletteCommands';
 
@@ -20,6 +20,7 @@ import { useComposerSuggest } from './composer/useComposerSuggest';
 import { useSpaceDocuments } from './composer/useSpaceDocuments';
 import { ComposerControls, WEB_TOOL_NAMES, WIKI_TOOL_NAMES, DEEP_RESEARCH_WARNING_MESSAGE } from './ComposerControls';
 import { ConversationLinkedDocumentsPanel } from './ConversationLinkedDocumentsPanel';
+import { ConversationMemoryPanel } from './ConversationMemoryPanel';
 import { ImportFailuresNotice } from './ImportFailuresNotice';
 import { Message } from './Message';
 import { ModelPickerPopover } from './ModelPickerPopover';
@@ -193,6 +194,9 @@ export function ChatPanel() {
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [isImportingFiles, setIsImportingFiles] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
+  // The memory reader is an overlay off the palette, like the source reader:
+  // a read-only look at what was recorded, never a place to edit it.
+  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [focusDocuments, setFocusDocuments] = useState<SpaceDocument[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [compactionByConversation, setCompactionByConversation] = useState<
@@ -228,6 +232,22 @@ export function ChatPanel() {
     );
     return [...realMessages, ...optimisticForConversation];
   }, [activeConversationId, conversations, optimisticMessages]);
+
+  /**
+   * Raw content of the loaded messages, for resolving memory evidence spans.
+   *
+   * The memory panel needs the stored text, not the rendered markdown: its
+   * spans are UTF-8 byte offsets into what the backend holds.
+   */
+  const messageContentById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const message of messages) {
+      if ('id' in message && typeof message.content === 'string') {
+        byId.set(message.id, message.content);
+      }
+    }
+    return byId;
+  }, [messages]);
 
   const getMessageKey = useCallback(
     (message: typeof messages[number]): string =>
@@ -460,10 +480,12 @@ export function ChatPanel() {
             ...prev,
             [conversationId]: record,
           }));
+          // No "lossless"/"complete" framing: compaction summarizes, and the
+          // only thing it actually guarantees is that active requirements
+          // survive and the raw messages are still searchable.
           toast.success('Context compacted', {
-            message: `${record.originalMessageCount} older message${
-              record.originalMessageCount === 1 ? '' : 's'
-            } folded into a summary.`,
+            message:
+              'Older context compacted. Active requirements preserved; original messages remain searchable.',
           });
         }
       } finally {
@@ -992,6 +1014,17 @@ export function ChatPanel() {
         },
       },
       {
+        id: 'chat.memory',
+        label: 'Show conversation memory',
+        group: 'Chat',
+        icon: ScrollText,
+        enabled: Boolean(activeConversationId),
+        description: 'What was recorded, and the quotation behind each item.',
+        run: () => {
+          setIsMemoryOpen(true);
+        },
+      },
+      {
         id: 'chat.switch-model',
         label: 'Switch chat model',
         group: 'Chat',
@@ -1088,6 +1121,12 @@ export function ChatPanel() {
       )}
       <ImportFailuresNotice />
       <UtilityModelNotice />
+      <ConversationMemoryPanel
+        conversationId={activeConversationId}
+        isOpen={isMemoryOpen}
+        onClose={() => setIsMemoryOpen(false)}
+        messageContentById={messageContentById}
+      />
       {/* Thread scroll region */}
       <div
         ref={scrollContainerRef}

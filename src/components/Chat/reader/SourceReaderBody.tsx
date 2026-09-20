@@ -30,6 +30,8 @@ import { formatSourceLocation } from '../../Reading/passageLocator';
 import { CitationRail } from '../CitationRail';
 import { passageMatchNotice, sourceHeaderMeta } from '../filePreviewMeta';
 import { JournalCapturePreview } from '../JournalCapturePreview';
+import { textFragmentUrl } from './textFragment';
+import { WebArticleView } from './WebArticleView';
 import { AudioViewer, audioViewerPropsFromSource } from '../viewers/AudioViewer';
 import { ImageViewer } from '../viewers/ImageViewer';
 import { MarkdownViewer } from '../viewers/MarkdownViewer';
@@ -81,6 +83,14 @@ export interface SourceReaderBodyProps {
   onCitationIndexChange?: (_index: number) => void;
   /** Called when a viewer resolves a real location (e.g. a PDF page). */
   onLocationResolved?: (_chunkId: string, _label: string) => void;
+  /**
+   * The message whose citations these are.
+   *
+   * What lets a web article mark the passages the answer's own sentences match.
+   * Absent when the reader was opened from somewhere with no answer behind it —
+   * the Library, Compare, the reference inbox — and then nothing is marked.
+   */
+  ownerKey?: string;
   /** The reader at its largest. Owned by the surface, which changes size for it. */
   isFocused?: boolean;
   /** Omit to leave the expand toggle out (the full-screen dialog has nothing to expand into). */
@@ -96,11 +106,14 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   citationIndex,
   onCitationIndexChange,
   onLocationResolved,
+  ownerKey,
   isFocused = false,
   onToggleFocus,
 }) => {
   const navigate = useNavigate();
   const [captureDraft, setCaptureDraft] = useState<string | null>(null);
+  /** The marked passage the web article has in view, if it has one. */
+  const [activePassage, setActivePassage] = useState<string | null>(null);
   const isCompact = presentation !== 'dialog';
   const isDocked = presentation === 'docked';
   const queryClient = useQueryClient();
@@ -149,7 +162,12 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     mimeType.startsWith('image/') ||
     mimeType.startsWith('audio/');
   const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
-  const usesEmbeddedViewer = isWebArchiveArticle || isBinaryPreview || isExternalWebSource;
+  /** A live web page, read out of the page cache rather than off disk. */
+  const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
+  // The article view scrolls itself and marks its own passages, so it is left
+  // alone like the other embedded viewers: an outer scroller and the block
+  // highlighter would both be fighting it.
+  const usesEmbeddedViewer = isWebArchiveArticle || isBinaryPreview || showsWebArticle;
   const canShowInFolder = hasDocumentId || (!shouldUseUrlActions && !isHttpUrl(source.filePath ?? ''));
 
   const shouldFetchContent =
@@ -365,14 +383,17 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         console.error('No URL available for external web source');
         return;
       }
+      // The browser can find the passage too: a text fragment lands the reader
+      // on the same sentences, highlighted, instead of the top of the article.
+      const target = activePassage ? textFragmentUrl(openableUrl, activePassage) : openableUrl;
       try {
-        await openExternal(openableUrl);
+        await openExternal(target);
       } catch (err) {
         toast.error("Couldn't open URL", {
           message: err instanceof Error ? err.message : String(err),
         });
         // Fallback for environments where shell open is blocked.
-        window.open(openableUrl, '_blank', 'noopener,noreferrer');
+        window.open(target, '_blank', 'noopener,noreferrer');
       }
       return;
     }
@@ -518,17 +539,16 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       );
     }
 
-    if (isWebSourceLike && !isWebArchiveArticle) {
-      const sourceUrl = externalSourceUrl ?? source.filePath;
+    if (showsWebArticle) {
       return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="flex items-center justify-between gap-4 border-b border-subtle pb-4">
-            <div className="min-w-0">
-              <p className="text-xs text-[hsl(var(--text-muted))]">Web source</p>
-              <p className="mt-1 truncate text-sm text-[hsl(var(--text-secondary))]">{sourceUrl}</p>
-            </div>
-            {openableUrl && !isCompact && (
-              <div className="inline-flex items-center gap-2">
+        <WebArticleView
+          url={openableUrl}
+          source={source}
+          ownerKey={ownerKey}
+          onActivePassageChange={setActivePassage}
+          actions={
+            openableUrl && !isCompact ? (
+              <div className="inline-flex shrink-0 items-center gap-2">
                 {importableUrl && renderImportScopeSelect()}
                 {importableUrl && (
                   <button
@@ -554,66 +574,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
                   Open URL
                 </button>
               </div>
-            )}
-          </div>
-          <div className="py-6">
-            <p className="text-sm leading-7 text-[hsl(var(--text-primary))]">
-              {(source.excerpt || source.content || content || 'No preview available.')}
-            </p>
-            {error && (
-              <p className="mt-3 text-xs text-[hsl(var(--text-muted))]">
-                {error}
-              </p>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    if (error && isWebSourceLike) {
-      const sourceUrl = externalSourceUrl ?? source.filePath;
-      return (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="flex items-center justify-between gap-4 border-b border-subtle pb-4">
-            <div className="min-w-0">
-              <p className="text-xs text-[hsl(var(--text-muted))]">Web source</p>
-              <p className="mt-1 truncate text-sm text-[hsl(var(--text-secondary))]">{sourceUrl}</p>
-            </div>
-            {openableUrl && !isCompact && (
-              <div className="inline-flex items-center gap-2">
-                {importableUrl && renderImportScopeSelect()}
-                {importableUrl && (
-                  <button
-                    type="button"
-                    onClick={handleImportSourceUrl}
-                    disabled={isImportingUrl}
-                    className="inline-flex items-center gap-2 rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm font-medium text-[hsl(var(--text-primary))] transition-colors duration-fast hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isImportingUrl ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Download size={14} />
-                    )}
-                    Import
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleOpenPrimary}
-                  className="inline-flex items-center gap-2 rounded-md bg-[hsl(var(--accent))] px-3 py-2 text-sm font-medium text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))]"
-                >
-                  <ExternalLink size={14} />
-                  Open URL
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="py-6">
-            <p className="text-sm leading-7 text-[hsl(var(--text-primary))]">
-              {(source.excerpt || source.content || 'Preview unavailable. Open the source URL.')}
-            </p>
-          </div>
-        </div>
+            ) : null
+          }
+        />
       );
     }
 

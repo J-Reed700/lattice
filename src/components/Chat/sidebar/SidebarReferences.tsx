@@ -9,13 +9,14 @@ import { useNavigate } from 'react-router';
 import { IconButton } from '@/components/ui/IconButton';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
+import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import {
   chatReferenceKey,
   type CapturedChatReference
 } from '@/utils/chatReferenceIndex';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-import { formatRoleLabel, formatShortRelativeTime, isReferenceInboxEnabled, scrollToMessage } from './sidebarUtils';
+import { formatRoleLabel, formatShortRelativeTime, isReferenceInboxEnabled } from './sidebarUtils';
 import { useCapturedReferencesQuery, useSidebarBookmarksQuery } from './workspaceQueries';
 
 export function SidebarReferences({ query, active }: { query: string; active: boolean }) {

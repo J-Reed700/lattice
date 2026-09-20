@@ -11,6 +11,7 @@ import { useDownloadedModels } from '../../hooks/useDownloadedModels';
 import { VaultAPI } from '../../lib/api';
 import { useConversationsStore } from '../../stores/conversationsStore';
 import { toast } from '../../stores/toastStore';
+import { scrollToMessage } from '../../utils/chatMessageNavigation';
 import { createDefaultConversationTitle } from '../../utils/conversationTitles';
 import { NEW_ITEM_EVENT } from '../RootLayout';
 import { IconButton } from '../ui';
@@ -281,48 +282,17 @@ export function ChatView() {
     if (!requestedConversationId || !requestedMessageId) return;
     if (activeConversationId !== requestedConversationId) return;
 
-    let attempts = 0;
-    const maxAttempts = 16;
-    const selector = `message-${requestedMessageId}`;
-    let retryTimeoutId: number | undefined;
-    let highlightTimeoutId: number | undefined;
-    let highlightedTarget: HTMLElement | null = null;
-
-    const clearRequestedLocation = () => {
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('conversationId');
-      nextParams.delete('messageId');
-      setSearchParams(nextParams, { replace: true });
-    };
-
-    const tryScroll = () => {
-      const target = document.getElementById(selector);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        target.classList.add('chat-message-highlighted');
-        highlightedTarget = target;
-        highlightTimeoutId = window.setTimeout(() => {
-          target.classList.remove('chat-message-highlighted');
-          clearRequestedLocation();
-        }, 1500);
-        return;
-      }
-
-      attempts += 1;
-      if (attempts < maxAttempts) {
-        retryTimeoutId = window.setTimeout(tryScroll, 120);
-      } else {
-        clearRequestedLocation();
-      }
-    };
-
-    retryTimeoutId = window.setTimeout(tryScroll, 80);
-
-    return () => {
-      if (retryTimeoutId !== undefined) window.clearTimeout(retryTimeoutId);
-      if (highlightTimeoutId !== undefined) window.clearTimeout(highlightTimeoutId);
-      highlightedTarget?.classList.remove('chat-message-highlighted');
-    };
+    // The deep link is consumed either way: left in the URL, a back-navigation
+    // or a re-render would jump the reader away from wherever they have since
+    // scrolled to.
+    return scrollToMessage(requestedMessageId, {
+      onSettled: () => {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('conversationId');
+        nextParams.delete('messageId');
+        setSearchParams(nextParams, { replace: true });
+      },
+    });
   }, [activeConversationId, searchParams, setSearchParams]);
 
   return (

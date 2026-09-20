@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 
-import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowUpRight,
@@ -16,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import VaultAPI from '@/lib/api';
 import { useConversationsStore } from '@/stores/conversationsStore';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 import { InsightMessage } from './InsightMessage';
 import {
@@ -79,12 +79,8 @@ export function EntryFromConversation({
   const openSource = async (source: JournalMessageSource | JournalSourceSummary) => {
     const sourceUrl = getSourceOpenUrl(source);
     if (sourceUrl) {
-      try {
-        await openExternal(sourceUrl);
-      } catch {
-        const opened = window.open(sourceUrl, '_blank', 'noopener,noreferrer');
-        if (!opened) onNotify('error', 'Unable to open source URL in browser.');
-      }
+      const opened = await openExternalUrl(sourceUrl);
+      if (!opened) onNotify('error', 'Unable to open source URL in browser.');
       return;
     }
     const rawPath = source.filePath.trim();

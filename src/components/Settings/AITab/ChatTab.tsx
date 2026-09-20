@@ -14,12 +14,13 @@ import {
   GHOST_BUTTON_CLASS,
   INPUT_CLASS,
   SECONDARY_BUTTON_CLASS,
+  SWITCH_CLASS,
 } from "./shared";
 import { useLlmSettings } from "./useLlmSettings";
 import { useDownloadedModels } from "../../../hooks/useDownloadedModels";
 import { VaultAPI } from "../../../lib/api";
 import { toast } from "../../../stores/toastStore";
-import { PageHeader, SettingsRow, SettingsSection } from "../../ui";
+import { PageHeader, SettingsRow, SettingsSection, Switch } from "../../ui";
 
 import type { LLMSettings as ApiLLMSettings } from "../../../types/api/settings";
 
@@ -78,6 +79,28 @@ export function ChatTab() {
 
   const provider = llmSettings?.provider ?? "auto";
   const showOllamaSettings = provider === "ollama" || provider === "auto";
+
+  // Staged rollout switch. Default false, so a missing field reads as off
+  // rather than promising memory the backend is not running.
+  const boundedMemoryEnabled = llmSettings?.boundedConversationMemory ?? false;
+
+  const handleBoundedMemoryToggle = async (enabled: boolean) => {
+    if (!llmSettings) return;
+    if (boundedMemoryEnabled === enabled) return;
+    const ok = await saveLlmUpdates({ boundedConversationMemory: enabled });
+    if (ok) {
+      toast.success(
+        enabled
+          ? "Conversation memory on"
+          : "Conversation memory off",
+        {
+          message: enabled
+            ? "New messages will be scanned for requirements, each kept with its source quotation."
+            : "Nothing new will be recorded, and nothing recorded is added to prompts.",
+        },
+      );
+    }
+  };
 
   const trimmedHeaderName = ollamaHeaderNameDraft.trim();
   const trimmedHeaderValue = ollamaHeaderValueDraft.trim();
@@ -444,6 +467,20 @@ export function ChatTab() {
           ) : null}
         </SettingsSection>
       ) : null}
+
+      <SettingsSection title="Memory">
+        <SettingsRow
+          label="Remember requirements in a conversation"
+          hint="Records constraints, decisions and goals with the quotation they came from, and adds the required ones to each prompt. Source-backed and bounded — not total recall, and off unless you turn it on."
+        >
+          <Switch
+            className={SWITCH_CLASS}
+            checked={boundedMemoryEnabled}
+            onCheckedChange={(checked) => void handleBoundedMemoryToggle(checked)}
+            aria-label="Remember requirements in a conversation"
+          />
+        </SettingsRow>
+      </SettingsSection>
 
       <SettingsSection title="Active models">
         <SettingsRow label="Chat">

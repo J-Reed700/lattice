@@ -58,6 +58,7 @@ export type {
   ToolPreferences,
   CompactionRecord,
   SpaceDocument,
+  WebPage,
 } from './conversation';
 
 export * from './api';

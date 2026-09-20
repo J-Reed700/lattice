@@ -33,7 +33,6 @@ import {
   getLocalDayKey,
   getTimeBucket,
   normalizeHexColor,
-  scrollToMessage,
   SpaceKind,
   TIME_BUCKET_LABELS,
   TIME_BUCKET_ORDER,
@@ -41,6 +40,7 @@ import {
 } from './sidebarUtils';
 import { useForkLineage } from './useForkLineage';
 import { useJournalsQuery } from './workspaceQueries';
+import { scrollToMessage } from '../../../utils/chatMessageNavigation';
 
 import type { ConversationExportActions } from './useConversationExport';
 import type { useConversationSynthesis } from './useConversationSynthesis';

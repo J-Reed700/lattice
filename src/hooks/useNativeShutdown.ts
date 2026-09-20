@@ -36,6 +36,10 @@ export function useNativeShutdown() {
       if (disposed || activeRequest.current !== null) return;
       const attempt = { requestId };
       activeRequest.current = attempt;
+      // Page titles and other draft fields commit on blur. Commit them before
+      // the save snapshot, rather than relying on the later inert render to
+      // remove focus after we've already acknowledged the quit request.
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       setIsQuitting(true);
       setCanCancelQuit(true);
       setError(null);

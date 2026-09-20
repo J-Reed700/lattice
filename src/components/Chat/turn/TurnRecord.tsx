@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
 import type {
   MessageVerificationSummary,
@@ -7,7 +7,14 @@ import type {
   TurnStep,
 } from '@/types/conversation';
 
+import { hasWebResearch } from './research';
+import { ResearchDeck } from './ResearchDeck';
+import { roundCount, roundOf } from './rounds';
+import { formatDuration } from './StepRow';
+
 import './turn-record.css';
+
+export { formatDuration };
 
 /**
  * What a turn did, above the answer it produced.
@@ -17,6 +24,12 @@ import './turn-record.css';
  * runs it is the same list, live: steps tick off as they finish and the running
  * one carries a clock, so a round that produces no text for minutes is visibly
  * working rather than indistinguishable from a hang.
+ *
+ * A model with tools can go back for more after reading what retrieval found.
+ * Each trip is a named round, and a round that starts after the record has
+ * folded still shows on the one line, so the second and third look are as
+ * visible as the first. A trip to the web is more than a row: it opens as a
+ * card naming what was searched and every page that came back (`ResearchDeck`).
  *
  * It replaces `RetrievalTrace` and `ActivityNote` and keeps their honesty
  * rules. Chiefly: a turn that did not search did not search *zero* documents,
@@ -33,6 +46,11 @@ interface TurnRecordProps {
   /** Only while the turn is in flight. */
   liveSteps: TurnStep[] | null;
   isPending: boolean;
+  /**
+   * The answer has text on screen. A generation step alone does not mean that:
+   * a tool round generates for minutes and writes nothing.
+   */
+  isWriting: boolean;
   /** For "4 of 5 claims backed". */
   verification: MessageVerificationSummary | null;
 }
@@ -42,14 +60,21 @@ export function TurnRecord({
   record,
   liveSteps,
   isPending,
+  isWriting,
   verification,
 }: TurnRecordProps) {
   const steps = (isPending ? liveSteps : record?.steps) ?? record?.steps ?? [];
-  const runningStep = steps.find(step => step.state === 'running') ?? null;
+  // Pages are read side by side, so several steps run at once; the newest is
+  // the one that says where the turn has got to.
+  const runningStep = isPending
+    ? ([...steps].reverse().find(step => step.state === 'running') ?? null)
+    : null;
 
-  // The turn opens itself and then gets out of the way: once the model starts
-  // writing, the answer is the progress indicator and the timeline folds. A
-  // reader who opened it by hand keeps it open.
+  // The turn opens itself and then gets out of the way: once the answer has
+  // text, the answer is the progress indicator and the timeline folds. Until
+  // then it stays open through every round — folding at the first generation
+  // step hid exactly the rounds worth watching, since a tool round generates
+  // without writing. A reader who opened it by hand keeps it open.
   const [manuallyOpen, setManuallyOpen] = useState<boolean | null>(null);
   const hasStartedWriting = useRef(false);
   const wasPending = useRef(isPending);
@@ -58,12 +83,11 @@ export function TurnRecord({
     hasStartedWriting.current = false;
   }
   if (!isPending) wasPending.current = false;
-  if (isPending && steps.some(step => step.kind === 'generate')) {
-    hasStartedWriting.current = true;
-  }
+  if (isPending && isWriting) hasStartedWriting.current = true;
   const open = manuallyOpen ?? (isPending && !hasStartedWriting.current);
 
-  const summary = summaryLine({ trace, record, verification });
+  const summary = summaryLine({ trace, record, verification, rounds: roundCount(steps) });
+  const runningRound = runningStep ? roundOf(steps, runningStep.id) : null;
   // Nothing to say and nothing happening: draw nothing at all.
   if (!summary && steps.length === 0) return null;
 
@@ -77,17 +101,25 @@ export function TurnRecord({
       >
         <Chevron open={open} />
         <span className="turn-record-line">
-          {summary ?? (runningStep ? runningStep.label : 'Working')}
+          {runningStep ? (
+            // Folded or not, a running turn says what it is doing right now.
+            <>
+              <span className="turn-record-live">
+                {runningRound !== null && runningRound > 1 && `Round ${runningRound} · `}
+                {runningStep.label}
+              </span>
+              {summary && <span> · {summary}</span>}
+            </>
+          ) : (
+            (summary ?? 'Working')
+          )}
         </span>
       </button>
       {open && (
-        <div className="turn-record-body">
+        // Cards float; a sunken box around them would pin them back down.
+        <div className="turn-record-body" data-deck={hasWebResearch(steps)}>
           <TurnNote trace={trace} />
-          <ol className="turn-record-steps">
-            {steps.map(step => (
-              <StepRow key={step.id} step={step} />
-            ))}
-          </ol>
+          <ResearchDeck steps={steps} live={isPending} />
           {record?.router?.rationale && (
             <p className="turn-record-rationale">
               Routed as {routerActionLabel(record.router.action)} —{' '}
@@ -115,31 +147,6 @@ function Chevron({ open }: { open: boolean }) {
     >
       <path d="M6 3.5 10.5 8 6 12.5" />
     </svg>
-  );
-}
-
-function StepRow({ step }: { step: TurnStep }) {
-  const elapsed = useElapsedSeconds(step.state === 'running' ? step.id : null);
-  return (
-    <li className="turn-record-step" data-state={step.state} data-kind={step.kind}>
-      <span className="turn-record-dot" aria-hidden="true" />
-      <span className="turn-record-label">
-        {step.label}
-        {step.detail && <span className="turn-record-detail"> · {step.detail}</span>}
-        {step.result && <span className="turn-record-result"> · {step.result}</span>}
-      </span>
-      <span className="turn-record-time">
-        {step.state === 'running'
-          ? // A clock, not a spinner: a label alone cannot tell "started a
-            // second ago" from "stuck here for six minutes".
-            elapsed >= 1
-            ? formatDuration(elapsed * 1000)
-            : ''
-          : typeof step.durationMs === 'number'
-            ? formatDuration(step.durationMs)
-            : ''}
-      </span>
-    </li>
   );
 }
 
@@ -184,24 +191,6 @@ function TurnNote({ trace }: { trace: RetrievalTrace | null }) {
   );
 }
 
-/** Track seconds since a step started running, restarting on each new step. */
-function useElapsedSeconds(runningStepId: string | null): number {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!runningStepId) {
-      setSeconds(0);
-      return;
-    }
-    const startedAt = Date.now();
-    setSeconds(0);
-    const timer = setInterval(() => {
-      setSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [runningStepId]);
-  return seconds;
-}
-
 /**
  * The one line at rest.
  *
@@ -212,14 +201,19 @@ function summaryLine({
   trace,
   record,
   verification,
+  rounds,
 }: {
   trace: RetrievalTrace | null;
   record: TurnRecordData | null;
   verification: MessageVerificationSummary | null;
+  rounds: number;
 }): string | null {
   const parts: string[] = [];
   const retrieval = retrievalSummary(trace);
   if (retrieval) parts.push(retrieval);
+  // Only worth a clause when the model went back: every turn that retrieves
+  // has one round, and saying so would be noise.
+  if (rounds >= 2) parts.push(`${rounds} rounds`);
   if (typeof trace?.focusedDocuments === 'number') {
     parts.push(
       trace.focusedDocuments === 0
@@ -327,18 +321,4 @@ function readableReason(code: string): string {
     default:
       return code.replace(/_/g, ' ');
   }
-}
-
-/**
- * Milliseconds as a duration a reader can compare at a glance.
- *
- * Exported because the same turn appears in more than one place and the two
- * must not disagree about how long it took.
- */
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const whole = Math.round(seconds);
-  return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, '0')}s`;
 }

@@ -25,7 +25,7 @@
     --text-primary: 30 12% 10%;
     --text-secondary: 30 8% 26%;
     --text-tertiary: 30 6% 40%;
-    --text-muted: 30 5% 45%;
+    --text-muted: 30 5% 41%;
     --text-disabled: 30 6% 68%;
 
     /* Accent — light mode (§2.4) */
@@ -132,7 +132,7 @@
     --text-primary: 36 18% 91%;
     --text-secondary: 35 9% 74%;
     --text-tertiary: 32 6% 58%;
-    --text-muted: 32 5% 54%;
+    --text-muted: 32 5% 57%;
     --text-disabled: 30 5% 34%;
 
     /* Accent — dark mode (§1.4) */
@@ -154,7 +154,7 @@
     --warning: 32 85% 55%;
     --danger-muted: 0 42% 18%;
     --danger-fg: 0 78% 74%;
-    --danger: 0 68% 56%;
+    --danger: 0 68% 65%;
 
     /* Utility — dark mode */
     --ring: 22 58% 72%;
@@ -495,7 +495,6 @@
   box-shadow: var(--shadow-sheet);
 }
 .dark .journal-paper::before { border-color: #c69c7610; }
-.dark .dark 
 @media (max-width: 1500px) {
   .journal-desk { padding: 20px 20px 0; }
   .journal-paper { padding-left: 40px; padding-right: 36px; }
@@ -606,6 +605,22 @@
   gap: 16px;
   padding-top: 8px;
 }
+/* A passage of a web article whose wording an answer's cited sentence matches.
+   The same accent pair the citation chip is lit with, at reading strength: the
+   marks are the page's own text, and a louder colour would read as the app
+   shouting over the article. */
+.source-reader-passage {
+  color: inherit;
+  background: hsl(var(--accent) / 0.13);
+  border-radius: 2px;
+  box-shadow: inset 2px 0 0 hsl(var(--accent) / 0.5);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.source-reader-passage.is-lit {
+  background: hsl(var(--accent) / 0.26);
+  box-shadow: inset 2px 0 0 hsl(var(--accent));
+}
+
 @keyframes reader-arrive { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes reader-leave { to { opacity: 0; transform: translateX(24px); } }
 @media (max-width: 760px) {

@@ -1067,6 +1067,14 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
     else return { status: "error", error: e  as any };
 }
 },
+async compactConversation(request: CompactConversationRequestDto) : Promise<Result<CompactConversationResponseDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compact_conversation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Compact a conversation's oldest messages into an LLM summary.
  *
@@ -1075,9 +1083,9 @@ async forkConversation(request: ForkConversationRequestDto) : Promise<Result<For
  * a single context note. The original messages stay in the history for
  * display; only the LLM context switches to the summary.
  */
-async compactConversation(request: CompactConversationRequestDto) : Promise<Result<CompactConversationResponseDto, ApiError>> {
+async getConversationMemory(request: GetConversationMemoryRequestDto) : Promise<Result<ConversationMemoryDetailsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("compact_conversation", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_conversation_memory", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2972,6 +2980,14 @@ async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_web_page", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("rescan_vault") };
@@ -3816,7 +3832,41 @@ export type CompactConversationResponseDto = {
 /**
  * The compaction that was applied
  */
-compaction: CompactionRecordDto }
+compaction: CompactionRecordDto;
+/**
+ * Memory accounting for this pass.
+ *
+ * Not optional: every compaction goes through the one job, which always
+ * commits a ledger alongside the summary. It was an `Option` while a
+ * summary-only path still existed; that path is gone, and leaving the
+ * `Option` would invite a caller to handle a case that cannot occur.
+ */
+memory: CompactionMemoryDto }
+/**
+ * Memory accounting attached to a compaction response (§13).
+ *
+ * `summaryTokens` on the compaction record keeps meaning the summary alone.
+ * These are reported beside it rather than folded into it, because presenting
+ * a summary-only compression ratio as total prompt savings overstates what
+ * compaction achieved.
+ */
+export type CompactionMemoryDto = { memoryRevision: number; activeMandatoryCount: number; activeOptionalCount: number;
+/**
+ * `ready`, `rebuild_required`, `unsupported_schema` or `degraded`.
+ */
+mode: string;
+/**
+ * Tokens the active memory block costs, separate from the summary.
+ */
+memoryTokens: number;
+/**
+ * Source messages this pass actually submitted for extraction.
+ */
+processedMessageCount: number;
+/**
+ * True when a work cap stopped the pass short and more source remains.
+ */
+moreSourceRemains: boolean }
 /**
  * A compaction record as returned to the client.
  */
@@ -4036,6 +4086,68 @@ forkedFromMessageId: string | null }
 export type ConversationFlowTimingMetrics = { validateRequestMs: number; loadLlmMs: number; conversationInitMs: number; settingsLoadMs: number; contextBuildMs: number; routerMs: number; retrievalPipelineMs: number; retrievalSubtimings: RetrievalSubTimingMetrics | null; promptBuildMs: number; persistUserMessageMs: number; toolPrepMs: number; generationMs: number; generationSubtimings: ToolLoopTimingMetrics | null; verificationMs: number; finalizePersistenceMs: number; totalMs: number }
 export type ConversationJournalDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
 export type ConversationLinkedDocumentDto = { documentId: string; fileName: string; filePath: string; fileType: string; category: string; indexedAt: string; lastReferencedAt: string; referenceCount: number }
+/**
+ * What the memory layer can currently promise for a conversation.
+ */
+export type ConversationMemoryDetailsDto = { conversationId: string;
+/**
+ * `ready`, `rebuild_required`, or `unsupported_schema`.
+ *
+ * Three states rather than a boolean because they call for different UI:
+ * rebuilding is temporary and self-healing, an unsupported layout needs the
+ * app updated, and neither should be described as working memory.
+ */
+mode: string; schemaVersion: number; memoryRevision: number; transcriptRevision: number;
+/**
+ * Everything at or below this sequence has been submitted for extraction.
+ * Coverage of *processing*, not a claim that every fact was noticed.
+ */
+processedThroughSequence: number; activeMandatoryCount: number; activeOptionalCount: number;
+/**
+ * Active items whose interpretation is unsettled, plus any whose evidence
+ * no longer resolves. These are the ones worth a user's attention.
+ */
+conflictCount: number;
+/**
+ * The working summary. Generated and fallible; the UI labels it so.
+ */
+summary: string | null; items: ConversationMemoryItemDto[];
+/**
+ * Superseded and resolved items, when `includeHistory` asked for them.
+ */
+history: ConversationMemoryItemDto[]; lastErrorCode: string | null; extractorModelIdentity: string | null;
+/**
+ * False while the staged-rollout switch is off. The UI must not advertise
+ * reliable memory when this is false (§18).
+ */
+featureEnabled: boolean }
+/**
+ * One memory record.
+ */
+export type ConversationMemoryItemDto = { id: string;
+/**
+ * `constraint`, `goal`, `decision`, `user_fact`, `preference`,
+ * `open_question` or `unresolved_change`.
+ */
+kind: string;
+/**
+ * `active`, `superseded` or `resolved`.
+ */
+state: string;
+/**
+ * `supported` or `ambiguous`.
+ */
+review: string;
+/**
+ * Generated text for scanning the list. **Not** evidence: the UI must make
+ * it visually distinct from the quotations, or a generated sentence reads
+ * as something the user wrote.
+ */
+label: string;
+/**
+ * True when this item is loaded into every prompt while active.
+ */
+isMandatory: boolean; createdAtSequence: number; changedAtSequence: number; supersededBy: string | null; relatedItemIds: string[]; evidence: MemoryEvidenceDto[] }
 export type ConversationMessageBookmarkDto = { id: string; conversationId: string; conversationTitle: string; spaceId: string; messageId: string; messageRole: string; messagePreview: string; title: string | null; note: string | null; createdAt: string }
 export type ConversationSnapshotDto = { id: string; conversationId: string; conversationTitle: string; capturedAt: string; messageCount: number; messages: SnapshotMessageDto[] }
 export type ConversationSpaceDto = { id: string; name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; defaultModelName: string | null; toolPreferencesJson: string | null; isArchived: boolean; sortOrder: number; createdAt: string; updatedAt: string }
@@ -4713,6 +4825,15 @@ export type GetBatchJobStatusRequestDto = {
  */
 jobId: string }
 /**
+ * Request the memory details for one conversation.
+ */
+export type GetConversationMemoryRequestDto = { conversationId: string;
+/**
+ * Include superseded and resolved items, for "what was my original
+ * budget?". Defaults to false.
+ */
+includeHistory?: boolean | null }
+/**
  * Request to get conversation messages.
  */
 export type GetConversationMessagesRequestDto = {
@@ -5013,7 +5134,22 @@ externalModelDirectories: string[];
 /**
  * User-defined tool integrations exposed to LLM tool calling.
  */
-customTools: CustomToolSettingsDto[] }
+customTools: CustomToolSettingsDto[];
+/**
+ * Staged rollout switch for bounded, source-backed conversation memory.
+ *
+ * Off by default. The deterministic guarantees — quote provenance,
+ * ownership, atomicity, budget enforcement — hold whenever this runs, but
+ * whether the model reliably *finds* every constraint is a measured
+ * question, and the evaluation gate in the design document has to be met
+ * for a model configuration before it becomes the default for that
+ * configuration. This is a release default, not an allowlist: a user may
+ * turn it on with any model, and the UI must not describe memory as
+ * reliable while it is off or rebuilding.
+ *
+ * Design: `docs/design/2026-09-19-conversation-memory.md` §18.
+ */
+boundedConversationMemory: boolean }
 /**
  * Verification settings for response grounding checks.
  */
@@ -5080,6 +5216,26 @@ export type ListWorkspaceNotesRequestDto = {
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+/**
+ * One quoted passage behind a memory item.
+ */
+export type MemoryEvidenceDto = { messageId: string; sequence: number;
+/**
+ * `user`, `assistant` or `system`.
+ */
+role: string;
+/**
+ * `assertion`, `antecedent` or `transition`.
+ */
+purpose: string; startByte: number; endByte: number;
+/**
+ * The exact source text, resolved from the original message.
+ *
+ * `null` when the message was edited or deleted. The UI must render that
+ * absence rather than a cached quotation — a deleted passage does not come
+ * back through a details view.
+ */
+text: string | null }
 export type MentionDto = { id: string; name: string; mentionType: string; metadata: string | null; createdAt: string }
 export type MentionWithContextDto = { id: string; name: string; mentionType: string; documentId: string; context: string; position: number; createdAt: string }
 /**
@@ -6562,12 +6718,34 @@ startedAtMs: number; durationMs?: number | null;
  * What the step produced, in the register of the label: "8 passages from
  * 3 files", "not enough support: low term coverage".
  */
-result?: string | null }
+result?: string | null;
+/**
+ * For a search, what it found; for a page read, the page. Known at the
+ * start of a read and only at the end of a search, so either event may
+ * carry it. Always on the wire, empty or not, so the generated binding's
+ * `links: TurnStepLinkDto[]` is true of every step.
+ */
+links: TurnStepLinkDto[] }
 /**
  * What kind of work a step was. Stable codes, not prose — the label is what a
  * person reads, this is what the UI groups and tests match on.
  */
-export type TurnStepKind = "route" | "plan" | "search_documents" | "sufficiency" | "corrective_search" | "web_search" | "read_page" | "wiki" | "open_document" | "tool" | "generate" | "verify" | "retry"
+export type TurnStepKind =
+/**
+ * The turn was asked to research rather than answer. Not work in itself:
+ * it is on the record so that what follows — several searches, several
+ * rounds, minutes of reading — is read as the request it was, live and in
+ * a week, without the UI having to remember how the composer was set.
+ */
+"deep_research" | "route" | "plan" | "search_documents" | "sufficiency" | "corrective_search" | "web_search" | "read_page" | "wiki" | "open_document" | "tool" | "generate" | "verify" | "retry"
+/**
+ * A page a step found or opened.
+ *
+ * A sentence like "10 results" says a search happened and nothing about where
+ * it led. On a research turn that runs for minutes, the addresses are the only
+ * evidence a reader has that the model is looking somewhere sensible.
+ */
+export type TurnStepLinkDto = { url: string; title?: string | null }
 export type TurnStepState = "running" | "done" | "failed"
 export type TurnTimingDto = {
 /**
@@ -6760,6 +6938,30 @@ author: string | null;
  * Estimated reading time in minutes
  */
 readingTimeMinutes: number | null }
+/**
+ * A web page as the reader shows it.
+ */
+export type WebPageDto = {
+/**
+ * The URL after redirects.
+ */
+url: string;
+/**
+ * Page title, when the page gave one.
+ */
+title: string | null;
+/**
+ * Extracted article text — the same text the model was given.
+ */
+text: string; wordCount: number;
+/**
+ * RFC 3339. When the text was actually fetched, not when it was served.
+ */
+fetchedAt: string;
+/**
+ * True when this came out of the page cache rather than off the network.
+ */
+fromCache: boolean }
 export type WikiLinkDto = { target: string; displayText: string | null; header: string | null; lineNumber: number }
 /**
  * One "word 7 was ___" answer.

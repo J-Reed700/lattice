@@ -30,6 +30,8 @@ interface FilePreviewModalProps {
   onCitationIndexChange?: (_index: number) => void;
   /** Called when a viewer resolves a real location (e.g. a PDF page). */
   onLocationResolved?: (_chunkId: string, _label: string) => void;
+  /** The message these citations belong to, where they came from one. */
+  ownerKey?: string;
 }
 
 export const FilePreviewModal: FC<FilePreviewModalProps> = ({
@@ -42,6 +44,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   citationIndex,
   onCitationIndexChange,
   onLocationResolved,
+  ownerKey,
 }) => {
   const [isFocused, setIsFocused] = useState(false);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -79,6 +82,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
             citationIndex={citationIndex}
             onCitationIndexChange={onCitationIndexChange}
             onLocationResolved={onLocationResolved}
+            ownerKey={ownerKey}
             isFocused={isFocused}
             // Only the pane has somewhere to expand into; the dialog already
             // fills the window.

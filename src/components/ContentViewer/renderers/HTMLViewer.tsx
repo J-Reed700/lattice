@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 import { open } from '@tauri-apps/plugin-shell';
 import { Loader2, AlertCircle, ExternalLink, Link2 } from 'lucide-react';
 
+import { htmlReadingDocument } from './htmlReadingDocument';
+import { useEffectiveTheme } from '../../../hooks/useApplyTheme';
 import VaultAPI from '../../../lib/api';
 
 interface HTMLViewerProps {
@@ -25,6 +27,7 @@ interface WebArchiveMetadata {
  * while allowing styles and images to render.
  */
 export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerProps) {
+  const theme = useEffectiveTheme();
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +36,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
   const [siteName, setSiteName] = useState<string | null>(null);
   const [links, setLinks] = useState<string[]>([]);
   const [showLinks, setShowLinks] = useState(false);
+  const readingDocument = useMemo(() => htmlReadingDocument(htmlContent, theme), [htmlContent, theme]);
 
   useEffect(() => {
     async function loadHTML() {
@@ -70,7 +74,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
               .replace(/"/g, '&quot;')
               .replace(/'/g, '&#39;');
             setHtmlContent(
-              `<html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; margin: 24px; color: #0f172a;"><pre style="white-space: pre-wrap; word-break: break-word;">${escaped}</pre></body></html>`
+              `<pre>${escaped}</pre>`
             );
             setFallbackNotice('Archived HTML missing. Showing markdown snapshot.');
           } else {
@@ -190,9 +194,9 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
           {fallbackNotice}
         </div>
       )}
-      <div className="flex-1 min-h-0 rounded-xl border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))] shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]">
+      <div className="flex-1 min-h-0 rounded-xl border border-border-subtle bg-surface shadow-sheet">
         <iframe
-          srcDoc={htmlContent}
+          srcDoc={readingDocument}
           className="h-full w-full border-0"
           sandbox="allow-same-origin"
           title={title || 'Web Article'}
