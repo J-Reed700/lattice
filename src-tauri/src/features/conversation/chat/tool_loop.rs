@@ -28,6 +28,7 @@ use super::retrieval::{
     merge_tool_sources, record_tool_document_references,
 };
 use super::turn_record::{TurnRecorder, TurnStepKind};
+use super::web_steps;
 use super::ChatStreamEventDto;
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
@@ -150,6 +151,12 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     pages_already_read: FetchMemory,
     focus: &FocusScope,
     recorder: &TurnRecorder,
+    // A bounded typed plan from the shared context assembler, when bounded
+    // conversation memory is on for this turn. When present it *replaces* the
+    // string-context input: the point of the typed path is that memory is never
+    // promoted into system instructions by string parsing, and raw user bytes
+    // are never trimmed on the way in.
+    memory_plan: Option<&crate::application::services::context_assembler::ContextPlan>,
 ) -> Result<ToolLoopOutcome> {
     use crate::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use crate::application::ports::StreamChunk;
@@ -194,12 +201,20 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     let mut tool_context = context.to_vec();
     let mut current_prompt = base_prompt.clone();
     let mut native_request = CompletionRequest {
-        input: crate::application::services::completion_input::from_context(
-            &prompt_settings.system_prompt,
-            context,
-            &base_prompt,
-        ),
+        input: match memory_plan {
+            Some(plan) => plan.messages.clone(),
+            None => crate::application::services::completion_input::from_context(
+                &prompt_settings.system_prompt,
+                context,
+                &base_prompt,
+            ),
+        },
         tools: tools_ref.unwrap_or(&[]).to_vec(),
+        // Reserving output room and then not enforcing it is only bookkeeping:
+        // the model could generate past what the budget set aside and overrun
+        // the window the prompt was measured against.
+        max_output_tokens: memory_plan
+            .map(|plan| u32::try_from(plan.max_output_tokens).unwrap_or(u32::MAX)),
         ..Default::default()
     };
     let cancellation_error = || AppError::InvalidState("Generation cancelled by user.".to_string());
@@ -209,6 +224,16 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
     // opened the top results already. Starting from its record is what stops
     // round one being spent asking for pages the prompt already carries.
     let mut fetch_memory = pages_already_read;
+    // Reading this conversation's own transcript is not a vault read, so it does
+    // not go through the space/focus scope path. The conversation id comes from
+    // the turn, and `HistoryToolScope` has no setter, so no tool argument can
+    // point it at another thread.
+    let history_port = crate::features::conversation::repository::ConversationRepository::new(
+        container.db_pool().clone(),
+    );
+    // One memo for the whole turn: a repeated read of a range already exhausted
+    // answers with a reference instead of paying for the same text twice.
+    let mut history_memo = super::history_tools::HistoryToolMemo::default();
     for iteration in 0..MAX_TOOL_ITERATIONS {
         timings.iterations = (iteration + 1) as u32;
         if is_cancel_requested(request_id) {
@@ -574,10 +599,12 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                     continue;
                                 }
                             }
-                            let tool_step = recorder.begin_guarded(
+                            let tool_step = recorder.begin_guarded_with_links(
                                 tool_step_kind(resolved_tool),
                                 tool_activity_label(resolved_tool, &tc.arguments),
-                                Some(tool_argument_summary(&tc.arguments)),
+                                web_steps::tool_detail(resolved_tool, &tc.arguments)
+                                    .or_else(|| Some(tool_argument_summary(&tc.arguments))),
+                                web_steps::links_for_call(resolved_tool, &tc.arguments),
                             );
                             info!(
                                 requested_function = tc.name.as_str(),
@@ -590,12 +617,37 @@ pub(super) async fn run_agentic_tool_loop<R: tauri::Runtime>(
                                 resolved_tool,
                                 tc.arguments.clone(),
                             );
-                            match scoped_document_tools::execute(container, conv_id, focus, call)
+                            let executed = if super::history_tools::is_history_tool(resolved_tool) {
+                                let scope = super::history_tools::HistoryToolScope::new(
+                                    conv_id,
+                                    super::history_tools::HistoryToolBudget {
+                                        // A char allowance used as a byte ceiling
+                                        // is conservative in the safe direction.
+                                        max_response_bytes: result_allowance,
+                                        deadline: Some(deadline),
+                                    },
+                                );
+                                super::history_tools::execute(
+                                    &history_port,
+                                    &scope,
+                                    &mut history_memo,
+                                    call,
+                                )
                                 .await
-                            {
+                            } else {
+                                scoped_document_tools::execute(container, conv_id, focus, call)
+                                    .await
+                            };
+                            match executed {
                                 Ok(result) => {
                                     if result.success {
-                                        tool_step.done(None);
+                                        web_steps::finish_tool_step(
+                                            tool_step,
+                                            recorder,
+                                            resolved_tool,
+                                            &tc.arguments,
+                                            result.data.as_ref(),
+                                        );
                                     } else {
                                         tool_step.failed(result.error_message.clone());
                                     }
@@ -1155,6 +1207,9 @@ fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
         "semantic_search" => "Searching your documents".to_string(),
         "list_documents" => "Looking through your documents".to_string(),
         "get_document" => "Opening a document".to_string(),
+        "search_conversation_history" | "read_conversation_history" => {
+            "Looking back through this conversation".to_string()
+        }
         other => format!("Running {other}"),
     }
 }

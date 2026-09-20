@@ -277,26 +277,4 @@ pub trait ConversationServiceTrait: Send + Sync {
     /// - `AppError::NotFound` if message doesn't exist
     /// - `AppError::Database` if update fails
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()>;
-
-    /// Compact the conversation's oldest messages into an LLM summary.
-    ///
-    /// # Arguments
-    /// * `conversation_id` - Conversation ID
-    /// * `summary_text` - LLM-produced summary of the compacted messages
-    /// * `up_to_message_id` - id of the last message folded into the summary
-    /// * `summary_tokens` - token count of the summary
-    ///
-    /// # Returns
-    /// The created compaction record
-    ///
-    /// # Errors
-    /// - `AppError::NotFound` if the conversation or boundary message is missing
-    /// - `AppError::InvalidInput` if the summary is empty or carries no tokens
-    async fn compact_conversation(
-        &self,
-        conversation_id: &str,
-        summary_text: String,
-        up_to_message_id: &str,
-        summary_tokens: i64,
-    ) -> Result<crate::domain::conversation::CompactionRecord>;
 }

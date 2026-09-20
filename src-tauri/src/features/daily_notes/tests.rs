@@ -185,7 +185,10 @@ async fn find_by_title_matches_exactly_and_lists_newest_first() {
         .await
         .unwrap();
 
-    let found = repository.find_by_title("Week of Sep 1", None).await.unwrap();
+    let found = repository
+        .find_by_title("Week of Sep 1", None)
+        .await
+        .unwrap();
     assert_eq!(found.unwrap().id, "b");
 
     assert!(repository
@@ -345,7 +348,12 @@ async fn todays_page_is_looked_up_inside_one_journal() {
         "theirs"
     );
     assert_eq!(
-        repository.find_by_title(title, None).await.unwrap().unwrap().id,
+        repository
+            .find_by_title(title, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
         "unowned"
     );
 }

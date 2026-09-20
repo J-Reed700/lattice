@@ -142,3 +142,45 @@ fn test_crash_writer_directory_creation() {
 
     assert!(crashes_dir.exists(), "Directory should be created");
 }
+
+#[test]
+#[allow(clippy::panic)]
+fn moving_the_crash_directory_after_the_hook_is_installed_takes_effect() {
+    const CHILD_DIR: &str = "LATTICE_CRASH_HOOK_TEST_DIR";
+    const MESSAGE: &str = "deliberate crash-hook regression test";
+    if let Some(dir) = std::env::var_os(CHILD_DIR) {
+        super::install_panic_hook();
+        super::set_crashes_directory(std::path::PathBuf::from(dir));
+        panic!("{MESSAGE}");
+    }
+
+    // A subprocess exercises the real global hook without changing the hook
+    // or crash directory used by other tests running in parallel.
+    let dir = tempfile::tempdir().unwrap();
+    let app_data = dir.path().join("app-data");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("infrastructure::crash::tests::moving_the_crash_directory_after_the_hook_is_installed_takes_effect")
+        .arg("--nocapture")
+        .env(CHILD_DIR, &app_data)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "the child must actually panic");
+    let reports: Vec<_> = fs::read_dir(app_data.join("crashes"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(
+        reports.len(),
+        1,
+        "one completed report, with no temporary file"
+    );
+    let report: CrashReport = serde_json::from_slice(&fs::read(&reports[0]).unwrap()).unwrap();
+    assert_eq!(report.panic_info.message, MESSAGE);
+    assert!(report.panic_info.location.is_some());
+    assert!(
+        !dir.path().join("crashes").exists(),
+        "the early directory was not used"
+    );
+}

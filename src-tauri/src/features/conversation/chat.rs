@@ -30,6 +30,7 @@
 
 use crate::application::services::conversation_context::build_conversation_context;
 use crate::domain::qa::hyde::QueryType;
+use crate::features::conversation::compaction;
 use crate::features::conversation::dto::CreateConversationRequestDto;
 use crate::features::qa::dto::SourceDto;
 use crate::features::settings::dto::{
@@ -49,6 +50,10 @@ use tracing::{info, warn};
 mod cancellation;
 mod fetch_memory;
 mod focus;
+// Public so the no-tools retrieval path and the turn's tool-selection wiring can
+// reach it without this module re-exporting its whole surface.
+pub mod history_tools;
+pub mod memory_context;
 mod persistence;
 mod prompting;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
@@ -57,6 +62,7 @@ pub mod retrieval;
 mod tool_loop;
 pub mod turn_record;
 mod verification;
+mod web_steps;
 
 use self::cancellation::{begin_turn, finish_turn, is_cancel_requested};
 use self::focus::FocusScope;
@@ -72,11 +78,11 @@ use self::retrieval::{
 };
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
+use self::turn_record::TurnRecorder;
 pub use self::turn_record::{
     TurnModelDto, TurnRecordDto, TurnRouterDto, TurnStepDto, TurnStepKind, TurnStepState,
     TurnTimingDto, TurnTokensDto,
 };
-use self::turn_record::TurnRecorder;
 use self::verification::{GroundingReport, GroundingVerifier};
 
 pub fn cancel_generation_for_conversation(conversation_id: &str, request_id: Option<&str>) -> bool {
@@ -542,6 +548,14 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     // Both emits and accumulates: everything below reports what it is doing
     // through this, and the same list is what the finished answer carries.
     let recorder = TurnRecorder::new(&window, &conv_id, &turn_id);
+    if search_flags.deep_research_mode {
+        recorder.note(
+            turn_record::TurnStepKind::DeepResearch,
+            "Deep research",
+            None,
+            Some("searches wider, follows up on what it finds, and may go back for more".into()),
+        );
+    }
     // Resolved once, against the conversation's space scope. A request may
     // narrow what the turn reads; it may never widen it.
     let focus = FocusScope::resolve(
@@ -821,62 +835,134 @@ pub async fn chat_with_conversation_impl<R: tauri::Runtime>(
     } else {
         &tool_definitions
     };
-    // Offering a closed-book turn `semantic_search` would reopen the vault one
-    // tool call later.
-    let tools_ref = (!selected_tools.is_empty() && !search_flags.closed_book)
-        .then_some(selected_tools.as_slice());
+    // A closed-book turn loses every external tool — offering it `semantic_search`
+    // would reopen the vault one tool call later — but it keeps read-only access
+    // to its own transcript. This conversation is internal task context, not an
+    // external source, so a turn that may not search the web must still be able
+    // to recover a requirement the user stated twenty turns ago.
+    //
+    // Gated on `supports_tools` because a model without tool calling must not be
+    // handed a schema it cannot use: telling it to call a tool that was never
+    // supplied is its own failure mode.
+    let turn_tools =
+        history_tools::tools_for_turn(selected_tools, search_flags.closed_book, supports_tools);
+    let tools_ref = (!turn_tools.is_empty()).then_some(turn_tools.as_slice());
     flow_metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
 
     info!(
         provider = llm.provider_name(),
         supports_tools = supports_tools,
-        tool_count = tool_definitions.len(),
+        tool_count = turn_tools.len(),
+        history_tools_offered = turn_tools
+            .iter()
+            .filter(|tool| history_tools::is_history_tool(&tool.name))
+            .count(),
         tools_enabled_for_turn = tools_ref.is_some(),
         force_tools_for_turn = force_tools_for_turn,
         has_grounded_context = has_grounded_context,
         "LLM capability check for conversation"
     );
 
+    // Enabled memory must account for unprocessed history before generation,
+    // including conversations that have no extracted ledger yet.
+    let memory_plan_start = Instant::now();
+    let repository = crate::features::conversation::repository::ConversationRepository::new(
+        container.db_pool().clone(),
+    );
+    let tool_schema_tokens: usize = tools_ref
+        .map(|tools| {
+            tools
+                .iter()
+                .map(|tool| llm.count_tokens(&tool.name) + llm.count_tokens(&tool.description))
+                .sum()
+        })
+        .unwrap_or(0);
+    let memory_turn = memory_context::prepare_memory_turn(
+        || async {
+            let turn = memory_context::build_memory_plan(
+                &repository,
+                &repository,
+                &llm,
+                &conv_id,
+                &prompt_settings.system_prompt,
+                &enhanced_message,
+                tool_schema_tokens,
+                Vec::new(),
+                settings.llm.bounded_conversation_memory,
+            )
+            .await?;
+
+            if let Some(turn) = &turn {
+                info!(
+                    conversation_id = conv_id.as_str(),
+                    memory_revision = turn.plan.memory_revision,
+                    active_mandatory = turn.plan.accounting.active_mandatory_count,
+                    conflicts = turn.plan.accounting.active_conflict_count,
+                    total_input_tokens = turn.plan.accounting.total_input,
+                    input_budget = turn.plan.accounting.input_budget,
+                    accounting = ?turn.plan.accounting.accounting_method,
+                    recall_passages = turn.plan.retrieval.passages_selected,
+                    recall_error = ?turn.plan.retrieval.index_error,
+                    compaction_required = turn.plan.compaction_required,
+                    evicted = ?turn.plan.accounting.evicted,
+                    elapsed_ms = elapsed_ms(memory_plan_start),
+                    "Assembled bounded conversation memory for this turn"
+                );
+            }
+            Ok(turn)
+        },
+        || compaction::compact_for_turn(container, conv_id.as_str()),
+    )
+    .await;
+
     let mut sources = retrieval.sources;
     let short_circuit_response = retrieval.short_circuit_response.take();
     let generation_start = Instant::now();
     let mut turn_tokens = TurnTokensDto::default();
-    let response_result: Result<String> = if let Some(response) = short_circuit_response {
-        flow_metrics.generation_subtimings = Some(ToolLoopTimingMetrics::default());
-        Ok(response)
-    } else {
-        match run_agentic_tool_loop(
-            container,
-            &conv_service,
-            &conv_id,
-            &turn_id,
-            &llm,
-            &window,
-            &context,
-            &enhanced_message,
-            &validated_message,
-            &prompt_settings,
-            &highlight_terms,
-            &tool_output_settings,
-            &mut sources,
-            &mut retrieval_trace,
-            tools_ref,
-            generation_time_budget(search_flags),
-            std::mem::take(&mut retrieval.pages_read),
-            &focus,
-            &recorder,
-        )
-        .await
-        {
-            Ok(tool_loop_outcome) => {
-                flow_metrics.generation_subtimings = Some(tool_loop_outcome.timings);
-                turn_tokens = TurnTokensDto {
-                    completion: tool_loop_outcome.output_tokens,
-                    context_used: tool_loop_outcome.input_tokens,
-                };
-                Ok(tool_loop_outcome.response)
+    // Route preparation failures through normal turn cleanup, so the saved
+    // user message becomes retryable rather than remaining pending forever.
+    let response_result: Result<String> = match memory_turn {
+        Err(error) => Err(error),
+        Ok(memory_turn) => {
+            if let Some(response) = short_circuit_response {
+                flow_metrics.generation_subtimings = Some(ToolLoopTimingMetrics::default());
+                Ok(response)
+            } else {
+                match run_agentic_tool_loop(
+                    container,
+                    &conv_service,
+                    &conv_id,
+                    &turn_id,
+                    &llm,
+                    &window,
+                    &context,
+                    &enhanced_message,
+                    &validated_message,
+                    &prompt_settings,
+                    &highlight_terms,
+                    &tool_output_settings,
+                    &mut sources,
+                    &mut retrieval_trace,
+                    tools_ref,
+                    generation_time_budget(search_flags),
+                    std::mem::take(&mut retrieval.pages_read),
+                    &focus,
+                    &recorder,
+                    memory_turn.as_ref().map(|turn| &turn.plan),
+                )
+                .await
+                {
+                    Ok(tool_loop_outcome) => {
+                        flow_metrics.generation_subtimings = Some(tool_loop_outcome.timings);
+                        turn_tokens = TurnTokensDto {
+                            completion: tool_loop_outcome.output_tokens,
+                            context_used: tool_loop_outcome.input_tokens,
+                        };
+                        Ok(tool_loop_outcome.response)
+                    }
+                    Err(e) => Err(e),
+                }
             }
-            Err(e) => Err(e),
         }
     };
     flow_metrics.generation_ms = elapsed_ms(generation_start);

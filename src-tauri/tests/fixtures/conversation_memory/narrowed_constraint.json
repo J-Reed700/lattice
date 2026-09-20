@@ -1,0 +1,129 @@
+{
+  "family": "narrowed_constraint",
+  "capability": "A restriction narrowed rather than replaced becomes one narrowed requirement, not a second independent one beside the original.",
+  "mode": "standard",
+  "decoy_quote": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "While the Falkirk audit is open: do not deploy anything, anywhere."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood. No deploys to any environment while the audit is open."
+    },
+    {
+      "role": "user",
+      "content": "What is still in the deploy queue?"
+    },
+    {
+      "role": "assistant",
+      "content": "Three builds: 4.2.1, 4.2.2 and a config-only change."
+    },
+    {
+      "role": "user",
+      "content": "Update: you may deploy, but only to staging, and only after 18:00 local. Nothing else changes."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood: staging only, after 18:00 local, while the audit stays open."
+    },
+    {
+      "role": "user",
+      "content": "Queue the config-only change for tonight."
+    },
+    {
+      "role": "assistant",
+      "content": "Queued the config-only change for after 18:00 on staging."
+    },
+    {
+      "role": "user",
+      "content": "What would you need from me to go further than that?"
+    },
+    {
+      "role": "assistant",
+      "content": "An explicit widening of the rule; as stated it covers staging after 18:00 only."
+    }
+  ],
+  "filler_turns": [
+    {
+      "role": "user",
+      "content": "Aside: what does a monotonic clock guarantee that a wall clock does not?"
+    },
+    {
+      "role": "assistant",
+      "content": "It never moves backwards, so an interval measured with it cannot be negative."
+    }
+  ],
+  "expect": {
+    "min_mandatory_items": 1,
+    "required_active_quotes": [
+      "only to staging, and only after 18:00 local"
+    ],
+    "superseded_quotes": [
+      "do not deploy anything, anywhere"
+    ],
+    "must_not_be_authoritative": [],
+    "open_question_quotes": [],
+    "expect_unresolved_conflict": false,
+    "expect_overflow": false,
+    "forbidden_tools": [
+      "deploy_production"
+    ],
+    "allowed_tools": [
+      "deploy_staging",
+      "read_note"
+    ],
+    "questions": [
+      {
+        "ask": "It is 14:00. Is deploying 4.2.2 to staging allowed yet?",
+        "must_quote": [
+          "18:00"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      },
+      {
+        "ask": "State the deploy rule that is in force and its conditions.",
+        "must_quote": [
+          "staging",
+          "18:00"
+        ],
+        "must_not_contain": [
+          "You may deploy anything, anywhere"
+        ],
+        "abstain": false
+      }
+    ],
+    "abstain_markers": [
+      "cannot",
+      "can't",
+      "no record",
+      "not stated",
+      "do not have",
+      "don't have",
+      "unable",
+      "nothing in",
+      "was not",
+      "wasn't",
+      "unclear",
+      "still waiting",
+      "has not",
+      "hasn't",
+      "not yet"
+    ],
+    "deduplicated_active_quote_groups": [
+      [
+        "do not deploy anything, anywhere",
+        "only to staging, and only after 18:00 local"
+      ]
+    ]
+  },
+  "cycles": [
+    1,
+    3
+  ],
+  "reload_after_cycles": [
+    1
+  ]
+}

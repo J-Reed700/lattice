@@ -137,13 +137,12 @@ async fn moving_a_conversation_does_not_file_its_documents_into_the_destination(
             .as_deref(),
         Some(target.id.as_str())
     );
-    let filed_in_destination: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM document_space_memberships WHERE space_id = ?",
-    )
-    .bind(&target.id)
-    .fetch_one(&repo.pool)
-    .await
-    .unwrap();
+    let filed_in_destination: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM document_space_memberships WHERE space_id = ?")
+            .bind(&target.id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
     assert_eq!(filed_in_destination, 0);
 }
 

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::application::ports::ConversationHistoryPort;
 use sqlx::SqlitePool;
 
+use crate::application::services::conversation_memory::CompactionSlots;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::service::ConversationService;
 use crate::features::conversation::use_cases::CreateConversationUseCase;
@@ -19,6 +20,18 @@ pub struct ConversationDi {
     pub conversation_context:
         Arc<dyn crate::application::ports::conversation_context::ConversationContextPort>,
     pub create_conversation_use_case: Arc<CreateConversationUseCase>,
+    /// Process-wide single-flight slots for compaction.
+    ///
+    /// Held here rather than inside a long-lived job because the job also needs
+    /// the utility model and the continuation model's token budget, and both of
+    /// those change when the user switches models. A job is built per request
+    /// around these shared slots, so a model switch cannot leave compaction
+    /// pinned to a stale budget while still guaranteeing that one conversation
+    /// never compacts twice at once.
+    pub compaction_slots: Arc<CompactionSlots>,
+    /// The memory ledger port, shared so every caller sees one snapshot read.
+    pub conversation_memory:
+        Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>,
 }
 
 pub fn build(db_pool: SqlitePool) -> ConversationDi {
@@ -30,11 +43,15 @@ pub fn build(db_pool: SqlitePool) -> ConversationDi {
         ),
     );
     let repository = Arc::new(ConversationRepository::new(db_pool));
+    let conversation_memory = repository.clone()
+        as Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort>;
     let conversation_service = Arc::new(ConversationService::new(repository));
 
     ConversationDi {
         document_scope,
         conversation_context,
+        compaction_slots: Arc::new(CompactionSlots::default()),
+        conversation_memory,
         conversation_history: conversation_service.clone(),
         create_conversation_use_case: Arc::new(CreateConversationUseCase::new(
             conversation_service.clone(),
@@ -70,6 +87,18 @@ impl Container {
         &self,
     ) -> Arc<dyn crate::application::ports::document_scope::DocumentScopePort> {
         Arc::clone(self.ai.document_scope())
+    }
+
+    /// Shared compaction slots. One per process, by construction.
+    pub fn compaction_slots(&self) -> Arc<CompactionSlots> {
+        Arc::clone(self.ai.compaction_slots())
+    }
+
+    /// The conversation-memory ledger port.
+    pub fn conversation_memory(
+        &self,
+    ) -> Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+        Arc::clone(self.ai.conversation_memory())
     }
 }
 

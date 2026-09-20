@@ -2,6 +2,7 @@
 
 use super::ConversationRepository;
 use crate::domain::conversation::{ConversationMessage, MessageRole};
+use crate::domain::conversation_memory::compute_digest;
 use crate::features::conversation::persistence_mapper::{
     ConversationMessageMapper, ConversationMessageModel,
 };
@@ -9,6 +10,47 @@ use crate::shared::domain_types::ConversationId;
 use crate::shared::error::{AppError, Result};
 use chrono::Utc;
 use std::str::FromStr;
+
+impl ConversationRepository {
+    /// Take the next durable position in a conversation, inside the caller's
+    /// transaction.
+    ///
+    /// Allocated from `conversations.next_message_sequence` rather than derived
+    /// from `created_at` or `rowid`: RFC 3339 text ties constantly at second
+    /// resolution, message ids are random UUIDs, and rowid does not survive a
+    /// vacuum. Numbers are never reused after a delete, so an evidence span can
+    /// never be silently re-pointed at a different message.
+    ///
+    /// Two statements rather than `RETURNING` so the behaviour does not depend
+    /// on the bundled SQLite version; inside one transaction they are atomic.
+    pub(super) async fn allocate_sequence(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        conversation_id: &str,
+    ) -> Result<i64> {
+        let updated = sqlx::query(
+            "UPDATE conversations SET next_message_sequence = next_message_sequence + 1 WHERE id = ?",
+        )
+        .bind(conversation_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to allocate message sequence: {}", e)))?;
+        if updated.rows_affected() != 1 {
+            return Err(AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            )));
+        }
+        let next: i64 =
+            sqlx::query_scalar("SELECT next_message_sequence FROM conversations WHERE id = ?")
+                .bind(conversation_id)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|e| {
+                    AppError::Database(format!("Failed to read message sequence: {}", e))
+                })?;
+        Ok(next - 1)
+    }
+}
 
 impl ConversationRepository {
     pub async fn complete_turn(
@@ -35,8 +77,10 @@ impl ConversationRepository {
                 "Turn is no longer pending in this conversation".into(),
             ));
         }
-        sqlx::query("INSERT INTO conversation_messages (id, conversation_id, role, content, tokens, created_at, metadata, status) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 'completed')")
+        let sequence = Self::allocate_sequence(&mut tx, conversation_id).await?;
+        sqlx::query("INSERT INTO conversation_messages (id, conversation_id, role, content, tokens, created_at, metadata, status, sequence, content_digest) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 'completed', ?, ?)")
             .bind(&id).bind(conversation_id).bind(&content).bind(tokens).bind(now.to_rfc3339()).bind(&metadata)
+            .bind(sequence).bind(compute_digest(&content))
             .execute(&mut *tx).await?;
         sqlx::query("UPDATE conversations SET message_count=message_count+1, total_tokens=total_tokens+?, updated_at=? WHERE id=?")
             .bind(tokens).bind(now.to_rfc3339()).bind(conversation_id).execute(&mut *tx).await?;
@@ -107,10 +151,12 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         let status = "completed";
+        let sequence = Self::allocate_sequence(&mut tx, conversation_id).await?;
+        let digest = compute_digest(content);
         sqlx::query!(
             r#"
-            INSERT INTO conversation_messages (id, conversation_id, role, content, tokens, created_at, metadata, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO conversation_messages (id, conversation_id, role, content, tokens, created_at, metadata, status, sequence, content_digest)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             message_id,
             conversation_id,
@@ -119,7 +165,9 @@ impl ConversationRepository {
             tokens,
             now,
             metadata,
-            status
+            status,
+            sequence,
+            digest
         )
         .execute(&mut *tx)
         .await
@@ -193,10 +241,12 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
+        let sequence = Self::allocate_sequence(&mut tx, conversation_id).await?;
+        let digest = compute_digest(content);
         sqlx::query!(
             r#"
-            INSERT INTO conversation_messages (id, conversation_id, role, content, tokens, created_at, metadata, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO conversation_messages (id, conversation_id, role, content, tokens, created_at, metadata, status, sequence, content_digest)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             message_id,
             conversation_id,
@@ -205,7 +255,9 @@ impl ConversationRepository {
             tokens,
             now,
             metadata,
-            status
+            status,
+            sequence,
+            digest
         )
         .execute(&mut *tx)
         .await
@@ -310,7 +362,7 @@ impl ConversationRepository {
                    metadata, status
             FROM conversation_messages
             WHERE conversation_id = ?
-            ORDER BY created_at ASC
+            ORDER BY sequence ASC, created_at ASC, rowid ASC
             "#,
         )
         .bind(conversation_id)

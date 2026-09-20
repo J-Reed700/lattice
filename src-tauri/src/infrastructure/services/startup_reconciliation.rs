@@ -1,7 +1,7 @@
 use crate::domain::download::{DownloadError, DownloadState};
 use crate::infrastructure::persistence::repositories::DownloadedModelRepository;
 use crate::infrastructure::persistence::DownloadRepository;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -16,7 +16,6 @@ use tracing::{error, info, warn};
 pub async fn reconcile_stale_downloads(
     repository: Arc<dyn DownloadRepository>,
     startup_ts: DateTime<Utc>,
-    grace: Duration,
 ) -> Result<usize, DownloadError> {
     info!("Starting download session reconciliation");
 
@@ -24,10 +23,14 @@ pub async fn reconcile_stale_downloads(
         .list_by_state(&DownloadState::Downloading)
         .await?;
 
-    let cutoff = startup_ts - grace;
+    // No task from a previous process survives a restart, so a session still
+    // marked Downloading that was last touched before this one started is dead
+    // however recently that was. A session this process has started is touched
+    // after `startup_ts` and is left alone. An earlier thirty-second allowance
+    // here let a quick relaunch keep its dead session as a row that never moved.
     let stale_sessions: Vec<_> = downloading_sessions
         .into_iter()
-        .filter(|session| session.is_stale_at(cutoff))
+        .filter(|session| session.is_stale_at(startup_ts))
         .collect();
     let count = stale_sessions.len();
 
@@ -88,13 +91,21 @@ pub async fn reconcile_orphaned_sessions(
         let session_id = session.id().to_string();
 
         let model_exists = match model_id {
-            Some(id) => model_repo
-                .find_by_model_id(id)
-                .await
-                .map_err(|e| {
-                    DownloadError::IoError(format!("Failed to check model existence: {}", e))
-                })?
-                .is_some(),
+            // A row that cannot be read is still a row: a model whose download
+            // has not finished has no storage path yet and fails to map. Its
+            // sessions are not orphans, and one such row must not end the pass
+            // for every other session, which is what returning the error did.
+            Some(id) => match model_repo.find_by_model_id(id).await {
+                Ok(found) => found.is_some(),
+                Err(e) => {
+                    warn!(
+                        "Could not read the model row for {} while checking session {}; \
+                         leaving the session alone: {}",
+                        id, session_id, e
+                    );
+                    true
+                }
+            },
             None => false, // No model_id means it's orphaned
         };
 
@@ -191,11 +202,18 @@ pub async fn reconcile_orphaned_files(
             }
         };
 
-        let model_exists = model_repo
-            .find_by_model_id(model_id)
-            .await
-            .map_err(|e| DownloadError::IoError(format!("Failed to check model existence: {}", e)))?
-            .is_some();
+        // An unreadable row must not end the pass, and must not read as
+        // "no such model" either: that would delete a directory still in use.
+        let model_exists = match model_repo.find_by_model_id(model_id).await {
+            Ok(model) => model.is_some(),
+            Err(e) => {
+                warn!(
+                    "Could not check model {} while looking for orphaned files; leaving {:?} alone: {}",
+                    model_id, model_dir_path, e
+                );
+                continue;
+            }
+        };
 
         if !model_exists {
             // Orphaned model directory found
@@ -255,4 +273,113 @@ fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
     }
 
     Ok(total_size)
+}
+
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+mod tests {
+    use super::*;
+    use crate::domain::download::DownloadSession;
+    use crate::features::download::download_repository::mock::MockDownloadRepository;
+
+    #[tokio::test]
+    async fn orphan_cleanup_preserves_unreadable_and_valid_models_but_removes_orphans() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for id in ["pending", "installed", "orphan"] {
+            std::fs::create_dir(dir.path().join(id)).unwrap();
+            std::fs::write(dir.path().join(id).join("weights"), b"model data").unwrap();
+        }
+        // This is the real pending-download shape that the model mapper cannot
+        // read: it has a row but no final storage path yet.
+        sqlx::query("INSERT INTO models (id, model_id, model_name, base_path, total_size_bytes, status, model_type, architecture, storage_kind, storage_path) VALUES ('pending', 'pending', 'Pending', '', 10, 'downloading', 'chat', 'llama', 'local_file', NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO models (id, model_id, model_name, base_path, total_size_bytes, status, model_type, architecture, storage_kind, storage_path) VALUES ('installed', 'installed', 'Installed', '', 10, 'completed', 'chat', 'llama', 'local_dir', ?)")
+            .bind(dir.path().join("installed").to_str().unwrap())
+            .execute(&pool).await.unwrap();
+        let repo = Arc::new(DownloadedModelRepository::new(pool));
+        assert!(repo.find_by_model_id("pending").await.is_err());
+        assert!(repo.find_by_model_id("installed").await.unwrap().is_some());
+
+        assert_eq!(reconcile_orphaned_files(repo, dir.path()).await.unwrap(), 1);
+        for id in ["pending", "installed"] {
+            assert_eq!(
+                std::fs::read(dir.path().join(id).join("weights")).unwrap(),
+                b"model data"
+            );
+        }
+        assert!(!dir.path().join("orphan").exists());
+    }
+
+    #[tokio::test]
+    async fn orphan_cleanup_never_deletes_models_when_the_database_is_unavailable() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        pool.close().await;
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model");
+        std::fs::create_dir(&model).unwrap();
+        std::fs::write(model.join("weights"), b"keep").unwrap();
+        let repo = Arc::new(DownloadedModelRepository::new(pool));
+
+        assert_eq!(reconcile_orphaned_files(repo, dir.path()).await.unwrap(), 0);
+        assert_eq!(std::fs::read(model.join("weights")).unwrap(), b"keep");
+    }
+
+    fn downloading(id: &str) -> DownloadSession {
+        let mut session = DownloadSession::new(
+            id.to_string(),
+            format!("https://example.com/{id}"),
+            std::env::temp_dir().join(id),
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        session.start().unwrap();
+        session
+    }
+
+    /// The case that shipped broken: the app is closed mid-download and opened
+    /// again within seconds. The session was touched a moment before startup,
+    /// which an earlier thirty-second allowance read as "still alive".
+    #[tokio::test]
+    async fn a_session_interrupted_moments_before_a_relaunch_is_closed_out() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        repository
+            .create(&downloading("interrupted"))
+            .await
+            .unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 1);
+        let session = repository.get("interrupted").await.unwrap().unwrap();
+        assert_eq!(session.state(), &DownloadState::Failed);
+    }
+
+    #[tokio::test]
+    async fn a_download_started_by_this_launch_is_left_running() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let startup = Utc::now() - chrono::Duration::milliseconds(5);
+        repository.create(&downloading("live")).await.unwrap();
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 0);
+        let session = repository.get("live").await.unwrap().unwrap();
+        assert_eq!(session.state(), &DownloadState::Downloading);
+    }
 }

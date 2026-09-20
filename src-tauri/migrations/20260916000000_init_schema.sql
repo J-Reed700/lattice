@@ -365,7 +365,16 @@ CREATE TABLE IF NOT EXISTS conversations (
     -- branch away with it, and a dangling id is a state the UI can render —
     -- it simply shows no lineage line.
     forked_from_conversation_id TEXT,
-    forked_from_message_id TEXT
+    forked_from_message_id TEXT,
+    -- Next value for conversation_messages.sequence. Allocated inside the same
+    -- transaction as the insert, so two concurrent appends cannot share one.
+    next_message_sequence INTEGER NOT NULL DEFAULT 1,
+    -- Bumped by trigger whenever this conversation's transcript changes in a
+    -- way that affects context eligibility. Derived memory commits compare it,
+    -- so a compaction cannot publish against a transcript that moved under it.
+    -- A transaction inserting several messages bumps it more than once: no
+    -- caller may assume an increment of exactly one.
+    transcript_revision INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS conversation_messages (
@@ -378,6 +387,18 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     metadata TEXT,
     status TEXT NOT NULL DEFAULT 'completed'
         CHECK(status IN ('pending', 'completed', 'failed', 'streaming', 'error')),
+    -- Durable position in the conversation, allocated from
+    -- conversations.next_message_sequence. Never reused after a delete.
+    -- created_at ties at second resolution and message ids are random UUIDs,
+    -- so neither is a usable order; rowid is not durable across a vacuum.
+    -- Zero means "written by a path that predates memory" (fixtures, the
+    -- conversation export scratch database) and is excluded from the unique
+    -- index below rather than colliding.
+    sequence INTEGER NOT NULL DEFAULT 0,
+    -- 'sha256:<hex>' over the exact UTF-8 content, written with the row.
+    -- Evidence spans carry the digest they were recorded against; a mismatch
+    -- means the text moved and the span must stop resolving.
+    content_digest TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
@@ -403,6 +424,9 @@ CREATE TABLE IF NOT EXISTS conversation_summaries (
     summary_tokens INTEGER NOT NULL CHECK(summary_tokens > 0),
     compression_ratio REAL NOT NULL CHECK(compression_ratio > 0.0 AND compression_ratio <= 1.0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- The memory revision this summary was generated alongside. A reader must
+    -- never pair the summary from one revision with the ledger from another.
+    memory_revision INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
     FOREIGN KEY (up_to_message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE
 );
@@ -467,6 +491,222 @@ WHEN NOT EXISTS (
 )
 BEGIN
     SELECT RAISE(ABORT, 'conversation must belong to an existing space');
+END;
+
+-- =====================================================================
+-- Bounded conversation memory
+--
+-- Design: docs/design/2026-09-19-conversation-memory.md
+--
+-- Durable, source-backed memory so a long conversation survives repeated
+-- compaction without the summary becoming the only record of what the user
+-- asked for. Quotations are NOT stored here: an evidence row is a byte range
+-- plus the digest the source had when it was recorded, and the text is
+-- resolved from conversation_messages on read. That is what makes deleting a
+-- message delete its quotation everywhere, including from derived memory.
+-- =====================================================================
+
+-- One row per conversation. Absent means nothing has been extracted yet,
+-- which is not the same as "extracted and found nothing".
+CREATE TABLE IF NOT EXISTS conversation_memory_state (
+    conversation_id TEXT PRIMARY KEY,
+    -- Layout version. An unrecognized value forces a rebuild; it is never
+    -- parsed as empty memory, which would silently drop every constraint a
+    -- newer build recorded.
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    memory_revision INTEGER NOT NULL DEFAULT 0,
+    -- conversations.transcript_revision at the last successful build.
+    source_transcript_revision INTEGER NOT NULL DEFAULT 0,
+    -- Every eligible message at or below this sequence has been submitted for
+    -- extraction. A watermark records processing, not comprehension.
+    processed_through_sequence INTEGER NOT NULL DEFAULT 0,
+    validity TEXT NOT NULL DEFAULT 'ready'
+        CHECK(validity IN ('ready', 'rebuild_required')),
+    -- A stable code. Never raw transcript text: this row is read by logs.
+    last_error_code TEXT,
+    extractor_model_identity TEXT,
+    extractor_prompt_version TEXT,
+    validator_version TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS conversation_memory_items (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN (
+        'constraint', 'goal', 'decision', 'user_fact',
+        'preference', 'open_question', 'unresolved_change')),
+    state TEXT NOT NULL DEFAULT 'active'
+        CHECK(state IN ('active', 'superseded', 'resolved')),
+    -- Generated text for search and display. Renderers mark it as a label so
+    -- it cannot be mistaken for something the user wrote.
+    label TEXT NOT NULL,
+    created_at_sequence INTEGER NOT NULL,
+    changed_at_sequence INTEGER NOT NULL,
+    superseded_by TEXT,
+    revision INTEGER NOT NULL DEFAULT 0,
+    review TEXT NOT NULL DEFAULT 'supported'
+        CHECK(review IN ('supported', 'ambiguous')),
+    -- JSON array of memory ids only, never memory text. Bounded and validated
+    -- in Rust inside the same transaction that writes it.
+    related_item_ids TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    -- A replacement that is deleted leaves the pointer null rather than taking
+    -- the item it replaced with it.
+    FOREIGN KEY (superseded_by) REFERENCES conversation_memory_items(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_memory_evidence (
+    item_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
+    -- Denormalized from the message so ordering and role rules need no join.
+    -- Both are re-derived on rebuild; neither is authority over the message.
+    sequence INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+    start_byte INTEGER NOT NULL CHECK(start_byte >= 0),
+    end_byte INTEGER NOT NULL,
+    content_digest TEXT NOT NULL,
+    purpose TEXT NOT NULL CHECK(purpose IN ('assertion', 'antecedent', 'transition')),
+    PRIMARY KEY (item_id, ordinal),
+    CHECK (end_byte > start_byte),
+    FOREIGN KEY (item_id) REFERENCES conversation_memory_items(id) ON DELETE CASCADE,
+    -- Deleting the source deletes the span. There is no cached copy of the
+    -- text to fall back to, which is the point.
+    FOREIGN KEY (message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE
+);
+
+-- Metadata-only transition log. Deliberately holds no quotations: this table
+-- is the one most likely to be read in bulk by diagnostics.
+CREATE TABLE IF NOT EXISTS conversation_memory_events (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    -- Idempotency key. A retried commit finds its own row and returns.
+    operation_id TEXT NOT NULL,
+    memory_revision INTEGER NOT NULL,
+    operation TEXT NOT NULL,
+    item_ids TEXT NOT NULL DEFAULT '[]',
+    source_message_ids TEXT NOT NULL DEFAULT '[]',
+    extractor_model_identity TEXT,
+    extractor_prompt_version TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    UNIQUE (conversation_id, operation_id)
+);
+
+-- Sequence uniqueness, excluding the zero placeholder used by paths that do
+-- not allocate one. A real sequence is always positive.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_sequence
+    ON conversation_messages(conversation_id, sequence) WHERE sequence > 0;
+
+CREATE INDEX IF NOT EXISTS idx_conversation_memory_items_active
+    ON conversation_memory_items(conversation_id, state, kind);
+CREATE INDEX IF NOT EXISTS idx_conversation_memory_evidence_message
+    ON conversation_memory_evidence(message_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_memory_events_revision
+    ON conversation_memory_events(conversation_id, memory_revision DESC);
+
+-- ---------------------------------------------------------------------
+-- Transcript revision
+--
+-- Centralized here rather than remembered at each call site: turn completion,
+-- forks, imports, fixtures and direct repository writes all go through the
+-- same statements, and one forgotten increment is a compaction that publishes
+-- against a transcript it never read.
+-- ---------------------------------------------------------------------
+
+CREATE TRIGGER IF NOT EXISTS trg_conversation_transcript_revision_ai
+AFTER INSERT ON conversation_messages
+BEGIN
+    UPDATE conversations
+    SET transcript_revision = transcript_revision + 1
+    WHERE id = NEW.conversation_id;
+END;
+
+-- Content, role and status all change what a context window may carry: a
+-- failed assistant output stops being an answer that was returned.
+CREATE TRIGGER IF NOT EXISTS trg_conversation_transcript_revision_au
+AFTER UPDATE OF content, role, status ON conversation_messages
+BEGIN
+    UPDATE conversations
+    SET transcript_revision = transcript_revision + 1
+    WHERE id = NEW.conversation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_conversation_transcript_revision_ad
+AFTER DELETE ON conversation_messages
+BEGIN
+    UPDATE conversations
+    SET transcript_revision = transcript_revision + 1
+    WHERE id = OLD.conversation_id;
+END;
+
+-- ---------------------------------------------------------------------
+-- Derived-memory invalidation
+--
+-- An append never invalidates anything. A rewrite of existing source does:
+-- an old summary that repeats a deleted fact is exactly the failure this
+-- design exists to prevent, and dependency-precise repair is far easier to
+-- get subtly wrong than clearing and rebuilding.
+--
+-- These fire inside the caller's transaction, so a rewrite cannot commit with
+-- stale memory still readable. The EXISTS guard skips the cascade from
+-- DELETE FROM conversations, where there is nothing left to invalidate.
+-- ---------------------------------------------------------------------
+
+CREATE TRIGGER IF NOT EXISTS trg_conversation_memory_invalidate_au
+AFTER UPDATE OF content, role ON conversation_messages
+WHEN EXISTS (SELECT 1 FROM conversations WHERE id = NEW.conversation_id)
+BEGIN
+    DELETE FROM conversation_memory_items WHERE conversation_id = NEW.conversation_id;
+    DELETE FROM conversation_memory_events WHERE conversation_id = NEW.conversation_id;
+    DELETE FROM conversation_summaries WHERE conversation_id = NEW.conversation_id;
+    INSERT INTO conversation_memory_state (
+        conversation_id, schema_version, memory_revision,
+        source_transcript_revision, processed_through_sequence,
+        validity, last_error_code, updated_at)
+    VALUES (NEW.conversation_id, 1, 1, 0, 0, 'rebuild_required',
+            'source_rewritten', CURRENT_TIMESTAMP)
+    ON CONFLICT(conversation_id) DO UPDATE SET
+        memory_revision = memory_revision + 1,
+        processed_through_sequence = 0,
+        source_transcript_revision = 0,
+        validity = 'rebuild_required',
+        last_error_code = 'source_rewritten',
+        updated_at = CURRENT_TIMESTAMP;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_conversation_memory_invalidate_ad
+AFTER DELETE ON conversation_messages
+WHEN EXISTS (SELECT 1 FROM conversations WHERE id = OLD.conversation_id)
+BEGIN
+    DELETE FROM conversation_memory_items WHERE conversation_id = OLD.conversation_id;
+    DELETE FROM conversation_memory_events WHERE conversation_id = OLD.conversation_id;
+    DELETE FROM conversation_summaries WHERE conversation_id = OLD.conversation_id;
+    INSERT INTO conversation_memory_state (
+        conversation_id, schema_version, memory_revision,
+        source_transcript_revision, processed_through_sequence,
+        validity, last_error_code, updated_at)
+    VALUES (OLD.conversation_id, 1, 1, 0, 0, 'rebuild_required',
+            'source_deleted', CURRENT_TIMESTAMP)
+    ON CONFLICT(conversation_id) DO UPDATE SET
+        memory_revision = memory_revision + 1,
+        processed_through_sequence = 0,
+        source_transcript_revision = 0,
+        validity = 'rebuild_required',
+        last_error_code = 'source_deleted',
+        updated_at = CURRENT_TIMESTAMP;
+END;
+
+-- Conversation vectors are derived from message text too, so an edit must not
+-- leave an embedding of the old wording behind for optional recall to surface.
+CREATE TRIGGER IF NOT EXISTS trg_conversation_memory_vectors_invalidate_au
+AFTER UPDATE OF content ON conversation_messages
+BEGIN
+    DELETE FROM conversation_memory_vectors WHERE message_id = NEW.id;
 END;
 
 -- =====================================================================

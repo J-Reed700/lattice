@@ -15,7 +15,7 @@
 //! use lattice::application::dtos::function_calling_dto::WebSearchInput;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let service = WebService::new()?;
+//! let service = WebService::new(std::path::Path::new("/tmp/lattice"))?;
 //!
 //! // Search web
 //! let request = WebSearchInput {
@@ -37,18 +37,21 @@
 //! ```
 
 use crate::features::function_calling::dto::*;
+use crate::features::web::services::page_cache::{CachedFetch, CachedPage, PageCache};
 use crate::features::web::WebServiceTrait;
 use crate::shared::constants::WEB_REQUEST_TIMEOUT;
 use crate::shared::error::{AppError, Result};
 use crate::shared::utils::stealth;
 use async_trait::async_trait;
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use reqwest::header::ACCEPT;
 use reqwest::{Client, StatusCode};
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
@@ -71,6 +74,14 @@ const MAX_TRACKED_SITES: usize = 64;
 /// Most of an article's text sits well inside this; past it a page is a
 /// dump, and the prompt has better uses for the room.
 const MAX_FETCHED_PAGE_CHARS: usize = 50_000;
+/// The page cache's folder inside the app data directory.
+const PAGE_CACHE_DIR_NAME: &str = "web-cache";
+/// How long a search's results are reused. Long enough to cover a regenerate
+/// and the follow-ups around it, short enough that "what happened today" does
+/// not answer from this morning.
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+/// Searches held at once. Each is a few kilobytes of snippets.
+const MAX_CACHED_SEARCHES: usize = 64;
 /// Hosts that queue with the site they mirror rather than on their own.
 const SITE_ALIASES: &[(&str, &str)] = &[
     ("html.duckduckgo.com", "duckduckgo.com"),
@@ -197,6 +208,89 @@ impl SitePacer {
     }
 }
 
+/// The last few searches, so the same one is not run twice in a quarter hour.
+///
+/// One deep-research search is a dozen or more requests to DuckDuckGo and
+/// Bing, and a regenerate re-issues every one of them for a query whose
+/// results have not moved. That is how the providers start answering 429. In
+/// memory rather than on disk on purpose: search results go stale much faster
+/// than the pages behind them, and nobody should be shown yesterday's ranking
+/// because the app was restarted.
+#[derive(Default)]
+struct SearchCache {
+    entries: parking_lot::Mutex<HashMap<String, (Instant, WebSearchOutput)>>,
+}
+
+impl SearchCache {
+    /// Everything that changes what comes back. A search that differs in any
+    /// of these is a different search.
+    fn key(input: &WebSearchInput) -> String {
+        let mut providers = input.providers.clone();
+        providers.sort();
+        format!(
+            "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            input.query.trim().to_lowercase(),
+            input.max_results,
+            input.page,
+            input.offset,
+            providers.join(","),
+            input.include_wikipedia,
+            input.depth,
+            input.branch_queries
+        )
+    }
+
+    fn get(&self, input: &WebSearchInput) -> Option<WebSearchOutput> {
+        let mut entries = self.entries.lock();
+        let key = Self::key(input);
+        let (stored_at, output) = entries.get(&key)?;
+        if stored_at.elapsed() > SEARCH_CACHE_TTL {
+            entries.remove(&key);
+            return None;
+        }
+        Some(output.clone())
+    }
+
+    /// Keep `output` under `input`. Only ever called with a search that
+    /// actually found something: caching "nothing found" would make a
+    /// provider's bad minute last fifteen.
+    fn store(&self, input: &WebSearchInput, output: &WebSearchOutput) {
+        let mut entries = self.entries.lock();
+        if entries.len() >= MAX_CACHED_SEARCHES {
+            entries.retain(|_, (stored_at, _)| stored_at.elapsed() <= SEARCH_CACHE_TTL);
+        }
+        if entries.len() >= MAX_CACHED_SEARCHES {
+            let oldest = entries
+                .iter()
+                .min_by_key(|(_, (stored_at, _))| *stored_at)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                entries.remove(&oldest);
+            }
+        }
+        entries.insert(Self::key(input), (Instant::now(), output.clone()));
+    }
+}
+
+/// Parse `url` and accept only what this service is willing to request.
+///
+/// Split out of [`WebService::validate_url`] because a page the cache already
+/// holds still has to clear this bar — a `file://` URL must not become
+/// readable just because something once wrote it into the cache — while the
+/// DNS resolution behind it would be pointless work for a request that is
+/// never sent.
+fn parse_fetchable_url(url: &str) -> Result<Url> {
+    let parsed =
+        Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed),
+        scheme => Err(AppError::InvalidUrl(format!(
+            "Unsupported URL scheme: {}. Only http and https are allowed.",
+            scheme
+        ))),
+    }
+}
+
 /// What one paced request to a search URL produced.
 enum SearchPage {
     /// A successful response's body.
@@ -238,16 +332,31 @@ pub struct WebService {
     client: Client,
     /// Per-site request queue shared by every search on this service.
     pacer: SitePacer,
+    /// Pages and settled refusals kept across turns, on disk.
+    page_cache: PageCache,
+    /// The last few searches, so a regenerate does not re-issue them.
+    search_cache: SearchCache,
+}
+
+/// A page read for display, which is a fetch plus the one thing the tool
+/// output has no room for: when the text was actually read. A cache hit is
+/// served instantly and could otherwise only claim to have been read "now".
+pub struct ReadPage {
+    pub output: FetchUrlContentOutput,
+    pub fetched_at: DateTime<Utc>,
 }
 
 impl WebService {
     /// Create a new web service with stealth features (cookie jar, proxy rotation).
-    pub fn new() -> Result<Self> {
-        Self::with_timeout(WEB_REQUEST_TIMEOUT)
+    ///
+    /// `data_dir` is the app data directory; the page cache lives in a
+    /// `web-cache/` folder under it and is created on first use.
+    pub fn new(data_dir: &Path) -> Result<Self> {
+        Self::with_timeout(WEB_REQUEST_TIMEOUT, data_dir)
     }
 
     /// Create with custom timeout
-    pub fn with_timeout(timeout: Duration) -> Result<Self> {
+    pub fn with_timeout(timeout: Duration, data_dir: &Path) -> Result<Self> {
         let client = stealth::stealth_client_builder()
             .timeout(timeout)
             .build()
@@ -256,6 +365,149 @@ impl WebService {
         Ok(Self {
             client,
             pacer: SitePacer::default(),
+            page_cache: PageCache::new(data_dir.join(PAGE_CACHE_DIR_NAME)),
+            search_cache: SearchCache::default(),
+        })
+    }
+
+    /// Read `url`, from the page cache when it holds it and from the network
+    /// otherwise.
+    ///
+    /// A hit skips the pacer and the DNS check as well as the request: the
+    /// text is already here, so there is no host to be polite to and no
+    /// address to re-resolve. Only the scheme is still checked, because a
+    /// `file://` URL must not be readable by any path.
+    pub async fn read_page(&self, url: &str) -> Result<ReadPage> {
+        debug!("Fetching URL: {}", url);
+        parse_fetchable_url(url)?;
+
+        let lookup_start = Instant::now();
+        match self.page_cache.get(url).await {
+            Some(CachedFetch::Page(page)) => {
+                info!(url, words = page.word_count, "URL served from page cache");
+                let fetched_at = page.fetched_at;
+                return Ok(ReadPage {
+                    output: FetchUrlContentOutput {
+                        url: page.final_url,
+                        title: page.title,
+                        content: page.content,
+                        content_truncated: page.content_truncated,
+                        word_count: page.word_count,
+                        fetch_time_ms: lookup_start.elapsed().as_secs_f64() * 1000.0,
+                        content_type: page.content_type,
+                        from_cache: true,
+                    },
+                    fetched_at,
+                });
+            }
+            Some(CachedFetch::Refusal { reason }) => {
+                info!(url, %reason, "URL refusal served from page cache");
+                return Err(AppError::Network(format!(
+                    "{reason} (this site refused earlier; not retried)"
+                )));
+            }
+            None => {}
+        }
+
+        // Validate URL for security
+        self.validate_url(url)?;
+
+        // Paced per site, like the searches: repeat requests to one host are
+        // spaced and never overlap, and a host this process has not contacted
+        // is contacted at once. This used to be a blind 0.5–2s sleep before
+        // every fetch, which a host seeing us for the first time cannot even
+        // observe — it only made the user wait, once per page per round.
+        let _site_slot = self.pacer.acquire(url).await;
+
+        let start = Instant::now();
+        let profile = stealth::random_profile();
+        let headers = stealth::browser_headers(profile, None);
+
+        let response = self
+            .client
+            .get(url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            warn!("URL fetch failed with status: {}", status);
+            // Remembered only when the status means the answer is settled, so
+            // the next turn does not spend a request finding out again.
+            self.page_cache
+                .remember_refusal(url, status, &format!("HTTP {status}"))
+                .await;
+            return Err(AppError::Network(format!(
+                "HTTP {}: {}",
+                status,
+                status.canonical_reason().unwrap_or("Unknown")
+            )));
+        }
+
+        // Get final URL (after redirects)
+        let final_url = response.url().to_string();
+
+        // Re-validate final URL after redirects (prevents redirect-based SSRF)
+        if final_url != url {
+            debug!("URL redirected to: {}", final_url);
+            self.validate_url(&final_url)?;
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let html = response
+            .text()
+            .await
+            .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
+
+        let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        let title = self.extract_title(&html);
+        let content = self.extract_article_text(&html);
+
+        let (final_content, truncated) = cap_page_text(content, MAX_FETCHED_PAGE_CHARS);
+
+        let word_count = final_content.split_whitespace().count();
+
+        info!(
+            "URL fetched: {} words in {:.2}ms",
+            word_count, fetch_time_ms
+        );
+
+        let fetched_at = Utc::now();
+        self.page_cache
+            .remember_page(
+                url,
+                &CachedPage {
+                    final_url: final_url.clone(),
+                    title: title.clone(),
+                    content: final_content.clone(),
+                    content_truncated: truncated,
+                    word_count,
+                    content_type: content_type.clone(),
+                    fetched_at,
+                },
+            )
+            .await;
+
+        Ok(ReadPage {
+            output: FetchUrlContentOutput {
+                url: final_url,
+                title,
+                content: final_content,
+                content_truncated: truncated,
+                word_count,
+                fetch_time_ms,
+                content_type,
+                from_cache: false,
+            },
+            fetched_at,
         })
     }
 
@@ -1277,6 +1529,15 @@ impl WebServiceTrait for WebService {
             ));
         }
 
+        if let Some(cached) = self.search_cache.get(input) {
+            info!(
+                query,
+                results = cached.results.len(),
+                "Search served from the recent-search cache"
+            );
+            return Ok(cached);
+        }
+
         let max_results = input.max_results.clamp(1, 50);
         let page = input.page.max(1);
         let effective_offset = input
@@ -1411,7 +1672,7 @@ impl WebServiceTrait for WebService {
         let mut providers_used_vec = providers_used.into_iter().collect::<Vec<_>>();
         providers_used_vec.sort();
 
-        Ok(WebSearchOutput {
+        let output = WebSearchOutput {
             results: page_results,
             query: query.to_string(),
             result_count: end_idx.saturating_sub(start_idx),
@@ -1423,102 +1684,21 @@ impl WebServiceTrait for WebService {
             unique_query_count: seen_queries.len(),
             unique_url_count: seen_urls.len(),
             unique_domain_count: seen_domains.len(),
-        })
+            // The first executed query is the one that was asked for.
+            followup_queries: executed_queries.into_iter().skip(1).collect(),
+        };
+        if !output.results.is_empty() {
+            self.search_cache.store(input, &output);
+        }
+        Ok(output)
     }
 
     async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
-        debug!("Fetching URL: {}", url);
-
-        // Validate URL for security
-        self.validate_url(url)?;
-
-        // Paced per site, like the searches: repeat requests to one host are
-        // spaced and never overlap, and a host this process has not contacted
-        // is contacted at once. This used to be a blind 0.5–2s sleep before
-        // every fetch, which a host seeing us for the first time cannot even
-        // observe — it only made the user wait, once per page per round.
-        let _site_slot = self.pacer.acquire(url).await;
-
-        let start = Instant::now();
-        let profile = stealth::random_profile();
-        let headers = stealth::browser_headers(profile, None);
-
-        let response = self
-            .client
-            .get(url)
-            .headers(headers)
-            .send()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
-
-        if !response.status().is_success() {
-            warn!("URL fetch failed with status: {}", response.status());
-            return Err(AppError::Network(format!(
-                "HTTP {}: {}",
-                response.status(),
-                response.status().canonical_reason().unwrap_or("Unknown")
-            )));
-        }
-
-        // Get final URL (after redirects)
-        let final_url = response.url().to_string();
-
-        // Re-validate final URL after redirects (prevents redirect-based SSRF)
-        if final_url != url {
-            debug!("URL redirected to: {}", final_url);
-            self.validate_url(&final_url)?;
-        }
-
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-
-        let html = response
-            .text()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
-
-        let fetch_time_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-        let title = self.extract_title(&html);
-        let content = self.extract_article_text(&html);
-
-        let (final_content, truncated) = cap_page_text(content, MAX_FETCHED_PAGE_CHARS);
-
-        let word_count = final_content.split_whitespace().count();
-
-        info!(
-            "URL fetched: {} words in {:.2}ms",
-            word_count, fetch_time_ms
-        );
-
-        Ok(FetchUrlContentOutput {
-            url: final_url,
-            title,
-            content: final_content,
-            content_truncated: truncated,
-            word_count,
-            fetch_time_ms,
-            content_type,
-        })
+        self.read_page(url).await.map(|read| read.output)
     }
 
     fn validate_url(&self, url: &str) -> Result<()> {
-        let parsed =
-            Url::parse(url).map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
-
-        // Check scheme (only allow http/https)
-        match parsed.scheme() {
-            "http" | "https" => {}
-            _ => {
-                return Err(AppError::InvalidUrl(format!(
-                    "Unsupported URL scheme: {}. Only http and https are allowed.",
-                    parsed.scheme()
-                )));
-            }
-        }
+        let parsed = parse_fetchable_url(url)?;
 
         let host = parsed
             .host_str()
@@ -1540,9 +1720,15 @@ impl WebServiceTrait for WebService {
 mod tests {
     use super::*;
 
+    /// A service for the tests that never leave the process. The cache folder
+    /// is named but never created: nothing here stores a page.
+    fn test_service() -> WebService {
+        WebService::new(&std::env::temp_dir().join("lattice-web-service-tests")).unwrap()
+    }
+
     #[test]
     fn test_validate_url() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
 
         // Public IP literals exercise URL validation without making this unit
         // test depend on external DNS availability.
@@ -1567,7 +1753,7 @@ mod tests {
 
     #[test]
     fn test_is_private_ip() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
 
         // Private IPs (should be blocked)
         assert!(service.is_private_ip("192.168.1.1".parse().unwrap()));
@@ -1590,7 +1776,7 @@ mod tests {
 
     #[test]
     fn test_extract_title() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
 
         let html = r#"
             <html>
@@ -1605,7 +1791,7 @@ mod tests {
 
     #[test]
     fn test_extract_article_text() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
 
         let html = r#"
             <html>
@@ -1627,7 +1813,7 @@ mod tests {
 
     #[test]
     fn test_normalize_search_url_accepts_bing_redirect_links() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let raw = "/ck/a?!&&p=abc123";
         let normalized = service.normalize_search_url(raw);
         assert_eq!(
@@ -1641,7 +1827,7 @@ mod tests {
     /// and returned without ever being unwrapped.
     #[test]
     fn a_protocol_relative_duckduckgo_redirect_resolves_to_its_destination() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let raw = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.thereviewgeek.com%2Fsilo%2Ds1e2review%2F&rut=c99505e363ada8be";
         assert_eq!(
             service.normalize_search_url(raw).as_deref(),
@@ -1651,7 +1837,7 @@ mod tests {
 
     #[test]
     fn an_absolute_duckduckgo_redirect_resolves_to_its_destination() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let raw = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%2Fb&rut=deadbeef";
         assert_eq!(
             service.normalize_search_url(raw).as_deref(),
@@ -1664,7 +1850,7 @@ mod tests {
     /// back a page with no article text in it.
     #[test]
     fn a_bing_redirect_with_a_payload_resolves_to_its_destination() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let raw = "https://www.bing.com/ck/a?!&&p=fc5438df02&ptn=3&fclid=398e7e7c&u=a1aHR0cHM6Ly9lbi5tLndpa2lwZWRpYS5vcmcvd2lraS9TaWxvXyhUVl9zZXJpZXMp&ntb=1";
         assert_eq!(
             service.normalize_search_url(raw).as_deref(),
@@ -1676,7 +1862,7 @@ mod tests {
     /// fetch may follow it server-side. Only a decodable payload is replaced.
     #[test]
     fn a_redirect_without_a_readable_destination_is_left_alone() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         for raw in [
             "https://www.bing.com/ck/a?!&&p=abc123",
             "https://duckduckgo.com/l/?rut=deadbeef",
@@ -1688,14 +1874,14 @@ mod tests {
 
     #[test]
     fn an_ordinary_result_url_passes_through_untouched() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let raw = "https://example.com/silo/recap?season=1";
         assert_eq!(service.normalize_search_url(raw).as_deref(), Some(raw));
     }
 
     #[test]
     fn test_detect_duckduckgo_challenge_page() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let challenge_html = r#"
             <html><body>
                 <div class="anomaly-modal__title">Unfortunately, bots use DuckDuckGo too.</div>
@@ -1706,7 +1892,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_results_generic_anchor_fallback() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let html = r#"
             <html>
                 <body>
@@ -1727,7 +1913,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_results_generic_fallback_skips_search_hosts() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let html = r#"
             <html>
                 <body>
@@ -1986,7 +2172,7 @@ mod tests {
 
     #[test]
     fn test_absorb_provider_page_merges_in_provider_order() {
-        let service = WebService::new().unwrap();
+        let service = test_service();
         let mut merged = QueryResults::default();
 
         service.absorb_provider_page(

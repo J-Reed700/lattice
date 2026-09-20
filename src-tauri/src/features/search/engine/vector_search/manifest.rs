@@ -19,13 +19,12 @@
 //!   bumps from inside its own transaction (see the `vector_index_state`
 //!   triggers in the schema migration).
 //!
-//! The row count is what catches a crash between an SQLite commit and an index
-//! save; the counter is what catches a delete and an insert that happen to
-//! leave the count unchanged. Either one differing means rebuild.
+//! The source count must also equal the loaded index count. Startup checks
+//! source key membership while hydrating text to detect a pending publication
+//! that replaces a row without changing the count.
 //!
-//! The manifest is written **last**, after the index and key map are safely on
-//! disk, so a crash mid-save leaves no manifest to trust and the next launch
-//! rebuilds.
+//! The previous manifest is invalidated before saving either index file; its
+//! replacement is written last. A process crash mid-save forces a rebuild.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +38,8 @@ use crate::shared::result::Result;
 /// Bumped whenever the meaning of anything the index persists changes. A
 /// manifest written under a different version is not read; the index is
 /// rebuilt.
-pub const MANIFEST_FORMAT_VERSION: u32 = 1;
+// Version 1 could certify partial snapshots; do not reuse its assurances.
+pub const MANIFEST_FORMAT_VERSION: u32 = 2;
 
 /// Compute the manifest path from the index path
 /// (`foo.usearch` → `foo.usearch.manifest.json`).
@@ -113,8 +113,10 @@ pub async fn read_source_stamp(
     // a prepared vector whose source text has since changed, which this count
     // cannot see; that direction is safe, because the extra row makes the
     // stamp differ and buys a rebuild.
-    let row_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM text_chunks tc \
+    // Read both values in one SQLite snapshot. Separate SELECTs can combine
+    // an old count with a new counter when a writer commits between them.
+    let (row_count, write_counter): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE((SELECT write_counter FROM vector_index_state WHERE id = 1), 0) FROM text_chunks tc \
          LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? \
          LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? \
          WHERE te.chunk_id IS NOT NULL OR eg.chunk_id IS NOT NULL",
@@ -125,12 +127,6 @@ pub async fn read_source_stamp(
     .bind(dimension)
     .fetch_one(pool)
     .await?;
-
-    let write_counter: i64 =
-        sqlx::query_scalar("SELECT write_counter FROM vector_index_state WHERE id = 1")
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or(0);
 
     Ok(SourceStamp {
         row_count: row_count.max(0) as u64,
@@ -158,6 +154,8 @@ pub enum ManifestMismatch {
     Generation,
     Config,
     VectorCount { manifest: usize, index: usize },
+    SourceCount { database: u64, index: usize },
+    SourceMembership,
     Stamp,
 }
 
@@ -175,6 +173,12 @@ impl std::fmt::Display for ManifestMismatch {
             Self::Config => write!(f, "built with a different index configuration"),
             Self::VectorCount { manifest, index } => {
                 write!(f, "manifest claims {manifest} vectors, index holds {index}")
+            }
+            Self::SourceCount { database, index } => {
+                write!(f, "SQLite holds {database} vectors, index holds {index}")
+            }
+            Self::SourceMembership => {
+                write!(f, "index keys do not match this generation's SQLite rows")
             }
             Self::Stamp => write!(f, "SQLite embeddings changed since the index was saved"),
         }
@@ -224,6 +228,15 @@ impl IndexManifest {
         }
         if self.stamp != *stamp {
             return Some(ManifestMismatch::Stamp);
+        }
+        // A flush can see a committed row before its vector is published.
+        // Comparing two database stamps and two index counts independently
+        // would certify that incomplete snapshot indefinitely after a crash.
+        if stamp.row_count != loaded_vector_count as u64 {
+            return Some(ManifestMismatch::SourceCount {
+                database: stamp.row_count,
+                index: loaded_vector_count,
+            });
         }
         None
     }

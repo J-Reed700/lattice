@@ -249,12 +249,8 @@ mod tests {
 
     #[test]
     fn blank_ids_are_not_a_focus() {
-        let focus = FocusScope::against_scope(
-            Some(&named(&["  ", ""])),
-            &ids(&["a"]),
-            false,
-            "conv-1",
-        );
+        let focus =
+            FocusScope::against_scope(Some(&named(&["  ", ""])), &ids(&["a"]), false, "conv-1");
 
         assert!(!focus.is_requested());
     }

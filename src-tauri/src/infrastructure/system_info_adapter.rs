@@ -66,6 +66,11 @@ impl SystemInfoAdapter {
     /// fallback for when that has not run, and they are weaker than they look —
     /// the Windows one cannot see an AMD or Intel card at all.
     fn detect_gpu_info(&self) -> Option<GpuInfo> {
+        // The Intel macOS build ships CPU inference only. A Metal-capable
+        // display adapter must not make onboarding recommend GPU-sized models.
+        if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            return None;
+        }
         if let Some(gpu) = Self::gpu_from_sidecar_probe() {
             return Some(gpu);
         }
@@ -340,6 +345,12 @@ impl SystemInfoPort for SystemInfoAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    #[test]
+    fn intel_mac_does_not_advertise_gpu_inference() {
+        assert!(SystemInfoAdapter::new().detect_gpu_info().is_none());
+    }
 
     #[tokio::test]
     async fn test_adapter_returns_valid_info() {

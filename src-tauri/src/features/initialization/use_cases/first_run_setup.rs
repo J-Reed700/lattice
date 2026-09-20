@@ -99,18 +99,13 @@ impl CheckFirstRunStatusUseCase {
     }
 
     async fn chat_recommendation(&self) -> Option<RecommendedModel> {
-        // Effective RAM = system RAM + discrete VRAM. Probe failure
-        // falls through to the small-tier recommendation.
-        let effective_ram_gb = match &self.system_info {
+        // These tiers describe system RAM. Backend/vendor identity does not
+        // establish whether GPU memory is dedicated: AMD APUs, for example,
+        // expose ROCm while sharing RAM. Do not add an unverified GPU budget.
+        // Probe failure falls through to the small-tier recommendation.
+        let system_ram_gb = match &self.system_info {
             Some(probe) => match probe.get_system_info().await {
-                Ok(info) => {
-                    let vram = info
-                        .gpu_info
-                        .as_ref()
-                        .and_then(|g| g.vram_gb)
-                        .unwrap_or(0.0);
-                    info.total_ram_gb + vram
-                }
+                Ok(info) => info.total_ram_gb,
                 Err(e) => {
                     warn!(error = %e, "First-run hardware probe failed; using small-tier default");
                     0.0
@@ -119,11 +114,8 @@ impl CheckFirstRunStatusUseCase {
             None => 0.0,
         };
 
-        let chat_id = recommend_chat_model_for_ram(effective_ram_gb);
-        debug!(
-            effective_ram_gb,
-            chat_id, "Chat model recommendation resolved"
-        );
+        let chat_id = recommend_chat_model_for_ram(system_ram_gb);
+        debug!(system_ram_gb, chat_id, "Chat model recommendation resolved");
 
         get_curated_llm_models()
             .into_iter()
@@ -156,7 +148,8 @@ fn embedding_recommendation() -> Option<RecommendedModel> {
 
     Some(RecommendedModel {
         model_id: default.curated_id.to_string(),
-        display_name: format!("{} (Embedding Model)", default.display_name),
+        // The setup screen labels the row "Embedding" already.
+        display_name: default.display_name.to_string(),
         // The catalog's own figure. The fallback is MiniLM's observed size, and
         // under-reporting a 1.2 GB download would under-warn the disk check, so
         // a missing entry is logged above rather than passed off as small.
@@ -322,12 +315,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gpu_memory_never_promotes_a_system_ram_tier() {
+        use crate::application::ports::system_info::{ComputeType, GpuInfo, MockSystemInfoPort};
+
+        let repo = setup_repo().await;
+        // Exercise the actual onboarding response, including the AMD APU case
+        // the old vendor-based test mislabeled as a discrete GPU.
+        for (ram, expected) in [
+            (4.0, "qwen3.5-2b-q4_k_m"),
+            (8.0, "qwen3.5-4b-q4_k_m"),
+            (16.0, "qwen3.5-9b-q4_k_m"),
+        ] {
+            for (name, compute_type) in [
+                ("Apple M3", ComputeType::Metal),
+                ("AMD Radeon 780M integrated", ComputeType::Rocm),
+                ("AMD Radeon RX 7900", ComputeType::Rocm),
+                ("Intel integrated graphics", ComputeType::None),
+                ("NVIDIA RTX", ComputeType::Cuda),
+            ] {
+                let probe = Arc::new(MockSystemInfoPort::new());
+                probe.set_ram(ram);
+                probe.set_gpu(Some(GpuInfo {
+                    name: name.into(),
+                    vram_gb: Some(24.0),
+                    compute_type,
+                }));
+                let result = CheckFirstRunStatusUseCase::with_system_info(repo.clone(), probe)
+                    .execute()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    result.chat_model.unwrap().model_id,
+                    expected,
+                    "{name}, {ram} GB"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn test_chat_recommendation_uses_hardware_probe_when_available() {
         use crate::application::ports::system_info::MockSystemInfoPort;
 
         let repo = setup_repo().await;
 
-        // Low-end probe (4 GB RAM, no GPU) → small-tier Phi-3 mini.
+        // Low-end probe (4 GB RAM, no GPU) → the smallest tier.
         let low_end_probe = std::sync::Arc::new(MockSystemInfoPort::low_end());
         let low_end_use_case =
             CheckFirstRunStatusUseCase::with_system_info(repo.clone(), low_end_probe);
@@ -337,11 +369,11 @@ mod tests {
                 .chat_model
                 .as_ref()
                 .map(|m| m.model_id.as_str()),
-            Some("phi-3-mini-4k-instruct-q4_k_m"),
+            Some("qwen3.5-2b-q4_k_m"),
             "4 GB box should get the small-tier chat model"
         );
 
-        // Default probe (16 GB RAM, no GPU) → Qwen 2.5 7B (>= 16 GB tier).
+        // Default probe (16 GB RAM, no GPU) → the >= 16 GB tier.
         let default_probe = std::sync::Arc::new(MockSystemInfoPort::new());
         let default_use_case =
             CheckFirstRunStatusUseCase::with_system_info(repo.clone(), default_probe);
@@ -351,7 +383,7 @@ mod tests {
                 .chat_model
                 .as_ref()
                 .map(|m| m.model_id.as_str()),
-            Some("qwen2.5-7b-instruct-q4_k_m"),
+            Some("qwen3.5-9b-q4_k_m"),
             "16 GB box should get the high-tier chat model"
         );
     }

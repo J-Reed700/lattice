@@ -58,6 +58,34 @@ mod scope_tests {
             .is_empty());
     }
 
+    /// A space's whole document list arrives here as the allow-list, so it
+    /// must not cost one SQL variable per document: SQLite allows 32,766.
+    #[tokio::test]
+    async fn an_allow_list_larger_than_sqlites_variable_limit_still_searches() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql("CREATE TABLE text_chunks(id TEXT, document_id TEXT, content TEXT);
+            CREATE TABLE document_space_memberships(document_id TEXT, space_id TEXT);
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+            CREATE VIRTUAL TABLE chunks_trigram USING fts5(chunk_id UNINDEXED, content, tokenize='trigram');
+            INSERT INTO text_chunks VALUES ('a','other','patent'), ('b','doc-7','patent manual');
+            INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
+            INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;")
+            .execute(&pool).await.unwrap();
+        let allowed: HashSet<String> = (0..40_000).map(|n| format!("doc-{n}")).collect();
+
+        let hits = SqliteTextSearch::new(pool)
+            .search_scoped("patent", 5, None, Some(&allowed))
+            .await
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].doc_id, "doc-7");
+    }
+
     /// From a real turn: markdown emphasis made the query look like explicit
     /// FTS syntax, FTS5 read `- The` as a column filter, and the keyword branch
     /// failed with "no such column: The" instead of falling back.
@@ -243,14 +271,14 @@ impl SqliteTextSearch {
             sql.push_bind(space).push(")");
         }
         if let Some(ids) = allowed_document_ids {
-            sql.push(" AND c.document_id IN (");
+            sql.push(" AND c.document_id IN (SELECT value FROM json_each(");
+            // One bind for the whole list. A bind per document runs into
+            // SQLite's 32,766-variable limit once a space is large enough, and
+            // every search in that space then fails.
             let mut sorted: Vec<_> = ids.iter().collect();
             sorted.sort();
-            let mut values = sql.separated(", ");
-            for id in sorted {
-                values.push_bind(id);
-            }
-            sql.push(")");
+            sql.push_bind(serde_json::json!(sorted).to_string());
+            sql.push("))");
         }
         sql.push(order).push_bind(top_k as i64);
         sql.build().fetch_all(pool).await

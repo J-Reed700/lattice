@@ -335,12 +335,14 @@ impl ConversationRepository {
         rows.truncate(limit);
         Ok(rows
             .into_iter()
-            .map(|(document_id, file_name, category, modified_at)| SpaceDocumentDto {
-                document_id,
-                file_name,
-                category,
-                modified_at,
-            })
+            .map(
+                |(document_id, file_name, category, modified_at)| SpaceDocumentDto {
+                    document_id,
+                    file_name,
+                    category,
+                    modified_at,
+                },
+            )
             .collect())
     }
 }
@@ -560,10 +562,7 @@ mod tests {
 
         assert_eq!(upper.len(), 2);
         assert_eq!(
-            upper
-                .iter()
-                .map(|d| &d.document_id)
-                .collect::<Vec<_>>(),
+            upper.iter().map(|d| &d.document_id).collect::<Vec<_>>(),
             lower.iter().map(|d| &d.document_id).collect::<Vec<_>>()
         );
     }
@@ -617,7 +616,10 @@ mod tests {
         assert_eq!(repo.space_documents(None, "", 1).await.unwrap().len(), 1);
         // 5,000 asked for, 50 the most the command will ever return, 3 that
         // exist.
-        assert_eq!(repo.space_documents(None, "", 5_000).await.unwrap().len(), 3);
+        assert_eq!(
+            repo.space_documents(None, "", 5_000).await.unwrap().len(),
+            3
+        );
     }
 
     #[tokio::test]

@@ -121,45 +121,6 @@ impl ConversationService {
         self.repository.load_aggregate(id).await
     }
 
-    /// Compact the conversation's oldest messages into an LLM summary.
-    ///
-    /// Loads the aggregate, applies the compaction (folding all messages up to
-    /// `up_to_message_id` into `summary_text`), and persists the summary.
-    ///
-    /// # Arguments
-    /// * `conversation_id` - Conversation ID
-    /// * `summary_text` - LLM-produced summary of the compacted messages
-    /// * `up_to_message_id` - id of the last message folded into the summary
-    /// * `summary_tokens` - token count of the summary
-    ///
-    /// # Returns
-    /// The created compaction record
-    ///
-    /// # Errors
-    /// - `AppError::NotFound` if the conversation or boundary message is missing
-    /// - `AppError::InvalidInput` if the summary is empty or carries no tokens
-    pub async fn compact_conversation(
-        &self,
-        conversation_id: &str,
-        summary_text: String,
-        up_to_message_id: &str,
-        summary_tokens: i64,
-    ) -> Result<crate::domain::conversation::CompactionRecord> {
-        let mut aggregate = self
-            .repository
-            .load_aggregate(conversation_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Conversation not found: {}", conversation_id))
-            })?;
-
-        let record = aggregate.apply_compaction(summary_text, up_to_message_id, summary_tokens)?;
-
-        self.repository.save_compaction(&record).await?;
-
-        Ok(record)
-    }
-
     /// List conversations ordered by most recently updated
     ///
     /// # Arguments
@@ -676,22 +637,6 @@ impl crate::features::conversation::ConversationServiceTrait for ConversationSer
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         self.update_message_status(message_id, status).await
     }
-
-    async fn compact_conversation(
-        &self,
-        conversation_id: &str,
-        summary_text: String,
-        up_to_message_id: &str,
-        summary_tokens: i64,
-    ) -> Result<crate::domain::conversation::CompactionRecord> {
-        self.compact_conversation(
-            conversation_id,
-            summary_text,
-            up_to_message_id,
-            summary_tokens,
-        )
-        .await
-    }
 }
 
 #[async_trait::async_trait]
@@ -771,87 +716,46 @@ mod tests {
         ));
     }
 
-    /// Create test database pool with schema
+    /// Create a test database pool from the real migration.
+    ///
+    /// Deliberately not a hand-maintained subset of the schema: a copy drifts,
+    /// and a test that passes against a schema production does not have is
+    /// worse than no test. Adding `conversations.next_message_sequence` broke
+    /// every one of these while production was fine.
     async fn create_test_pool() -> SqlitePool {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-
-        sqlx::query(
-            r#"
-            CREATE TABLE conversations (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                model_name TEXT NOT NULL,
-                system_prompt TEXT,
-                space_id TEXT NOT NULL DEFAULT 'space_general',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                message_count INTEGER NOT NULL DEFAULT 0,
-                total_tokens INTEGER NOT NULL DEFAULT 0
-            );
-
-            CREATE TABLE conversation_spaces (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL
-            );
-
-            INSERT INTO conversation_spaces (id, name) VALUES ('space_general', 'General');
-
-            CREATE TABLE conversation_messages (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-                content TEXT NOT NULL,
-                tokens INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                metadata TEXT,
-                status TEXT NOT NULL DEFAULT 'completed',
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE conversation_message_bookmarks (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                message_id TEXT NOT NULL
-            );
-
-            CREATE TABLE conversation_documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                chunk_id TEXT,
-                relevance_score REAL,
-                added_at TEXT NOT NULL,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                UNIQUE(conversation_id, chunk_id)
-            );
-
-            CREATE TABLE document_space_memberships (
-                document_id TEXT NOT NULL,
-                space_id TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (document_id, space_id)
-            );
-
-            CREATE TABLE conversation_summaries (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL UNIQUE,
-                summary_text TEXT NOT NULL,
-                up_to_message_id TEXT NOT NULL,
-                original_message_count INTEGER NOT NULL CHECK(original_message_count > 0),
-                original_tokens INTEGER NOT NULL CHECK(original_tokens > 0),
-                summary_tokens INTEGER NOT NULL CHECK(summary_tokens > 0),
-                compression_ratio REAL NOT NULL CHECK(compression_ratio > 0.0 AND compression_ratio <= 1.0),
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                FOREIGN KEY (up_to_message_id) REFERENCES conversation_messages(id) ON DELETE CASCADE
-            );
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        // Several of these tests assert cascade behaviour, which SQLite only
+        // enforces with this on.
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
+    }
+
+    /// Insert the `documents` rows a fixture is about to reference.
+    ///
+    /// `conversation_documents.document_id` really does have a foreign key to
+    /// `documents`, and these tests now run with enforcement on, so a linked
+    /// document has to exist. Seeding it is also more honest than the old
+    /// unenforced schema: a reference to a document that was never indexed is not
+    /// a state the application can reach.
+    async fn seed_documents(pool: &SqlitePool, ids: &[&str]) {
+        for id in ids {
+            sqlx::query(
+                "INSERT OR IGNORE INTO documents \
+                    (id, file_path, file_name, size_bytes, modified_at, checksum) \
+                 VALUES (?, ?, ?, 1, '2026-09-01T10:00:00Z', ?)",
+            )
+            .bind(id)
+            .bind(format!("/fixtures/{id}.md"))
+            .bind(format!("{id}.md"))
+            .bind(format!("checksum-{id}"))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
     }
 
     /// Create test service with fresh database
@@ -1341,6 +1245,7 @@ mod tests {
             .expect("create should succeed");
 
         let conv_id = conversation.id.to_string();
+        seed_documents(&pool, &["doc-123", "doc-789"]).await;
 
         service
             .add_document_reference(
@@ -1476,7 +1381,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_document_reference() {
-        let (service, _pool) = create_test_service().await;
+        let (service, pool) = create_test_service().await;
+        seed_documents(&pool, &["doc-123"]).await;
 
         let conversation = service
             .create_conversation(
@@ -1512,7 +1418,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_conversation_includes_document_references() {
-        let (service, _pool) = create_test_service().await;
+        let (service, pool) = create_test_service().await;
 
         let conversation = service
             .create_conversation(
@@ -1524,6 +1430,7 @@ mod tests {
             .expect("create should succeed");
 
         let conv_id = conversation.id.to_string();
+        seed_documents(&pool, &["doc-1", "doc-2"]).await;
 
         service
             .add_document_reference(

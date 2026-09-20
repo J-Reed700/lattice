@@ -12,7 +12,7 @@ pub fn best_available_compute_device(workload: &str) -> Device {
         return Device::Cpu;
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         // Candle's Metal constructor can panic in constrained processes before
         // it has a chance to return an error. Treat that like any unavailable
@@ -57,6 +57,13 @@ fn force_cpu_requested(value: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::force_cpu_requested;
+
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    #[test]
+    fn intel_mac_uses_cpu_for_local_inference() {
+        assert!(super::best_available_compute_device("intel-mac-test").is_cpu());
+        assert!(!super::gpu_acceleration_available());
+    }
 
     #[test]
     fn force_cpu_values_are_explicit() {

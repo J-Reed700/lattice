@@ -507,6 +507,13 @@ pub struct WebSearchOutput {
     /// Number of unique domains discovered before pagination.
     #[serde(default)]
     pub unique_domain_count: usize,
+
+    /// Every query a deep search ran beyond the one it was asked, in the order
+    /// it ran them. They used to reach the log and nowhere else, so a reader
+    /// saw one search where there had been six and could not tell what the
+    /// results were actually results *for*.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub followup_queries: Vec<String>,
 }
 
 /// Input for fetch_url_content function.
@@ -545,6 +552,17 @@ pub struct FetchUrlContentOutput {
     /// HTTP Content-Type header
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+
+    /// True when the page came from the on-disk page cache instead of the
+    /// network. Left out of the payload entirely for a live fetch, so what a
+    /// model sees for an ordinary page is exactly what it saw before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub from_cache: bool,
+}
+
+/// `skip_serializing_if` for a flag only worth sending when it is set.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Input for wiki_search function.

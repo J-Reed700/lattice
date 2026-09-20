@@ -100,7 +100,10 @@ impl LlamaCppLlm {
             ("top_p".into(), json!(self.settings.top_p)),
             ("top_k".into(), json!(self.settings.top_k)),
             ("repeat_penalty".into(), json!(self.settings.repeat_penalty)),
-            ("max_tokens".into(), json!(self.settings.max_tokens)),
+            (
+                "max_tokens".into(),
+                json!(request.effective_max_output_tokens(self.settings.max_tokens)),
+            ),
         ]);
         if stream {
             body.insert("stream_options".into(), json!({"include_usage": true}));

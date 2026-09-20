@@ -337,92 +337,6 @@ impl ConversationAggregate {
         Ok(())
     }
 
-    /// Fold the messages up to (and including) `up_to_message_id` into a summary.
-    ///
-    /// This is the non-lossy alternative to [`Self::prune_to_token_limit`]: the
-    /// compacted messages stay in the aggregate so the UI can still render them
-    /// (with a divider at the boundary), but [`Self::to_llm_messages`] replaces
-    /// them with the summary so the LLM context window stays small.
-    ///
-    /// # Arguments
-    ///
-    /// * `summary_text` - LLM-produced summary of the compacted messages
-    /// * `up_to_message_id` - id of the last message folded into the summary
-    /// * `summary_tokens` - token count of the summary
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::NotFound` if `up_to_message_id` is not in this conversation
-    /// - `AppError::InvalidInput` if the summary is empty, `summary_tokens` is
-    ///   not positive, or the compacted messages carry no tokens
-    pub fn apply_compaction(
-        &mut self,
-        summary_text: String,
-        up_to_message_id: &str,
-        summary_tokens: i64,
-    ) -> Result<CompactionRecord> {
-        if summary_text.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Compaction summary cannot be empty".into(),
-            ));
-        }
-        if summary_tokens <= 0 {
-            return Err(AppError::InvalidInput(
-                "Compaction summary must have a positive token count".into(),
-            ));
-        }
-
-        let boundary_index = self
-            .messages
-            .iter()
-            .position(|m| m.id == up_to_message_id)
-            .ok_or_else(|| {
-                AppError::NotFound(format!(
-                    "Cannot compact: message {} is not in this conversation",
-                    up_to_message_id
-                ))
-            })?;
-
-        let (compacted, _kept) = self.messages.split_at(boundary_index + 1);
-        let original_message_count = compacted.len() as i64;
-        let original_tokens: i64 = compacted.iter().map(|m| m.tokens).sum();
-        if original_tokens <= 0 {
-            return Err(AppError::InvalidInput(
-                "Cannot compact messages that carry no tokens".into(),
-            ));
-        }
-
-        let compression_ratio = (summary_tokens as f64 / original_tokens as f64).min(1.0);
-
-        let record = CompactionRecord {
-            id: uuid::Uuid::new_v4().to_string(),
-            conversation_id: self.conversation.id.clone(),
-            summary_text,
-            up_to_message_id: up_to_message_id.to_string(),
-            original_message_count,
-            original_tokens,
-            summary_tokens,
-            compression_ratio,
-            created_at: Utc::now(),
-        };
-
-        self.compaction = Some(record.clone());
-        self.conversation.updated_at = Utc::now();
-
-        Ok(record)
-    }
-
-    fn to_llm_message(msg: &ConversationMessage) -> LLMMessage {
-        LLMMessage {
-            role: match msg.role {
-                MessageRole::User => "user".to_string(),
-                MessageRole::Assistant => "assistant".to_string(),
-                MessageRole::System => "system".to_string(),
-            },
-            content: msg.content.clone(),
-        }
-    }
-
     /// The summary standing in for the folded prefix, if a compaction is active.
     ///
     /// Every context window is assembled the same way: this preamble first, then
@@ -430,10 +344,10 @@ impl ConversationAggregate {
     /// stops one caller from carrying the summary and another the raw history.
     pub fn context_preamble(&self) -> Option<String> {
         self.compaction.as_ref().map(|record| {
-            format!(
-                "[Earlier conversation, summarized]\n{}",
-                record.summary_text
-            )
+            // Shared framing, not a local format string: this used to say only
+            // "summarized", which let the QA and context-window paths present a
+            // model's paraphrase as though it were the transcript.
+            crate::domain::conversation_memory::frame_generated_summary(&record.summary_text)
         })
     }
 
@@ -453,23 +367,6 @@ impl ConversationAggregate {
             .position(|m| m.id == record.up_to_message_id)
             .and_then(|boundary| self.messages.get(boundary + 1..))
             .unwrap_or(&self.messages)
-    }
-
-    /// Convert conversation messages to LLM API format.
-    ///
-    /// A compaction summary is emitted first, as a system message, followed only
-    /// by the messages after the boundary, so the context window carries the
-    /// distilled past instead of the raw history.
-    pub fn to_llm_messages(&self) -> Vec<LLMMessage> {
-        let mut out = Vec::new();
-        if let Some(preamble) = self.context_preamble() {
-            out.push(LLMMessage {
-                role: "system".to_string(),
-                content: preamble,
-            });
-        }
-        out.extend(self.live_messages().iter().map(Self::to_llm_message));
-        out
     }
 
     /// Rename the conversation.
@@ -739,14 +636,49 @@ mod tests {
         aggregate
     }
 
+    /// Attach a compaction the way persistence does: a `CompactionRecord` read
+    /// back from `conversation_summaries`.
+    ///
+    /// There is deliberately no aggregate method that creates one. A summary row
+    /// is written in exactly one place — the memory commit — so that the summary
+    /// and the ledger it belongs to can never describe different revisions.
+    fn with_compaction(
+        aggregate: ConversationAggregate,
+        summary_text: &str,
+        up_to_message_id: &str,
+        summary_tokens: i64,
+    ) -> ConversationAggregate {
+        let compacted = aggregate
+            .messages()
+            .iter()
+            .position(|m| m.id == up_to_message_id)
+            .map(|index| index + 1)
+            .unwrap_or(0) as i64;
+        let original_tokens = (compacted * 10).max(1);
+        let record = CompactionRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: aggregate.id().clone(),
+            summary_text: summary_text.to_string(),
+            up_to_message_id: up_to_message_id.to_string(),
+            original_message_count: compacted,
+            original_tokens,
+            summary_tokens,
+            compression_ratio: (summary_tokens as f64 / original_tokens as f64).min(1.0),
+            created_at: Utc::now(),
+        };
+        ConversationAggregate::from_persistence(
+            aggregate.conversation().clone(),
+            aggregate.messages().to_vec(),
+            aggregate.document_context().to_vec(),
+            Some(record),
+        )
+    }
+
     #[test]
     fn compaction_replaces_the_folded_prefix_in_the_llm_context() {
-        let mut aggregate = aggregate_with_messages(6);
+        let aggregate = aggregate_with_messages(6);
         let boundary = aggregate.messages()[3].id.clone();
-
-        aggregate
-            .apply_compaction("distilled past".to_string(), &boundary, 5)
-            .expect("compaction applies");
+        let aggregate = with_compaction(aggregate, "distilled past", &boundary, 5);
 
         // Every message is still present for display...
         assert_eq!(aggregate.messages().len(), 6);
@@ -758,71 +690,28 @@ mod tests {
             .collect();
         assert_eq!(live, vec!["message 4", "message 5"]);
 
-        let llm = aggregate.to_llm_messages();
-        assert_eq!(llm.len(), 3);
-        assert_eq!(llm[0].role, "system");
-        assert!(llm[0].content.contains("distilled past"));
-        assert_eq!(llm[1].content, "message 4");
-    }
-
-    #[test]
-    fn compaction_records_what_it_folded() {
-        let mut aggregate = aggregate_with_messages(6);
-        let boundary = aggregate.messages()[3].id.clone();
-
-        let record = aggregate
-            .apply_compaction("summary".to_string(), &boundary, 5)
-            .expect("compaction applies");
-
-        assert_eq!(record.original_message_count, 4);
-        assert_eq!(record.original_tokens, 40);
-        assert_eq!(record.up_to_message_id, boundary);
-        assert!((record.compression_ratio - 0.125).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn a_summary_never_exceeds_what_it_replaced() {
-        let mut aggregate = aggregate_with_messages(2);
-        let boundary = aggregate.messages()[0].id.clone();
-
-        // A summary larger than the single message it folds still reports 1.0,
-        // so a ratio can always be read as "fraction of the original".
-        let record = aggregate
-            .apply_compaction("a much longer summary".to_string(), &boundary, 999)
-            .expect("compaction applies");
-
-        assert!((record.compression_ratio - 1.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn compaction_rejects_input_it_cannot_account_for() {
-        let mut aggregate = aggregate_with_messages(4);
-        let boundary = aggregate.messages()[1].id.clone();
-
-        assert!(matches!(
-            aggregate.apply_compaction("   ".to_string(), &boundary, 5),
-            Err(AppError::InvalidInput(_))
-        ));
-        assert!(matches!(
-            aggregate.apply_compaction("summary".to_string(), &boundary, 0),
-            Err(AppError::InvalidInput(_))
-        ));
-        assert!(matches!(
-            aggregate.apply_compaction("summary".to_string(), "not-a-message", 5),
-            Err(AppError::NotFound(_))
-        ));
-        // A rejected compaction leaves the context untouched.
-        assert!(aggregate.context_preamble().is_none());
-        assert_eq!(aggregate.live_messages().len(), 4);
+        // The summary itself is rendered by the context assembler, which is the
+        // one place a prompt is built; the aggregate's job is only to say which
+        // messages are still carried raw and what the summary text is.
+        let preamble = aggregate
+            .context_preamble()
+            .expect("a compaction has a preamble");
+        assert!(preamble.contains("distilled past"));
+        // And it must say who wrote it. This preamble used to read only
+        // "[Earlier conversation, summarized]", which let the QA and
+        // context-window paths hand a model's paraphrase to another model as
+        // though it were the transcript.
+        assert!(
+            preamble.contains("written by a model"),
+            "a summary presented without that caveat reads as something the user said"
+        );
     }
 
     #[test]
     fn a_stale_boundary_keeps_the_history_instead_of_erasing_it() {
-        let mut aggregate = aggregate_with_messages(4);
+        let aggregate = aggregate_with_messages(4);
         let boundary = aggregate.messages()[1].id.clone();
-        aggregate
-            .apply_compaction("summary".to_string(), &boundary, 5)
-            .expect("compaction applies");
+        let mut aggregate = with_compaction(aggregate, "summary", &boundary, 5);
 
         // The boundary message is deleted out from under the summary.
         aggregate.messages.retain(|m| m.id != boundary);
@@ -830,7 +719,6 @@ mod tests {
         // Falling open costs tokens; falling closed would silently drop the
         // entire live conversation from the model's context.
         assert_eq!(aggregate.live_messages().len(), 3);
-        assert_eq!(aggregate.to_llm_messages().len(), 4);
     }
 
     #[test]

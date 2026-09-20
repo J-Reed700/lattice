@@ -300,6 +300,14 @@ impl CompactionRecordDto {
 pub struct CompactConversationResponseDto {
     /// The compaction that was applied
     pub compaction: CompactionRecordDto,
+
+    /// Memory accounting for this pass.
+    ///
+    /// Not optional: every compaction goes through the one job, which always
+    /// commits a ledger alongside the summary. It was an `Option` while a
+    /// summary-only path still existed; that path is gone, and leaving the
+    /// `Option` would invite a caller to handle a case that cannot occur.
+    pub memory: crate::features::conversation::memory_dto::CompactionMemoryDto,
 }
 
 #[cfg(test)]

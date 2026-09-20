@@ -329,7 +329,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     tracing::info!("Reconciling stale downloads from previous session...");
     let reconcile_repo = download_repository.clone();
     let reconcile_startup_ts = Utc::now();
-    let reconcile_grace = chrono::Duration::seconds(30);
     let model_repo_for_cleanup = Arc::new(
         crate::features::download::downloaded_model_repository::DownloadedModelRepository::new(
             container.db_pool().clone(),
@@ -342,13 +341,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
             reconcile_orphaned_files, reconcile_orphaned_sessions, reconcile_stale_downloads,
         };
 
-        match reconcile_stale_downloads(
-            reconcile_repo.clone(),
-            reconcile_startup_ts,
-            reconcile_grace,
-        )
-        .await
-        {
+        match reconcile_stale_downloads(reconcile_repo.clone(), reconcile_startup_ts).await {
             Ok(count) if count > 0 => {
                 tracing::info!("Reconciled {} stale download(s) on startup", count);
             }

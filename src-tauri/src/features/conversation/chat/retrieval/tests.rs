@@ -515,7 +515,9 @@ fn a_remembered_document_outside_the_space_is_forgotten() {
     );
 
     assert_eq!(
-        kept.iter().map(|r| r.document_id.as_str()).collect::<Vec<_>>(),
+        kept.iter()
+            .map(|r| r.document_id.as_str())
+            .collect::<Vec<_>>(),
         ["still_here"]
     );
     assert!(super::keep_references_in_scope(vec![reference("any")], &HashSet::new()).is_empty());

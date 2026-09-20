@@ -26,11 +26,20 @@ const MAX_STEPS: usize = 200;
 /// arguments. Anything longer is cut.
 const MAX_DETAIL_CHARS: usize = 200;
 
+/// Links one step may carry. A search hands the model about ten results; past
+/// that the list stops being "where it looked" and becomes a results page.
+const MAX_STEP_LINKS: usize = 12;
+
 /// What kind of work a step was. Stable codes, not prose — the label is what a
 /// person reads, this is what the UI groups and tests match on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStepKind {
+    /// The turn was asked to research rather than answer. Not work in itself:
+    /// it is on the record so that what follows — several searches, several
+    /// rounds, minutes of reading — is read as the request it was, live and in
+    /// a week, without the UI having to remember how the composer was set.
+    DeepResearch,
     Route,
     Plan,
     SearchDocuments,
@@ -52,6 +61,31 @@ pub enum TurnStepState {
     Running,
     Done,
     Failed,
+}
+
+/// A page a step found or opened.
+///
+/// A sentence like "10 results" says a search happened and nothing about where
+/// it led. On a research turn that runs for minutes, the addresses are the only
+/// evidence a reader has that the model is looking somewhere sensible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnStepLinkDto {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl TurnStepLinkDto {
+    pub fn new(url: impl Into<String>, title: Option<&str>) -> Self {
+        Self {
+            url: url.into(),
+            title: title
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(clip),
+        }
+    }
 }
 
 /// One thing the turn did, with how long it took and what came of it.
@@ -76,6 +110,11 @@ pub struct TurnStepDto {
     /// 3 files", "not enough support: low term coverage".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    /// For a search, what it found; for a page read, the page. Known at the
+    /// start of a read and only at the end of a search, so either event may
+    /// carry it. Always on the wire, empty or not, so the generated binding's
+    /// `links: TurnStepLinkDto[]` is true of every step.
+    pub links: Vec<TurnStepLinkDto>,
 }
 
 /// The model that answered **this** turn, which is not necessarily the one the
@@ -223,6 +262,18 @@ impl TurnRecorder {
         label: impl Into<String>,
         detail: Option<String>,
     ) -> StepId {
+        self.begin_with_links(kind, label, detail, Vec::new())
+    }
+
+    /// Start a step that already knows where it is going — a page read knows
+    /// its address before the first byte arrives.
+    pub fn begin_with_links(
+        &self,
+        kind: TurnStepKind,
+        label: impl Into<String>,
+        detail: Option<String>,
+        links: Vec<TurnStepLinkDto>,
+    ) -> StepId {
         let step = TurnStepDto {
             id: format!("s{}", self.next_id.fetch_add(1, Ordering::Relaxed)),
             kind,
@@ -232,6 +283,7 @@ impl TurnRecorder {
             started_at_ms: self.elapsed_ms(),
             duration_ms: None,
             result: None,
+            links: capped(links),
         };
         let Ok(mut steps) = self.steps.lock() else {
             return StepId::none();
@@ -258,9 +310,20 @@ impl TurnRecorder {
         label: impl Into<String>,
         detail: Option<String>,
     ) -> StepGuard<'_> {
+        self.begin_guarded_with_links(kind, label, detail, Vec::new())
+    }
+
+    /// [`Self::begin_guarded`] for a step that knows its links up front.
+    pub fn begin_guarded_with_links(
+        &self,
+        kind: TurnStepKind,
+        label: impl Into<String>,
+        detail: Option<String>,
+        links: Vec<TurnStepLinkDto>,
+    ) -> StepGuard<'_> {
         StepGuard {
             recorder: self,
-            id: self.begin(kind, label, detail),
+            id: self.begin_with_links(kind, label, detail, links),
         }
     }
 
@@ -269,6 +332,19 @@ impl TurnRecorder {
     /// Only a running step is changed, so the guard's drop cannot overwrite a
     /// verdict the caller already gave.
     pub fn end(&self, id: &StepId, state: TurnStepState, result: Option<String>) {
+        self.end_with_links(id, state, result, Vec::new());
+    }
+
+    /// Finish a step and attach what it found. Links given at the start are
+    /// kept when the finish brings none, so a page read does not lose its
+    /// address by ending.
+    pub fn end_with_links(
+        &self,
+        id: &StepId,
+        state: TurnStepState,
+        result: Option<String>,
+        links: Vec<TurnStepLinkDto>,
+    ) {
         let Some(step_id) = id.0.as_deref() else {
             return;
         };
@@ -284,6 +360,9 @@ impl TurnRecorder {
         step.state = state;
         step.duration_ms = Some(self.elapsed_ms().saturating_sub(step.started_at_ms));
         step.result = result.map(|text| clip(&text));
+        if !links.is_empty() {
+            step.links = capped(links);
+        }
         let finished = step.clone();
         drop(steps);
         self.send(finished);
@@ -335,6 +414,11 @@ impl StepGuard<'_> {
     pub fn failed(self, result: Option<String>) {
         self.recorder.end(&self.id, TurnStepState::Failed, result);
     }
+
+    pub fn done_with_links(self, result: Option<String>, links: Vec<TurnStepLinkDto>) {
+        self.recorder
+            .end_with_links(&self.id, TurnStepState::Done, result, links);
+    }
 }
 
 impl Drop for StepGuard<'_> {
@@ -343,6 +427,16 @@ impl Drop for StepGuard<'_> {
         // away from this step, which is a failure however it got there.
         self.recorder.end(&self.id, TurnStepState::Failed, None);
     }
+}
+
+/// Longer than any address a person would recognise. The frontend schema is
+/// strict, so one pathological link would otherwise cost the whole step.
+const MAX_LINK_URL_BYTES: usize = 2048;
+
+fn capped(mut links: Vec<TurnStepLinkDto>) -> Vec<TurnStepLinkDto> {
+    links.retain(|link| !link.url.is_empty() && link.url.len() <= MAX_LINK_URL_BYTES);
+    links.truncate(MAX_STEP_LINKS);
+    links
 }
 
 fn clip(text: &str) -> String {
@@ -371,7 +465,11 @@ mod tests {
     fn a_finish_event_carries_the_id_of_its_start() {
         let (recorder, seen) = capturing();
 
-        let step = recorder.begin(TurnStepKind::SearchDocuments, "Searching your documents", None);
+        let step = recorder.begin(
+            TurnStepKind::SearchDocuments,
+            "Searching your documents",
+            None,
+        );
         recorder.end(
             &step,
             TurnStepState::Done,
@@ -500,6 +598,7 @@ mod tests {
             started_at_ms: 0,
             duration_ms: None,
             result: None,
+            links: Vec::new(),
         })
         .unwrap();
 
@@ -508,5 +607,67 @@ mod tests {
         assert_eq!(json["startedAtMs"], 0);
         assert!(json.get("durationMs").is_none());
         assert!(json.get("detail").is_none());
+        // Present even when empty: the binding promises an array, and a field
+        // that is sometimes missing makes that promise false.
+        assert_eq!(json["links"], serde_json::json!([]));
+    }
+
+    /// A search learns where it led only when it returns, so the finish event
+    /// is the one that has to carry the addresses.
+    #[test]
+    fn a_search_reports_where_it_led_when_it_finishes() {
+        let (recorder, seen) = capturing();
+
+        recorder
+            .begin_guarded(TurnStepKind::WebSearch, "Searching the web", None)
+            .done_with_links(
+                Some("2 results".into()),
+                vec![
+                    TurnStepLinkDto::new("https://example.com/a", Some("  A page  ")),
+                    TurnStepLinkDto::new("https://example.org/b", Some("   ")),
+                ],
+            );
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].step.as_ref().unwrap().links.is_empty());
+        let finished = seen[1].step.as_ref().unwrap();
+        assert_eq!(finished.links.len(), 2);
+        assert_eq!(finished.links[0].title.as_deref(), Some("A page"));
+        assert_eq!(finished.links[1].title, None, "a blank title is no title");
+        assert_eq!(recorder.steps()[0].links, finished.links);
+    }
+
+    /// A page read knows its address from the start. Ending it with a word
+    /// count must not cost the record the one fact that says which page it was.
+    #[test]
+    fn a_page_read_keeps_its_address_when_it_ends_without_new_links() {
+        let (recorder, _) = capturing();
+
+        recorder
+            .begin_guarded_with_links(
+                TurnStepKind::ReadPage,
+                "Reading example.com",
+                None,
+                vec![TurnStepLinkDto::new("https://example.com/a", None)],
+            )
+            .failed(Some("403".into()));
+
+        let steps = recorder.steps();
+        assert_eq!(steps[0].state, TurnStepState::Failed);
+        assert_eq!(steps[0].links[0].url, "https://example.com/a");
+    }
+
+    #[test]
+    fn a_step_carries_no_more_links_than_a_reader_can_take_in() {
+        let (recorder, _) = capturing();
+        let many = (0..40)
+            .map(|n| TurnStepLinkDto::new(format!("https://example.com/{n}"), None))
+            .collect();
+
+        recorder
+            .begin_guarded(TurnStepKind::WebSearch, "Searching the web", None)
+            .done_with_links(None, many);
+
+        assert_eq!(recorder.steps()[0].links.len(), MAX_STEP_LINKS);
     }
 }

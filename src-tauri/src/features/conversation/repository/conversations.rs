@@ -165,7 +165,9 @@ impl ConversationRepository {
     }
 
     /// Load the compaction summary for a conversation, if any. At most one row
-    /// can exist per conversation (see [`Self::upsert_summary`]).
+    /// can exist per conversation: `conversation_summaries.conversation_id` is
+    /// UNIQUE and the memory commit conflicts on it, so a re-compaction updates
+    /// the row in place and a read never has to choose between two.
     pub async fn get_summary(&self, id: &str) -> Result<Option<CompactionRecord>> {
         let model = sqlx::query_as::<_, ConversationSummaryModel>(
             r#"
@@ -331,63 +333,6 @@ impl ConversationRepository {
                 "Conversation not found: {}",
                 conversation.id
             )));
-        }
-
-        // Persist the active compaction summary, if any (upsert).
-        if let Some(record) = aggregate.compaction() {
-            self.upsert_summary(record).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Insert or update the compaction summary for a conversation.
-    ///
-    /// One row per conversation: `conversation_summaries.conversation_id` is
-    /// UNIQUE, and conflicting on that column updates the existing row in
-    /// place, so its primary key stays stable across re-compactions. Reading a
-    /// summary back can therefore never have to choose between rows. Doing this
-    /// in one statement also keeps two concurrent compactions of the same
-    /// conversation from both inserting.
-    pub async fn upsert_summary(&self, record: &CompactionRecord) -> Result<()> {
-        let conversation_id = record.conversation_id.to_string();
-        let created_at = record.created_at.to_rfc3339();
-
-        let result = sqlx::query(
-            r#"
-            INSERT INTO conversation_summaries (
-                id, conversation_id, summary_text, up_to_message_id,
-                original_message_count, original_tokens, summary_tokens,
-                compression_ratio, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (conversation_id) DO UPDATE SET
-                summary_text = excluded.summary_text,
-                up_to_message_id = excluded.up_to_message_id,
-                original_message_count = excluded.original_message_count,
-                original_tokens = excluded.original_tokens,
-                summary_tokens = excluded.summary_tokens,
-                compression_ratio = excluded.compression_ratio,
-                created_at = excluded.created_at
-            "#,
-        )
-        .bind(&record.id)
-        .bind(&conversation_id)
-        .bind(&record.summary_text)
-        .bind(&record.up_to_message_id)
-        .bind(record.original_message_count)
-        .bind(record.original_tokens)
-        .bind(record.summary_tokens)
-        .bind(record.compression_ratio)
-        .bind(&created_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to save conversation summary: {}", e)))?;
-
-        if result.rows_affected() == 0 {
-            return Err(AppError::Database(
-                "Conversation summary upsert affected no rows".into(),
-            ));
         }
 
         Ok(())

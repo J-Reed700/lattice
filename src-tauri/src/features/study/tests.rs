@@ -385,3 +385,11 @@ fn source_budget_shares_context_between_documents_and_reserves_output_space() {
     );
     assert!(super::generation::bounded_sources(&sources, 2, 100, |_| 50).is_empty());
 }
+
+#[test]
+fn a_reply_whose_only_closing_brace_precedes_the_opening_one_is_rejected_not_a_panic() {
+    let s = source();
+    let raw = "} and then {\"cards\": [";
+    assert!(parse_cards(raw, std::slice::from_ref(&s), "deck", 6, 0).is_err());
+    assert!(parse_conversation_cards(raw, &[], "deck", 0).is_err());
+}

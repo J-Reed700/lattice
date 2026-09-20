@@ -156,7 +156,30 @@ fn read_only_backup_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new().filename(path).read_only(true)
 }
 
-/// Backup adapter using SQLite backup API
+/// Put the pre-restore safety copy back as the live database. Returns what to
+/// tell the user when that fails, including the path to inspect for recovery.
+pub(crate) async fn roll_back_database(safety: &Path, db_path: &Path) -> Option<String> {
+    // repository-barrier-allow: rolling back the live database file.
+    match tokio::fs::rename(safety, db_path).await {
+        Ok(()) => {
+            info!("Rolled back to original database");
+            None
+        }
+        Err(e) => {
+            error!(
+                safety_copy = %safety.display(),
+                error = %e,
+                "Could not roll back to the original database"
+            );
+            Some(format!(
+                " Your original database could not be put back automatically. Check the safety copy at {} before retrying.",
+                safety.display()
+            ))
+        }
+    }
+}
+
+/// Backup adapter using SQLite backup API.
 pub struct BackupAdapter {
     pool: SqlitePool,
     db_path: PathBuf,
@@ -487,14 +510,16 @@ impl BackupPort for BackupAdapter {
                     Err(e) => {
                         // Rollback: restore from safety backup
                         error!("Failed to rename restored database: {}", e);
+                        let mut note = String::new();
                         if current_backup.exists() {
-                            let _ = tokio::fs::rename(&current_backup, &self.db_path).await;
-                            info!("Rolled back to original database");
+                            note = roll_back_database(&current_backup, &self.db_path)
+                                .await
+                                .unwrap_or_default();
                         }
                         let _ = tokio::fs::remove_file(&temp_path).await;
                         Err(AppError::FileSystem(format!(
-                            "Failed to restore database: {}",
-                            e
+                            "Failed to restore database: {}.{}",
+                            e, note
                         )))
                     }
                 }
@@ -502,13 +527,15 @@ impl BackupPort for BackupAdapter {
             Err(e) => {
                 error!("Failed to copy backup file: {}", e);
                 // Rollback: restore from safety backup if needed
+                let mut note = String::new();
                 if current_backup.exists() && !self.db_path.exists() {
-                    let _ = tokio::fs::rename(&current_backup, &self.db_path).await;
-                    info!("Rolled back to original database");
+                    note = roll_back_database(&current_backup, &self.db_path)
+                        .await
+                        .unwrap_or_default();
                 }
                 Err(AppError::FileSystem(format!(
-                    "Failed to copy backup: {}",
-                    e
+                    "Failed to copy backup: {}.{}",
+                    e, note
                 )))
             }
         }
@@ -553,6 +580,40 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn rollback_failure_preserves_the_safety_copy_and_reports_its_location() {
+        let dir = tempdir().unwrap();
+        let safety = dir.path().join("original.db.pre_restore");
+        fs::write(&safety, b"original database").unwrap();
+        // A non-empty directory is a deterministic rename failure on every
+        // platform, including elevated processes that bypass permission bits.
+        let destination = dir.path().join("blocked.db");
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("keep"), b"existing file").unwrap();
+
+        let note = roll_back_database(&safety, &destination).await.unwrap();
+        assert!(note.contains("could not be put back automatically"));
+        assert!(note.contains(safety.to_str().unwrap()));
+        assert_eq!(fs::read(&safety).unwrap(), b"original database");
+        assert_eq!(
+            fs::read(destination.join("keep")).unwrap(),
+            b"existing file"
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_success_restores_original_bytes_without_a_failure_message() {
+        let dir = tempdir().unwrap();
+        let safety = dir.path().join("original.db.pre_restore");
+        let destination = dir.path().join("live.db");
+        fs::write(&safety, b"original database").unwrap();
+        fs::write(&destination, b"replacement database").unwrap();
+
+        assert!(roll_back_database(&safety, &destination).await.is_none());
+        assert_eq!(fs::read(&destination).unwrap(), b"original database");
+        assert!(!safety.exists());
+    }
 
     /// Open a read-write pool on an existing fixture file.
     ///

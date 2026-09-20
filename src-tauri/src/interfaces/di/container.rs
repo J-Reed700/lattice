@@ -79,6 +79,11 @@ pub struct Container {
     /// Function executor for LLM tools
     pub(crate) function_executor: Arc<dyn FunctionExecutorTrait>,
 
+    /// The one web service, held as itself rather than as its trait so the
+    /// reader command can ask for a page and be told when the text was
+    /// actually read — something the model's tool output has no field for.
+    pub(crate) web_service: Arc<WebService>,
+
     /// Router LLM cache (optional smaller routing model)
     pub(crate) router_llm_cache: NamedLlmCache,
 
@@ -240,7 +245,9 @@ impl Container {
 
         let embedding_service = Arc::new(DynamicEmbeddingService::new(embedding_runtime.clone()))
             as Arc<dyn EmbeddingServiceTrait>;
-        let web_service = Arc::new(WebService::new()?);
+        // One service for the whole process: its page cache and its per-site
+        // request queue are only worth anything if every caller shares them.
+        let web_service = Arc::new(WebService::new(core.data_dir())?);
 
         let function_executor = Arc::new(FunctionExecutor::new_with_custom_tools(
             function_registry.clone(),
@@ -254,7 +261,7 @@ impl Container {
             library.favorites_repo().clone(),
             library.recent_docs_repo().clone(),
             indexing.file_storage().clone(),
-            web_service,
+            web_service.clone(),
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
 
@@ -286,6 +293,7 @@ impl Container {
             search,
             function_registry,
             function_executor,
+            web_service,
             router_llm_cache,
             utility_llm_cache,
             llm_cache,

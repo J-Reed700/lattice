@@ -15,6 +15,9 @@
 mod conversations;
 mod document_references;
 mod fork;
+mod memory;
+mod memory_port;
+mod memory_recall;
 mod messages;
 mod port;
 mod pruning;

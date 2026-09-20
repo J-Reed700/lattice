@@ -493,10 +493,12 @@ impl DownloadEventBridge {
         let mut overall_status = DownloadStatus::Downloading;
 
         for session in &model_sessions {
+            // The path inside the model, not the bare file name: a sentence-
+            // transformers model has a `config.json` and a `1_Pooling/config.json`,
+            // and the frontend keys a row by this.
             let filename = session
-                .destination()
-                .file_name()
-                .and_then(|n| n.to_str())
+                .model_file_name()
+                .or_else(|| session.destination().file_name().and_then(|n| n.to_str()))
                 .unwrap_or("unknown")
                 .to_string();
 

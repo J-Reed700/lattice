@@ -155,6 +155,7 @@ fn main() {
             lattice::features::conversation::plugin::truncate_conversation_after,
             lattice::features::conversation::plugin::fork_conversation,
             lattice::features::conversation::plugin::compact_conversation,
+            lattice::features::conversation::plugin::get_conversation_memory,
             lattice::features::settings::plugin::get_system_theme::<tauri::Wry>,
             lattice::features::settings::plugin::set_cloud_api_key,
             // Additional public IPC contracts (use the same signatures as runtime).
@@ -356,6 +357,7 @@ fn main() {
             lattice::features::web::plugin::ingest_web_url,
             lattice::features::web::plugin::fetch_url_preview,
             lattice::features::web::plugin::extract_article,
+            lattice::features::web::plugin::read_web_page,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,

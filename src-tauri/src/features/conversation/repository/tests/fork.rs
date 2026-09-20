@@ -107,6 +107,7 @@ async fn test_fork_unknown_anchor_copies_nothing() {
 async fn test_fork_copies_linked_documents_and_web_sources() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
+    seed_documents(&pool, &["doc-1"]).await;
     let conversation_id = seed_thread(&pool).await;
 
     sqlx::query(
@@ -190,9 +191,14 @@ async fn a_branch_records_the_conversation_and_turn_it_was_taken_from() {
     let conversation_id = seed_thread(&pool).await;
     let repo = ConversationRepository::new(pool.clone());
 
-    repo.fork(&conversation_id, Some("m2"), "conv-lineage", "Thread · branch")
-        .await
-        .unwrap();
+    repo.fork(
+        &conversation_id,
+        Some("m2"),
+        "conv-lineage",
+        "Thread · branch",
+    )
+    .await
+    .unwrap();
 
     let lineage = sqlx::query_as::<_, (Option<String>, Option<String>)>(
         "SELECT forked_from_conversation_id, forked_from_message_id \

@@ -556,6 +556,15 @@ pub async fn regenerate_response(
 /// display; only the LLM context switches to the summary.
 #[tauri::command]
 #[specta::specta]
+pub async fn get_conversation_memory(
+    request: crate::features::conversation::memory_dto::GetConversationMemoryRequestDto,
+    container: State<'_, Container>,
+) -> Result<crate::features::conversation::memory_dto::ConversationMemoryDetailsDto, ApiError> {
+    conversation_impl::get_conversation_memory_impl(request, container.inner()).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn compact_conversation(
     request: CompactConversationRequestDto,
     container: State<'_, Container>,
@@ -613,6 +622,7 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             fork_conversation,
             regenerate_response,
             compact_conversation,
+            get_conversation_memory,
         ])
         .build()
 }

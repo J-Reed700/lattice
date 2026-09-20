@@ -363,6 +363,14 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// Caps generated tokens for this request, overriding the provider's own
+    /// configured ceiling when it is lower.
+    ///
+    /// The context assembler reserves output room out of the model's window, and
+    /// a reservation nothing enforces is only bookkeeping: without this the model
+    /// may generate past what the budget set aside and overrun the window it was
+    /// measured against. `None` keeps the provider's configured limit.
+    pub max_output_tokens: Option<u32>,
     /// Caps wall-clock time across all attempts. Stalls are detected separately,
     /// so this only needs to exceed the longest legitimate generation.
     #[serde(skip)]
@@ -372,6 +380,18 @@ pub struct CompletionRequest {
 impl CompletionRequest {
     pub fn effective_time_budget(&self) -> Duration {
         self.time_budget.unwrap_or(DEFAULT_COMPLETION_TIME_BUDGET)
+    }
+
+    /// The output ceiling to send, given the provider's own configured limit.
+    ///
+    /// The smaller of the two always wins: a request-level cap must be able to
+    /// tighten the provider's default, and must never be able to raise it past
+    /// what the user configured.
+    pub fn effective_max_output_tokens(&self, provider_limit: u32) -> u32 {
+        match self.max_output_tokens {
+            Some(requested) if requested > 0 => requested.min(provider_limit),
+            _ => provider_limit,
+        }
     }
 }
 
@@ -384,4 +404,48 @@ pub struct CompletionResponse {
     pub finish_reason: String,
     /// Opaque native output items for replaying provider-specific reasoning state.
     pub provider_output: serde_json::Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_output_cap_can_tighten_the_providers_limit_but_never_raise_it() {
+        let provider_limit = 4096;
+        let uncapped = CompletionRequest::default();
+        assert_eq!(
+            uncapped.effective_max_output_tokens(provider_limit),
+            provider_limit,
+            "no request cap leaves the configured limit alone"
+        );
+
+        let tighter = CompletionRequest {
+            max_output_tokens: Some(512),
+            ..Default::default()
+        };
+        assert_eq!(tighter.effective_max_output_tokens(provider_limit), 512);
+
+        // A budget that reserved more room than the user configured must not
+        // silently grant it: the configured ceiling is the user's decision.
+        let looser = CompletionRequest {
+            max_output_tokens: Some(100_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            looser.effective_max_output_tokens(provider_limit),
+            provider_limit
+        );
+
+        // Zero is meaningless as a generation cap and would produce an empty
+        // response rather than an error, so it is treated as "unset".
+        let zero = CompletionRequest {
+            max_output_tokens: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            zero.effective_max_output_tokens(provider_limit),
+            provider_limit
+        );
+    }
 }

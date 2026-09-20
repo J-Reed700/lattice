@@ -35,14 +35,19 @@
 //! # }
 //! ```
 
+use crate::application::services::context_assembler::{
+    BudgetAllocation, ModelCapacity, MESSAGE_FRAMING_TOKENS,
+};
 use crate::domain::conversation::{ConversationAggregate, ConversationMessage, LLMMessage};
 use crate::features::qa::engine::tokenizer::{count_tokens, truncate_to_tokens};
 use crate::features::search::engine::service::SearchResult;
 use crate::shared::error::{AppError, Result};
 
 // Default token budget allocation percentages
-const SYSTEM_PROMPT_BUDGET_PCT: f32 = 0.20; // 20% for system prompt
-const DOCUMENT_CONTEXT_BUDGET_PCT: f32 = 0.50; // 50% for document context
+/// Retained only as the fallback when the shared allocator refuses a capacity
+/// (a model too small to plan for). The live policy is
+/// [`BudgetAllocation`], so this path and the chat path agree.
+const DOCUMENT_CONTEXT_BUDGET_PCT: f32 = 0.50;
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful AI assistant with access to relevant documents. Answer the user's question based on the provided context when available.";
 
 /// Complete context package for LLM API calls
@@ -170,30 +175,56 @@ impl ContextManager {
         conversation: &ConversationAggregate,
         search_results: Vec<SearchResult>,
     ) -> Result<LLMContext> {
-        let _system_budget = (self.max_context_tokens as f32 * SYSTEM_PROMPT_BUDGET_PCT) as usize;
-        let document_budget =
-            (self.max_context_tokens as f32 * DOCUMENT_CONTEXT_BUDGET_PCT) as usize;
-
         // Format system prompt
         let system_prompt = Self::format_system_context(conversation.system_prompt());
         let system_tokens = count_tokens(&system_prompt);
+
+        // Budgeted by the same rules the chat path uses, rather than this
+        // module's own percentages. Two budget policies for one model is how a
+        // prompt that fits on one path overruns on the other.
+        let allocation = BudgetAllocation::plan(
+            &ModelCapacity::new("conversational-qa", self.max_context_tokens),
+            system_tokens.min(self.max_context_tokens),
+        )
+        .ok();
+        let document_budget = allocation
+            .as_ref()
+            .map(|allocation| allocation.rag_and_tools)
+            .unwrap_or_else(|| {
+                (self.max_context_tokens as f32 * DOCUMENT_CONTEXT_BUDGET_PCT) as usize
+            });
 
         // Format document context with budget
         let document_context = Self::format_document_context(search_results, document_budget)?;
         let document_tokens = count_tokens(&document_context);
 
         let used_tokens = system_tokens + document_tokens;
-        let conversation_budget = self.max_context_tokens.saturating_sub(used_tokens);
+        let conversation_budget = allocation
+            .as_ref()
+            .map(|allocation| allocation.recent_history.max(allocation.available / 4))
+            .unwrap_or_else(|| self.max_context_tokens.saturating_sub(used_tokens))
+            .min(self.max_context_tokens.saturating_sub(used_tokens));
 
-        // Format conversation history
-        let messages = Self::format_conversation_history(conversation.messages());
+        // `live_messages`, not `messages`: with a compaction active the folded
+        // prefix is represented by the summary, and replaying it here sent the
+        // whole archive *and* grew with it. The summary goes in front of the
+        // messages it stands for, the same order the chat path renders.
+        let mut messages = Vec::new();
+        if let Some(preamble) = conversation.context_preamble() {
+            messages.push(LLMMessage {
+                role: "assistant".to_string(),
+                content: preamble,
+            });
+        }
+        messages.extend(Self::format_conversation_history(
+            conversation.live_messages(),
+        ));
 
         // Estimate tokens in messages and truncate if needed
         let messages_tokens: usize = messages.iter().map(|m| count_tokens(&m.content)).sum();
 
         let final_messages = if messages_tokens > conversation_budget {
-            // Truncate oldest messages to fit budget
-            Self::truncate_messages(messages, conversation_budget)
+            Self::evict_history_to_budget(messages, conversation_budget)
         } else {
             messages
         };
@@ -379,50 +410,59 @@ impl ContextManager {
             .collect()
     }
 
-    /// Truncate messages to fit within token budget
+    /// Drop history until it fits, in the order the chat assembler uses.
     ///
-    /// Removes oldest messages first, preserving most recent conversation context.
-    /// Always keeps at least the last message.
+    /// The order is the point, not an implementation detail. `context_assembler`
+    /// evicts document evidence, then recalled passages, then the summary, then
+    /// the oldest processed turns; this prompt carries only the last two of
+    /// those, so it gives up the generated summary before it gives up any of the
+    /// user's own words. Two paths that discard different things under the same
+    /// pressure answer the same question differently, and that divergence is
+    /// exactly what a single rule removes.
     ///
-    /// # Arguments
+    /// Charges [`MESSAGE_FRAMING_TOKENS`] per message for the same reason the
+    /// assembler does: every provider spends tokens on role delimiters, and
+    /// counting zero for them is what makes a prompt that "fits" come back
+    /// rejected by the API.
     ///
-    /// * `messages` - Messages to truncate
-    /// * `max_tokens` - Maximum token budget
-    ///
-    /// # Returns
-    ///
-    /// Truncated messages that fit within budget
-    fn truncate_messages(messages: Vec<LLMMessage>, max_tokens: usize) -> Vec<LLMMessage> {
-        if messages.is_empty() {
-            return vec![];
+    /// A turn is dropped whole. Removing a question and leaving its answer
+    /// behind produces a transcript where the assistant appears to have
+    /// volunteered something unprompted, which is worse than having less
+    /// history. The newest message is never dropped.
+    fn evict_history_to_budget(messages: Vec<LLMMessage>, max_tokens: usize) -> Vec<LLMMessage> {
+        fn charge(message: &LLMMessage) -> usize {
+            count_tokens(&message.content) + MESSAGE_FRAMING_TOKENS
+        }
+        fn total(messages: &[LLMMessage]) -> usize {
+            messages.iter().map(charge).sum()
         }
 
-        let mut cumulative_tokens = 0;
-        let mut keep_from_index = messages.len();
-
-        // Count tokens from most recent to oldest
-        for (i, message) in messages.iter().enumerate().rev() {
-            let msg_tokens = count_tokens(&message.content);
-            cumulative_tokens += msg_tokens;
-
-            if cumulative_tokens > max_tokens {
-                keep_from_index = i + 1;
-                break;
-            }
-        }
-
-        // If keep_from_index is still at messages.len(), all messages fit
-        if keep_from_index == messages.len() {
+        let mut messages = messages;
+        if messages.is_empty() || total(&messages) <= max_tokens {
             return messages;
         }
 
-        // Otherwise, ensure we keep at least the last message
-        keep_from_index = keep_from_index.min(messages.len() - 1);
+        // The generated summary goes first. It is the only thing here that no
+        // user wrote, so it is the only thing whose loss costs no original words.
+        if let Some(index) = messages
+            .iter()
+            .position(|message| message.content.starts_with("[generated summary"))
+        {
+            messages.remove(index);
+        }
+
+        // Then the oldest turns, whole, while anything but the newest remains.
+        while total(&messages) > max_tokens && messages.len() > 1 {
+            let pair = messages.len() > 2
+                && messages.first().is_some_and(|first| first.role == "user")
+                && messages
+                    .get(1)
+                    .is_some_and(|second| second.role == "assistant");
+            let drop = if pair { 2 } else { 1 };
+            messages.drain(..drop.min(messages.len() - 1));
+        }
 
         messages
-            .get(keep_from_index..)
-            .map(|slice| slice.to_vec())
-            .unwrap_or_else(|| messages.to_vec())
     }
 }
 
@@ -611,58 +651,77 @@ mod tests {
             .contains("Retrieval-Augmented Generation"));
     }
 
-    #[test]
-    fn test_truncate_messages_no_truncation_needed() {
-        let messages = vec![
-            LLMMessage {
-                role: "user".to_string(),
-                content: "Hello".to_string(),
-            },
-            LLMMessage {
-                role: "assistant".to_string(),
-                content: "Hi there!".to_string(),
-            },
-        ];
-
-        let truncated = ContextManager::truncate_messages(messages.clone(), 1000);
-        assert_eq!(truncated.len(), 2);
-        assert_eq!(truncated[0].content, "Hello");
+    /// Small helper so the eviction tests read as the sequences they describe.
+    fn history(turns: &[(&str, &str)]) -> Vec<LLMMessage> {
+        turns
+            .iter()
+            .map(|(role, content)| LLMMessage {
+                role: (*role).to_string(),
+                content: (*content).to_string(),
+            })
+            .collect()
     }
 
     #[test]
-    fn test_truncate_messages_removes_oldest() {
-        let messages = vec![
-            LLMMessage {
-                role: "user".to_string(),
-                content: "First message with some content".to_string(),
-            },
-            LLMMessage {
-                role: "assistant".to_string(),
-                content: "Second message".to_string(),
-            },
-            LLMMessage {
-                role: "user".to_string(),
-                content: "Third message".to_string(),
-            },
-        ];
+    fn history_that_already_fits_is_left_exactly_as_it_was() {
+        let messages = history(&[("user", "Hello"), ("assistant", "Hi there!")]);
 
-        // Small budget should keep only recent messages
-        let truncated = ContextManager::truncate_messages(messages, 10);
-        assert!(truncated.len() < 3);
-        assert!(!truncated.is_empty());
-        assert_eq!(truncated.last().unwrap().content, "Third message");
+        let kept = ContextManager::evict_history_to_budget(messages.clone(), 1000);
+
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].content, "Hello");
     }
 
     #[test]
-    fn test_truncate_messages_keeps_at_least_one() {
-        let messages = vec![LLMMessage {
-            role: "user".to_string(),
-            content: "Very long message that exceeds budget...".repeat(100),
-        }];
+    fn the_generated_summary_is_given_up_before_any_of_the_users_own_words() {
+        let summary = crate::domain::conversation_memory::frame_generated_summary(
+            "The user chose Postgres and asked for nightly backups.",
+        );
+        let messages = history(&[
+            ("assistant", summary.as_str()),
+            ("user", "And what about the retention window?"),
+        ]);
 
-        // Even with budget of 1, should keep the last message
-        let truncated = ContextManager::truncate_messages(messages, 1);
-        assert_eq!(truncated.len(), 1);
+        // A budget that fits the question but not both.
+        let budget = count_tokens("And what about the retention window?") + MESSAGE_FRAMING_TOKENS;
+        let kept = ContextManager::evict_history_to_budget(messages, budget);
+
+        // The assembler's eviction order, and the reason for it: the summary is
+        // the only entry here that no user wrote.
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].content, "And what about the retention window?");
+    }
+
+    #[test]
+    fn a_turn_is_dropped_whole_so_an_answer_never_outlives_its_question() {
+        let messages = history(&[
+            ("user", "Which database should we use?"),
+            ("assistant", "Postgres, for the constraints you described."),
+            ("user", "And the retention window?"),
+        ]);
+
+        let budget = count_tokens("And the retention window?") + MESSAGE_FRAMING_TOKENS;
+        let kept = ContextManager::evict_history_to_budget(messages, budget);
+
+        assert_eq!(
+            kept.len(),
+            1,
+            "the question and its answer go together or not at all"
+        );
+        assert_eq!(kept[0].content, "And the retention window?");
+    }
+
+    #[test]
+    fn the_newest_message_survives_a_budget_it_cannot_possibly_fit() {
+        let messages = history(&[("user", "placeholder")]);
+        let mut messages = messages;
+        messages[0].content = "Very long message that exceeds budget...".repeat(100);
+
+        // Dropping it would send a prompt with no question in it at all, which
+        // fails less usefully than an over-budget request the provider rejects.
+        let kept = ContextManager::evict_history_to_budget(messages, 1);
+
+        assert_eq!(kept.len(), 1);
     }
 
     #[test]
@@ -746,19 +805,101 @@ mod tests {
     }
 
     #[test]
-    fn test_token_budget_allocation() {
-        let _manager = ContextManager::new(1000);
+    fn qa_budgets_from_the_same_allocator_the_chat_path_uses() {
+        // The previous test asserted arithmetic on this module's own percentage
+        // constants, which proved nothing about behaviour and drifted from the
+        // chat path for free. What matters is that one policy governs both.
+        let manager = ContextManager::new(32_768);
+        let conversation = aggregate_with("Answer well.", 4);
+        let context = manager
+            .build_context_for_llm(&conversation, Vec::new())
+            .expect("context builds");
 
-        // System budget should be ~20% = 200 tokens
-        let system_budget = (1000.0 * SYSTEM_PROMPT_BUDGET_PCT) as usize;
-        assert_eq!(system_budget, 200);
+        let allocation = BudgetAllocation::plan(
+            &ModelCapacity::new("conversational-qa", 32_768),
+            count_tokens(&context.system_prompt),
+        )
+        .expect("the shared allocator plans this capacity");
+        assert!(
+            context.total_tokens <= allocation.input_budget,
+            "QA spent {} against an input budget of {}",
+            context.total_tokens,
+            allocation.input_budget
+        );
+    }
 
-        // Document budget should be ~50% = 500 tokens
-        let document_budget = (1000.0 * DOCUMENT_CONTEXT_BUDGET_PCT) as usize;
-        assert_eq!(document_budget, 500);
+    #[test]
+    fn qa_carries_the_summary_instead_of_replaying_a_compacted_prefix() {
+        let manager = ContextManager::new(32_768);
+        let plain = aggregate_with("Answer well.", 6);
+        let boundary = plain.messages()[3].id.clone();
 
-        // Remaining for conversation ~30% = 300 tokens
-        let remaining = 1000 - system_budget - document_budget;
-        assert_eq!(remaining, 300);
+        let before = manager
+            .build_context_for_llm(&plain, Vec::new())
+            .expect("context builds");
+
+        let record = crate::domain::conversation::CompactionRecord {
+            id: "c".into(),
+            conversation_id: plain.id().clone(),
+            summary_text: "distilled past".into(),
+            up_to_message_id: boundary,
+            original_message_count: 4,
+            original_tokens: 40,
+            summary_tokens: 5,
+            compression_ratio: 0.125,
+            created_at: chrono::Utc::now(),
+        };
+        let compacted = ConversationAggregate::from_persistence(
+            plain.conversation().clone(),
+            plain.messages().to_vec(),
+            plain.document_context().to_vec(),
+            Some(record),
+        );
+        let after = manager
+            .build_context_for_llm(&compacted, Vec::new())
+            .expect("context builds");
+
+        // The folded prefix is gone from the prompt and the summary stands in
+        // for it. Before this, QA replayed every message the compaction had
+        // already folded, so a compacted conversation grew without bound.
+        assert!(
+            after.messages.len() < before.messages.len(),
+            "compaction must shrink the QA prompt: {} vs {}",
+            after.messages.len(),
+            before.messages.len()
+        );
+        assert!(after.messages[0].content.contains("distilled past"));
+        assert_ne!(
+            after.messages[0].role, "system",
+            "a generated summary must not be given system authority here either"
+        );
+        assert!(
+            !after
+                .messages
+                .iter()
+                .any(|message| message.content == "message 0"),
+            "a folded message must not also be replayed raw"
+        );
+    }
+
+    /// An aggregate with `count` alternating messages and a system prompt.
+    fn aggregate_with(system_prompt: &str, count: usize) -> ConversationAggregate {
+        let mut aggregate = ConversationAggregate::new(
+            "QA".to_string(),
+            "test-model".to_string(),
+            Some(system_prompt.to_string()),
+        )
+        .expect("aggregate");
+        for index in 0..count {
+            let role = if index % 2 == 0 {
+                crate::domain::conversation::MessageRole::User
+            } else {
+                crate::domain::conversation::MessageRole::Assistant
+            };
+            aggregate
+                .add_message(role, format!("message {index}"), 10)
+                .expect("add message");
+        }
+        aggregate
     }
 }

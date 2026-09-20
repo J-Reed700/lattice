@@ -1,7 +1,10 @@
 use super::*;
 use crate::features::conversation::chat::cancellation::is_cancel_requested;
-use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::fetch_memory::{Delivery, FetchMemory};
+use crate::features::conversation::chat::turn_record::{
+    TurnRecorder, TurnStepKind, TurnStepLinkDto,
+};
+use crate::features::conversation::chat::web_steps::{self, result_count_line};
 use std::time::Duration;
 
 use crate::domain::qa::hyde::HyDEInterpretation;
@@ -799,14 +802,15 @@ impl ExternalLookup<'_> {
         // Named by host, because "Reading thereviewgeek.com" is the difference
         // between visible progress and a spinner, and a blocked site is then
         // obvious rather than mysterious.
-        let step = self.recorder.begin_guarded(
+        let step = self.recorder.begin_guarded_with_links(
             TurnStepKind::ReadPage,
             format!("Reading {}", host_of(&url)),
             Some(url.clone()),
+            vec![TurnStepLinkDto::new(url.clone(), None)],
         );
-        let outcome = self.fetch_one_page_inner(url).await;
+        let outcome = self.fetch_one_page_inner(url.clone()).await;
         match &outcome {
-            Ok(page) => step.done(Some(format!("{} words", page.word_count))),
+            Ok(page) => web_steps::finish_page(step, &url, page),
             Err(reason) => step.failed(Some(reason.clone())),
         }
         outcome
@@ -993,11 +997,13 @@ impl ExternalLookup<'_> {
         let web_search_start = Instant::now();
         let tuning = self.tuning;
         let mut searched = ExternalSearchResult::default();
-        let step = self.recorder.begin_guarded(
+        // Held as an option because a search that succeeds is finished before
+        // its pages are read, not after.
+        let mut step = Some(self.recorder.begin_guarded(
             TurnStepKind::WebSearch,
             "Searching the web",
             Some(web_query.to_string()),
-        );
+        ));
 
         let deep_research_enabled = self.search_flags.deep_research_mode;
         let web_depth = if deep_research_enabled {
@@ -1054,6 +1060,13 @@ impl ExternalLookup<'_> {
                                 result_count = output.result_count,
                                 "Forced web search completed"
                             );
+                            // Said now, before the pages are read: reading is
+                            // the slow part, and a list of addresses that only
+                            // appears once every one of them has been fetched
+                            // tells a waiting reader nothing.
+                            if let Some(step) = step.take() {
+                                web_steps::finish_search(step, self.recorder, &output);
+                            }
                             if deep_research_enabled {
                                 let llm_context_domains = output
                                     .results
@@ -1169,9 +1182,11 @@ impl ExternalLookup<'_> {
                 searched.error = Some(e.to_string());
             }
         }
-        match &searched.error {
-            Some(reason) => step.failed(Some(reason.clone())),
-            None => step.done(Some(result_count_line(searched.sources.len()))),
+        if let Some(step) = step {
+            match &searched.error {
+                Some(reason) => step.failed(Some(reason.clone())),
+                None => step.done(Some(result_count_line(searched.sources.len()))),
+            }
         }
         searched.elapsed_ms = elapsed_ms(web_search_start);
         searched
@@ -1189,14 +1204,6 @@ fn host_of(url: &str) -> String {
 /// How many results a search came back with, in the register of the step's
 /// label. Zero is said outright: a search that found nothing is not the same as
 /// a search that did not run.
-fn result_count_line(count: usize) -> String {
-    match count {
-        0 => "no results".to_string(),
-        1 => "1 result".to_string(),
-        many => format!("{many} results"),
-    }
-}
-
 /// Merge wiki results first: citations are appended, and the wiki context is
 /// used only while no web context exists.
 pub(super) fn attach_wiki_results(

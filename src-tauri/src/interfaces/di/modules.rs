@@ -785,6 +785,18 @@ impl AIModule {
         &self.conversation.conversation_context
     }
 
+    pub fn compaction_slots(
+        &self,
+    ) -> &Arc<crate::application::services::conversation_memory::CompactionSlots> {
+        &self.conversation.compaction_slots
+    }
+
+    pub fn conversation_memory(
+        &self,
+    ) -> &Arc<dyn crate::application::ports::conversation_memory::ConversationMemoryPort> {
+        &self.conversation.conversation_memory
+    }
+
     pub fn conversational_qa_service(&self) -> &Arc<dyn ConversationalQAServiceTrait> {
         &self.qa.conversational_qa_service
     }

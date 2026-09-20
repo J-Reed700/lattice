@@ -68,12 +68,13 @@ use tokio::time::timeout;
 // `.exe` on Windows), so the name passed to it must be that stem. A test
 // below pins these to the conf files.
 
-/// The primary llama-server build (Metal on macOS, Vulkan elsewhere).
+/// The primary llama-server build (Metal on Apple Silicon, CPU on Intel Macs,
+/// Vulkan on Windows/Linux).
 pub const SIDECAR_BIN: &str = "llama-server";
 /// CPU-only llama-server build. Bundled on Windows and Linux only, where
 /// the primary build is Vulkan and cannot even start without a Vulkan
-/// loader (`vulkan-1.dll` / `libvulkan.so.1`). macOS ships one Metal
-/// build. Always reached through [`SidecarBinary::Cpu`].
+/// loader (`vulkan-1.dll` / `libvulkan.so.1`). macOS ships one build per
+/// architecture. Always reached through [`SidecarBinary::Cpu`].
 pub const SIDECAR_CPU_BIN: &str = "llama-server-cpu";
 /// llama-server's readiness line, as the pinned build prints it on stderr:
 /// `main: server is listening on http://127.0.0.1:<port>`. The pre-b4000

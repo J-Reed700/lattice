@@ -401,6 +401,30 @@ impl DownloadSaga {
 
         let mut uow = self.uow_factory.create().await?;
 
+        // A file that is already on disk and recorded as complete stays that
+        // way. The failure can belong to a different session for the same file:
+        // cancelling a row left over from an interrupted attempt used to mark a
+        // finished, active model as failed and drop it from the downloaded list.
+        let already_complete = {
+            let model_file_repo = uow.model_file_repository()?;
+            model_file_repo
+                .find_by_model_id(&event.model_id)
+                .await?
+                .iter()
+                .any(|file| {
+                    file.file_name == event.file_name
+                        && matches!(file.status, FileStatus::Completed)
+                })
+        };
+        if already_complete {
+            warn!(
+                "Saga: ignoring a failure for {}/{}, which has already completed",
+                event.model_id, event.file_name
+            );
+            uow.rollback().await?;
+            return Ok(());
+        }
+
         // Wrap in async block so `?` short-circuits to tx_result, not out of
         // the function — otherwise we'd skip the rollback arm below and drop
         // `uow` with an open transaction.
@@ -656,6 +680,110 @@ mod tests {
             active.embedding_artifact_identity(),
             Some(&artifact_identity::compute(dir.path()).expect("compute identity")),
             "a local embedding model is activated with the identity of its files"
+        );
+    }
+
+    /// A model row with one file, in the given states, and a saga over it.
+    async fn saga_with_one_file(
+        model_status: &str,
+        file_status: &str,
+    ) -> (DownloadSaga, sqlx::SqlitePool) {
+        use crate::features::download::downloaded_model_repository::DownloadedModelRepository;
+        use crate::infrastructure::event_bus::EventBus;
+        use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
+        use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
+        use std::sync::Arc;
+
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("create in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        sqlx::query(
+            "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
+             VALUES ('row-1', 'embed', 'embed', '/tmp/embed', 'embedding', 'bert', ?1)",
+        )
+        .bind(model_status)
+        .execute(&pool)
+        .await
+        .expect("insert model row");
+        sqlx::query(
+            "INSERT INTO model_files
+                 (id, model_id, file_name, file_path, relative_path, size_bytes, download_url, status)
+             VALUES ('file-1', 'embed', 'model.safetensors', '/tmp/embed/model.safetensors',
+                     'model.safetensors', 7, 'https://example.com', ?1)",
+        )
+        .bind(file_status)
+        .execute(&pool)
+        .await
+        .expect("insert model file row");
+
+        let saga = DownloadSaga::new(
+            Arc::new(EventBus::new()),
+            Arc::new(SqliteModelFileRepository::new(pool.clone())),
+            Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+            Arc::new(DownloadedModelRepository::new(pool.clone())),
+        );
+        (saga, pool)
+    }
+
+    async fn statuses(pool: &sqlx::SqlitePool) -> (String, String) {
+        let model: String = sqlx::query_scalar("SELECT status FROM models WHERE id = 'row-1'")
+            .fetch_one(pool)
+            .await
+            .expect("read model status");
+        let file: String = sqlx::query_scalar("SELECT status FROM model_files WHERE id = 'file-1'")
+            .fetch_one(pool)
+            .await
+            .expect("read file status");
+        (model, file)
+    }
+
+    fn cancelled(
+        file_name: &str,
+    ) -> crate::features::download::events::model_download_events::FileDownloadFailedEvent {
+        crate::features::download::events::model_download_events::FileDownloadFailedEvent {
+            model_id: "embed".to_string(),
+            file_id: "some-other-session".to_string(),
+            file_name: file_name.to_string(),
+            error: "Download cancelled".to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Cancelling a row left over from an interrupted attempt reports a failure
+    /// for a file that a later attempt already finished. It used to mark the
+    /// finished, active model as failed, which removed it from the downloaded
+    /// list.
+    #[tokio::test]
+    async fn a_failure_for_a_file_that_already_completed_changes_nothing() {
+        let (saga, pool) = saga_with_one_file("completed", "completed").await;
+
+        saga.handle_file_failed(cancelled("model.safetensors"))
+            .await
+            .expect("handle the stray failure");
+
+        assert_eq!(
+            statuses(&pool).await,
+            ("completed".to_string(), "completed".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failure_for_a_file_still_downloading_fails_the_model() {
+        let (saga, pool) = saga_with_one_file("downloading", "downloading").await;
+
+        saga.handle_file_failed(cancelled("model.safetensors"))
+            .await
+            .expect("handle the failure");
+
+        assert_eq!(
+            statuses(&pool).await,
+            ("failed".to_string(), "failed".to_string())
         );
     }
 

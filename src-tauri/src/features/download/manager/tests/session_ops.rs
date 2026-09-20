@@ -343,3 +343,64 @@ async fn test_list_downloads() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+/// A relaunch leaves the interrupted session behind, still marked Downloading.
+/// Asking for the same file again must replace it, not sit beside it: the
+/// downloads panel groups a model's sessions, and the dead one showed as a row
+/// that never moved.
+#[tokio::test]
+async fn a_new_download_supersedes_a_dead_session_for_the_same_file(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repository = Arc::new(MockDownloadRepository::new());
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager = DownloadManagerService::new(repository.clone(), engine.clone(), temp_root());
+    let url = "https://example.com/superseded.bin";
+    let destination = temp_file("superseded.bin");
+    engine.set_file_size(url, Some(1000));
+
+    let mut leftover = DownloadSession::new(
+        "left-by-a-previous-launch".to_string(),
+        url.to_string(),
+        destination.clone(),
+        Some(1000),
+        None,
+    )?;
+    leftover.start()?;
+    repository.create(&leftover).await?;
+
+    let mut elsewhere = DownloadSession::new(
+        "another-file".to_string(),
+        "https://example.com/other.bin".to_string(),
+        temp_file("other.bin"),
+        Some(10),
+        None,
+    )?;
+    elsewhere.start()?;
+    repository.create(&elsewhere).await?;
+
+    let id = manager
+        .start_download(DownloadRequest {
+            url: url.to_string(),
+            destination: destination.clone(),
+            checksum: None,
+            auth_token: None,
+            model_name: None,
+            model_id: None,
+            model_file_name: None,
+        })
+        .await?;
+
+    let for_destination: Vec<String> = repository
+        .list()
+        .await?
+        .into_iter()
+        .filter(|session| session.destination() == &destination)
+        .map(|session| session.id().to_string())
+        .collect();
+    assert_eq!(for_destination, vec![id], "one session per destination");
+    assert!(
+        repository.get("another-file").await?.is_some(),
+        "a session for a different file is not touched"
+    );
+    Ok(())
+}

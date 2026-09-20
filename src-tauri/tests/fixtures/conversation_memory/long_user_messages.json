@@ -1,0 +1,104 @@
+{
+  "family": "long_user_messages",
+  "capability": "A negation and its exception near a chunk boundary survive, and the prompt does not grow with the source's full size.",
+  "mode": "standard",
+  "decoy_quote": null,
+  "turns": [
+    {
+      "role": "user",
+      "content": "Full context for the ingest rewrite, read it all before answering.\n\nParagraph 1: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 2: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 3: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 4: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 5: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 6: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 7: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 8: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 9: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 10: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 11: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 12: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 13: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 14: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 15: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 16: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 17: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 18: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 19: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 20: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 21: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 22: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 23: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 24: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\nParagraph 25: the ingest stage reads a manifest, validates each entry against the schema registry, writes a staging table, and emits a completion event. Nothing in this paragraph changes any rule; it is background only, repeated so the message is long.\n\nParagraph 26: do not enable the auto-repair path unless the manifest checksum matches, and never enable it for the Reykjavik feed even when the checksum does match.\n\nParagraph 27: more background about retry accounting, all of it inert.\nParagraph 28: more background about retry accounting, all of it inert.\nParagraph 29: more background about retry accounting, all of it inert.\nParagraph 30: more background about retry accounting, all of it inert.\nParagraph 31: more background about retry accounting, all of it inert.\nParagraph 32: more background about retry accounting, all of it inert.\nParagraph 33: more background about retry accounting, all of it inert.\nParagraph 34: more background about retry accounting, all of it inert.\nParagraph 35: more background about retry accounting, all of it inert.\nParagraph 36: more background about retry accounting, all of it inert.\nParagraph 37: more background about retry accounting, all of it inert.\nParagraph 38: more background about retry accounting, all of it inert.\nParagraph 39: more background about retry accounting, all of it inert.\nParagraph 40: more background about retry accounting, all of it inert.\nParagraph 41: more background about retry accounting, all of it inert.\nParagraph 42: more background about retry accounting, all of it inert.\nParagraph 43: more background about retry accounting, all of it inert.\nParagraph 44: more background about retry accounting, all of it inert.\nParagraph 45: more background about retry accounting, all of it inert.\nParagraph 46: more background about retry accounting, all of it inert.\nParagraph 47: more background about retry accounting, all of it inert.\nParagraph 48: more background about retry accounting, all of it inert.\nParagraph 49: more background about retry accounting, all of it inert.\nParagraph 50: more background about retry accounting, all of it inert.\nParagraph 51: more background about retry accounting, all of it inert."
+    },
+    {
+      "role": "assistant",
+      "content": "Read. I will not enable auto-repair unless the checksum matches, and never for the Reykjavik feed."
+    },
+    {
+      "role": "user",
+      "content": "Summarise the four ingest stages in one line each."
+    },
+    {
+      "role": "assistant",
+      "content": "Manifest read; schema validation; staging write; completion event."
+    },
+    {
+      "role": "user",
+      "content": "Now propose retry accounting for the staging write."
+    },
+    {
+      "role": "assistant",
+      "content": "Three attempts with exponential backoff, capped at 30 s, counted per manifest entry."
+    },
+    {
+      "role": "user",
+      "content": "Good. Add a metric for repair attempts."
+    },
+    {
+      "role": "assistant",
+      "content": "Added a counter for attempted and skipped repairs."
+    }
+  ],
+  "filler_turns": [
+    {
+      "role": "user",
+      "content": "Separately, remind me what a p95 latency figure actually measures."
+    },
+    {
+      "role": "assistant",
+      "content": "It is the value below which 95 percent of observations fall."
+    }
+  ],
+  "expect": {
+    "min_mandatory_items": 1,
+    "required_active_quotes": [
+      "never enable it for the Reykjavik feed even when the checksum does match"
+    ],
+    "superseded_quotes": [],
+    "must_not_be_authoritative": [],
+    "expect_unresolved_conflict": false,
+    "expect_overflow": false,
+    "forbidden_tools": [],
+    "allowed_tools": [
+      "read_note"
+    ],
+    "questions": [
+      {
+        "ask": "Does a matching Reykjavik checksum permit auto-repair to be enabled for that feed?",
+        "must_quote": [
+          "never enable it for the Reykjavik feed"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      },
+      {
+        "ask": "Under what condition may auto-repair be enabled at all?",
+        "must_quote": [
+          "checksum matches"
+        ],
+        "must_not_contain": [],
+        "abstain": false
+      }
+    ],
+    "abstain_markers": [
+      "cannot",
+      "can't",
+      "no record",
+      "not stated",
+      "do not have",
+      "don't have",
+      "unable",
+      "nothing in",
+      "was not",
+      "wasn't",
+      "unclear"
+    ]
+  },
+  "cycles": [
+    1,
+    3,
+    10
+  ],
+  "reload_after_cycles": [
+    1,
+    3
+  ]
+}
